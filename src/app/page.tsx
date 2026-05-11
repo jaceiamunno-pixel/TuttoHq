@@ -332,6 +332,62 @@ function SpinnerIcon({ className = "h-3 w-3" }: { className?: string }) {
   )
 }
 
+// ─── Combobox ─────────────────────────────────────────────────────────────────
+
+function Combobox({ value, onChange, options, placeholder, autoFocus }: {
+  value: string
+  onChange: (v: string) => void
+  options: string[]
+  placeholder?: string
+  autoFocus?: boolean
+}) {
+  const [open, setOpen] = useState(false)
+  const containerRef = useRef<HTMLDivElement>(null)
+
+  const filtered = value.trim()
+    ? options.filter(o => o.toLowerCase().includes(value.toLowerCase()))
+    : options
+
+  useEffect(() => {
+    function onMouseDown(e: MouseEvent) {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setOpen(false)
+      }
+    }
+    document.addEventListener("mousedown", onMouseDown)
+    return () => document.removeEventListener("mousedown", onMouseDown)
+  }, [])
+
+  return (
+    <div ref={containerRef} className="relative">
+      <input
+        type="text"
+        value={value}
+        autoFocus={autoFocus}
+        placeholder={placeholder}
+        onChange={e => { onChange(e.target.value); setOpen(true) }}
+        onFocus={() => setOpen(true)}
+        onKeyDown={e => { if (e.key === "Escape") setOpen(false) }}
+        className="w-full h-9 px-3 rounded-md border border-[#2a3347] text-[13px] text-[#e8edf5] bg-[#0d1117] focus:outline-none focus:ring-1 focus:ring-[#2563eb]/40 focus:border-[#2563eb]/50 placeholder:text-[#4f617a] transition-all"
+      />
+      {open && filtered.length > 0 && (
+        <div className="absolute z-20 top-full left-0 right-0 mt-1 bg-[#1c2333] border border-[#2a3347] rounded-md shadow-xl max-h-44 overflow-y-auto">
+          {filtered.map(opt => (
+            <button
+              key={opt}
+              type="button"
+              onMouseDown={e => { e.preventDefault(); onChange(opt); setOpen(false) }}
+              className="w-full text-left px-3 py-1.5 text-[13px] text-[#c8d3e6] hover:bg-white/[0.07] transition-colors"
+            >
+              {opt}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ─── Sidebar file row ─────────────────────────────────────────────────────────
 
 function SidebarFileRow({ file, indent, onDelete, onOpen }: { file: SubmittalFile; indent: number; onDelete?: () => void; onOpen: () => void }) {
@@ -621,6 +677,13 @@ export default function Home() {
       const res  = await fetch("/api/upload", { method: "POST", body: fd })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error ?? "Upload failed")
+
+      // Append new name values to local opts so they appear in next upload
+      setNameOpts(prev => ({
+        materials:     nameMatl.trim() && !prev.materials.includes(nameMatl.trim())     ? [...prev.materials,     nameMatl.trim()].sort()     : prev.materials,
+        manufacturers: nameMfr.trim()  && !prev.manufacturers.includes(nameMfr.trim()) ? [...prev.manufacturers, nameMfr.trim()].sort()  : prev.manufacturers,
+        dimensions:    nameDims.trim() && !prev.dimensions.includes(nameDims.trim())   ? [...prev.dimensions,    nameDims.trim()].sort()    : prev.dimensions,
+      }))
 
       // Open the division + section and immediately fetch the files
       setOpenDivisions(prev => new Set([...prev, uploadDiv]))
@@ -1257,48 +1320,17 @@ export default function Home() {
 
                   <div>
                     <label className="block text-[12px] font-medium text-[#8b9ab5] mb-1">Material</label>
-                    <input
-                      type="text"
-                      list="matl-opts"
-                      value={nameMatl}
-                      onChange={e => setNameMatl(e.target.value)}
-                      placeholder="e.g. Gypsum Board"
-                      autoFocus
-                      className="w-full h-9 px-3 rounded-md border border-[#2a3347] text-[13px] text-[#e8edf5] bg-[#0d1117] focus:outline-none focus:ring-1 focus:ring-[#2563eb]/40 focus:border-[#2563eb]/50 placeholder:text-[#4f617a] transition-all"
-                    />
-                    <datalist id="matl-opts">
-                      {nameOpts.materials.map(m => <option key={m} value={m} />)}
-                    </datalist>
+                    <Combobox value={nameMatl} onChange={setNameMatl} options={nameOpts.materials} placeholder="e.g. Gypsum Board" autoFocus />
                   </div>
 
                   <div>
                     <label className="block text-[12px] font-medium text-[#8b9ab5] mb-1">Manufacturer</label>
-                    <input
-                      type="text"
-                      list="mfr-opts"
-                      value={nameMfr}
-                      onChange={e => setNameMfr(e.target.value)}
-                      placeholder="e.g. Georgia-Pacific"
-                      className="w-full h-9 px-3 rounded-md border border-[#2a3347] text-[13px] text-[#e8edf5] bg-[#0d1117] focus:outline-none focus:ring-1 focus:ring-[#2563eb]/40 focus:border-[#2563eb]/50 placeholder:text-[#4f617a] transition-all"
-                    />
-                    <datalist id="mfr-opts">
-                      {nameOpts.manufacturers.map(m => <option key={m} value={m} />)}
-                    </datalist>
+                    <Combobox value={nameMfr} onChange={setNameMfr} options={nameOpts.manufacturers} placeholder="e.g. Georgia-Pacific" />
                   </div>
 
                   <div>
                     <label className="block text-[12px] font-medium text-[#8b9ab5] mb-1">Dimensions</label>
-                    <input
-                      type="text"
-                      list="dims-opts"
-                      value={nameDims}
-                      onChange={e => setNameDims(e.target.value)}
-                      placeholder='e.g. 5/8" x 4&apos; x 8&apos;'
-                      className="w-full h-9 px-3 rounded-md border border-[#2a3347] text-[13px] text-[#e8edf5] bg-[#0d1117] focus:outline-none focus:ring-1 focus:ring-[#2563eb]/40 focus:border-[#2563eb]/50 placeholder:text-[#4f617a] transition-all"
-                    />
-                    <datalist id="dims-opts">
-                      {nameOpts.dimensions.map(d => <option key={d} value={d} />)}
-                    </datalist>
+                    <Combobox value={nameDims} onChange={setNameDims} options={nameOpts.dimensions} placeholder='e.g. 5/8" x 4&apos; x 8&apos;' />
                   </div>
 
                   {(nameMatl || nameMfr || nameDims) && (
