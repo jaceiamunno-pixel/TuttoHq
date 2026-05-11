@@ -708,7 +708,7 @@ export default function Home() {
     <div className="flex min-h-screen bg-[#0f1117]">
 
       {/* ── Sidebar ───────────────────────────────────────────────────────── */}
-      <aside className="w-1/3 flex-shrink-0 bg-[#161b27] border-r border-[#2a3347] flex flex-col h-screen sticky top-0 overflow-hidden">
+      <aside style={{ width: "33.333vw" }} className="flex-shrink-0 bg-[#161b27] border-r border-[#2a3347] flex flex-col h-screen sticky top-0 overflow-hidden">
 
         {/* Workspace header */}
         <div className="flex-shrink-0 px-3 pt-4 pb-2">
