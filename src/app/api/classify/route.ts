@@ -26,6 +26,24 @@ const CSI_LIST = `
 33: Utilities — 33 10 00 Water Utilities, 33 20 00 Wells, 33 30 00 Sanitary Sewerage Utilities, 33 40 00 Storm Drainage Utilities, 33 50 00 Fuel Distribution Utilities, 33 60 00 Hydronic & Steam Energy Utilities, 33 70 00 Electrical Utilities, 33 80 00 Communications Utilities
 `.trim()
 
+const SYSTEM = `You are an expert construction document classifier specializing in CSI MasterFormat.
+Your job is to read a submittal document and assign it to the single most appropriate CSI division and section.
+
+CSI Divisions and Sections available:
+${CSI_LIST}
+
+Classification guidance:
+- Product data sheets / cut sheets: match the product's primary material or system
+- Shop drawings: match the fabricated element (e.g. steel connections → 05 Metals)
+- Material certifications / test reports: match the tested material
+- If a section code appears explicitly in the document, use that
+- Choose the most specific section that fits
+
+Respond with ONLY a compact JSON object — no markdown, no explanation:
+{"division_num":"XX","division_name":"Name","section_code":"XX XX XX","section_name":"Name"}`
+
+const MAX_PDF_BYTES = 20 * 1024 * 1024 // 20 MB
+
 export async function POST(req: NextRequest) {
   if (!process.env.ANTHROPIC_API_KEY) {
     return NextResponse.json({ error: "ANTHROPIC_API_KEY not set" }, { status: 500 })
@@ -39,23 +57,35 @@ export async function POST(req: NextRequest) {
 
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
-  const prompt = `You are a construction document classifier specializing in CSI MasterFormat divisions.
-
-Classify this construction submittal into the single most appropriate CSI division and section.
-
-CSI Divisions and Sections (format: "XX XX XX Section Name"):
-${CSI_LIST}
-
-Filename: ${file.name}
-
-Respond with ONLY a compact JSON object — no markdown, no explanation:
-{"division_num":"XX","division_name":"Name","section_code":"XX XX XX","section_name":"Name"}`
-
   try {
+    const isPdf = file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf")
+    const withinSizeLimit = file.size <= MAX_PDF_BYTES
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let userContent: any
+
+    if (isPdf && withinSizeLimit) {
+      const bytes = await file.arrayBuffer()
+      const base64 = Buffer.from(bytes).toString("base64")
+      userContent = [
+        {
+          type: "document",
+          source: { type: "base64", media_type: "application/pdf", data: base64 },
+        },
+        {
+          type: "text",
+          text: `Filename: "${file.name}"\n\nClassify this construction submittal into the correct CSI division and section.`,
+        },
+      ]
+    } else {
+      userContent = `Filename: "${file.name}"\n\nClassify this construction submittal into the correct CSI division and section based on the filename.`
+    }
+
     const message = await client.messages.create({
       model: "claude-haiku-4-5-20251001",
       max_tokens: 150,
-      messages: [{ role: "user", content: prompt }],
+      system: SYSTEM,
+      messages: [{ role: "user", content: userContent }],
     })
 
     const text = message.content[0].type === "text" ? message.content[0].text.trim() : ""
