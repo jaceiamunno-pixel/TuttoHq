@@ -32,12 +32,32 @@ Your job is to read a submittal document and assign it to the single most approp
 CSI Divisions and Sections available:
 ${CSI_LIST}
 
-Classification guidance:
+General classification guidance:
 - Product data sheets / cut sheets: match the product's primary material or system
-- Shop drawings: match the fabricated element (e.g. steel connections → 05 Metals)
+- Shop drawings: match the fabricated element
 - Material certifications / test reports: match the tested material
-- If a section code appears explicitly in the document, use that
+- If a CSI section code (e.g. "09 20 00") appears explicitly in the document, use that
 - Choose the most specific section that fits
+
+Critical construction-specific rules (these override generic reasoning):
+- Non-structural metal framing, light-gauge steel studs, drywall framing, metal track → 09 20 00 Plaster & Gypsum Board (NOT Division 05)
+- Structural steel columns, beams, moment frames, HSS, wide flange → 05 10 00 Structural Metal Framing
+- Cold-formed metal framing for structural floor/roof systems → 05 40 00
+- Gypsum board, drywall, shaftwall, shaft liner → 09 20 00 Plaster & Gypsum Board
+- Acoustical ceiling tiles, suspension grid → 09 50 00 Ceilings
+- Carpet, VCT, LVT, hardwood, epoxy flooring → 09 60 00 Flooring
+- Paint, primer, coating, stain → 09 90 00 Painting & Coating
+- Spray foam, batt insulation, rigid insulation board → 07 20 00 Thermal Protection
+- Roofing membrane, TPO, EPDM, modified bitumen → 07 50 00 Membrane Roofing
+- Sheet metal flashing, gutters, downspouts → 07 60 00 Flashing & Sheet Metal
+- Firestopping, intumescent sealant → 07 80 00 Fire & Smoke Protection
+- Hollow metal doors, wood doors → 08 10 00 Doors & Frames
+- Storefront, curtain wall, aluminum framing → 08 40 00 Entrances Storefronts & Curtain Walls
+- Glass, glazing, window film → 08 80 00 Glazing
+- Ceramic tile, porcelain tile, stone tile → 09 30 00 Tiling
+- Toilet partitions, lockers, fire extinguisher cabinets → 10 20 00 Interior Specialties
+- Mechanical pipe insulation → 22 10 00 or 23 20 00 depending on system
+- Conduit, wire, cable tray → 26 20 00 Low-Voltage Electrical Transmission
 
 Respond with ONLY a compact JSON object — no markdown, no explanation:
 {"division_num":"XX","division_name":"Name","section_code":"XX XX XX","section_name":"Name"}`
