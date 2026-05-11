@@ -73,8 +73,7 @@ export async function GET(
 
   const mergedBytes = await mergedDoc.save()
 
-  return new NextResponse(Buffer.from(mergedBytes), {
-    headers: {
+return new NextResponse(Buffer.from(mergedBytes), {    headers: {
       "Content-Type": "application/pdf",
       "Content-Disposition": `inline; filename="${submittal.file_name}"`,
     },
