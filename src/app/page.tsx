@@ -700,9 +700,10 @@ export default function Home() {
 
   async function classifyBatch() {
     setBatchPhase("classifying")
-    // snapshot current list so we iterate in order
-    const items = batchItems
-    for (const item of items) {
+    const items = [...batchItems]
+    const CONCURRENCY = 4
+
+    async function classifyOne(item: BatchItem) {
       updateBatchItem(item.id, { status: "classifying" })
       try {
         const fd = new FormData()
@@ -710,19 +711,18 @@ export default function Home() {
         const res  = await fetch("/api/classify", { method: "POST", body: fd })
         const data = await res.json()
         if (res.ok && data.division_num && data.section_code) {
-          updateBatchItem(item.id, {
-            status: "ready",
-            divNum:  data.division_num,
-            divName: data.division_name,
-            secCode: data.section_code,
-            secName: data.section_name,
-          })
+          updateBatchItem(item.id, { status: "ready", divNum: data.division_num, divName: data.division_name, secCode: data.section_code, secName: data.section_name })
         } else {
-          updateBatchItem(item.id, { status: "error", errorMsg: "Could not classify — select manually" })
+          updateBatchItem(item.id, { status: "error", errorMsg: "Could not classify — assign manually" })
         }
       } catch {
         updateBatchItem(item.id, { status: "error", errorMsg: "Network error" })
       }
+    }
+
+    // Run in chunks of CONCURRENCY to stay within API rate limits
+    for (let i = 0; i < items.length; i += CONCURRENCY) {
+      await Promise.all(items.slice(i, i + CONCURRENCY).map(classifyOne))
     }
     setBatchPhase("review")
   }
@@ -730,7 +730,8 @@ export default function Home() {
   async function uploadBatch() {
     setBatchPhase("uploading")
     const toUpload = batchItems.filter(it => (it.status === "ready" || it.status === "error") && it.divNum && it.secCode)
-    for (const item of toUpload) {
+
+    async function uploadOne(item: BatchItem) {
       updateBatchItem(item.id, { status: "uploading" })
       try {
         const fd = new FormData()
@@ -745,9 +746,11 @@ export default function Home() {
         updateBatchItem(item.id, { status: "upload-error", errorMsg: "Network error" })
       }
     }
+
+    // Uploads can all run in parallel — no AI rate limit concern
+    await Promise.all(toUpload.map(uploadOne))
     setBatchPhase("done")
     loadTree()
-    // clear cached section files so they refetch on next open
     setSectionFiles({})
   }
 
