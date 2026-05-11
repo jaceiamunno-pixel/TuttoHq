@@ -24,7 +24,7 @@ interface Division { num: string; name: string; sections: Section[]; file_count:
 
 type UploadStep = "file" | "classifying" | "suggested" | "manual" | "naming"
 interface NameOptions { materials: string[]; manufacturers: string[]; dimensions: string[] }
-interface AiResult { division_num: string; division_name: string; section_code: string; section_name: string }
+interface AiResult { division_num: string; division_name: string; section_code: string; section_name: string; material_name?: string | null; manufacturer?: string | null; dimensions?: string | null }
 
 interface Project { id: string; name: string; number: string | null; location: string | null; gc_name: string | null; architect: string | null }
 interface TeamMember { id: string; name: string; title: string | null; email: string | null }
@@ -552,6 +552,9 @@ export default function Home() {
     setUploadDivName(aiResult.division_name)
     setUploadSec(aiResult.section_code)
     setUploadSecName(aiResult.section_name)
+    if (aiResult.material_name) setNameMatl(aiResult.material_name)
+    if (aiResult.manufacturer)  setNameMfr(aiResult.manufacturer)
+    if (aiResult.dimensions)    setNameDims(aiResult.dimensions)
     setUploadStep("naming")
   }
 
@@ -1255,6 +1258,13 @@ export default function Home() {
                     <p className="text-[13px] font-semibold text-[#e8edf5]">{aiResult.division_num} — {aiResult.division_name}</p>
                     <p className="text-[12px] text-[#8b9ab5] mt-0.5">{aiResult.section_code} — {aiResult.section_name}</p>
                   </div>
+                  {(aiResult.material_name || aiResult.manufacturer || aiResult.dimensions) && (
+                    <div className="border-t border-[#2563eb]/20 pt-2 space-y-0.5">
+                      {aiResult.material_name && <p className="text-[12px] text-[#c8d3e6]"><span className="text-[#4f617a]">Material:</span> {aiResult.material_name}</p>}
+                      {aiResult.manufacturer  && <p className="text-[12px] text-[#c8d3e6]"><span className="text-[#4f617a]">Mfr:</span> {aiResult.manufacturer}</p>}
+                      {aiResult.dimensions    && <p className="text-[12px] text-[#c8d3e6]"><span className="text-[#4f617a]">Dims:</span> {aiResult.dimensions}</p>}
+                    </div>
+                  )}
                   <div className="flex gap-2 pt-0.5">
                     <button type="button" onClick={acceptSuggestion}
                       className="h-7 px-3 rounded-md bg-[#2563eb] text-white text-[12px] font-semibold hover:bg-[#1d4ed8] transition-colors">

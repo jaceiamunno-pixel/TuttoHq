@@ -59,8 +59,13 @@ Critical construction-specific rules (these override generic reasoning):
 - Mechanical pipe insulation → 22 10 00 or 23 20 00 depending on system
 - Conduit, wire, cable tray → 26 20 00 Low-Voltage Electrical Transmission
 
+Also extract from the document (if present):
+- material_name: the primary product or material being submitted (e.g. "Gypsum Board", "Type X Drywall", "Steel Stud Framing")
+- manufacturer: the manufacturer or brand name (e.g. "USG", "National Gypsum", "ClarkDietrich")
+- dimensions: size, thickness, or gauge (e.g. '5/8" x 4\' x 8\'', "25 Gauge", "3-5/8\" 20ga")
+
 Respond with ONLY a compact JSON object — no markdown, no explanation:
-{"division_num":"XX","division_name":"Name","section_code":"XX XX XX","section_name":"Name"}`
+{"division_num":"XX","division_name":"Name","section_code":"XX XX XX","section_name":"Name","material_name":"...or null","manufacturer":"...or null","dimensions":"...or null"}`
 
 const MAX_PDF_BYTES = 20 * 1024 * 1024 // 20 MB
 
@@ -103,7 +108,7 @@ export async function POST(req: NextRequest) {
 
     const message = await client.messages.create({
       model: "claude-haiku-4-5-20251001",
-      max_tokens: 150,
+      max_tokens: 300,
       system: SYSTEM,
       messages: [{ role: "user", content: userContent }],
     })
