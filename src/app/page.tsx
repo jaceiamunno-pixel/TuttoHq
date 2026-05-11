@@ -28,7 +28,7 @@ interface AiResult { division_num: string; division_name: string; section_code: 
 
 type BatchStatus = "pending" | "classifying" | "ready" | "error" | "uploading" | "done" | "upload-error"
 type BatchPhase  = "select" | "classifying" | "review" | "uploading" | "done"
-interface BatchItem { id: string; file: File; status: BatchStatus; divNum: string; divName: string; secCode: string; secName: string; errorMsg?: string }
+interface BatchItem { id: string; file: File; status: BatchStatus; divNum: string; divName: string; secCode: string; secName: string; nameMatl: string; nameMfr: string; nameDims: string; expanded: boolean; errorMsg?: string }
 
 interface Project { id: string; name: string; number: string | null; location: string | null; gc_name: string | null; architect: string | null }
 interface TeamMember { id: string; name: string; title: string | null; email: string | null }
@@ -527,13 +527,13 @@ export default function Home() {
   }, [])
 
   useEffect(() => {
-    if (showUpload) {
+    if (showUpload || showBatch) {
       fetch("/api/submittal-names")
         .then(r => r.json())
         .then(d => setNameOpts(d))
         .catch(() => {})
     }
-  }, [showUpload])
+  }, [showUpload, showBatch])
 
   function toggleDivisionVisibility(num: string) {
     setHiddenDivisions(prev => {
@@ -695,6 +695,7 @@ export default function Home() {
     setBatchItems(valid.map((file, i) => ({
       id: `${Date.now()}-${i}`, file, status: "pending",
       divNum: "", divName: "", secCode: "", secName: "",
+      nameMatl: "", nameMfr: "", nameDims: "", expanded: false,
     })))
   }
 
@@ -711,7 +712,12 @@ export default function Home() {
         const res  = await fetch("/api/classify", { method: "POST", body: fd })
         const data = await res.json()
         if (res.ok && data.division_num && data.section_code) {
-          updateBatchItem(item.id, { status: "ready", divNum: data.division_num, divName: data.division_name, secCode: data.section_code, secName: data.section_name })
+          updateBatchItem(item.id, {
+            status: "ready",
+            divNum: data.division_num, divName: data.division_name,
+            secCode: data.section_code, secName: data.section_name,
+            nameMatl: data.material_name ?? "", nameMfr: data.manufacturer ?? "", nameDims: data.dimensions ?? "",
+          })
         } else {
           updateBatchItem(item.id, { status: "error", errorMsg: "Could not classify — assign manually" })
         }
@@ -740,6 +746,9 @@ export default function Home() {
         fd.append("division_name", item.divName)
         fd.append("section_code",  item.secCode)
         fd.append("section_name",  item.secName)
+        if (item.nameMatl) fd.append("material_name", item.nameMatl)
+        if (item.nameMfr)  fd.append("manufacturer",  item.nameMfr)
+        if (item.nameDims) fd.append("dimensions",     item.nameDims)
         const res = await fetch("/api/upload", { method: "POST", body: fd })
         updateBatchItem(item.id, { status: res.ok ? "done" : "upload-error", errorMsg: res.ok ? undefined : "Upload failed" })
       } catch {
@@ -1550,68 +1559,92 @@ export default function Home() {
               {(batchPhase === "classifying" || batchPhase === "review" || batchPhase === "uploading" || batchPhase === "done") && (
                 <div className="space-y-1.5">
                   {/* Column headers */}
-                  <div className="grid gap-2 px-2 pb-1" style={{ gridTemplateColumns: "1fr 160px 200px 28px 24px" }}>
+                  <div className="grid gap-2 px-2 pb-1" style={{ gridTemplateColumns: "1fr 155px 195px 20px 20px 20px" }}>
                     <span className="text-[10px] font-bold text-[#4f617a] uppercase tracking-widest">File</span>
                     <span className="text-[10px] font-bold text-[#4f617a] uppercase tracking-widest">Division</span>
                     <span className="text-[10px] font-bold text-[#4f617a] uppercase tracking-widest">Section</span>
-                    <span />
-                    <span />
+                    <span /><span /><span />
                   </div>
                   {batchItems.map(item => {
                     const isEditable = batchPhase === "review" || batchPhase === "classifying"
+                    const hasName = item.nameMatl || item.nameMfr || item.nameDims
                     return (
-                      <div key={item.id} className="grid gap-2 items-center bg-[#161b27] rounded-lg px-2 py-1.5" style={{ gridTemplateColumns: "1fr 160px 200px 28px 24px" }}>
-                        {/* Filename */}
-                        <span className="text-[12px] text-[#c8d3e6] truncate min-w-0" title={item.file.name}>{item.file.name}</span>
+                      <div key={item.id} className="bg-[#161b27] rounded-lg overflow-hidden mb-1">
+                        {/* Main row */}
+                        <div className="grid gap-2 items-center px-2 py-1.5" style={{ gridTemplateColumns: "1fr 155px 195px 20px 20px 20px" }}>
+                          <span className="text-[12px] text-[#c8d3e6] truncate min-w-0" title={item.file.name}>{item.file.name}</span>
 
-                        {/* Division select */}
-                        <select
-                          value={item.divNum}
-                          disabled={!isEditable}
-                          onChange={e => {
-                            const d = CSI_DIVISIONS.find(d => d.num === e.target.value)
-                            updateBatchItem(item.id, { divNum: e.target.value, divName: d?.name ?? "", secCode: "", secName: "", status: "ready" })
-                          }}
-                          className="h-7 px-1.5 rounded-md border border-[#2a3347] text-[11px] text-[#e8edf5] bg-[#0d1117] focus:outline-none focus:ring-1 focus:ring-[#2563eb]/40 disabled:opacity-60 w-full"
-                        >
-                          <option value="">Division…</option>
-                          {CSI_DIVISIONS.map(d => <option key={d.num} value={d.num}>{d.num} — {d.name}</option>)}
-                        </select>
+                          <select value={item.divNum} disabled={!isEditable}
+                            onChange={e => {
+                              const d = CSI_DIVISIONS.find(d => d.num === e.target.value)
+                              updateBatchItem(item.id, { divNum: e.target.value, divName: d?.name ?? "", secCode: "", secName: "", status: "ready" })
+                            }}
+                            className="h-7 px-1.5 rounded-md border border-[#2a3347] text-[11px] text-[#e8edf5] bg-[#0d1117] focus:outline-none disabled:opacity-60 w-full">
+                            <option value="">Division…</option>
+                            {CSI_DIVISIONS.map(d => <option key={d.num} value={d.num}>{d.num} — {d.name}</option>)}
+                          </select>
 
-                        {/* Section select */}
-                        <select
-                          value={item.secCode}
-                          disabled={!isEditable || !item.divNum}
-                          onChange={e => {
-                            const s = (CSI_SECTIONS[item.divNum] ?? []).find(s => s.code === e.target.value)
-                            updateBatchItem(item.id, { secCode: e.target.value, secName: s?.name ?? "", status: "ready" })
-                          }}
-                          className="h-7 px-1.5 rounded-md border border-[#2a3347] text-[11px] text-[#e8edf5] bg-[#0d1117] focus:outline-none focus:ring-1 focus:ring-[#2563eb]/40 disabled:opacity-60 w-full"
-                        >
-                          <option value="">{item.divNum ? "Section…" : "—"}</option>
-                          {(CSI_SECTIONS[item.divNum] ?? []).map(s => <option key={s.code} value={s.code}>{s.code} — {s.name}</option>)}
-                        </select>
+                          <select value={item.secCode} disabled={!isEditable || !item.divNum}
+                            onChange={e => {
+                              const s = (CSI_SECTIONS[item.divNum] ?? []).find(s => s.code === e.target.value)
+                              updateBatchItem(item.id, { secCode: e.target.value, secName: s?.name ?? "", status: "ready" })
+                            }}
+                            className="h-7 px-1.5 rounded-md border border-[#2a3347] text-[11px] text-[#e8edf5] bg-[#0d1117] focus:outline-none disabled:opacity-60 w-full">
+                            <option value="">{item.divNum ? "Section…" : "—"}</option>
+                            {(CSI_SECTIONS[item.divNum] ?? []).map(s => <option key={s.code} value={s.code}>{s.code} — {s.name}</option>)}
+                          </select>
 
-                        {/* Status icon */}
-                        <div className="flex items-center justify-center">
-                          {item.status === "classifying" && <SpinnerIcon className="h-3.5 w-3.5" />}
-                          {item.status === "pending"     && <span className="w-2 h-2 rounded-full bg-[#2a3347]" />}
-                          {item.status === "ready"       && <span className="w-2 h-2 rounded-full bg-emerald-400" title="Ready" />}
-                          {item.status === "error"       && <span className="w-2 h-2 rounded-full bg-amber-400" title={item.errorMsg} />}
-                          {item.status === "uploading"   && <SpinnerIcon className="h-3.5 w-3.5" />}
-                          {item.status === "done"        && <span className="w-2 h-2 rounded-full bg-emerald-400" title="Uploaded" />}
-                          {item.status === "upload-error"&& <span className="w-2 h-2 rounded-full bg-red-400" title={item.errorMsg} />}
+                          {/* Status */}
+                          <div className="flex items-center justify-center">
+                            {(item.status === "classifying" || item.status === "uploading") && <SpinnerIcon className="h-3.5 w-3.5" />}
+                            {item.status === "pending"      && <span className="w-2 h-2 rounded-full bg-[#2a3347]" />}
+                            {item.status === "ready"        && <span className="w-2 h-2 rounded-full bg-emerald-400" />}
+                            {item.status === "error"        && <span className="w-2 h-2 rounded-full bg-amber-400" title={item.errorMsg} />}
+                            {item.status === "done"         && <span className="w-2 h-2 rounded-full bg-emerald-400" />}
+                            {item.status === "upload-error" && <span className="w-2 h-2 rounded-full bg-red-400" title={item.errorMsg} />}
+                          </div>
+
+                          {/* Expand naming */}
+                          {isEditable && (
+                            <button type="button" onClick={() => updateBatchItem(item.id, { expanded: !item.expanded })}
+                              title="Edit name (Material / Manufacturer / Dimensions)"
+                              className={`flex items-center justify-center transition-colors ${item.expanded || hasName ? "text-[#60a5fa]" : "text-[#4f617a] hover:text-[#8b9ab5]"}`}>
+                              <svg className={`h-3 w-3 transition-transform ${item.expanded ? "rotate-180" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                              </svg>
+                            </button>
+                          )}
+
+                          {/* Remove */}
+                          {isEditable && (
+                            <button type="button" onClick={() => setBatchItems(prev => prev.filter(it => it.id !== item.id))}
+                              className="text-[#4f617a] hover:text-red-400 transition-colors flex items-center justify-center">
+                              <XIcon className="h-3 w-3" />
+                            </button>
+                          )}
                         </div>
 
-                        {/* Remove button */}
-                        {isEditable && (
-                          <button
-                            type="button"
-                            onClick={() => setBatchItems(prev => prev.filter(it => it.id !== item.id))}
-                            className="text-[#4f617a] hover:text-red-400 transition-colors flex items-center justify-center"
-                          >
-                            <XIcon className="h-3 w-3" />
-                          </button>
+                        {/* Expanded naming row */}
+                        {item.expanded && isEditable && (
+                          <div className="border-t border-[#2a3347] px-2 pb-2 pt-2 grid grid-cols-3 gap-2">
+                            <div>
+                              <label className="block text-[10px] font-medium text-[#4f617a] mb-1">Material</label>
+                              <Combobox value={item.nameMatl} onChange={v => updateBatchItem(item.id, { nameMatl: v })} options={nameOpts.materials} placeholder="e.g. Gypsum Board" />
+                            </div>
+                            <div>
+                              <label className="block text-[10px] font-medium text-[#4f617a] mb-1">Manufacturer</label>
+                              <Combobox value={item.nameMfr} onChange={v => updateBatchItem(item.id, { nameMfr: v })} options={nameOpts.manufacturers} placeholder="e.g. USG" />
+                            </div>
+                            <div>
+                              <label className="block text-[10px] font-medium text-[#4f617a] mb-1">Dimensions</label>
+                              <Combobox value={item.nameDims} onChange={v => updateBatchItem(item.id, { nameDims: v })} options={nameOpts.dimensions} placeholder='e.g. 5/8"' />
+                            </div>
+                            {hasName && (
+                              <div className="col-span-3 text-[11px] text-[#60a5fa] truncate">
+                                {[item.nameMatl, item.nameMfr, item.nameDims].filter(Boolean).join(" — ")}
+                              </div>
+                            )}
+                          </div>
                         )}
                       </div>
                     )
