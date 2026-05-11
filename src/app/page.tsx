@@ -496,7 +496,7 @@ export default function Home() {
     setUploadDivName(aiResult.division_name)
     setUploadSec(aiResult.section_code)
     setUploadSecName(aiResult.section_name)
-    setUploadStep("manual")
+    setUploadStep("naming")
   }
 
   function handleFileOpen(file: SubmittalFile, divNum: string, divName: string, secCode: string, secName: string) {
@@ -603,7 +603,7 @@ export default function Home() {
 
   async function handleUpload(e: React.FormEvent) {
     e.preventDefault()
-    if (!uploadFile || !uploadDiv || !uploadSec || !nameMatl.trim() || !nameMfr.trim() || !nameDims.trim()) return
+    if (!uploadFile || !uploadDiv || !uploadSec) return
     setUploading(true)
     setUploadError(null)
 
@@ -1256,7 +1256,7 @@ export default function Home() {
                   <p className="text-[11px] font-bold text-[#4f617a] uppercase tracking-widest">Submittal Name</p>
 
                   <div>
-                    <label className="block text-[12px] font-medium text-[#8b9ab5] mb-1">Material <span className="text-red-400">*</span></label>
+                    <label className="block text-[12px] font-medium text-[#8b9ab5] mb-1">Material</label>
                     <input
                       type="text"
                       list="matl-opts"
@@ -1272,7 +1272,7 @@ export default function Home() {
                   </div>
 
                   <div>
-                    <label className="block text-[12px] font-medium text-[#8b9ab5] mb-1">Manufacturer <span className="text-red-400">*</span></label>
+                    <label className="block text-[12px] font-medium text-[#8b9ab5] mb-1">Manufacturer</label>
                     <input
                       type="text"
                       list="mfr-opts"
@@ -1287,7 +1287,7 @@ export default function Home() {
                   </div>
 
                   <div>
-                    <label className="block text-[12px] font-medium text-[#8b9ab5] mb-1">Dimensions <span className="text-red-400">*</span></label>
+                    <label className="block text-[12px] font-medium text-[#8b9ab5] mb-1">Dimensions</label>
                     <input
                       type="text"
                       list="dims-opts"
@@ -1326,7 +1326,7 @@ export default function Home() {
                   {uploadStep === "naming" && (
                     <button
                       type="button"
-                      onClick={() => setUploadStep("manual")}
+                      onClick={() => setUploadStep(aiResult ? "suggested" : "manual")}
                       className="h-8 px-3 rounded-md border border-[#2a3347] text-[13px] text-[#8b9ab5] hover:bg-white/[0.05] transition-colors"
                     >
                       ← Back
@@ -1346,7 +1346,7 @@ export default function Home() {
                 {uploadStep === "naming" && (
                   <button
                     type="submit"
-                    disabled={uploading || !nameMatl.trim() || !nameMfr.trim() || !nameDims.trim()}
+                    disabled={uploading}
                     className="h-8 px-4 rounded-md bg-[#2563eb] text-white text-[13px] font-semibold hover:bg-[#1d4ed8] transition-colors disabled:opacity-50 flex items-center gap-2"
                   >
                     {uploading && <SpinnerIcon className="h-3 w-3" />}
