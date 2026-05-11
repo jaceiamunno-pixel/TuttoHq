@@ -26,6 +26,10 @@ type UploadStep = "file" | "classifying" | "suggested" | "manual" | "naming"
 interface NameOptions { materials: string[]; manufacturers: string[]; dimensions: string[] }
 interface AiResult { division_num: string; division_name: string; section_code: string; section_name: string; material_name?: string | null; manufacturer?: string | null; dimensions?: string | null }
 
+type BatchStatus = "pending" | "classifying" | "ready" | "error" | "uploading" | "done" | "upload-error"
+type BatchPhase  = "select" | "classifying" | "review" | "uploading" | "done"
+interface BatchItem { id: string; file: File; status: BatchStatus; divNum: string; divName: string; secCode: string; secName: string; errorMsg?: string }
+
 interface Project { id: string; name: string; number: string | null; location: string | null; gc_name: string | null; architect: string | null }
 interface TeamMember { id: string; name: string; title: string | null; email: string | null }
 type FileModalStep = "project" | "coversheet" | "form"
@@ -332,6 +336,14 @@ function SpinnerIcon({ className = "h-3 w-3" }: { className?: string }) {
   )
 }
 
+function LayersIcon() {
+  return (
+    <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" />
+    </svg>
+  )
+}
+
 // ─── Combobox ─────────────────────────────────────────────────────────────────
 
 function Combobox({ value, onChange, options, placeholder, autoFocus }: {
@@ -451,6 +463,12 @@ export default function Home() {
   const [nameMfr, setNameMfr]               = useState("")
   const [nameDims, setNameDims]             = useState("")
   const [nameOpts, setNameOpts]             = useState<NameOptions>({ materials: [], manufacturers: [], dimensions: [] })
+
+  // Batch upload
+  const [showBatch, setShowBatch]     = useState(false)
+  const [batchItems, setBatchItems]   = useState<BatchItem[]>([])
+  const [batchPhase, setBatchPhase]   = useState<BatchPhase>("select")
+  const [batchDragOver, setBatchDragOver] = useState(false)
 
   // Auth + company settings
   const [userEmail, setUserEmail] = useState<string | null>(null)
@@ -660,6 +678,79 @@ export default function Home() {
       .finally(() => setLoadingSections(prev => { const n = new Set(prev); n.delete(code); return n }))
   }
 
+  function closeBatch() {
+    setShowBatch(false)
+    setBatchItems([])
+    setBatchPhase("select")
+    setBatchDragOver(false)
+  }
+
+  function updateBatchItem(id: string, update: Partial<BatchItem>) {
+    setBatchItems(prev => prev.map(it => it.id === id ? { ...it, ...update } : it))
+  }
+
+  function initBatchFiles(files: File[]) {
+    const valid = files.filter(f => /\.(pdf|doc|docx|xls|xlsx|dwg|rvt)$/i.test(f.name))
+    if (!valid.length) return
+    setBatchItems(valid.map((file, i) => ({
+      id: `${Date.now()}-${i}`, file, status: "pending",
+      divNum: "", divName: "", secCode: "", secName: "",
+    })))
+  }
+
+  async function classifyBatch() {
+    setBatchPhase("classifying")
+    // snapshot current list so we iterate in order
+    const items = batchItems
+    for (const item of items) {
+      updateBatchItem(item.id, { status: "classifying" })
+      try {
+        const fd = new FormData()
+        fd.append("file", item.file)
+        const res  = await fetch("/api/classify", { method: "POST", body: fd })
+        const data = await res.json()
+        if (res.ok && data.division_num && data.section_code) {
+          updateBatchItem(item.id, {
+            status: "ready",
+            divNum:  data.division_num,
+            divName: data.division_name,
+            secCode: data.section_code,
+            secName: data.section_name,
+          })
+        } else {
+          updateBatchItem(item.id, { status: "error", errorMsg: "Could not classify — select manually" })
+        }
+      } catch {
+        updateBatchItem(item.id, { status: "error", errorMsg: "Network error" })
+      }
+    }
+    setBatchPhase("review")
+  }
+
+  async function uploadBatch() {
+    setBatchPhase("uploading")
+    const toUpload = batchItems.filter(it => (it.status === "ready" || it.status === "error") && it.divNum && it.secCode)
+    for (const item of toUpload) {
+      updateBatchItem(item.id, { status: "uploading" })
+      try {
+        const fd = new FormData()
+        fd.append("file",          item.file)
+        fd.append("division_num",  item.divNum)
+        fd.append("division_name", item.divName)
+        fd.append("section_code",  item.secCode)
+        fd.append("section_name",  item.secName)
+        const res = await fetch("/api/upload", { method: "POST", body: fd })
+        updateBatchItem(item.id, { status: res.ok ? "done" : "upload-error", errorMsg: res.ok ? undefined : "Upload failed" })
+      } catch {
+        updateBatchItem(item.id, { status: "upload-error", errorMsg: "Network error" })
+      }
+    }
+    setBatchPhase("done")
+    loadTree()
+    // clear cached section files so they refetch on next open
+    setSectionFiles({})
+  }
+
   async function handleUpload(e: React.FormEvent) {
     e.preventDefault()
     if (!uploadFile || !uploadDiv || !uploadSec) return
@@ -781,6 +872,13 @@ export default function Home() {
                   className="text-[#4f617a] hover:text-[#8b9ab5] transition-colors"
                 >
                   <SlidersIcon />
+                </button>
+                <button
+                  onClick={() => { setShowBatch(true); setBatchPhase("select"); setBatchItems([]) }}
+                  title="Batch upload"
+                  className="text-[#4f617a] hover:text-[#8b9ab5] transition-colors"
+                >
+                  <LayersIcon />
                 </button>
                 <button
                   onClick={() => setShowUpload(true)}
@@ -1397,6 +1495,188 @@ export default function Home() {
                 )}
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* ── Batch upload modal ───────────────────────────────────────────── */}
+      {showBatch && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center"
+          onClick={e => { if (e.target === e.currentTarget) closeBatch() }}>
+          <div className="bg-[#1c2333] rounded-xl border border-[#2a3347] shadow-2xl w-[700px] max-h-[85vh] flex flex-col">
+
+            {/* Header */}
+            <div className="flex items-center justify-between px-6 pt-5 pb-4 border-b border-[#2a3347] flex-shrink-0">
+              <div>
+                <h2 className="text-[15px] font-bold text-[#e8edf5]">Batch Upload</h2>
+                <p className="text-[12px] text-[#4f617a] mt-0.5">AI will classify each file — review before uploading</p>
+              </div>
+              <button onClick={closeBatch} className="text-[#4f617a] hover:text-[#8b9ab5] transition-colors">
+                <XIcon className="h-4 w-4" />
+              </button>
+            </div>
+
+            {/* Body */}
+            <div className="flex-1 overflow-y-auto px-6 py-4 min-h-0">
+
+              {/* ── Select phase ── */}
+              {batchPhase === "select" && (
+                <div
+                  onDragOver={e => { e.preventDefault(); setBatchDragOver(true) }}
+                  onDragLeave={() => setBatchDragOver(false)}
+                  onDrop={e => { e.preventDefault(); setBatchDragOver(false); initBatchFiles(Array.from(e.dataTransfer.files)) }}
+                  className={`border-2 border-dashed rounded-xl p-10 text-center transition-colors ${batchDragOver ? "border-[#2563eb]/60 bg-[#2563eb]/5" : "border-[#2a3347]"}`}
+                >
+                  <div className="w-12 h-12 rounded-xl bg-[#2a3347] flex items-center justify-center mx-auto mb-3">
+                    <LayersIcon />
+                  </div>
+                  <p className="text-[14px] font-semibold text-[#c8d3e6] mb-1">Drop files here</p>
+                  <p className="text-[12px] text-[#4f617a] mb-4">PDF, DOC, DOCX, XLS, XLSX, DWG, RVT</p>
+                  <label className="cursor-pointer h-8 px-4 rounded-md bg-[#2563eb] text-white text-[13px] font-semibold hover:bg-[#1d4ed8] transition-colors inline-flex items-center gap-2">
+                    <PlusIcon /> Choose files
+                    <input type="file" multiple accept=".pdf,.doc,.docx,.xls,.xlsx,.dwg,.rvt" className="hidden"
+                      onChange={e => { if (e.target.files) initBatchFiles(Array.from(e.target.files)) }} />
+                  </label>
+                  {batchItems.length > 0 && (
+                    <p className="mt-4 text-[13px] text-[#60a5fa]">{batchItems.length} file{batchItems.length !== 1 ? "s" : ""} selected</p>
+                  )}
+                </div>
+              )}
+
+              {/* ── Classifying + review phase ── */}
+              {(batchPhase === "classifying" || batchPhase === "review" || batchPhase === "uploading" || batchPhase === "done") && (
+                <div className="space-y-1.5">
+                  {/* Column headers */}
+                  <div className="grid gap-2 px-2 pb-1" style={{ gridTemplateColumns: "1fr 160px 200px 28px 24px" }}>
+                    <span className="text-[10px] font-bold text-[#4f617a] uppercase tracking-widest">File</span>
+                    <span className="text-[10px] font-bold text-[#4f617a] uppercase tracking-widest">Division</span>
+                    <span className="text-[10px] font-bold text-[#4f617a] uppercase tracking-widest">Section</span>
+                    <span />
+                    <span />
+                  </div>
+                  {batchItems.map(item => {
+                    const isEditable = batchPhase === "review" || batchPhase === "classifying"
+                    return (
+                      <div key={item.id} className="grid gap-2 items-center bg-[#161b27] rounded-lg px-2 py-1.5" style={{ gridTemplateColumns: "1fr 160px 200px 28px 24px" }}>
+                        {/* Filename */}
+                        <span className="text-[12px] text-[#c8d3e6] truncate min-w-0" title={item.file.name}>{item.file.name}</span>
+
+                        {/* Division select */}
+                        <select
+                          value={item.divNum}
+                          disabled={!isEditable}
+                          onChange={e => {
+                            const d = CSI_DIVISIONS.find(d => d.num === e.target.value)
+                            updateBatchItem(item.id, { divNum: e.target.value, divName: d?.name ?? "", secCode: "", secName: "", status: "ready" })
+                          }}
+                          className="h-7 px-1.5 rounded-md border border-[#2a3347] text-[11px] text-[#e8edf5] bg-[#0d1117] focus:outline-none focus:ring-1 focus:ring-[#2563eb]/40 disabled:opacity-60 w-full"
+                        >
+                          <option value="">Division…</option>
+                          {CSI_DIVISIONS.map(d => <option key={d.num} value={d.num}>{d.num} — {d.name}</option>)}
+                        </select>
+
+                        {/* Section select */}
+                        <select
+                          value={item.secCode}
+                          disabled={!isEditable || !item.divNum}
+                          onChange={e => {
+                            const s = (CSI_SECTIONS[item.divNum] ?? []).find(s => s.code === e.target.value)
+                            updateBatchItem(item.id, { secCode: e.target.value, secName: s?.name ?? "", status: "ready" })
+                          }}
+                          className="h-7 px-1.5 rounded-md border border-[#2a3347] text-[11px] text-[#e8edf5] bg-[#0d1117] focus:outline-none focus:ring-1 focus:ring-[#2563eb]/40 disabled:opacity-60 w-full"
+                        >
+                          <option value="">{item.divNum ? "Section…" : "—"}</option>
+                          {(CSI_SECTIONS[item.divNum] ?? []).map(s => <option key={s.code} value={s.code}>{s.code} — {s.name}</option>)}
+                        </select>
+
+                        {/* Status icon */}
+                        <div className="flex items-center justify-center">
+                          {item.status === "classifying" && <SpinnerIcon className="h-3.5 w-3.5" />}
+                          {item.status === "pending"     && <span className="w-2 h-2 rounded-full bg-[#2a3347]" />}
+                          {item.status === "ready"       && <span className="w-2 h-2 rounded-full bg-emerald-400" title="Ready" />}
+                          {item.status === "error"       && <span className="w-2 h-2 rounded-full bg-amber-400" title={item.errorMsg} />}
+                          {item.status === "uploading"   && <SpinnerIcon className="h-3.5 w-3.5" />}
+                          {item.status === "done"        && <span className="w-2 h-2 rounded-full bg-emerald-400" title="Uploaded" />}
+                          {item.status === "upload-error"&& <span className="w-2 h-2 rounded-full bg-red-400" title={item.errorMsg} />}
+                        </div>
+
+                        {/* Remove button */}
+                        {isEditable && (
+                          <button
+                            type="button"
+                            onClick={() => setBatchItems(prev => prev.filter(it => it.id !== item.id))}
+                            className="text-[#4f617a] hover:text-red-400 transition-colors flex items-center justify-center"
+                          >
+                            <XIcon className="h-3 w-3" />
+                          </button>
+                        )}
+                      </div>
+                    )
+                  })}
+
+                  {batchPhase === "classifying" && (
+                    <p className="text-[12px] text-[#4f617a] pt-2 text-center">
+                      Analyzing {batchItems.filter(it => it.status === "classifying").length > 0
+                        ? `"${batchItems.find(it => it.status === "classifying")?.file.name ?? ""}"`
+                        : "files"}…
+                    </p>
+                  )}
+
+                  {batchPhase === "done" && (() => {
+                    const done = batchItems.filter(it => it.status === "done").length
+                    const errs = batchItems.filter(it => it.status === "upload-error").length
+                    return (
+                      <div className="mt-3 rounded-lg border border-[#2a3347] bg-[#161b27] px-4 py-3 text-center">
+                        <p className="text-[13px] font-semibold text-[#c8d3e6]">
+                          {done} file{done !== 1 ? "s" : ""} uploaded successfully
+                          {errs > 0 && <span className="text-red-400"> · {errs} failed</span>}
+                        </p>
+                      </div>
+                    )
+                  })()}
+                </div>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="flex-shrink-0 border-t border-[#2a3347] px-6 py-4 flex justify-between items-center">
+              <button onClick={closeBatch} className="h-8 px-4 rounded-md border border-[#2a3347] text-[13px] text-[#8b9ab5] hover:bg-white/[0.05] transition-colors">
+                {batchPhase === "done" ? "Close" : "Cancel"}
+              </button>
+              <div className="flex items-center gap-3">
+                {batchPhase === "review" && (
+                  <p className="text-[12px] text-[#4f617a]">
+                    {batchItems.filter(it => it.status === "ready").length} ready ·{" "}
+                    {batchItems.filter(it => it.status === "error" && it.divNum && it.secCode).length} manual ·{" "}
+                    {batchItems.filter(it => it.status === "error" && (!it.divNum || !it.secCode)).length} unassigned
+                  </p>
+                )}
+                {batchPhase === "select" && (
+                  <button
+                    disabled={batchItems.length === 0}
+                    onClick={classifyBatch}
+                    className="h-8 px-5 rounded-md bg-[#2563eb] text-white text-[13px] font-semibold hover:bg-[#1d4ed8] transition-colors disabled:opacity-40 flex items-center gap-2"
+                  >
+                    <SpinnerIcon className="h-3 w-3 hidden" />
+                    Analyze {batchItems.length > 0 ? `${batchItems.length} files` : "files"}
+                  </button>
+                )}
+                {batchPhase === "review" && (
+                  <button
+                    disabled={!batchItems.some(it => it.divNum && it.secCode)}
+                    onClick={uploadBatch}
+                    className="h-8 px-5 rounded-md bg-[#2563eb] text-white text-[13px] font-semibold hover:bg-[#1d4ed8] transition-colors disabled:opacity-40"
+                  >
+                    Upload {batchItems.filter(it => it.divNum && it.secCode).length} files
+                  </button>
+                )}
+                {batchPhase === "uploading" && (
+                  <div className="flex items-center gap-2 text-[13px] text-[#8b9ab5]">
+                    <SpinnerIcon className="h-3.5 w-3.5" /> Uploading…
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
         </div>
       )}
