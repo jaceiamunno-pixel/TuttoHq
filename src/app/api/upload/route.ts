@@ -15,6 +15,9 @@ export async function POST(req: NextRequest) {
   const divisionName = formData.get("division_name") as string | null
   const sectionCode  = (formData.get("section_code") as string | null)?.trim() || null
   const sectionName  = (formData.get("section_name") as string | null)?.trim() || null
+  const materialName = (formData.get("material_name") as string | null)?.trim() || null
+  const manufacturer = (formData.get("manufacturer")  as string | null)?.trim() || null
+  const dimensions   = (formData.get("dimensions")    as string | null)?.trim() || null
 
   if (!file || !divisionNum || !divisionName) {
     return NextResponse.json(
@@ -22,6 +25,10 @@ export async function POST(req: NextRequest) {
       { status: 400 },
     )
   }
+
+  // Build display name from structured fields, fall back to original filename
+  const nameParts  = [materialName, manufacturer, dimensions].filter(Boolean)
+  const displayName = nameParts.length > 0 ? nameParts.join(" — ") : file.name
 
   // Build a clean storage path: division/section/timestamp_filename
   const safeName    = file.name.replace(/[^a-zA-Z0-9._-]/g, "_")
@@ -45,7 +52,7 @@ export async function POST(req: NextRequest) {
 
   // Insert DB row
   const { error: dbError } = await supabase.from("submittals").insert({
-    file_name:     file.name,
+    file_name:     displayName,
     storage_path:  storagePath,
     mime_type:     file.type || null,
     file_size:     file.size,
@@ -53,6 +60,9 @@ export async function POST(req: NextRequest) {
     division_name: divisionName,
     csi_section:   sectionCode,
     section_name:  sectionName,
+    material_name: materialName,
+    manufacturer:  manufacturer,
+    dimensions:    dimensions,
     status:        "active",
     uploaded_by:   user.id,
   })

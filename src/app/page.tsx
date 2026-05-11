@@ -22,7 +22,8 @@ interface SubmittalFile {
 interface Section  { code: string; name: string }
 interface Division { num: string; name: string; sections: Section[]; file_count: number }
 
-type UploadStep = "file" | "classifying" | "suggested" | "manual"
+type UploadStep = "file" | "classifying" | "suggested" | "manual" | "naming"
+interface NameOptions { materials: string[]; manufacturers: string[]; dimensions: string[] }
 interface AiResult { division_num: string; division_name: string; section_code: string; section_name: string }
 
 interface Project { id: string; name: string; number: string | null; location: string | null; gc_name: string | null; architect: string | null }
@@ -390,6 +391,10 @@ export default function Home() {
   const [uploadError, setUploadError]       = useState<string | null>(null)
   const [uploadStep, setUploadStep]         = useState<UploadStep>("file")
   const [aiResult, setAiResult]             = useState<AiResult | null>(null)
+  const [nameMatl, setNameMatl]             = useState("")
+  const [nameMfr, setNameMfr]               = useState("")
+  const [nameDims, setNameDims]             = useState("")
+  const [nameOpts, setNameOpts]             = useState<NameOptions>({ materials: [], manufacturers: [], dimensions: [] })
 
   // Auth + company settings
   const [userEmail, setUserEmail] = useState<string | null>(null)
@@ -447,6 +452,15 @@ export default function Home() {
     } catch {}
   }, [])
 
+  useEffect(() => {
+    if (showUpload) {
+      fetch("/api/submittal-names")
+        .then(r => r.json())
+        .then(d => setNameOpts(d))
+        .catch(() => {})
+    }
+  }, [showUpload])
+
   function toggleDivisionVisibility(num: string) {
     setHiddenDivisions(prev => {
       const next = new Set(prev)
@@ -471,6 +485,9 @@ export default function Home() {
     setUploadStep("file")
     setAiResult(null)
     setUploadError(null)
+    setNameMatl("")
+    setNameMfr("")
+    setNameDims("")
   }
 
   function acceptSuggestion() {
@@ -586,7 +603,7 @@ export default function Home() {
 
   async function handleUpload(e: React.FormEvent) {
     e.preventDefault()
-    if (!uploadFile || !uploadDiv || !uploadSec) return
+    if (!uploadFile || !uploadDiv || !uploadSec || !nameMatl.trim() || !nameMfr.trim() || !nameDims.trim()) return
     setUploading(true)
     setUploadError(null)
 
@@ -596,6 +613,9 @@ export default function Home() {
     fd.append("division_name", uploadDivName)
     fd.append("section_code",  uploadSec)
     fd.append("section_name",  uploadSecName)
+    fd.append("material_name", nameMatl)
+    fd.append("manufacturer",  nameMfr)
+    fd.append("dimensions",    nameDims)
 
     try {
       const res  = await fetch("/api/upload", { method: "POST", body: fd })
@@ -1229,22 +1249,107 @@ export default function Home() {
                 </>
               )}
 
+              {/* Naming step */}
+              {uploadStep === "naming" && (
+                <div className="space-y-3 pt-1">
+                  <div className="h-px bg-[#2a3347]" />
+                  <p className="text-[11px] font-bold text-[#4f617a] uppercase tracking-widest">Submittal Name</p>
+
+                  <div>
+                    <label className="block text-[12px] font-medium text-[#8b9ab5] mb-1">Material <span className="text-red-400">*</span></label>
+                    <input
+                      type="text"
+                      list="matl-opts"
+                      value={nameMatl}
+                      onChange={e => setNameMatl(e.target.value)}
+                      placeholder="e.g. Gypsum Board"
+                      autoFocus
+                      className="w-full h-9 px-3 rounded-md border border-[#2a3347] text-[13px] text-[#e8edf5] bg-[#0d1117] focus:outline-none focus:ring-1 focus:ring-[#2563eb]/40 focus:border-[#2563eb]/50 placeholder:text-[#4f617a] transition-all"
+                    />
+                    <datalist id="matl-opts">
+                      {nameOpts.materials.map(m => <option key={m} value={m} />)}
+                    </datalist>
+                  </div>
+
+                  <div>
+                    <label className="block text-[12px] font-medium text-[#8b9ab5] mb-1">Manufacturer <span className="text-red-400">*</span></label>
+                    <input
+                      type="text"
+                      list="mfr-opts"
+                      value={nameMfr}
+                      onChange={e => setNameMfr(e.target.value)}
+                      placeholder="e.g. Georgia-Pacific"
+                      className="w-full h-9 px-3 rounded-md border border-[#2a3347] text-[13px] text-[#e8edf5] bg-[#0d1117] focus:outline-none focus:ring-1 focus:ring-[#2563eb]/40 focus:border-[#2563eb]/50 placeholder:text-[#4f617a] transition-all"
+                    />
+                    <datalist id="mfr-opts">
+                      {nameOpts.manufacturers.map(m => <option key={m} value={m} />)}
+                    </datalist>
+                  </div>
+
+                  <div>
+                    <label className="block text-[12px] font-medium text-[#8b9ab5] mb-1">Dimensions <span className="text-red-400">*</span></label>
+                    <input
+                      type="text"
+                      list="dims-opts"
+                      value={nameDims}
+                      onChange={e => setNameDims(e.target.value)}
+                      placeholder='e.g. 5/8" x 4&apos; x 8&apos;'
+                      className="w-full h-9 px-3 rounded-md border border-[#2a3347] text-[13px] text-[#e8edf5] bg-[#0d1117] focus:outline-none focus:ring-1 focus:ring-[#2563eb]/40 focus:border-[#2563eb]/50 placeholder:text-[#4f617a] transition-all"
+                    />
+                    <datalist id="dims-opts">
+                      {nameOpts.dimensions.map(d => <option key={d} value={d} />)}
+                    </datalist>
+                  </div>
+
+                  {(nameMatl || nameMfr || nameDims) && (
+                    <div className="rounded-md bg-[#2563eb]/10 border border-[#2563eb]/20 px-3 py-2">
+                      <p className="text-[10px] font-bold text-[#60a5fa] uppercase tracking-widest mb-0.5">Name preview</p>
+                      <p className="text-[13px] font-medium text-[#e8edf5] truncate">
+                        {[nameMatl, nameMfr, nameDims].filter(Boolean).join(" — ")}
+                      </p>
+                    </div>
+                  )}
+                </div>
+              )}
+
               {uploadError && <p className="text-[12px] text-red-400">{uploadError}</p>}
 
-              <div className="flex justify-end gap-2 pt-1">
-                <button
-                  type="button"
-                  onClick={closeModal}
-                  className="h-8 px-4 rounded-md border border-[#2a3347] text-[13px] text-[#8b9ab5] hover:bg-white/[0.05] transition-colors"
-                >
-                  Cancel
-                </button>
+              <div className="flex justify-between gap-2 pt-1">
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={closeModal}
+                    className="h-8 px-4 rounded-md border border-[#2a3347] text-[13px] text-[#8b9ab5] hover:bg-white/[0.05] transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  {uploadStep === "naming" && (
+                    <button
+                      type="button"
+                      onClick={() => setUploadStep("manual")}
+                      className="h-8 px-3 rounded-md border border-[#2a3347] text-[13px] text-[#8b9ab5] hover:bg-white/[0.05] transition-colors"
+                    >
+                      ← Back
+                    </button>
+                  )}
+                </div>
                 {uploadStep === "manual" && (
                   <button
-                    type="submit"
-                    disabled={uploading || !uploadFile || !uploadDiv || !uploadSec}
+                    type="button"
+                    disabled={!uploadFile || !uploadDiv || !uploadSec}
+                    onClick={() => setUploadStep("naming")}
                     className="h-8 px-4 rounded-md bg-[#2563eb] text-white text-[13px] font-semibold hover:bg-[#1d4ed8] transition-colors disabled:opacity-50"
                   >
+                    Next →
+                  </button>
+                )}
+                {uploadStep === "naming" && (
+                  <button
+                    type="submit"
+                    disabled={uploading || !nameMatl.trim() || !nameMfr.trim() || !nameDims.trim()}
+                    className="h-8 px-4 rounded-md bg-[#2563eb] text-white text-[13px] font-semibold hover:bg-[#1d4ed8] transition-colors disabled:opacity-50 flex items-center gap-2"
+                  >
+                    {uploading && <SpinnerIcon className="h-3 w-3" />}
                     {uploading ? "Uploading…" : "Upload"}
                   </button>
                 )}
