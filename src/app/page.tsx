@@ -573,7 +573,7 @@ export default function Home() {
     if (aiResult.material_name) setNameMatl(aiResult.material_name)
     if (aiResult.manufacturer)  setNameMfr(aiResult.manufacturer)
     if (aiResult.dimensions)    setNameDims(aiResult.dimensions)
-    setUploadStep("naming")
+    setUploadStep("manual")
   }
 
   function handleFileOpen(file: SubmittalFile, divNum: string, divName: string, secCode: string, secName: string) {
@@ -1378,9 +1378,9 @@ export default function Home() {
                   <div className="flex gap-2 pt-0.5">
                     <button type="button" onClick={acceptSuggestion}
                       className="h-7 px-3 rounded-md bg-[#2563eb] text-white text-[12px] font-semibold hover:bg-[#1d4ed8] transition-colors">
-                      Use this
+                      Use this →
                     </button>
-                    <button type="button" onClick={() => { setUploadDiv(""); setUploadSec(""); setUploadStep("manual") }}
+                    <button type="button" onClick={() => { setUploadDiv(""); setUploadDivName(""); setUploadSec(""); setUploadSecName(""); setUploadStep("manual") }}
                       className="h-7 px-3 rounded-md border border-[#2a3347] text-[12px] text-[#8b9ab5] hover:bg-white/[0.05] transition-colors">
                       Classify manually
                     </button>
