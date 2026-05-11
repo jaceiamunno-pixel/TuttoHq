@@ -296,8 +296,8 @@ export default function SettingsPage() {
     }
   }
 
-  const inputCls = "w-full h-9 px-3 rounded border border-[#e9e9e7] text-[13px] text-[#37352f] bg-white focus:outline-none focus:ring-1 focus:ring-[#37352f]/20 placeholder:text-[#acaba8]"
-  const labelCls = "block text-[12px] text-[#787774] mb-1"
+  const inputCls = "w-full h-9 px-3 rounded-md border border-[#2a3347] text-[13px] text-[#e8edf5] bg-[#0d1117] focus:outline-none focus:ring-1 focus:ring-[#2563eb]/40 focus:border-[#2563eb]/50 placeholder:text-[#4f617a] transition-all"
+  const labelCls = "block text-[12px] font-medium text-[#8b9ab5] mb-1"
 
   const tabs: { key: Tab; label: string }[] = [
     { key: "company",  label: "Company" },
@@ -306,28 +306,28 @@ export default function SettingsPage() {
   ]
 
   return (
-    <div className="min-h-screen bg-[#f7f6f3]">
+    <div className="min-h-screen bg-[#0f1117]">
       <div className="max-w-[720px] mx-auto py-12 px-6">
 
-        <div className="flex items-center justify-between mb-6">
+        <div className="flex items-center justify-between mb-8">
           <div>
-            <h1 className="text-[22px] font-semibold text-[#37352f]">Settings</h1>
-            <p className="text-[13px] text-[#acaba8] mt-0.5">THP Construction</p>
+            <h1 className="text-[22px] font-bold text-[#e8edf5] tracking-tight">Settings</h1>
+            <p className="text-[13px] text-[#8b9ab5] mt-0.5">THP Construction</p>
           </div>
-          <Link href="/" className="text-[13px] text-[#acaba8] hover:text-[#787774] transition-colors">
+          <Link href="/" className="text-[13px] text-[#8b9ab5] hover:text-[#e8edf5] transition-colors">
             ← Back to library
           </Link>
         </div>
 
-        <div className="flex gap-1 mb-6 border-b border-[#e9e9e7]">
+        <div className="flex gap-1 mb-6 border-b border-[#2a3347]">
           {tabs.map(t => (
             <button
               key={t.key}
               onClick={() => setActiveTab(t.key)}
-              className={`px-4 py-2 text-[13px] font-medium transition-colors border-b-2 -mb-px ${
+              className={`px-4 py-2.5 text-[13px] font-medium transition-colors border-b-2 -mb-px ${
                 activeTab === t.key
-                  ? "border-[#37352f] text-[#37352f]"
-                  : "border-transparent text-[#acaba8] hover:text-[#787774]"
+                  ? "border-[#2563eb] text-[#e8edf5]"
+                  : "border-transparent text-[#8b9ab5] hover:text-[#e8edf5]"
               }`}
             >
               {t.label}
@@ -338,53 +338,55 @@ export default function SettingsPage() {
         {activeTab === "company" && (
           <div className="space-y-4">
             {loadingCompany ? (
-              <div className="text-[13px] text-[#acaba8]">Loading…</div>
+              <div className="text-[13px] text-[#8b9ab5]">Loading…</div>
             ) : (
               <>
-                <div className="bg-white rounded-lg border border-[#e9e9e7] p-5">
-                  <h2 className="text-[14px] font-semibold text-[#37352f] mb-0.5">Company Logo</h2>
-                  <p className="text-[12px] text-[#acaba8] mb-4">
+                <div className="bg-[#161b27] rounded-xl border border-[#2a3347] p-5">
+                  <h2 className="text-[14px] font-semibold text-[#e8edf5] mb-0.5">Company Logo</h2>
+                  <p className="text-[12px] text-[#8b9ab5] mb-4">
                     Displayed in the app header. PNG, SVG, or JPG recommended.
                   </p>
                   <div className="flex items-center gap-4">
-                    <div className="w-16 h-16 rounded border border-[#e9e9e7] bg-[#f7f6f3] flex items-center justify-center overflow-hidden flex-shrink-0">
+                    <div className="w-16 h-16 rounded-lg border border-[#2a3347] bg-[#0d1117] flex items-center justify-center overflow-hidden flex-shrink-0">
                       {logoUrl ? (
                         <img src={logoUrl} alt="Logo" className="w-full h-full object-contain p-1" />
                       ) : (
-                        <span className="text-2xl select-none">🗂️</span>
+                        <svg className="w-7 h-7 text-[#4f617a]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                        </svg>
                       )}
                     </div>
                     <div className="space-y-1">
                       <button
                         onClick={() => logoInputRef.current?.click()}
                         disabled={uploadingLogo}
-                        className="h-8 px-4 rounded border border-[#e9e9e7] text-[13px] text-[#787774] hover:bg-[#f7f6f3] transition-colors disabled:opacity-50"
+                        className="h-8 px-4 rounded-md border border-[#2a3347] text-[13px] text-[#c8d3e6] hover:bg-white/[0.05] transition-colors disabled:opacity-50"
                       >
                         {uploadingLogo ? "Uploading…" : logoUrl ? "Replace logo" : "Upload logo"}
                       </button>
-                      {logoUrl && <p className="text-[11px] text-[#acaba8]">Logo is active</p>}
+                      {logoUrl && <p className="text-[11px] text-[#8b9ab5]">Logo is active</p>}
                     </div>
                   </div>
                   <input ref={logoInputRef} type="file" accept="image/*" onChange={handleLogoChange} className="hidden" />
                 </div>
 
-                <div className="bg-white rounded-lg border border-[#e9e9e7] p-5">
-                  <h2 className="text-[14px] font-semibold text-[#37352f] mb-0.5">Cover Page Template</h2>
-                  <p className="text-[12px] text-[#acaba8] mb-4">
+                <div className="bg-[#161b27] rounded-xl border border-[#2a3347] p-5">
+                  <h2 className="text-[14px] font-semibold text-[#e8edf5] mb-0.5">Cover Page Template</h2>
+                  <p className="text-[12px] text-[#8b9ab5] mb-4">
                     This PDF will be prepended to every submittal when a user opens or downloads it. Must be a PDF file.
                   </p>
                   <div className="flex items-center gap-3">
-                    <div className={`flex-1 h-9 px-3 rounded border flex items-center text-[13px] ${
+                    <div className={`flex-1 h-9 px-3 rounded-md border flex items-center text-[13px] ${
                       hasCoverPage
-                        ? "border-[#e9e9e7] bg-[#f7f6f3] text-[#37352f]"
-                        : "border-dashed border-[#d3d2cf] text-[#acaba8]"
+                        ? "border-[#2a3347] bg-[#0d1117] text-[#c8d3e6]"
+                        : "border-dashed border-[#2a3347] text-[#4f617a]"
                     }`}>
                       {hasCoverPage ? "📄 cover.pdf — active" : "No cover page uploaded"}
                     </div>
                     <button
                       onClick={() => coverInputRef.current?.click()}
                       disabled={uploadingCover}
-                      className="h-9 px-4 rounded border border-[#e9e9e7] text-[13px] text-[#787774] hover:bg-[#f7f6f3] transition-colors disabled:opacity-50 flex-shrink-0"
+                      className="h-9 px-4 rounded-md border border-[#2a3347] text-[13px] text-[#c8d3e6] hover:bg-white/[0.05] transition-colors disabled:opacity-50 flex-shrink-0"
                     >
                       {uploadingCover ? "Uploading…" : hasCoverPage ? "Replace" : "Upload PDF"}
                     </button>
@@ -395,7 +397,7 @@ export default function SettingsPage() {
             )}
 
             {companyMessage && (
-              <div className={`text-center text-[13px] ${companyMessage.ok ? "text-[#787774]" : "text-red-500"}`}>
+              <div className={`text-center text-[13px] ${companyMessage.ok ? "text-[#60a5fa]" : "text-red-400"}`}>
                 {companyMessage.text}
               </div>
             )}
@@ -404,16 +406,16 @@ export default function SettingsPage() {
 
         {activeTab === "team" && (
           <div className="space-y-4">
-            <div className="bg-white rounded-lg border border-[#e9e9e7] overflow-hidden">
-              <div className="flex items-center justify-between px-5 py-4 border-b border-[#e9e9e7]">
+            <div className="bg-[#161b27] rounded-xl border border-[#2a3347] overflow-hidden">
+              <div className="flex items-center justify-between px-5 py-4 border-b border-[#2a3347]">
                 <div>
-                  <h2 className="text-[14px] font-semibold text-[#37352f]">Team Members</h2>
-                  <p className="text-[12px] text-[#acaba8] mt-0.5">Used to populate Reviewed By / Certified By fields on cover sheets.</p>
+                  <h2 className="text-[14px] font-semibold text-[#e8edf5]">Team Members</h2>
+                  <p className="text-[12px] text-[#8b9ab5] mt-0.5">Used to populate Reviewed By / Certified By fields on cover sheets.</p>
                 </div>
                 {!showTeamForm && (
                   <button
                     onClick={openAddMember}
-                    className="h-8 px-3 rounded border border-[#e9e9e7] text-[13px] text-[#787774] hover:bg-[#f7f6f3] transition-colors flex items-center gap-1.5 flex-shrink-0"
+                    className="h-8 px-3 rounded-md bg-[#2563eb] text-white text-[13px] font-medium hover:bg-[#1d4ed8] transition-colors flex items-center gap-1.5 flex-shrink-0"
                   >
                     <PlusIcon /> Add member
                   </button>
@@ -421,8 +423,8 @@ export default function SettingsPage() {
               </div>
 
               {showTeamForm && (
-                <div className="px-5 py-4 border-b border-[#e9e9e7] bg-[#f7f6f3]">
-                  <p className="text-[13px] font-medium text-[#37352f] mb-3">
+                <div className="px-5 py-4 border-b border-[#2a3347] bg-[#0d1117]/50">
+                  <p className="text-[13px] font-semibold text-[#e8edf5] mb-3">
                     {editingMember ? "Edit member" : "New member"}
                   </p>
                   <form onSubmit={saveMember} className="space-y-3">
@@ -464,14 +466,14 @@ export default function SettingsPage() {
                       <button
                         type="button"
                         onClick={cancelMemberForm}
-                        className="h-8 px-3 rounded border border-[#e9e9e7] text-[13px] text-[#787774] hover:bg-white transition-colors"
+                        className="h-8 px-3 rounded-md border border-[#2a3347] text-[13px] text-[#8b9ab5] hover:text-[#e8edf5] hover:bg-white/[0.05] transition-colors"
                       >
                         Cancel
                       </button>
                       <button
                         type="submit"
                         disabled={savingMember || !memberForm.name.trim()}
-                        className="h-8 px-4 rounded bg-[#37352f] text-white text-[13px] font-medium hover:bg-[#2f2d28] transition-colors disabled:opacity-50"
+                        className="h-8 px-4 rounded-md bg-[#2563eb] text-white text-[13px] font-semibold hover:bg-[#1d4ed8] transition-colors disabled:opacity-50"
                       >
                         {savingMember ? "Saving…" : editingMember ? "Save changes" : "Add member"}
                       </button>
@@ -481,41 +483,41 @@ export default function SettingsPage() {
               )}
 
               {teamLoading && (
-                <div className="px-5 py-4 text-[13px] text-[#acaba8]">Loading…</div>
+                <div className="px-5 py-4 text-[13px] text-[#8b9ab5]">Loading…</div>
               )}
 
               {!teamLoading && teamMembers.length === 0 && (
-                <div className="px-5 py-6 text-center text-[13px] text-[#acaba8]">No team members yet.</div>
+                <div className="px-5 py-8 text-center text-[13px] text-[#4f617a]">No team members yet.</div>
               )}
 
               {!teamLoading && teamMembers.length > 0 && (
                 <table className="w-full">
                   <thead>
-                    <tr className="border-b border-[#e9e9e7]">
-                      <th className="text-left px-5 py-2 text-[11px] font-medium text-[#acaba8] uppercase tracking-wider">Name</th>
-                      <th className="text-left px-3 py-2 text-[11px] font-medium text-[#acaba8] uppercase tracking-wider">Title</th>
-                      <th className="text-left px-3 py-2 text-[11px] font-medium text-[#acaba8] uppercase tracking-wider">Email</th>
-                      <th className="px-3 py-2 w-16" />
+                    <tr className="border-b border-[#2a3347]">
+                      <th className="text-left px-5 py-2.5 text-[11px] font-semibold text-[#4f617a] uppercase tracking-wider">Name</th>
+                      <th className="text-left px-3 py-2.5 text-[11px] font-semibold text-[#4f617a] uppercase tracking-wider">Title</th>
+                      <th className="text-left px-3 py-2.5 text-[11px] font-semibold text-[#4f617a] uppercase tracking-wider">Email</th>
+                      <th className="px-3 py-2.5 w-16" />
                     </tr>
                   </thead>
                   <tbody>
                     {teamMembers.map((m, i) => (
-                      <tr key={m.id} className={`${i < teamMembers.length - 1 ? "border-b border-[#e9e9e7]" : ""} hover:bg-[#f7f6f3] transition-colors group`}>
-                        <td className="px-5 py-3 text-[13px] font-medium text-[#37352f]">{m.name}</td>
-                        <td className="px-3 py-3 text-[13px] text-[#787774]">{m.title ?? <span className="text-[#acaba8]">—</span>}</td>
-                        <td className="px-3 py-3 text-[13px] text-[#787774]">{m.email ?? <span className="text-[#acaba8]">—</span>}</td>
+                      <tr key={m.id} className={`${i < teamMembers.length - 1 ? "border-b border-[#2a3347]" : ""} hover:bg-white/[0.03] transition-colors group`}>
+                        <td className="px-5 py-3 text-[13px] font-medium text-[#e8edf5]">{m.name}</td>
+                        <td className="px-3 py-3 text-[13px] text-[#8b9ab5]">{m.title ?? <span className="text-[#4f617a]">—</span>}</td>
+                        <td className="px-3 py-3 text-[13px] text-[#8b9ab5]">{m.email ?? <span className="text-[#4f617a]">—</span>}</td>
                         <td className="px-3 py-3">
                           <div className="flex items-center gap-1.5 justify-end opacity-0 group-hover:opacity-100 transition-opacity">
                             <button
                               onClick={() => openEditMember(m)}
-                              className="p-1 rounded text-[#acaba8] hover:text-[#787774] hover:bg-[#e9e9e7] transition-colors"
+                              className="p-1 rounded text-[#4f617a] hover:text-[#c8d3e6] hover:bg-white/[0.08] transition-colors"
                               title="Edit"
                             >
                               <PencilIcon />
                             </button>
                             <button
                               onClick={() => deleteMember(m)}
-                              className="p-1 rounded text-[#acaba8] hover:text-red-400 hover:bg-[#e9e9e7] transition-colors"
+                              className="p-1 rounded text-[#4f617a] hover:text-red-400 hover:bg-white/[0.08] transition-colors"
                               title="Delete"
                             >
                               <XIcon className="h-3 w-3" />
@@ -530,7 +532,7 @@ export default function SettingsPage() {
             </div>
 
             {teamMessage && (
-              <div className={`text-center text-[13px] ${teamMessage.ok ? "text-[#787774]" : "text-red-500"}`}>
+              <div className={`text-center text-[13px] ${teamMessage.ok ? "text-[#60a5fa]" : "text-red-400"}`}>
                 {teamMessage.text}
               </div>
             )}
@@ -539,16 +541,16 @@ export default function SettingsPage() {
 
         {activeTab === "projects" && (
           <div className="space-y-4">
-            <div className="bg-white rounded-lg border border-[#e9e9e7] overflow-hidden">
-              <div className="flex items-center justify-between px-5 py-4 border-b border-[#e9e9e7]">
+            <div className="bg-[#161b27] rounded-xl border border-[#2a3347] overflow-hidden">
+              <div className="flex items-center justify-between px-5 py-4 border-b border-[#2a3347]">
                 <div>
-                  <h2 className="text-[14px] font-semibold text-[#37352f]">Projects</h2>
-                  <p className="text-[12px] text-[#acaba8] mt-0.5">Projects available when generating submittal cover sheets.</p>
+                  <h2 className="text-[14px] font-semibold text-[#e8edf5]">Projects</h2>
+                  <p className="text-[12px] text-[#8b9ab5] mt-0.5">Projects available when generating submittal cover sheets.</p>
                 </div>
                 {!showProjectForm && (
                   <button
                     onClick={openAddProject}
-                    className="h-8 px-3 rounded border border-[#e9e9e7] text-[13px] text-[#787774] hover:bg-[#f7f6f3] transition-colors flex items-center gap-1.5 flex-shrink-0"
+                    className="h-8 px-3 rounded-md bg-[#2563eb] text-white text-[13px] font-medium hover:bg-[#1d4ed8] transition-colors flex items-center gap-1.5 flex-shrink-0"
                   >
                     <PlusIcon /> Add project
                   </button>
@@ -556,8 +558,8 @@ export default function SettingsPage() {
               </div>
 
               {showProjectForm && (
-                <div className="px-5 py-4 border-b border-[#e9e9e7] bg-[#f7f6f3]">
-                  <p className="text-[13px] font-medium text-[#37352f] mb-3">
+                <div className="px-5 py-4 border-b border-[#2a3347] bg-[#0d1117]/50">
+                  <p className="text-[13px] font-semibold text-[#e8edf5] mb-3">
                     {editingProject ? "Edit project" : "New project"}
                   </p>
                   <form onSubmit={saveProject} className="space-y-3">
@@ -621,14 +623,14 @@ export default function SettingsPage() {
                       <button
                         type="button"
                         onClick={cancelProjectForm}
-                        className="h-8 px-3 rounded border border-[#e9e9e7] text-[13px] text-[#787774] hover:bg-white transition-colors"
+                        className="h-8 px-3 rounded-md border border-[#2a3347] text-[13px] text-[#8b9ab5] hover:text-[#e8edf5] hover:bg-white/[0.05] transition-colors"
                       >
                         Cancel
                       </button>
                       <button
                         type="submit"
                         disabled={savingProject || !projectForm.name.trim()}
-                        className="h-8 px-4 rounded bg-[#37352f] text-white text-[13px] font-medium hover:bg-[#2f2d28] transition-colors disabled:opacity-50"
+                        className="h-8 px-4 rounded-md bg-[#2563eb] text-white text-[13px] font-semibold hover:bg-[#1d4ed8] transition-colors disabled:opacity-50"
                       >
                         {savingProject ? "Saving…" : editingProject ? "Save changes" : "Add project"}
                       </button>
@@ -638,43 +640,43 @@ export default function SettingsPage() {
               )}
 
               {projectsLoading && (
-                <div className="px-5 py-4 text-[13px] text-[#acaba8]">Loading…</div>
+                <div className="px-5 py-4 text-[13px] text-[#8b9ab5]">Loading…</div>
               )}
 
               {!projectsLoading && projects.length === 0 && (
-                <div className="px-5 py-6 text-center text-[13px] text-[#acaba8]">No projects yet.</div>
+                <div className="px-5 py-8 text-center text-[13px] text-[#4f617a]">No projects yet.</div>
               )}
 
               {!projectsLoading && projects.length > 0 && (
                 <table className="w-full">
                   <thead>
-                    <tr className="border-b border-[#e9e9e7]">
-                      <th className="text-left px-5 py-2 text-[11px] font-medium text-[#acaba8] uppercase tracking-wider">Name</th>
-                      <th className="text-left px-3 py-2 text-[11px] font-medium text-[#acaba8] uppercase tracking-wider">No.</th>
-                      <th className="text-left px-3 py-2 text-[11px] font-medium text-[#acaba8] uppercase tracking-wider">Location</th>
-                      <th className="text-left px-3 py-2 text-[11px] font-medium text-[#acaba8] uppercase tracking-wider">GC</th>
-                      <th className="px-3 py-2 w-16" />
+                    <tr className="border-b border-[#2a3347]">
+                      <th className="text-left px-5 py-2.5 text-[11px] font-semibold text-[#4f617a] uppercase tracking-wider">Name</th>
+                      <th className="text-left px-3 py-2.5 text-[11px] font-semibold text-[#4f617a] uppercase tracking-wider">No.</th>
+                      <th className="text-left px-3 py-2.5 text-[11px] font-semibold text-[#4f617a] uppercase tracking-wider">Location</th>
+                      <th className="text-left px-3 py-2.5 text-[11px] font-semibold text-[#4f617a] uppercase tracking-wider">GC</th>
+                      <th className="px-3 py-2.5 w-16" />
                     </tr>
                   </thead>
                   <tbody>
                     {projects.map((p, i) => (
-                      <tr key={p.id} className={`${i < projects.length - 1 ? "border-b border-[#e9e9e7]" : ""} hover:bg-[#f7f6f3] transition-colors group`}>
-                        <td className="px-5 py-3 text-[13px] font-medium text-[#37352f]">{p.name}</td>
-                        <td className="px-3 py-3 text-[13px] text-[#787774]">{p.number ?? <span className="text-[#acaba8]">—</span>}</td>
-                        <td className="px-3 py-3 text-[13px] text-[#787774]">{p.location ?? <span className="text-[#acaba8]">—</span>}</td>
-                        <td className="px-3 py-3 text-[13px] text-[#787774]">{p.gc_name ?? <span className="text-[#acaba8]">—</span>}</td>
+                      <tr key={p.id} className={`${i < projects.length - 1 ? "border-b border-[#2a3347]" : ""} hover:bg-white/[0.03] transition-colors group`}>
+                        <td className="px-5 py-3 text-[13px] font-medium text-[#e8edf5]">{p.name}</td>
+                        <td className="px-3 py-3 text-[13px] text-[#8b9ab5]">{p.number ?? <span className="text-[#4f617a]">—</span>}</td>
+                        <td className="px-3 py-3 text-[13px] text-[#8b9ab5]">{p.location ?? <span className="text-[#4f617a]">—</span>}</td>
+                        <td className="px-3 py-3 text-[13px] text-[#8b9ab5]">{p.gc_name ?? <span className="text-[#4f617a]">—</span>}</td>
                         <td className="px-3 py-3">
                           <div className="flex items-center gap-1.5 justify-end opacity-0 group-hover:opacity-100 transition-opacity">
                             <button
                               onClick={() => openEditProject(p)}
-                              className="p-1 rounded text-[#acaba8] hover:text-[#787774] hover:bg-[#e9e9e7] transition-colors"
+                              className="p-1 rounded text-[#4f617a] hover:text-[#c8d3e6] hover:bg-white/[0.08] transition-colors"
                               title="Edit"
                             >
                               <PencilIcon />
                             </button>
                             <button
                               onClick={() => deleteProject(p)}
-                              className="p-1 rounded text-[#acaba8] hover:text-red-400 hover:bg-[#e9e9e7] transition-colors"
+                              className="p-1 rounded text-[#4f617a] hover:text-red-400 hover:bg-white/[0.08] transition-colors"
                               title="Delete"
                             >
                               <XIcon className="h-3 w-3" />
@@ -689,7 +691,7 @@ export default function SettingsPage() {
             </div>
 
             {projectMessage && (
-              <div className={`text-center text-[13px] ${projectMessage.ok ? "text-[#787774]" : "text-red-500"}`}>
+              <div className={`text-center text-[13px] ${projectMessage.ok ? "text-[#60a5fa]" : "text-red-400"}`}>
                 {projectMessage.text}
               </div>
             )}

@@ -274,7 +274,7 @@ function fmtDate(iso: string) {
 function ToggleIcon({ open }: { open: boolean }) {
   return (
     <svg
-      className={`h-[9px] w-[9px] flex-shrink-0 fill-[#acaba8] transition-transform duration-150 ${open ? "rotate-90" : ""}`}
+      className={`h-[9px] w-[9px] flex-shrink-0 fill-[#4f617a] transition-transform duration-150 ${open ? "rotate-90" : ""}`}
       viewBox="0 0 8 10"
     >
       <path d="M1.5 1l5 4-5 4z" />
@@ -324,7 +324,7 @@ function CheckIcon() {
 
 function SpinnerIcon({ className = "h-3 w-3" }: { className?: string }) {
   return (
-    <svg className={`${className} animate-spin text-[#acaba8]`} fill="none" viewBox="0 0 24 24">
+    <svg className={`${className} animate-spin text-[#4f617a]`} fill="none" viewBox="0 0 24 24">
       <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
       <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
     </svg>
@@ -337,18 +337,18 @@ function SidebarFileRow({ file, indent, onDelete, onOpen }: { file: SubmittalFil
   const dot = getDot(file.mime_type)
   return (
     <div
-      className="group flex items-center gap-1.5 h-7 rounded-sm hover:bg-[#e9e9e7] transition-colors cursor-pointer"
+      className="group flex items-center gap-1.5 h-7 rounded-md hover:bg-white/[0.05] transition-colors cursor-pointer"
       style={{ paddingLeft: `${indent}px`, paddingRight: "4px" }}
       onClick={onOpen}
       title={`${file.file_name} · ${fmtDate(file.created_at)}`}
     >
       <span className={`flex-shrink-0 w-1.5 h-1.5 rounded-full ${dot}`} />
-      <span className="flex-1 min-w-0 text-[13px] text-[#37352f] truncate">{file.file_name}</span>
+      <span className="flex-1 min-w-0 text-[12px] text-[#8b9ab5] truncate">{file.file_name}</span>
       {onDelete && (
         <button
           onClick={e => { e.stopPropagation(); onDelete() }}
           title="Delete file"
-          className="opacity-0 group-hover:opacity-100 flex-shrink-0 text-[#acaba8] hover:text-red-400 transition-all rounded p-0.5"
+          className="opacity-0 group-hover:opacity-100 flex-shrink-0 text-[#4f617a] hover:text-red-400 transition-all rounded p-0.5"
         >
           <XIcon className="h-2.5 w-2.5" />
         </button>
@@ -618,29 +618,33 @@ export default function Home() {
 
   const isSearchMode = searchResults !== null || searching
 
-  const inputCls = "w-full h-9 px-3 rounded border border-[#e9e9e7] text-[13px] text-[#37352f] bg-white focus:outline-none focus:ring-1 focus:ring-[#37352f]/20 placeholder:text-[#acaba8]"
-  const labelCls = "block text-[12px] text-[#787774] mb-1"
+  const inputCls = "w-full h-9 px-3 rounded-md border border-[#2a3347] text-[13px] text-[#e8edf5] bg-[#0d1117] focus:outline-none focus:ring-1 focus:ring-[#2563eb]/40 focus:border-[#2563eb]/50 placeholder:text-[#4f617a] transition-all"
+  const labelCls = "block text-[12px] font-medium text-[#8b9ab5] mb-1"
 
   return (
-    <div className="flex min-h-screen bg-white">
+    <div className="flex min-h-screen bg-[#0f1117]">
 
       {/* ── Sidebar ───────────────────────────────────────────────────────── */}
-      <aside className="w-[240px] flex-shrink-0 bg-[#f7f6f3] border-r border-[#e9e9e7] flex flex-col h-screen sticky top-0 overflow-hidden">
+      <aside className="w-[252px] flex-shrink-0 bg-[#161b27] border-r border-[#2a3347] flex flex-col h-screen sticky top-0 overflow-hidden">
 
         {/* Workspace header */}
-        <div className="flex-shrink-0 px-2 pt-3 pb-1">
-          <div className="flex items-center gap-1.5 px-2 h-8 rounded-sm cursor-default select-none">
-            <span className="text-[15px] leading-none">🗂️</span>
-            <span className="text-[13px] font-semibold text-[#37352f] truncate">Submittal Library</span>
+        <div className="flex-shrink-0 px-3 pt-4 pb-2">
+          <div className="flex items-center gap-2.5 px-2 h-9 cursor-default select-none">
+            <div className="w-6 h-6 rounded-md bg-[#2563eb]/20 border border-[#2563eb]/30 flex items-center justify-center flex-shrink-0">
+              <svg className="w-3.5 h-3.5 text-[#60a5fa]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              </svg>
+            </div>
+            <span className="text-[14px] font-bold text-[#e8edf5] tracking-tight truncate">Submittal Library</span>
           </div>
-          <p className="text-[11px] text-[#acaba8] px-2 pb-1">THP Construction</p>
+          <p className="text-[11px] text-[#4f617a] px-2 pb-1">THP Construction</p>
         </div>
 
         {/* Search */}
-        <div className="flex-shrink-0 px-2 pb-1">
+        <div className="flex-shrink-0 px-3 pb-2">
           <form onSubmit={handleSearch}>
             <div className="relative">
-              <div className="absolute inset-y-0 left-0 flex items-center pl-2 pointer-events-none text-[#acaba8]">
+              <div className="absolute inset-y-0 left-0 flex items-center pl-2.5 pointer-events-none text-[#4f617a]">
                 <SearchIcon />
               </div>
               <input
@@ -650,13 +654,13 @@ export default function Home() {
                 onChange={e => setQuery(e.target.value)}
                 onKeyDown={e => e.key === "Escape" && clearSearch()}
                 placeholder="Search submittals…"
-                className="w-full h-7 pl-7 pr-6 rounded text-[13px] bg-[#e9e9e7]/70 text-[#37352f] placeholder-[#acaba8] focus:outline-none focus:bg-white focus:ring-1 focus:ring-[#37352f]/20 transition-all"
+                className="w-full h-8 pl-8 pr-6 rounded-md text-[13px] bg-[#0d1117] border border-[#2a3347] text-[#e8edf5] placeholder-[#4f617a] focus:outline-none focus:ring-1 focus:ring-[#2563eb]/40 focus:border-[#2563eb]/50 transition-all"
               />
               {query && (
                 <button
                   type="button"
                   onClick={clearSearch}
-                  className="absolute inset-y-0 right-0 flex items-center pr-2 text-[#acaba8] hover:text-[#787774] transition-colors"
+                  className="absolute inset-y-0 right-0 flex items-center pr-2 text-[#4f617a] hover:text-[#8b9ab5] transition-colors"
                 >
                   <XIcon />
                 </button>
@@ -665,11 +669,11 @@ export default function Home() {
           </form>
         </div>
 
-        <div className="flex-shrink-0 border-t border-[#e9e9e7] mx-2 mt-1 mb-1" />
+        <div className="flex-shrink-0 border-t border-[#2a3347] mx-3 mt-0.5 mb-1.5" />
 
         {/* Section label + upload button */}
-        <div className="flex-shrink-0 flex items-center justify-between px-3 pb-0.5">
-          <span className="text-[11px] font-medium text-[#acaba8] uppercase tracking-wider">
+        <div className="flex-shrink-0 flex items-center justify-between px-4 pb-1">
+          <span className="text-[10px] font-bold text-[#4f617a] uppercase tracking-widest">
             {isSearchMode
               ? (searching ? "Searching…" : `${searchResults?.length ?? 0} results`)
               : "Divisions"}
@@ -678,7 +682,7 @@ export default function Home() {
             {isSearchMode && !searching && (
               <button
                 onClick={clearSearch}
-                className="text-[11px] text-[#acaba8] hover:text-[#787774] transition-colors"
+                className="text-[11px] text-[#8b9ab5] hover:text-[#e8edf5] transition-colors"
               >
                 Clear
               </button>
@@ -688,14 +692,14 @@ export default function Home() {
                 <button
                   onClick={() => setShowManage(true)}
                   title="Manage divisions"
-                  className="text-[#acaba8] hover:text-[#787774] transition-colors"
+                  className="text-[#4f617a] hover:text-[#8b9ab5] transition-colors"
                 >
                   <SlidersIcon />
                 </button>
                 <button
                   onClick={() => setShowUpload(true)}
                   title="Upload submittal"
-                  className="text-[#acaba8] hover:text-[#787774] transition-colors"
+                  className="text-[#4f617a] hover:text-[#8b9ab5] transition-colors"
                 >
                   <PlusIcon />
                 </button>
@@ -708,17 +712,17 @@ export default function Home() {
         <div className="flex-1 overflow-y-auto px-2 pb-2 min-h-0">
 
           {treeLoading && !isSearchMode && (
-            <div className="flex items-center gap-2 px-2 py-2 text-[13px] text-[#acaba8]">
+            <div className="flex items-center gap-2 px-3 py-2 text-[13px] text-[#4f617a]">
               <SpinnerIcon /> Loading…
             </div>
           )}
 
           {treeError && !isSearchMode && (
-            <p className="px-2 py-1 text-[12px] text-red-500">{treeError}</p>
+            <p className="px-3 py-1 text-[12px] text-red-400">{treeError}</p>
           )}
 
           {searching && (
-            <div className="flex items-center gap-2 px-2 py-2 text-[13px] text-[#acaba8]">
+            <div className="flex items-center gap-2 px-3 py-2 text-[13px] text-[#4f617a]">
               <SpinnerIcon /> Searching…
             </div>
           )}
@@ -726,9 +730,9 @@ export default function Home() {
           {/* Search results */}
           {!searching && isSearchMode && (
             <>
-              {searchError && <p className="px-2 py-1 text-[12px] text-red-500">{searchError}</p>}
+              {searchError && <p className="px-3 py-1 text-[12px] text-red-400">{searchError}</p>}
               {searchResults?.length === 0 && (
-                <p className="px-2 py-2 text-[13px] text-[#acaba8]">No results for &ldquo;{query}&rdquo;</p>
+                <p className="px-3 py-2 text-[13px] text-[#4f617a]">No results for &ldquo;{query}&rdquo;</p>
               )}
               {searchResults?.map(file => (
                 <SidebarFileRow
@@ -748,21 +752,21 @@ export default function Home() {
               <div key={div.num}>
                 <button
                   onClick={() => toggleDivision(div.num)}
-                  className="w-full flex items-center gap-1.5 h-7 px-1 rounded-sm hover:bg-[#e9e9e7] transition-colors text-left group"
+                  className="w-full flex items-center gap-1.5 h-8 px-2 rounded-md hover:bg-white/[0.05] transition-colors text-left group"
                 >
                   <span className="w-4 flex items-center justify-center flex-shrink-0">
                     <ToggleIcon open={isOpen} />
                   </span>
-                  <span className="text-[11px] font-mono text-[#acaba8] w-5 text-right flex-shrink-0">{div.num}</span>
-                  <span className="flex-1 text-[13px] font-medium text-[#37352f] truncate">{div.name}</span>
+                  <span className="text-[11px] font-mono text-[#4f617a] w-5 text-right flex-shrink-0">{div.num}</span>
+                  <span className="flex-1 text-[13px] font-semibold text-[#c8d3e6] truncate">{div.name}</span>
                   {div.file_count > 0 && (
-                    <span className="text-[10px] text-[#acaba8] flex-shrink-0 tabular-nums">{div.file_count}</span>
+                    <span className="text-[10px] text-[#4f617a] flex-shrink-0 tabular-nums bg-[#2563eb]/10 px-1.5 py-0.5 rounded">{div.file_count}</span>
                   )}
                 </button>
 
                 <div className={`grid transition-all duration-150 ${isOpen ? "grid-rows-[1fr]" : "grid-rows-[0fr]"}`}>
                   <div className="overflow-hidden">
-                    <div className="ml-[18px] border-l border-[#e9e9e7] pl-1">
+                    <div className="ml-[20px] border-l border-[#2a3347] pl-1">
                       {(CSI_SECTIONS[div.num] ?? div.sections).map(sec => {
                         const secOpen    = openSections.has(sec.code)
                         const secLoading = loadingSections.has(sec.code)
@@ -771,7 +775,7 @@ export default function Home() {
                           <div key={sec.code}>
                             <button
                               onClick={() => toggleSection(sec.code)}
-                              className="w-full flex items-center gap-1.5 h-7 px-1 rounded-sm hover:bg-[#e9e9e7] transition-colors text-left group"
+                              className="w-full flex items-center gap-1.5 h-7 px-1.5 rounded-md hover:bg-white/[0.04] transition-colors text-left group"
                             >
                               <span className="w-3.5 flex items-center justify-center flex-shrink-0">
                                 {secLoading
@@ -779,9 +783,9 @@ export default function Home() {
                                   : <ToggleIcon open={secOpen} />
                                 }
                               </span>
-                              <span className="flex-1 text-[13px] text-[#37352f] truncate">{sec.name}</span>
+                              <span className="flex-1 text-[12px] text-[#8b9ab5] truncate">{sec.name}</span>
                               {!secLoading && sectionFiles[sec.code] !== undefined && (
-                                <span className="text-[11px] text-[#acaba8] flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+                                <span className="text-[10px] text-[#4f617a] flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
                                   {files.length}
                                 </span>
                               )}
@@ -789,14 +793,14 @@ export default function Home() {
 
                             <div className={`grid transition-all duration-150 ${secOpen ? "grid-rows-[1fr]" : "grid-rows-[0fr]"}`}>
                               <div className="overflow-hidden">
-                                <div className="ml-[14px] border-l border-[#e9e9e7] pl-1">
+                                <div className="ml-[14px] border-l border-[#2a3347] pl-1">
                                   {secLoading && (
-                                    <div className="flex items-center gap-1.5 h-7 px-2 text-[12px] text-[#acaba8]">
+                                    <div className="flex items-center gap-1.5 h-7 px-2 text-[12px] text-[#4f617a]">
                                       <SpinnerIcon className="h-2.5 w-2.5" /> Loading…
                                     </div>
                                   )}
                                   {!secLoading && sectionFiles[sec.code] !== undefined && files.length === 0 && (
-                                    <p className="px-2 h-7 flex items-center text-[12px] text-[#acaba8]">Empty</p>
+                                    <p className="px-2 h-7 flex items-center text-[12px] text-[#4f617a]">Empty</p>
                                   )}
                                   {!secLoading && files.map(file => (
                                     <SidebarFileRow
@@ -831,24 +835,24 @@ export default function Home() {
         </div>
 
         {/* Settings + sign out */}
-        <div className="flex-shrink-0 border-t border-[#e9e9e7]">
-          <div className="px-2 pt-1">
+        <div className="flex-shrink-0 border-t border-[#2a3347]">
+          <div className="px-2 pt-1.5">
             <Link
               href="/settings"
-              className="flex items-center gap-2 h-7 px-2 rounded-sm text-[12px] text-[#acaba8] hover:bg-[#e9e9e7] hover:text-[#787774] transition-colors"
+              className="flex items-center gap-2 h-8 px-2 rounded-md text-[12px] text-[#8b9ab5] hover:bg-white/[0.05] hover:text-[#e8edf5] transition-colors"
             >
-              <svg className="h-3 w-3 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg className="h-3.5 w-3.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
               </svg>
               Settings
             </Link>
           </div>
-          <div className="flex items-center justify-between px-3 py-2">
-            <span className="text-[11px] text-[#acaba8] truncate min-w-0">{userEmail}</span>
+          <div className="flex items-center justify-between px-3 py-2.5">
+            <span className="text-[11px] text-[#4f617a] truncate min-w-0">{userEmail}</span>
             <button
               onClick={signOut}
-              className="text-[11px] text-[#acaba8] hover:text-[#787774] transition-colors flex-shrink-0 ml-2"
+              className="text-[11px] text-[#8b9ab5] hover:text-[#e8edf5] transition-colors flex-shrink-0 ml-2"
             >
               Sign out
             </button>
@@ -859,20 +863,24 @@ export default function Home() {
       {/* ── Main content area ─────────────────────────────────────────────── */}
       <div className="flex-1 flex flex-col">
         {logoUrl && (
-          <div className="flex-shrink-0 h-12 border-b border-[#e9e9e7] flex items-center justify-end px-6">
+          <div className="flex-shrink-0 h-13 border-b border-[#2a3347] flex items-center justify-end px-6 bg-[#161b27]">
             <img src={logoUrl} alt="Company logo" className="h-8 max-w-[180px] object-contain" />
           </div>
         )}
       <main className="flex-1 flex items-center justify-center select-none">
         <div className="text-center">
-          <p className="text-5xl mb-4">🗂️</p>
-          <p className="text-[15px] font-medium text-[#787774]">Submittal Library</p>
-          <p className="text-[13px] text-[#acaba8] mt-1">
+          <div className="w-16 h-16 rounded-2xl bg-[#2563eb]/10 border border-[#2563eb]/20 flex items-center justify-center mx-auto mb-5">
+            <svg className="w-8 h-8 text-[#3b82f6]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+            </svg>
+          </div>
+          <p className="text-[17px] font-bold text-[#c8d3e6] tracking-tight">Submittal Library</p>
+          <p className="text-[13px] text-[#4f617a] mt-1.5">
             Expand a division to browse,<br />or search in the sidebar.
           </p>
           <button
             onClick={() => setShowUpload(true)}
-            className="mt-5 h-8 px-4 rounded border border-[#e9e9e7] text-[13px] text-[#787774] hover:bg-[#f7f6f3] transition-colors inline-flex items-center gap-1.5"
+            className="mt-6 h-9 px-5 rounded-lg bg-[#2563eb] text-white text-[13px] font-semibold hover:bg-[#1d4ed8] transition-colors inline-flex items-center gap-2"
           >
             <PlusIcon /> Upload submittal
           </button>
@@ -883,24 +891,24 @@ export default function Home() {
       {/* ── File open modal ───────────────────────────────────────────────── */}
       {openFileCtx && fileModalStep === "project" && (
         <div
-          className="fixed inset-0 bg-black/25 z-50 flex items-center justify-center"
+          className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center"
           onClick={e => { if (e.target === e.currentTarget) closeFileModal() }}
         >
-          <div className="bg-white rounded-lg border border-[#e9e9e7] shadow-xl w-[460px] p-6">
+          <div className="bg-[#1c2333] rounded-xl border border-[#2a3347] shadow-2xl w-[460px] p-6">
             <div className="flex items-center justify-between mb-1">
-              <h2 className="text-[15px] font-semibold text-[#37352f]">Open Submittal</h2>
-              <button onClick={closeFileModal} className="text-[#acaba8] hover:text-[#787774] transition-colors">
+              <h2 className="text-[15px] font-bold text-[#e8edf5]">Open Submittal</h2>
+              <button onClick={closeFileModal} className="text-[#4f617a] hover:text-[#8b9ab5] transition-colors">
                 <XIcon className="h-4 w-4" />
               </button>
             </div>
-            <p className="text-[12px] text-[#acaba8] mb-4 truncate">{openFileCtx.file.file_name}</p>
+            <p className="text-[12px] text-[#4f617a] mb-4 truncate">{openFileCtx.file.file_name}</p>
 
             <div className="mb-4">
-              <label className="block text-[12px] text-[#787774] mb-1">Which project is this for?</label>
+              <label className="block text-[12px] font-medium text-[#8b9ab5] mb-1">Which project is this for?</label>
               <select
                 value={modalProjectId}
                 onChange={e => setModalProjectId(e.target.value)}
-                className="w-full h-9 px-3 rounded border border-[#e9e9e7] text-[13px] text-[#37352f] bg-white focus:outline-none focus:ring-1 focus:ring-[#37352f]/20"
+                className="w-full h-9 px-3 rounded-md border border-[#2a3347] text-[13px] text-[#e8edf5] bg-[#0d1117] focus:outline-none focus:ring-1 focus:ring-[#2563eb]/40"
               >
                 <option value="">No project / skip</option>
                 {appProjects.map(p => (
@@ -914,20 +922,20 @@ export default function Home() {
             <div className="flex justify-between items-center gap-2">
               <button
                 onClick={closeFileModal}
-                className="h-8 px-3 rounded border border-[#e9e9e7] text-[13px] text-[#787774] hover:bg-[#f7f6f3] transition-colors"
+                className="h-8 px-3 rounded-md border border-[#2a3347] text-[13px] text-[#8b9ab5] hover:bg-white/[0.05] transition-colors"
               >
                 Cancel
               </button>
               <div className="flex gap-2">
                 <button
                   onClick={openFileDirectly}
-                  className="h-8 px-3 rounded border border-[#e9e9e7] text-[13px] text-[#787774] hover:bg-[#f7f6f3] transition-colors"
+                  className="h-8 px-3 rounded-md border border-[#2a3347] text-[13px] text-[#8b9ab5] hover:bg-white/[0.05] transition-colors"
                 >
                   Skip &amp; Open
                 </button>
                 <button
                   onClick={() => setFileModalStep("coversheet")}
-                  className="h-8 px-4 rounded bg-[#37352f] text-white text-[13px] font-medium hover:bg-[#2f2d28] transition-colors"
+                  className="h-8 px-4 rounded-md bg-[#2563eb] text-white text-[13px] font-semibold hover:bg-[#1d4ed8] transition-colors"
                 >
                   Continue →
                 </button>
@@ -939,38 +947,38 @@ export default function Home() {
 
       {openFileCtx && fileModalStep === "coversheet" && (
         <div
-          className="fixed inset-0 bg-black/25 z-50 flex items-center justify-center"
+          className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center"
           onClick={e => { if (e.target === e.currentTarget) closeFileModal() }}
         >
-          <div className="bg-white rounded-lg border border-[#e9e9e7] shadow-xl w-[460px] p-6">
+          <div className="bg-[#1c2333] rounded-xl border border-[#2a3347] shadow-2xl w-[460px] p-6">
             <div className="flex items-center justify-between mb-1">
-              <h2 className="text-[15px] font-semibold text-[#37352f]">Add Cover Sheet?</h2>
-              <button onClick={closeFileModal} className="text-[#acaba8] hover:text-[#787774] transition-colors">
+              <h2 className="text-[15px] font-bold text-[#e8edf5]">Add Cover Sheet?</h2>
+              <button onClick={closeFileModal} className="text-[#4f617a] hover:text-[#8b9ab5] transition-colors">
                 <XIcon className="h-4 w-4" />
               </button>
             </div>
-            <p className="text-[12px] font-medium text-[#37352f] mb-1">
+            <p className="text-[12px] font-semibold text-[#c8d3e6] mb-1">
               {modalProjectId ? (appProjects.find(p => p.id === modalProjectId)?.name ?? "Project") : "No project selected"}
             </p>
-            <p className="text-[13px] text-[#787774] mb-5">
+            <p className="text-[13px] text-[#8b9ab5] mb-5">
               Generate a submittal transmittal cover sheet and merge it with this document.
             </p>
             <div className="flex flex-col gap-2">
               <button
                 onClick={initCoverForm}
-                className="h-9 px-4 rounded bg-[#37352f] text-white text-[13px] font-medium hover:bg-[#2f2d28] transition-colors"
+                className="h-9 px-4 rounded-md bg-[#2563eb] text-white text-[13px] font-semibold hover:bg-[#1d4ed8] transition-colors"
               >
                 Yes, add cover sheet
               </button>
               <button
                 onClick={openFileDirectly}
-                className="h-9 px-4 rounded border border-[#e9e9e7] text-[13px] text-[#787774] hover:bg-[#f7f6f3] transition-colors"
+                className="h-9 px-4 rounded-md border border-[#2a3347] text-[13px] text-[#8b9ab5] hover:bg-white/[0.05] transition-colors"
               >
                 No, just open
               </button>
               <button
                 onClick={closeFileModal}
-                className="h-9 px-4 rounded border border-[#e9e9e7] text-[13px] text-[#acaba8] hover:bg-[#f7f6f3] transition-colors"
+                className="h-9 px-4 rounded-md border border-[#2a3347] text-[13px] text-[#4f617a] hover:bg-white/[0.05] transition-colors"
               >
                 Cancel
               </button>
@@ -981,13 +989,13 @@ export default function Home() {
 
       {openFileCtx && fileModalStep === "form" && coverForm && (
         <div
-          className="fixed inset-0 bg-black/25 z-50 flex items-center justify-center"
+          className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center"
           onClick={e => { if (e.target === e.currentTarget) closeFileModal() }}
         >
-          <div className="bg-white rounded-lg border border-[#e9e9e7] shadow-xl w-[680px]">
-            <div className="flex items-center justify-between px-6 pt-5 pb-4 border-b border-[#e9e9e7]">
-              <h2 className="text-[15px] font-semibold text-[#37352f]">Submittal Transmittal</h2>
-              <button onClick={closeFileModal} className="text-[#acaba8] hover:text-[#787774] transition-colors">
+          <div className="bg-[#1c2333] rounded-xl border border-[#2a3347] shadow-2xl w-[680px]">
+            <div className="flex items-center justify-between px-6 pt-5 pb-4 border-b border-[#2a3347]">
+              <h2 className="text-[15px] font-bold text-[#e8edf5]">Submittal Transmittal</h2>
+              <button onClick={closeFileModal} className="text-[#4f617a] hover:text-[#8b9ab5] transition-colors">
                 <XIcon className="h-4 w-4" />
               </button>
             </div>
@@ -1052,14 +1060,14 @@ export default function Home() {
                 <div className="flex gap-3">
                   <div className="flex-1">
                     <label className={labelCls}>Reviewed By</label>
-                    <select value={coverForm.reviewedBy} onChange={e => setCoverForm(prev => ({ ...prev!, reviewedBy: e.target.value }))} className="w-full h-9 px-3 rounded border border-[#e9e9e7] text-[13px] text-[#37352f] bg-white focus:outline-none focus:ring-1 focus:ring-[#37352f]/20">
+                    <select value={coverForm.reviewedBy} onChange={e => setCoverForm(prev => ({ ...prev!, reviewedBy: e.target.value }))} className="w-full h-9 px-3 rounded-md border border-[#2a3347] text-[13px] text-[#e8edf5] bg-[#0d1117] focus:outline-none focus:ring-1 focus:ring-[#2563eb]/40">
                       <option value="">Select…</option>
                       {teamMembers.map(m => <option key={m.id} value={m.name}>{m.name}{m.title ? ` — ${m.title}` : ""}</option>)}
                     </select>
                   </div>
                   <div className="flex-1">
                     <label className={labelCls}>Certified by CQM</label>
-                    <select value={coverForm.certifiedBy} onChange={e => setCoverForm(prev => ({ ...prev!, certifiedBy: e.target.value }))} className="w-full h-9 px-3 rounded border border-[#e9e9e7] text-[13px] text-[#37352f] bg-white focus:outline-none focus:ring-1 focus:ring-[#37352f]/20">
+                    <select value={coverForm.certifiedBy} onChange={e => setCoverForm(prev => ({ ...prev!, certifiedBy: e.target.value }))} className="w-full h-9 px-3 rounded-md border border-[#2a3347] text-[13px] text-[#e8edf5] bg-[#0d1117] focus:outline-none focus:ring-1 focus:ring-[#2563eb]/40">
                       <option value="">Select…</option>
                       {teamMembers.map(m => <option key={m.id} value={m.name}>{m.name}{m.title ? ` — ${m.title}` : ""}</option>)}
                     </select>
@@ -1073,24 +1081,24 @@ export default function Home() {
                     onChange={e => setCoverForm(prev => ({ ...prev!, notes: e.target.value }))}
                     rows={3}
                     placeholder="Additional notes or instructions…"
-                    className="w-full px-3 py-2 rounded border border-[#e9e9e7] text-[13px] text-[#37352f] bg-white focus:outline-none focus:ring-1 focus:ring-[#37352f]/20 resize-none placeholder:text-[#acaba8]"
+                    className="w-full px-3 py-2 rounded-md border border-[#2a3347] text-[13px] text-[#e8edf5] bg-[#0d1117] focus:outline-none focus:ring-1 focus:ring-[#2563eb]/40 resize-none placeholder:text-[#4f617a]"
                   />
                 </div>
 
               </div>
 
-              <div className="flex justify-end gap-2 px-6 py-4 border-t border-[#e9e9e7]">
+              <div className="flex justify-end gap-2 px-6 py-4 border-t border-[#2a3347]">
                 <button
                   type="button"
                   onClick={closeFileModal}
-                  className="h-8 px-4 rounded border border-[#e9e9e7] text-[13px] text-[#787774] hover:bg-[#f7f6f3] transition-colors"
+                  className="h-8 px-4 rounded-md border border-[#2a3347] text-[13px] text-[#8b9ab5] hover:bg-white/[0.05] transition-colors"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={generatingCover}
-                  className="h-8 px-4 rounded bg-[#37352f] text-white text-[13px] font-medium hover:bg-[#2f2d28] transition-colors disabled:opacity-50 flex items-center gap-2"
+                  className="h-8 px-4 rounded-md bg-[#2563eb] text-white text-[13px] font-semibold hover:bg-[#1d4ed8] transition-colors disabled:opacity-50 flex items-center gap-2"
                 >
                   {generatingCover && <SpinnerIcon className="h-3 w-3" />}
                   {generatingCover ? "Generating…" : "Generate & Download"}
@@ -1104,13 +1112,13 @@ export default function Home() {
       {/* ── Upload modal ──────────────────────────────────────────────────── */}
       {showUpload && (
         <div
-          className="fixed inset-0 bg-black/25 z-50 flex items-center justify-center"
+          className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center"
           onClick={e => { if (e.target === e.currentTarget) closeModal() }}
         >
-          <div className="bg-white rounded-lg border border-[#e9e9e7] shadow-xl w-[440px] p-6">
+          <div className="bg-[#1c2333] rounded-xl border border-[#2a3347] shadow-2xl w-[440px] p-6">
             <div className="flex items-center justify-between mb-4">
-              <h2 className="text-[15px] font-semibold text-[#37352f]">Upload Submittal</h2>
-              <button onClick={closeModal} className="text-[#acaba8] hover:text-[#787774] transition-colors">
+              <h2 className="text-[15px] font-bold text-[#e8edf5]">Upload Submittal</h2>
+              <button onClick={closeModal} className="text-[#4f617a] hover:text-[#8b9ab5] transition-colors">
                 <XIcon className="h-4 w-4" />
               </button>
             </div>
@@ -1118,7 +1126,7 @@ export default function Home() {
             <form onSubmit={handleUpload} className="space-y-3">
               {/* File */}
               <div>
-                <label className="block text-[12px] text-[#787774] mb-1">File</label>
+                <label className="block text-[12px] font-medium text-[#8b9ab5] mb-1">File</label>
                 <input
                   type="file"
                   accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.dwg,.rvt"
@@ -1145,32 +1153,32 @@ export default function Home() {
                     setUploadStep("manual")
                   }}
                   required
-                  className="w-full text-[13px] text-[#37352f] file:mr-3 file:text-[12px] file:bg-[#f7f6f3] file:border file:border-[#e9e9e7] file:rounded file:px-2 file:py-1 file:text-[#37352f] file:cursor-pointer cursor-pointer disabled:opacity-50"
+                  className="w-full text-[13px] text-[#c8d3e6] file:mr-3 file:text-[12px] file:bg-[#2a3347] file:border-0 file:rounded-md file:px-3 file:py-1.5 file:text-[#c8d3e6] file:cursor-pointer cursor-pointer disabled:opacity-50"
                 />
               </div>
 
               {/* Classifying spinner */}
               {uploadStep === "classifying" && (
-                <div className="flex items-center gap-2 py-1 text-[13px] text-[#acaba8]">
+                <div className="flex items-center gap-2 py-1 text-[13px] text-[#8b9ab5]">
                   <SpinnerIcon className="h-4 w-4" /> Analyzing document…
                 </div>
               )}
 
               {/* AI suggestion card */}
               {uploadStep === "suggested" && aiResult && (
-                <div className="rounded-md border border-violet-200 bg-violet-50/60 p-3 space-y-2">
-                  <p className="text-[11px] font-semibold text-violet-500 uppercase tracking-wide">✦ AI Suggestion</p>
+                <div className="rounded-lg border border-[#2563eb]/30 bg-[#2563eb]/10 p-3 space-y-2">
+                  <p className="text-[11px] font-bold text-[#60a5fa] uppercase tracking-widest">✦ AI Suggestion</p>
                   <div>
-                    <p className="text-[13px] font-medium text-[#37352f]">{aiResult.division_num} — {aiResult.division_name}</p>
-                    <p className="text-[12px] text-[#787774] mt-0.5">{aiResult.section_code} — {aiResult.section_name}</p>
+                    <p className="text-[13px] font-semibold text-[#e8edf5]">{aiResult.division_num} — {aiResult.division_name}</p>
+                    <p className="text-[12px] text-[#8b9ab5] mt-0.5">{aiResult.section_code} — {aiResult.section_name}</p>
                   </div>
                   <div className="flex gap-2 pt-0.5">
                     <button type="button" onClick={acceptSuggestion}
-                      className="h-7 px-3 rounded bg-[#37352f] text-white text-[12px] font-medium hover:bg-[#2f2d28] transition-colors">
+                      className="h-7 px-3 rounded-md bg-[#2563eb] text-white text-[12px] font-semibold hover:bg-[#1d4ed8] transition-colors">
                       Use this
                     </button>
                     <button type="button" onClick={() => { setUploadDiv(""); setUploadSec(""); setUploadStep("manual") }}
-                      className="h-7 px-3 rounded border border-[#e9e9e7] text-[12px] text-[#787774] hover:bg-[#f7f6f3] transition-colors">
+                      className="h-7 px-3 rounded-md border border-[#2a3347] text-[12px] text-[#8b9ab5] hover:bg-white/[0.05] transition-colors">
                       Classify manually
                     </button>
                   </div>
@@ -1181,7 +1189,7 @@ export default function Home() {
               {uploadStep === "manual" && (
                 <>
                   <div>
-                    <label className="block text-[12px] text-[#787774] mb-1">Division</label>
+                    <label className="block text-[12px] font-medium text-[#8b9ab5] mb-1">Division</label>
                     <select
                       value={uploadDiv}
                       onChange={e => {
@@ -1192,7 +1200,7 @@ export default function Home() {
                         setUploadSecName("")
                       }}
                       required
-                      className="w-full h-9 px-2 rounded border border-[#e9e9e7] text-[13px] text-[#37352f] bg-white focus:outline-none focus:ring-1 focus:ring-[#37352f]/20"
+                      className="w-full h-9 px-2 rounded-md border border-[#2a3347] text-[13px] text-[#e8edf5] bg-[#0d1117] focus:outline-none focus:ring-1 focus:ring-[#2563eb]/40"
                     >
                       <option value="">Select a division…</option>
                       {CSI_DIVISIONS.map(d => (
@@ -1201,7 +1209,7 @@ export default function Home() {
                     </select>
                   </div>
                   <div>
-                    <label className="block text-[12px] text-[#787774] mb-1">Section</label>
+                    <label className="block text-[12px] font-medium text-[#8b9ab5] mb-1">Section</label>
                     <select
                       value={uploadSec}
                       onChange={e => {
@@ -1210,7 +1218,7 @@ export default function Home() {
                         setUploadSecName(picked?.name ?? "")
                       }}
                       disabled={!uploadDiv}
-                      className="w-full h-9 px-2 rounded border border-[#e9e9e7] text-[13px] text-[#37352f] bg-white focus:outline-none focus:ring-1 focus:ring-[#37352f]/20 disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="w-full h-9 px-2 rounded-md border border-[#2a3347] text-[13px] text-[#e8edf5] bg-[#0d1117] focus:outline-none focus:ring-1 focus:ring-[#2563eb]/40 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       <option value="">{uploadDiv ? "Select a section…" : "Select a division first"}</option>
                       {(CSI_SECTIONS[uploadDiv] ?? []).map(s => (
@@ -1221,13 +1229,13 @@ export default function Home() {
                 </>
               )}
 
-              {uploadError && <p className="text-[12px] text-red-500">{uploadError}</p>}
+              {uploadError && <p className="text-[12px] text-red-400">{uploadError}</p>}
 
               <div className="flex justify-end gap-2 pt-1">
                 <button
                   type="button"
                   onClick={closeModal}
-                  className="h-8 px-4 rounded border border-[#e9e9e7] text-[13px] text-[#787774] hover:bg-[#f7f6f3] transition-colors"
+                  className="h-8 px-4 rounded-md border border-[#2a3347] text-[13px] text-[#8b9ab5] hover:bg-white/[0.05] transition-colors"
                 >
                   Cancel
                 </button>
@@ -1235,7 +1243,7 @@ export default function Home() {
                   <button
                     type="submit"
                     disabled={uploading || !uploadFile || !uploadDiv || !uploadSec}
-                    className="h-8 px-4 rounded bg-[#37352f] text-white text-[13px] font-medium hover:bg-[#2f2d28] transition-colors disabled:opacity-50"
+                    className="h-8 px-4 rounded-md bg-[#2563eb] text-white text-[13px] font-semibold hover:bg-[#1d4ed8] transition-colors disabled:opacity-50"
                   >
                     {uploading ? "Uploading…" : "Upload"}
                   </button>
@@ -1249,17 +1257,17 @@ export default function Home() {
       {/* ── Manage divisions modal ────────────────────────────────────────── */}
       {showManage && (
         <div
-          className="fixed inset-0 bg-black/25 z-50 flex items-center justify-center"
+          className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center"
           onClick={e => { if (e.target === e.currentTarget) setShowManage(false) }}
         >
-          <div className="bg-white rounded-lg border border-[#e9e9e7] shadow-xl w-[360px] p-5">
+          <div className="bg-[#1c2333] rounded-xl border border-[#2a3347] shadow-2xl w-[360px] p-5">
             <div className="flex items-center justify-between mb-1">
-              <h2 className="text-[15px] font-semibold text-[#37352f]">Manage Divisions</h2>
-              <button onClick={() => setShowManage(false)} className="text-[#acaba8] hover:text-[#787774] transition-colors">
+              <h2 className="text-[15px] font-bold text-[#e8edf5]">Manage Divisions</h2>
+              <button onClick={() => setShowManage(false)} className="text-[#4f617a] hover:text-[#8b9ab5] transition-colors">
                 <XIcon className="h-4 w-4" />
               </button>
             </div>
-            <p className="text-[12px] text-[#acaba8] mb-3">Uncheck divisions to hide them from the sidebar.</p>
+            <p className="text-[12px] text-[#8b9ab5] mb-3">Uncheck divisions to hide them from the sidebar.</p>
             <div className="space-y-0.5 max-h-[420px] overflow-y-auto">
               {CSI_DIVISIONS.map(d => {
                 const hidden = hiddenDivisions.has(d.num)
@@ -1267,13 +1275,13 @@ export default function Home() {
                   <button
                     key={d.num}
                     onClick={() => toggleDivisionVisibility(d.num)}
-                    className="w-full flex items-center gap-2.5 h-8 px-2 rounded-sm hover:bg-[#f7f6f3] transition-colors text-left"
+                    className="w-full flex items-center gap-2.5 h-8 px-2 rounded-md hover:bg-white/[0.05] transition-colors text-left"
                   >
-                    <span className={`w-3.5 h-3.5 rounded border flex items-center justify-center flex-shrink-0 transition-colors ${hidden ? "border-[#d3d2cf] bg-white" : "border-[#37352f] bg-[#37352f]"}`}>
+                    <span className={`w-3.5 h-3.5 rounded border flex items-center justify-center flex-shrink-0 transition-colors ${hidden ? "border-[#2a3347] bg-transparent" : "border-[#2563eb] bg-[#2563eb]"}`}>
                       {!hidden && <CheckIcon />}
                     </span>
-                    <span className="text-[11px] font-mono text-[#acaba8] w-5 text-right flex-shrink-0">{d.num}</span>
-                    <span className={`text-[13px] truncate transition-colors ${hidden ? "text-[#acaba8]" : "text-[#37352f]"}`}>{d.name}</span>
+                    <span className="text-[11px] font-mono text-[#4f617a] w-5 text-right flex-shrink-0">{d.num}</span>
+                    <span className={`text-[13px] truncate transition-colors ${hidden ? "text-[#4f617a]" : "text-[#c8d3e6]"}`}>{d.name}</span>
                   </button>
                 )
               })}

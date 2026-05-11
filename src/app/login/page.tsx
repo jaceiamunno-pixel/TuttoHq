@@ -16,17 +16,14 @@ export default function LoginPage() {
   const router = useRouter()
 
   useEffect(() => {
-    // Detect invite / password-reset token in URL hash
     const params = new URLSearchParams(window.location.hash.slice(1))
     const type         = params.get("type")
     const accessToken  = params.get("access_token")
     const refreshToken = params.get("refresh_token")
 
     if ((type === "invite" || type === "recovery") && accessToken && refreshToken) {
-      // Establish the session from the hash so updateUser works
       createClient().auth.setSession({ access_token: accessToken, refresh_token: refreshToken })
       setMode("set-password")
-      // Remove the tokens from the URL bar
       window.history.replaceState(null, "", window.location.pathname)
     }
   }, [])
@@ -60,62 +57,68 @@ export default function LoginPage() {
     }
   }
 
-  return (
-    <div className="min-h-screen bg-[#f7f6f3] flex items-center justify-center">
-      <div className="bg-white rounded-lg border border-[#e9e9e7] shadow-sm w-[340px] p-8">
+  const inputCls = "w-full h-10 px-3 rounded-md border border-[#2a3347] bg-[#0d1117] text-[14px] text-[#e8edf5] placeholder-[#4f617a] focus:outline-none focus:ring-2 focus:ring-[#2563eb]/40 focus:border-[#2563eb]/60 transition-all"
 
-        <div className="text-center mb-6">
-          <p className="text-4xl mb-2 select-none">🗂️</p>
-          <h1 className="text-[17px] font-semibold text-[#37352f]">Submittal Library</h1>
-          <p className="text-[13px] text-[#acaba8] mt-0.5">THP Construction</p>
+  return (
+    <div className="min-h-screen bg-[#0f1117] flex items-center justify-center">
+      <div className="bg-[#161b27] rounded-xl border border-[#2a3347] shadow-2xl w-[360px] p-8">
+
+        <div className="text-center mb-7">
+          <div className="w-12 h-12 rounded-xl bg-[#2563eb]/15 border border-[#2563eb]/30 flex items-center justify-center mx-auto mb-4">
+            <svg className="w-6 h-6 text-[#60a5fa]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+            </svg>
+          </div>
+          <h1 className="text-[18px] font-bold text-[#e8edf5] tracking-tight">Submittal Library</h1>
+          <p className="text-[13px] text-[#8b9ab5] mt-1">THP Construction</p>
         </div>
 
         {mode === "signin" ? (
-          <form onSubmit={handleSignIn} className="space-y-3">
+          <form onSubmit={handleSignIn} className="space-y-4">
             <div>
-              <label className="block text-[12px] text-[#787774] mb-1">Email</label>
+              <label className="block text-[12px] font-medium text-[#8b9ab5] mb-1.5">Email</label>
               <input
                 type="email" value={email} onChange={e => setEmail(e.target.value)}
                 required autoFocus placeholder="you@company.com"
-                className="w-full h-9 px-3 rounded border border-[#e9e9e7] text-[14px] text-[#37352f] placeholder-[#acaba8] focus:outline-none focus:ring-1 focus:ring-[#37352f]/25 focus:border-[#37352f]/35 transition-all"
+                className={inputCls}
               />
             </div>
             <div>
-              <label className="block text-[12px] text-[#787774] mb-1">Password</label>
+              <label className="block text-[12px] font-medium text-[#8b9ab5] mb-1.5">Password</label>
               <input
                 type="password" value={password} onChange={e => setPassword(e.target.value)}
                 required placeholder="••••••••"
-                className="w-full h-9 px-3 rounded border border-[#e9e9e7] text-[14px] text-[#37352f] placeholder-[#acaba8] focus:outline-none focus:ring-1 focus:ring-[#37352f]/25 focus:border-[#37352f]/35 transition-all"
+                className={inputCls}
               />
             </div>
-            {error && <p className="text-[12px] text-red-500">{error}</p>}
+            {error && <p className="text-[12px] text-red-400">{error}</p>}
             <button type="submit" disabled={loading}
-              className="w-full h-9 bg-[#37352f] text-white text-[14px] font-medium rounded hover:bg-[#2f2d28] transition-colors disabled:opacity-50">
+              className="w-full h-10 bg-[#2563eb] text-white text-[14px] font-semibold rounded-md hover:bg-[#1d4ed8] transition-colors disabled:opacity-50 mt-1">
               {loading ? "Signing in…" : "Sign in"}
             </button>
           </form>
         ) : (
-          <form onSubmit={handleSetPassword} className="space-y-3">
-            <p className="text-[13px] text-[#787774] -mt-2 mb-1">Create a password for your account.</p>
+          <form onSubmit={handleSetPassword} className="space-y-4">
+            <p className="text-[13px] text-[#8b9ab5] -mt-2 mb-1">Create a password for your account.</p>
             <div>
-              <label className="block text-[12px] text-[#787774] mb-1">New password</label>
+              <label className="block text-[12px] font-medium text-[#8b9ab5] mb-1.5">New password</label>
               <input
                 type="password" value={password} onChange={e => setPassword(e.target.value)}
                 required autoFocus minLength={8} placeholder="Min. 8 characters"
-                className="w-full h-9 px-3 rounded border border-[#e9e9e7] text-[14px] text-[#37352f] placeholder-[#acaba8] focus:outline-none focus:ring-1 focus:ring-[#37352f]/25 focus:border-[#37352f]/35 transition-all"
+                className={inputCls}
               />
             </div>
             <div>
-              <label className="block text-[12px] text-[#787774] mb-1">Confirm password</label>
+              <label className="block text-[12px] font-medium text-[#8b9ab5] mb-1.5">Confirm password</label>
               <input
                 type="password" value={confirm} onChange={e => setConfirm(e.target.value)}
                 required minLength={8} placeholder="••••••••"
-                className="w-full h-9 px-3 rounded border border-[#e9e9e7] text-[14px] text-[#37352f] placeholder-[#acaba8] focus:outline-none focus:ring-1 focus:ring-[#37352f]/25 focus:border-[#37352f]/35 transition-all"
+                className={inputCls}
               />
             </div>
-            {error && <p className="text-[12px] text-red-500">{error}</p>}
+            {error && <p className="text-[12px] text-red-400">{error}</p>}
             <button type="submit" disabled={loading}
-              className="w-full h-9 bg-[#37352f] text-white text-[14px] font-medium rounded hover:bg-[#2f2d28] transition-colors disabled:opacity-50">
+              className="w-full h-10 bg-[#2563eb] text-white text-[14px] font-semibold rounded-md hover:bg-[#1d4ed8] transition-colors disabled:opacity-50">
               {loading ? "Setting password…" : "Set password"}
             </button>
           </form>
