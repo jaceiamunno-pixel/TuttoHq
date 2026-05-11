@@ -1,0 +1,68 @@
+import { NextRequest, NextResponse } from "next/server"
+import { createClient } from "@/lib/supabase/server"
+
+export async function POST(req: NextRequest) {
+  const supabase = await createClient()
+
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+  }
+
+  const formData     = await req.formData()
+  const file         = formData.get("file") as File | null
+  const divisionNum  = formData.get("division_num") as string | null
+  const divisionName = formData.get("division_name") as string | null
+  const sectionCode  = (formData.get("section_code") as string | null)?.trim() || null
+  const sectionName  = (formData.get("section_name") as string | null)?.trim() || null
+
+  if (!file || !divisionNum || !divisionName) {
+    return NextResponse.json(
+      { error: "file, division_num, and division_name are required" },
+      { status: 400 },
+    )
+  }
+
+  // Build a clean storage path: division/section/timestamp_filename
+  const safeName    = file.name.replace(/[^a-zA-Z0-9._-]/g, "_")
+  const ts          = Date.now()
+  const sectionSlug = sectionCode ? sectionCode.replace(/\s+/g, "") : "general"
+  const storagePath = `${divisionNum}/${sectionSlug}/${ts}_${safeName}`
+
+  // Upload bytes to storage
+  const bytes = await file.arrayBuffer()
+  const { error: storageError } = await supabase.storage
+    .from("submittals")
+    .upload(storagePath, bytes, {
+      contentType: file.type || "application/octet-stream",
+      upsert: false,
+    })
+
+  if (storageError) {
+    console.error("Storage upload failed:", storageError)
+    return NextResponse.json({ error: "Storage upload failed" }, { status: 500 })
+  }
+
+  // Insert DB row
+  const { error: dbError } = await supabase.from("submittals").insert({
+    file_name:     file.name,
+    storage_path:  storagePath,
+    mime_type:     file.type || null,
+    file_size:     file.size,
+    csi_division:  divisionNum,
+    division_name: divisionName,
+    csi_section:   sectionCode,
+    section_name:  sectionName,
+    status:        "active",
+    uploaded_by:   user.id,
+  })
+
+  if (dbError) {
+    console.error("DB insert failed:", dbError)
+    // Clean up the orphaned storage file
+    await supabase.storage.from("submittals").remove([storagePath])
+    return NextResponse.json({ error: "Failed to save file record" }, { status: 500 })
+  }
+
+  return NextResponse.json({ ok: true })
+}

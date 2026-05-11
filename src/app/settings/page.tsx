@@ -1,0 +1,702 @@
+"use client"
+
+import { useState, useEffect, useRef } from "react"
+import Link from "next/link"
+
+type Tab = "company" | "team" | "projects"
+
+interface TeamMember {
+  id: string
+  name: string
+  title: string | null
+  email: string | null
+  created_at: string
+}
+
+interface Project {
+  id: string
+  name: string
+  number: string | null
+  location: string | null
+  gc_name: string | null
+  architect: string | null
+  created_at: string
+}
+
+function XIcon({ className = "h-3 w-3" }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+    </svg>
+  )
+}
+
+function PencilIcon() {
+  return (
+    <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536M9 13l6.5-6.5a2.121 2.121 0 013 3L12 16H9v-3z" />
+    </svg>
+  )
+}
+
+function PlusIcon() {
+  return (
+    <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+    </svg>
+  )
+}
+
+export default function SettingsPage() {
+  const [activeTab, setActiveTab] = useState<Tab>("company")
+
+  const [logoUrl, setLogoUrl]           = useState<string | null>(null)
+  const [hasCoverPage, setHasCoverPage] = useState(false)
+  const [loadingCompany, setLoadingCompany] = useState(true)
+  const [uploadingLogo, setUploadingLogo]   = useState(false)
+  const [uploadingCover, setUploadingCover] = useState(false)
+  const [companyMessage, setCompanyMessage] = useState<{ text: string; ok: boolean } | null>(null)
+
+  const [teamMembers, setTeamMembers]   = useState<TeamMember[]>([])
+  const [teamLoading, setTeamLoading]   = useState(false)
+  const [teamLoaded, setTeamLoaded]     = useState(false)
+  const [showTeamForm, setShowTeamForm] = useState(false)
+  const [editingMember, setEditingMember] = useState<TeamMember | null>(null)
+  const [memberForm, setMemberForm]     = useState({ name: "", title: "", email: "" })
+  const [savingMember, setSavingMember] = useState(false)
+  const [teamMessage, setTeamMessage]   = useState<{ text: string; ok: boolean } | null>(null)
+
+  const [projects, setProjects]         = useState<Project[]>([])
+  const [projectsLoading, setProjectsLoading] = useState(false)
+  const [projectsLoaded, setProjectsLoaded]   = useState(false)
+  const [showProjectForm, setShowProjectForm] = useState(false)
+  const [editingProject, setEditingProject]   = useState<Project | null>(null)
+  const [projectForm, setProjectForm]   = useState({ name: "", number: "", location: "", gc_name: "", architect: "" })
+  const [savingProject, setSavingProject] = useState(false)
+  const [projectMessage, setProjectMessage] = useState<{ text: string; ok: boolean } | null>(null)
+
+  const logoInputRef  = useRef<HTMLInputElement>(null)
+  const coverInputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    fetch("/api/settings")
+      .then(r => r.json())
+      .then(d => { setLogoUrl(d.logo_url); setHasCoverPage(d.has_cover_page) })
+      .finally(() => setLoadingCompany(false))
+  }, [])
+
+  useEffect(() => {
+    if (activeTab === "team" && !teamLoaded) {
+      loadTeam()
+    }
+    if (activeTab === "projects" && !projectsLoaded) {
+      loadProjects()
+    }
+  }, [activeTab])
+
+  function loadTeam() {
+    setTeamLoading(true)
+    fetch("/api/team")
+      .then(r => r.json())
+      .then(d => { setTeamMembers(d.members ?? []); setTeamLoaded(true) })
+      .catch(() => {})
+      .finally(() => setTeamLoading(false))
+  }
+
+  function loadProjects() {
+    setProjectsLoading(true)
+    fetch("/api/projects")
+      .then(r => r.json())
+      .then(d => { setProjects(d.projects ?? []); setProjectsLoaded(true) })
+      .catch(() => {})
+      .finally(() => setProjectsLoading(false))
+  }
+
+  function flashCompany(text: string, ok = true) {
+    setCompanyMessage({ text, ok })
+    setTimeout(() => setCompanyMessage(null), 3000)
+  }
+
+  function flashTeam(text: string, ok = true) {
+    setTeamMessage({ text, ok })
+    setTimeout(() => setTeamMessage(null), 3000)
+  }
+
+  function flashProject(text: string, ok = true) {
+    setProjectMessage({ text, ok })
+    setTimeout(() => setProjectMessage(null), 3000)
+  }
+
+  async function uploadAsset(type: "logo" | "cover_page", file: File) {
+    const fd = new FormData()
+    fd.append("type", type)
+    fd.append("file", file)
+    const res  = await fetch("/api/settings", { method: "POST", body: fd })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.error ?? "Upload failed")
+    return data
+  }
+
+  async function handleLogoChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setUploadingLogo(true)
+    try {
+      const data = await uploadAsset("logo", file)
+      if (data.logo_url) setLogoUrl(data.logo_url)
+      flashCompany("Logo updated successfully")
+    } catch {
+      flashCompany("Logo upload failed", false)
+    } finally {
+      setUploadingLogo(false)
+      e.target.value = ""
+    }
+  }
+
+  async function handleCoverChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    if (file.type !== "application/pdf") {
+      flashCompany("Cover page must be a PDF file", false)
+      e.target.value = ""
+      return
+    }
+    setUploadingCover(true)
+    try {
+      await uploadAsset("cover_page", file)
+      setHasCoverPage(true)
+      flashCompany("Cover page updated successfully")
+    } catch {
+      flashCompany("Cover page upload failed", false)
+    } finally {
+      setUploadingCover(false)
+      e.target.value = ""
+    }
+  }
+
+  function openAddMember() {
+    setEditingMember(null)
+    setMemberForm({ name: "", title: "", email: "" })
+    setShowTeamForm(true)
+  }
+
+  function openEditMember(m: TeamMember) {
+    setEditingMember(m)
+    setMemberForm({ name: m.name, title: m.title ?? "", email: m.email ?? "" })
+    setShowTeamForm(true)
+  }
+
+  function cancelMemberForm() {
+    setShowTeamForm(false)
+    setEditingMember(null)
+    setMemberForm({ name: "", title: "", email: "" })
+  }
+
+  async function saveMember(e: React.FormEvent) {
+    e.preventDefault()
+    if (!memberForm.name.trim()) return
+    setSavingMember(true)
+    try {
+      const url    = editingMember ? `/api/team/${editingMember.id}` : "/api/team"
+      const method = editingMember ? "PATCH" : "POST"
+      const res    = await fetch(url, {
+        method,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: memberForm.name.trim(), title: memberForm.title.trim() || null, email: memberForm.email.trim() || null }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error ?? "Save failed")
+      if (editingMember) {
+        setTeamMembers(prev => prev.map(m => m.id === editingMember.id ? data.member : m))
+        flashTeam("Member updated")
+      } else {
+        setTeamMembers(prev => [...prev, data.member])
+        flashTeam("Member added")
+      }
+      cancelMemberForm()
+    } catch {
+      flashTeam("Save failed", false)
+    } finally {
+      setSavingMember(false)
+    }
+  }
+
+  async function deleteMember(m: TeamMember) {
+    if (!window.confirm(`Delete ${m.name}?`)) return
+    const res = await fetch(`/api/team/${m.id}`, { method: "DELETE" })
+    if (res.ok) {
+      setTeamMembers(prev => prev.filter(x => x.id !== m.id))
+      flashTeam("Member deleted")
+    } else {
+      flashTeam("Delete failed", false)
+    }
+  }
+
+  function openAddProject() {
+    setEditingProject(null)
+    setProjectForm({ name: "", number: "", location: "", gc_name: "", architect: "" })
+    setShowProjectForm(true)
+  }
+
+  function openEditProject(p: Project) {
+    setEditingProject(p)
+    setProjectForm({ name: p.name, number: p.number ?? "", location: p.location ?? "", gc_name: p.gc_name ?? "", architect: p.architect ?? "" })
+    setShowProjectForm(true)
+  }
+
+  function cancelProjectForm() {
+    setShowProjectForm(false)
+    setEditingProject(null)
+    setProjectForm({ name: "", number: "", location: "", gc_name: "", architect: "" })
+  }
+
+  async function saveProject(e: React.FormEvent) {
+    e.preventDefault()
+    if (!projectForm.name.trim()) return
+    setSavingProject(true)
+    try {
+      const url    = editingProject ? `/api/projects/${editingProject.id}` : "/api/projects"
+      const method = editingProject ? "PATCH" : "POST"
+      const res    = await fetch(url, {
+        method,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name:     projectForm.name.trim(),
+          number:   projectForm.number.trim()   || null,
+          location: projectForm.location.trim() || null,
+          gc_name:  projectForm.gc_name.trim()  || null,
+          architect: projectForm.architect.trim() || null,
+        }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error ?? "Save failed")
+      if (editingProject) {
+        setProjects(prev => prev.map(p => p.id === editingProject.id ? data.project : p))
+        flashProject("Project updated")
+      } else {
+        setProjects(prev => [...prev, data.project])
+        flashProject("Project added")
+      }
+      cancelProjectForm()
+    } catch {
+      flashProject("Save failed", false)
+    } finally {
+      setSavingProject(false)
+    }
+  }
+
+  async function deleteProject(p: Project) {
+    if (!window.confirm(`Delete project "${p.name}"?`)) return
+    const res = await fetch(`/api/projects/${p.id}`, { method: "DELETE" })
+    if (res.ok) {
+      setProjects(prev => prev.filter(x => x.id !== p.id))
+      flashProject("Project deleted")
+    } else {
+      flashProject("Delete failed", false)
+    }
+  }
+
+  const inputCls = "w-full h-9 px-3 rounded border border-[#e9e9e7] text-[13px] text-[#37352f] bg-white focus:outline-none focus:ring-1 focus:ring-[#37352f]/20 placeholder:text-[#acaba8]"
+  const labelCls = "block text-[12px] text-[#787774] mb-1"
+
+  const tabs: { key: Tab; label: string }[] = [
+    { key: "company",  label: "Company" },
+    { key: "team",     label: "Team" },
+    { key: "projects", label: "Projects" },
+  ]
+
+  return (
+    <div className="min-h-screen bg-[#f7f6f3]">
+      <div className="max-w-[720px] mx-auto py-12 px-6">
+
+        <div className="flex items-center justify-between mb-6">
+          <div>
+            <h1 className="text-[22px] font-semibold text-[#37352f]">Settings</h1>
+            <p className="text-[13px] text-[#acaba8] mt-0.5">THP Construction</p>
+          </div>
+          <Link href="/" className="text-[13px] text-[#acaba8] hover:text-[#787774] transition-colors">
+            ← Back to library
+          </Link>
+        </div>
+
+        <div className="flex gap-1 mb-6 border-b border-[#e9e9e7]">
+          {tabs.map(t => (
+            <button
+              key={t.key}
+              onClick={() => setActiveTab(t.key)}
+              className={`px-4 py-2 text-[13px] font-medium transition-colors border-b-2 -mb-px ${
+                activeTab === t.key
+                  ? "border-[#37352f] text-[#37352f]"
+                  : "border-transparent text-[#acaba8] hover:text-[#787774]"
+              }`}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+
+        {activeTab === "company" && (
+          <div className="space-y-4">
+            {loadingCompany ? (
+              <div className="text-[13px] text-[#acaba8]">Loading…</div>
+            ) : (
+              <>
+                <div className="bg-white rounded-lg border border-[#e9e9e7] p-5">
+                  <h2 className="text-[14px] font-semibold text-[#37352f] mb-0.5">Company Logo</h2>
+                  <p className="text-[12px] text-[#acaba8] mb-4">
+                    Displayed in the app header. PNG, SVG, or JPG recommended.
+                  </p>
+                  <div className="flex items-center gap-4">
+                    <div className="w-16 h-16 rounded border border-[#e9e9e7] bg-[#f7f6f3] flex items-center justify-center overflow-hidden flex-shrink-0">
+                      {logoUrl ? (
+                        <img src={logoUrl} alt="Logo" className="w-full h-full object-contain p-1" />
+                      ) : (
+                        <span className="text-2xl select-none">🗂️</span>
+                      )}
+                    </div>
+                    <div className="space-y-1">
+                      <button
+                        onClick={() => logoInputRef.current?.click()}
+                        disabled={uploadingLogo}
+                        className="h-8 px-4 rounded border border-[#e9e9e7] text-[13px] text-[#787774] hover:bg-[#f7f6f3] transition-colors disabled:opacity-50"
+                      >
+                        {uploadingLogo ? "Uploading…" : logoUrl ? "Replace logo" : "Upload logo"}
+                      </button>
+                      {logoUrl && <p className="text-[11px] text-[#acaba8]">Logo is active</p>}
+                    </div>
+                  </div>
+                  <input ref={logoInputRef} type="file" accept="image/*" onChange={handleLogoChange} className="hidden" />
+                </div>
+
+                <div className="bg-white rounded-lg border border-[#e9e9e7] p-5">
+                  <h2 className="text-[14px] font-semibold text-[#37352f] mb-0.5">Cover Page Template</h2>
+                  <p className="text-[12px] text-[#acaba8] mb-4">
+                    This PDF will be prepended to every submittal when a user opens or downloads it. Must be a PDF file.
+                  </p>
+                  <div className="flex items-center gap-3">
+                    <div className={`flex-1 h-9 px-3 rounded border flex items-center text-[13px] ${
+                      hasCoverPage
+                        ? "border-[#e9e9e7] bg-[#f7f6f3] text-[#37352f]"
+                        : "border-dashed border-[#d3d2cf] text-[#acaba8]"
+                    }`}>
+                      {hasCoverPage ? "📄 cover.pdf — active" : "No cover page uploaded"}
+                    </div>
+                    <button
+                      onClick={() => coverInputRef.current?.click()}
+                      disabled={uploadingCover}
+                      className="h-9 px-4 rounded border border-[#e9e9e7] text-[13px] text-[#787774] hover:bg-[#f7f6f3] transition-colors disabled:opacity-50 flex-shrink-0"
+                    >
+                      {uploadingCover ? "Uploading…" : hasCoverPage ? "Replace" : "Upload PDF"}
+                    </button>
+                  </div>
+                  <input ref={coverInputRef} type="file" accept=".pdf,application/pdf" onChange={handleCoverChange} className="hidden" />
+                </div>
+              </>
+            )}
+
+            {companyMessage && (
+              <div className={`text-center text-[13px] ${companyMessage.ok ? "text-[#787774]" : "text-red-500"}`}>
+                {companyMessage.text}
+              </div>
+            )}
+          </div>
+        )}
+
+        {activeTab === "team" && (
+          <div className="space-y-4">
+            <div className="bg-white rounded-lg border border-[#e9e9e7] overflow-hidden">
+              <div className="flex items-center justify-between px-5 py-4 border-b border-[#e9e9e7]">
+                <div>
+                  <h2 className="text-[14px] font-semibold text-[#37352f]">Team Members</h2>
+                  <p className="text-[12px] text-[#acaba8] mt-0.5">Used to populate Reviewed By / Certified By fields on cover sheets.</p>
+                </div>
+                {!showTeamForm && (
+                  <button
+                    onClick={openAddMember}
+                    className="h-8 px-3 rounded border border-[#e9e9e7] text-[13px] text-[#787774] hover:bg-[#f7f6f3] transition-colors flex items-center gap-1.5 flex-shrink-0"
+                  >
+                    <PlusIcon /> Add member
+                  </button>
+                )}
+              </div>
+
+              {showTeamForm && (
+                <div className="px-5 py-4 border-b border-[#e9e9e7] bg-[#f7f6f3]">
+                  <p className="text-[13px] font-medium text-[#37352f] mb-3">
+                    {editingMember ? "Edit member" : "New member"}
+                  </p>
+                  <form onSubmit={saveMember} className="space-y-3">
+                    <div>
+                      <label className={labelCls}>Name <span className="text-red-400">*</span></label>
+                      <input
+                        type="text"
+                        value={memberForm.name}
+                        onChange={e => setMemberForm(p => ({ ...p, name: e.target.value }))}
+                        required
+                        placeholder="Full name"
+                        className={inputCls}
+                        autoFocus
+                      />
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className={labelCls}>Title</label>
+                        <input
+                          type="text"
+                          value={memberForm.title}
+                          onChange={e => setMemberForm(p => ({ ...p, title: e.target.value }))}
+                          placeholder="e.g. Project Manager"
+                          className={inputCls}
+                        />
+                      </div>
+                      <div>
+                        <label className={labelCls}>Email</label>
+                        <input
+                          type="email"
+                          value={memberForm.email}
+                          onChange={e => setMemberForm(p => ({ ...p, email: e.target.value }))}
+                          placeholder="name@company.com"
+                          className={inputCls}
+                        />
+                      </div>
+                    </div>
+                    <div className="flex justify-end gap-2 pt-1">
+                      <button
+                        type="button"
+                        onClick={cancelMemberForm}
+                        className="h-8 px-3 rounded border border-[#e9e9e7] text-[13px] text-[#787774] hover:bg-white transition-colors"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="submit"
+                        disabled={savingMember || !memberForm.name.trim()}
+                        className="h-8 px-4 rounded bg-[#37352f] text-white text-[13px] font-medium hover:bg-[#2f2d28] transition-colors disabled:opacity-50"
+                      >
+                        {savingMember ? "Saving…" : editingMember ? "Save changes" : "Add member"}
+                      </button>
+                    </div>
+                  </form>
+                </div>
+              )}
+
+              {teamLoading && (
+                <div className="px-5 py-4 text-[13px] text-[#acaba8]">Loading…</div>
+              )}
+
+              {!teamLoading && teamMembers.length === 0 && (
+                <div className="px-5 py-6 text-center text-[13px] text-[#acaba8]">No team members yet.</div>
+              )}
+
+              {!teamLoading && teamMembers.length > 0 && (
+                <table className="w-full">
+                  <thead>
+                    <tr className="border-b border-[#e9e9e7]">
+                      <th className="text-left px-5 py-2 text-[11px] font-medium text-[#acaba8] uppercase tracking-wider">Name</th>
+                      <th className="text-left px-3 py-2 text-[11px] font-medium text-[#acaba8] uppercase tracking-wider">Title</th>
+                      <th className="text-left px-3 py-2 text-[11px] font-medium text-[#acaba8] uppercase tracking-wider">Email</th>
+                      <th className="px-3 py-2 w-16" />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {teamMembers.map((m, i) => (
+                      <tr key={m.id} className={`${i < teamMembers.length - 1 ? "border-b border-[#e9e9e7]" : ""} hover:bg-[#f7f6f3] transition-colors group`}>
+                        <td className="px-5 py-3 text-[13px] font-medium text-[#37352f]">{m.name}</td>
+                        <td className="px-3 py-3 text-[13px] text-[#787774]">{m.title ?? <span className="text-[#acaba8]">—</span>}</td>
+                        <td className="px-3 py-3 text-[13px] text-[#787774]">{m.email ?? <span className="text-[#acaba8]">—</span>}</td>
+                        <td className="px-3 py-3">
+                          <div className="flex items-center gap-1.5 justify-end opacity-0 group-hover:opacity-100 transition-opacity">
+                            <button
+                              onClick={() => openEditMember(m)}
+                              className="p-1 rounded text-[#acaba8] hover:text-[#787774] hover:bg-[#e9e9e7] transition-colors"
+                              title="Edit"
+                            >
+                              <PencilIcon />
+                            </button>
+                            <button
+                              onClick={() => deleteMember(m)}
+                              className="p-1 rounded text-[#acaba8] hover:text-red-400 hover:bg-[#e9e9e7] transition-colors"
+                              title="Delete"
+                            >
+                              <XIcon className="h-3 w-3" />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+
+            {teamMessage && (
+              <div className={`text-center text-[13px] ${teamMessage.ok ? "text-[#787774]" : "text-red-500"}`}>
+                {teamMessage.text}
+              </div>
+            )}
+          </div>
+        )}
+
+        {activeTab === "projects" && (
+          <div className="space-y-4">
+            <div className="bg-white rounded-lg border border-[#e9e9e7] overflow-hidden">
+              <div className="flex items-center justify-between px-5 py-4 border-b border-[#e9e9e7]">
+                <div>
+                  <h2 className="text-[14px] font-semibold text-[#37352f]">Projects</h2>
+                  <p className="text-[12px] text-[#acaba8] mt-0.5">Projects available when generating submittal cover sheets.</p>
+                </div>
+                {!showProjectForm && (
+                  <button
+                    onClick={openAddProject}
+                    className="h-8 px-3 rounded border border-[#e9e9e7] text-[13px] text-[#787774] hover:bg-[#f7f6f3] transition-colors flex items-center gap-1.5 flex-shrink-0"
+                  >
+                    <PlusIcon /> Add project
+                  </button>
+                )}
+              </div>
+
+              {showProjectForm && (
+                <div className="px-5 py-4 border-b border-[#e9e9e7] bg-[#f7f6f3]">
+                  <p className="text-[13px] font-medium text-[#37352f] mb-3">
+                    {editingProject ? "Edit project" : "New project"}
+                  </p>
+                  <form onSubmit={saveProject} className="space-y-3">
+                    <div className="grid grid-cols-3 gap-3">
+                      <div className="col-span-2">
+                        <label className={labelCls}>Project Name <span className="text-red-400">*</span></label>
+                        <input
+                          type="text"
+                          value={projectForm.name}
+                          onChange={e => setProjectForm(p => ({ ...p, name: e.target.value }))}
+                          required
+                          placeholder="e.g. Riverside Office Complex"
+                          className={inputCls}
+                          autoFocus
+                        />
+                      </div>
+                      <div>
+                        <label className={labelCls}>Project No.</label>
+                        <input
+                          type="text"
+                          value={projectForm.number}
+                          onChange={e => setProjectForm(p => ({ ...p, number: e.target.value }))}
+                          placeholder="2024-001"
+                          className={inputCls}
+                        />
+                      </div>
+                    </div>
+                    <div>
+                      <label className={labelCls}>Location</label>
+                      <input
+                        type="text"
+                        value={projectForm.location}
+                        onChange={e => setProjectForm(p => ({ ...p, location: e.target.value }))}
+                        placeholder="City, State"
+                        className={inputCls}
+                      />
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className={labelCls}>General Contractor</label>
+                        <input
+                          type="text"
+                          value={projectForm.gc_name}
+                          onChange={e => setProjectForm(p => ({ ...p, gc_name: e.target.value }))}
+                          placeholder="GC company name"
+                          className={inputCls}
+                        />
+                      </div>
+                      <div>
+                        <label className={labelCls}>Architect</label>
+                        <input
+                          type="text"
+                          value={projectForm.architect}
+                          onChange={e => setProjectForm(p => ({ ...p, architect: e.target.value }))}
+                          placeholder="Architecture firm"
+                          className={inputCls}
+                        />
+                      </div>
+                    </div>
+                    <div className="flex justify-end gap-2 pt-1">
+                      <button
+                        type="button"
+                        onClick={cancelProjectForm}
+                        className="h-8 px-3 rounded border border-[#e9e9e7] text-[13px] text-[#787774] hover:bg-white transition-colors"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="submit"
+                        disabled={savingProject || !projectForm.name.trim()}
+                        className="h-8 px-4 rounded bg-[#37352f] text-white text-[13px] font-medium hover:bg-[#2f2d28] transition-colors disabled:opacity-50"
+                      >
+                        {savingProject ? "Saving…" : editingProject ? "Save changes" : "Add project"}
+                      </button>
+                    </div>
+                  </form>
+                </div>
+              )}
+
+              {projectsLoading && (
+                <div className="px-5 py-4 text-[13px] text-[#acaba8]">Loading…</div>
+              )}
+
+              {!projectsLoading && projects.length === 0 && (
+                <div className="px-5 py-6 text-center text-[13px] text-[#acaba8]">No projects yet.</div>
+              )}
+
+              {!projectsLoading && projects.length > 0 && (
+                <table className="w-full">
+                  <thead>
+                    <tr className="border-b border-[#e9e9e7]">
+                      <th className="text-left px-5 py-2 text-[11px] font-medium text-[#acaba8] uppercase tracking-wider">Name</th>
+                      <th className="text-left px-3 py-2 text-[11px] font-medium text-[#acaba8] uppercase tracking-wider">No.</th>
+                      <th className="text-left px-3 py-2 text-[11px] font-medium text-[#acaba8] uppercase tracking-wider">Location</th>
+                      <th className="text-left px-3 py-2 text-[11px] font-medium text-[#acaba8] uppercase tracking-wider">GC</th>
+                      <th className="px-3 py-2 w-16" />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {projects.map((p, i) => (
+                      <tr key={p.id} className={`${i < projects.length - 1 ? "border-b border-[#e9e9e7]" : ""} hover:bg-[#f7f6f3] transition-colors group`}>
+                        <td className="px-5 py-3 text-[13px] font-medium text-[#37352f]">{p.name}</td>
+                        <td className="px-3 py-3 text-[13px] text-[#787774]">{p.number ?? <span className="text-[#acaba8]">—</span>}</td>
+                        <td className="px-3 py-3 text-[13px] text-[#787774]">{p.location ?? <span className="text-[#acaba8]">—</span>}</td>
+                        <td className="px-3 py-3 text-[13px] text-[#787774]">{p.gc_name ?? <span className="text-[#acaba8]">—</span>}</td>
+                        <td className="px-3 py-3">
+                          <div className="flex items-center gap-1.5 justify-end opacity-0 group-hover:opacity-100 transition-opacity">
+                            <button
+                              onClick={() => openEditProject(p)}
+                              className="p-1 rounded text-[#acaba8] hover:text-[#787774] hover:bg-[#e9e9e7] transition-colors"
+                              title="Edit"
+                            >
+                              <PencilIcon />
+                            </button>
+                            <button
+                              onClick={() => deleteProject(p)}
+                              className="p-1 rounded text-[#acaba8] hover:text-red-400 hover:bg-[#e9e9e7] transition-colors"
+                              title="Delete"
+                            >
+                              <XIcon className="h-3 w-3" />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+
+            {projectMessage && (
+              <div className={`text-center text-[13px] ${projectMessage.ok ? "text-[#787774]" : "text-red-500"}`}>
+                {projectMessage.text}
+              </div>
+            )}
+          </div>
+        )}
+
+      </div>
+    </div>
+  )
+}
