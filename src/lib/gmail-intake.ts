@@ -24,20 +24,49 @@ interface ClassificationResult {
   reasoning: string | null
 }
 
+// ─── Logging ──────────────────────────────────────────────────────────────────
+
+function log(step: string, data?: unknown) {
+  const payload = data !== undefined ? ` ${JSON.stringify(data)}` : ""
+  console.log(`[gmail-intake] ${step}${payload}`)
+}
+
+function logError(step: string, err: unknown) {
+  const detail = err instanceof Error
+    ? `${err.message}\n${err.stack}`
+    : JSON.stringify(err)
+  console.error(`[gmail-intake] FAIL ${step}: ${detail}`)
+}
+
 // ─── Constants ────────────────────────────────────────────────────────────────
 
+// Accepted MIME types for attachments — also check filename extension as a fallback
+// because some mail clients send PDFs with application/octet-stream
 const ACCEPTED_MIMES = new Set([
   "application/pdf",
+  "application/octet-stream",   // generic binary — confirmed by extension below
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
   "application/msword",
+  "application/x-pdf",
 ])
+
+const PDF_EXTENSIONS  = new Set([".pdf"])
+const WORD_EXTENSIONS = new Set([".doc", ".docx"])
 
 const MAX_PDF_BYTES = 20 * 1024 * 1024
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
+function isAcceptedAttachment(part: GmailPart): boolean {
+  const name = part.filename?.trim() ?? ""
+  if (!name) return false
+  const ext  = name.slice(name.lastIndexOf(".")).toLowerCase()
+  const mime = part.mimeType ?? ""
+  return ACCEPTED_MIMES.has(mime) && (PDF_EXTENSIONS.has(ext) || WORD_EXTENSIONS.has(ext))
+}
+
 function collectAttachments(part: GmailPart, out: GmailPart[] = []): GmailPart[] {
-  if (part.filename?.trim() && ACCEPTED_MIMES.has(part.mimeType ?? "")) {
+  if (isAcceptedAttachment(part)) {
     out.push(part)
   }
   for (const child of part.parts ?? []) {
@@ -57,38 +86,64 @@ async function gmailGet(token: string, url: string): Promise<Response> {
 // ─── Main entry point ─────────────────────────────────────────────────────────
 
 export async function processGmailNotification(emailAddress: string, historyId: string): Promise<void> {
-  // Service-role client bypasses RLS — this runs server-side outside a user session
+  log("start", { emailAddress, historyId })
+
+  if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    log("FAIL env: NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY is not set")
+    return
+  }
+
+  if (!process.env.ANTHROPIC_API_KEY) {
+    log("FAIL env: ANTHROPIC_API_KEY is not set")
+    return
+  }
+
   const supabase = createServiceClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!,
+    process.env.NEXT_PUBLIC_SUPABASE_URL,
+    process.env.SUPABASE_SERVICE_ROLE_KEY,
     { auth: { persistSession: false } }
   )
 
-  const { data: conn } = await supabase
+  // ── 1. Look up the stored connection ───────────────────────────────────────
+  const { data: conn, error: connErr } = await supabase
     .from("gmail_connections")
     .select("user_id, access_token, refresh_token, token_expiry, history_id")
     .eq("gmail_address", emailAddress)
     .single()
 
-  if (!conn) return
+  if (connErr || !conn) {
+    log("FAIL connection-lookup", { emailAddress, error: connErr?.message ?? "no row returned" })
+    return
+  }
+  log("connection-found", { userId: conn.user_id, storedHistoryId: conn.history_id })
 
-  // Refresh access token if it expires within 5 minutes
+  // ── 2. Ensure a valid access token ─────────────────────────────────────────
   let accessToken = conn.access_token as string
   const tokenExpiry = conn.token_expiry ? new Date(conn.token_expiry as string).getTime() : 0
   if (Date.now() + 5 * 60 * 1000 >= tokenExpiry) {
-    const refreshed = await refreshAccessToken(conn.refresh_token as string)
-    accessToken = refreshed.access_token
-    await supabase
-      .from("gmail_connections")
-      .update({
-        access_token: accessToken,
-        token_expiry: new Date(Date.now() + refreshed.expires_in * 1000).toISOString(),
-      })
-      .eq("gmail_address", emailAddress)
+    log("token-refresh: triggering refresh")
+    try {
+      const refreshed = await refreshAccessToken(conn.refresh_token as string)
+      accessToken = refreshed.access_token
+      await supabase
+        .from("gmail_connections")
+        .update({
+          access_token: accessToken,
+          token_expiry: new Date(Date.now() + refreshed.expires_in * 1000).toISOString(),
+        })
+        .eq("gmail_address", emailAddress)
+      log("token-refresh: success")
+    } catch (err) {
+      logError("token-refresh", err)
+      return
+    }
+  } else {
+    log("token-refresh: token still valid")
   }
 
-  // Use the stored historyId as the start of the range to avoid missing messages
+  // ── 3. Fetch Gmail history since last cursor ────────────────────────────────
   const startHistoryId = (conn.history_id as string) ?? historyId
+  log("history-fetch", { startHistoryId, incomingHistoryId: historyId })
 
   const histRes = await gmailGet(
     accessToken,
@@ -96,27 +151,45 @@ export async function processGmailNotification(emailAddress: string, historyId: 
   )
   const histData = await histRes.json()
 
-  // Advance the cursor regardless of whether there are new messages
+  log("history-response", {
+    status: histRes.status,
+    hasHistory: Array.isArray(histData.history),
+    historyLength: histData.history?.length ?? 0,
+    error: histData.error ?? null,
+  })
+
+  // Advance the cursor regardless so we don't reprocess on the next notification
   await supabase
     .from("gmail_connections")
     .update({ history_id: historyId })
     .eq("gmail_address", emailAddress)
 
-  if (!Array.isArray(histData.history) || histData.history.length === 0) return
+  if (histData.error) {
+    log("FAIL history-api-error", histData.error)
+    return
+  }
 
-  // Deduplicate message IDs across history items
+  if (!Array.isArray(histData.history) || histData.history.length === 0) {
+    log("history-empty: no new messages to process")
+    return
+  }
+
+  // ── 4. Collect unique message IDs ──────────────────────────────────────────
   const messageIds = new Set<string>()
   for (const item of histData.history as Array<{ messagesAdded?: Array<{ message: { id: string } }> }>) {
     for (const added of item.messagesAdded ?? []) {
       messageIds.add(added.message.id)
     }
   }
+  log("messages-found", { count: messageIds.size, ids: [...messageIds] })
 
-  const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! })
+  const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
   for (const msgId of messageIds) {
     await processMessage(supabase, anthropic, accessToken, msgId, conn.user_id as string)
   }
+
+  log("done", { emailAddress, processedMessages: messageIds.size })
 }
 
 // ─── Per-message processing ───────────────────────────────────────────────────
@@ -128,26 +201,44 @@ async function processMessage(
   messageId: string,
   userId: string
 ): Promise<void> {
+  log("message-fetch", { messageId })
+
   const res = await gmailGet(
     accessToken,
     `https://gmail.googleapis.com/gmail/v1/users/me/messages/${messageId}?format=full`
   )
-  if (!res.ok) return
-  const msg = await res.json()
 
-  const headers   = (msg.payload?.headers ?? []) as Array<{ name: string; value: string }>
-  const subject   = getHeader(headers, "Subject") || "(no subject)"
-  const fromRaw   = getHeader(headers, "From")
+  if (!res.ok) {
+    log("FAIL message-fetch", { messageId, status: res.status, statusText: res.statusText })
+    return
+  }
+
+  const msg     = await res.json()
+  const headers = (msg.payload?.headers ?? []) as Array<{ name: string; value: string }>
+  const subject = getHeader(headers, "Subject") || "(no subject)"
+  const fromRaw = getHeader(headers, "From")
   const dateHeader = getHeader(headers, "Date")
 
-  // Parse "Display Name <addr@example.com>" format
-  const fromMatch  = fromRaw.match(/^"?([^"<]*)"?\s*<?([^>]*)>?$/)
+  const fromMatch   = fromRaw.match(/^"?([^"<]*)"?\s*<?([^>]*)>?$/)
   const senderName  = fromMatch?.[1]?.trim() || fromRaw
   const senderEmail = fromMatch?.[2]?.trim() || fromRaw
   const receivedAt  = dateHeader ? new Date(dateHeader).toISOString() : new Date().toISOString()
 
   const attachments = collectAttachments(msg.payload ?? {})
-  if (attachments.length === 0) return
+
+  log("message-parsed", {
+    messageId,
+    subject,
+    from: fromRaw,
+    date: dateHeader,
+    attachmentCount: attachments.length,
+    attachments: attachments.map(a => ({ filename: a.filename, mimeType: a.mimeType, size: a.body?.size })),
+  })
+
+  if (attachments.length === 0) {
+    log("message-skip: no accepted attachments", { messageId, subject })
+    return
+  }
 
   for (const part of attachments) {
     await processAttachment({
@@ -176,48 +267,71 @@ async function processAttachment(ctx: AttachmentCtx): Promise<void> {
   const { supabase, anthropic, accessToken, messageId, part,
           subject, senderName, senderEmail, receivedAt, userId } = ctx
 
-  // Download bytes — small attachments are inlined; larger ones need a separate call
+  const fileName = part.filename?.trim() || `attachment_${Date.now()}.bin`
+  log("attachment-start", { fileName, mimeType: part.mimeType, bodySize: part.body?.size, hasInlineData: !!part.body?.data, hasAttachmentId: !!part.body?.attachmentId })
+
+  // ── Download bytes ─────────────────────────────────────────────────────────
   let base64url: string
+
   if (part.body?.data) {
     base64url = part.body.data
+    log("attachment-data: using inline body data")
   } else if (part.body?.attachmentId) {
-    const r = await gmailGet(
-      accessToken,
-      `https://gmail.googleapis.com/gmail/v1/users/me/messages/${messageId}/attachments/${part.body.attachmentId}`
-    )
-    if (!r.ok) return
+    const attachUrl = `https://gmail.googleapis.com/gmail/v1/users/me/messages/${messageId}/attachments/${part.body.attachmentId}`
+    log("attachment-data: fetching from API", { attachmentId: part.body.attachmentId })
+    const r = await gmailGet(accessToken, attachUrl)
+    if (!r.ok) {
+      log("FAIL attachment-download", { status: r.status, statusText: r.statusText, fileName })
+      return
+    }
     const d = await r.json()
     base64url = d.data as string
+    if (!base64url) {
+      log("FAIL attachment-download: response had no data field", { fileName, responseKeys: Object.keys(d) })
+      return
+    }
   } else {
+    log("FAIL attachment-skip: no body data and no attachmentId", { fileName })
     return
   }
 
-  // Gmail uses URL-safe base64 (- and _); convert to standard before decoding
+  // Gmail uses URL-safe base64 — convert before decoding
   const fileBytes = Buffer.from(base64url.replace(/-/g, "+").replace(/_/g, "/"), "base64")
   const mimeType  = part.mimeType ?? "application/octet-stream"
-  const isPdf     = mimeType === "application/pdf"
-  const ext       = isPdf ? "pdf" : "docx"
-  const fileName  = part.filename?.trim() || `attachment_${Date.now()}.${ext}`
+  const ext       = fileName.slice(fileName.lastIndexOf(".")).toLowerCase()
+  const isPdf     = ext === ".pdf"
 
-  // Classify with Claude using the exact prompt from the spec
+  log("attachment-downloaded", { fileName, mimeType, bytes: fileBytes.length })
+
+  // ── AI classification ──────────────────────────────────────────────────────
   const classification = await classifyDocument(anthropic, fileBytes, fileName, subject, senderName, isPdf)
+  log("classification-result", {
+    fileName,
+    division_number: classification.division_number,
+    section_number:  classification.section_number,
+    confidence_score: classification.confidence_score,
+    reasoning: classification.reasoning,
+  })
 
-  // Upload to Supabase storage
+  // ── Upload to Supabase storage ─────────────────────────────────────────────
   const safeName    = fileName.replace(/[^a-zA-Z0-9._-]/g, "_")
   const storagePath = `gmail-intake/${new Date().toISOString().slice(0, 10)}/${Date.now()}_${safeName}`
 
-  const { error: uploadErr } = await supabase.storage
+  log("storage-upload-start", { bucket: "submittals", path: storagePath, bytes: fileBytes.length })
+  const { data: storageData, error: uploadErr } = await supabase.storage
     .from("submittals")
     .upload(storagePath, fileBytes, { contentType: mimeType })
 
   if (uploadErr) {
-    console.error("[gmail-intake] storage upload failed:", uploadErr.message)
+    log("FAIL storage-upload", { path: storagePath, error: uploadErr.message, statusCode: (uploadErr as { statusCode?: string }).statusCode })
     return
   }
+  log("storage-upload-ok", { path: storageData?.path ?? storagePath })
 
+  // ── Insert database record ─────────────────────────────────────────────────
   const reviewStatus = (classification.confidence_score ?? 0) >= 70 ? "Received" : "Needs Review"
 
-  const { error: dbErr } = await supabase.from("submittals").insert({
+  const record = {
     file_name:     fileName,
     storage_path:  storagePath,
     mime_type:     mimeType,
@@ -234,11 +348,17 @@ async function processAttachment(ctx: AttachmentCtx): Promise<void> {
     project_id:    null,
     status:        "active",
     uploaded_by:   userId,
-  })
+  }
+
+  log("db-insert-start", { file_name: fileName, review_status: reviewStatus, uploaded_by: userId })
+  const { error: dbErr } = await supabase.from("submittals").insert(record)
 
   if (dbErr) {
-    console.error("[gmail-intake] db insert failed:", dbErr.message)
+    log("FAIL db-insert", { error: dbErr.message, code: dbErr.code, details: dbErr.details, hint: dbErr.hint, record_keys: Object.keys(record) })
+    return
   }
+
+  log("db-insert-ok", { fileName, reviewStatus })
 }
 
 // ─── AI classification ────────────────────────────────────────────────────────
@@ -257,17 +377,17 @@ async function classifyDocument(
     `Sender: ${senderName}`,
   ].join("\n")
 
-  // Exact prompt from spec
   const prompt = `You are a construction submittal expert. Based on the following information about a submittal document, determine the correct CSI MasterFormat division and section. Return ONLY a JSON object with these exact fields: division_number, division_name, section_number, section_name, confidence_score (0-100), reasoning
 
 ${context}`
+
+  log("classify-start", { fileName, isPdf, fileSizeKb: Math.round(fileBytes.length / 1024) })
 
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let content: any
 
     if (isPdf && fileBytes.length <= MAX_PDF_BYTES) {
-      // Send PDF natively so Claude can read the full document text
       content = [
         {
           type: "document",
@@ -275,9 +395,10 @@ ${context}`
         },
         { type: "text", text: prompt },
       ]
+      log("classify: sending PDF natively to Claude")
     } else {
-      // Word docs or oversized PDFs — classify from filename + subject + sender only
       content = prompt
+      log("classify: text-only (Word doc or oversized PDF)")
     }
 
     const response = await anthropic.messages.create({
@@ -286,12 +407,21 @@ ${context}`
       messages: [{ role: "user", content }],
     })
 
-    const text  = response.content[0].type === "text" ? response.content[0].text : ""
-    const match = text.match(/\{[\s\S]*\}/)
-    if (!match) return fallbackResult(fileName)
+    const rawText = response.content[0].type === "text" ? response.content[0].text : ""
+    log("classify-raw-response", { fileName, rawText: rawText.slice(0, 500) })
 
-    return { ...fallbackResult(fileName), ...JSON.parse(match[0]) }
-  } catch {
+    const match = rawText.match(/\{[\s\S]*\}/)
+    if (!match) {
+      log("FAIL classify: no JSON object in response", { fileName, rawText })
+      return fallbackResult(fileName)
+    }
+
+    const parsed = JSON.parse(match[0])
+    log("classify-parsed", { fileName, parsed })
+    return { ...fallbackResult(fileName), ...parsed }
+
+  } catch (err) {
+    logError("classify", err)
     return fallbackResult(fileName)
   }
 }
