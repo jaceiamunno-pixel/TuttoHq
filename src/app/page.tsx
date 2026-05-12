@@ -54,6 +54,7 @@ interface BatchItem { id: string; file: File; status: BatchStatus; divNum: strin
 
 interface Project { id: string; name: string; number: string | null; location: string | null; gc_name: string | null; architect: string | null }
 interface TeamMember { id: string; name: string; title: string | null; email: string | null }
+interface RFI { id: string; rfi_number: string; subject: string; description: string | null; submitted_by: string | null; assigned_to: string | null; date_issued: string | null; due_date: string | null; status: string; response: string | null; project_id: string | null; created_at: string; uploaded_by: string }
 type FileModalStep = "project" | "coversheet" | "form"
 interface OpenFileCtx { file: SubmittalFile; divNum: string; divName: string; secCode: string; secName: string }
 interface CoverFormData { projectName: string; projectNumber: string; projectLocation: string; gcName: string; architect: string; specSectionNo: string; specSectionTitle: string; description: string; dateSubmitted: string; submittalNo: string; reviewedBy: string; certifiedBy: string; notes: string }
@@ -296,6 +297,11 @@ function fmtDate(iso: string) {
   return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
 }
 
+function fmtDateOnly(d: string) {
+  const [y, m, day] = d.split("-").map(Number)
+  return new Date(y, m - 1, day).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
+}
+
 // ─── Icons ────────────────────────────────────────────────────────────────────
 
 function ToggleIcon({ open }: { open: boolean }) {
@@ -369,6 +375,18 @@ const STATUS_STYLES: Record<string, string> = {
 }
 function StatusBadge({ status }: { status: string }) {
   const cls = STATUS_STYLES[status] ?? "bg-[#2a3347] text-[#8b9ab5] border-[#2a3347]"
+  return <span className={`inline-flex items-center px-2 py-0.5 rounded border text-[11px] font-medium ${cls}`}>{status}</span>
+}
+
+const RFI_STATUS_STYLES: Record<string, string> = {
+  "Open":         "bg-blue-400/15 text-blue-300 border-blue-400/20",
+  "Under Review": "bg-amber-400/15 text-amber-300 border-amber-400/20",
+  "Answered":     "bg-teal-400/15 text-teal-300 border-teal-400/20",
+  "Closed":       "bg-emerald-400/15 text-emerald-300 border-emerald-400/20",
+  "Void":         "bg-[#2a3347] text-[#4f617a] border-[#2a3347]",
+}
+function RfiStatusBadge({ status }: { status: string }) {
+  const cls = RFI_STATUS_STYLES[status] ?? "bg-[#2a3347] text-[#8b9ab5] border-[#2a3347]"
   return <span className={`inline-flex items-center px-2 py-0.5 rounded border text-[11px] font-medium ${cls}`}>{status}</span>
 }
 
@@ -536,6 +554,26 @@ export default function Home() {
   const [modalProjectId, setModalProjectId] = useState("")
   const [coverForm, setCoverForm]         = useState<CoverFormData | null>(null)
   const [generatingCover, setGeneratingCover] = useState(false)
+
+  // Module navigation
+  const [activeModule, setActiveModule] = useState<"submittals" | "rfis">("submittals")
+
+  // RFI log
+  const [rfis, setRfis]                               = useState<RFI[]>([])
+  const [rfisLoading, setRfisLoading]                 = useState(false)
+  const [showNewRfi, setShowNewRfi]                   = useState(false)
+  const [viewRfi, setViewRfi]                         = useState<RFI | null>(null)
+  const [rfiSubject, setRfiSubject]                   = useState("")
+  const [rfiDescription, setRfiDescription]           = useState("")
+  const [rfiSubmittedBy, setRfiSubmittedBy]           = useState("")
+  const [rfiAssignedTo, setRfiAssignedTo]             = useState("")
+  const [rfiDateIssued, setRfiDateIssued]             = useState(() => new Date().toISOString().slice(0, 10))
+  const [rfiDueDate, setRfiDueDate]                   = useState("")
+  const [rfiProjectId, setRfiProjectId]               = useState("")
+  const [rfiSaving, setRfiSaving]                     = useState(false)
+  const [rfiResponse, setRfiResponse]                 = useState("")
+  const [rfiResponseStatus, setRfiResponseStatus]     = useState("")
+  const [rfiRespondSaving, setRfiRespondSaving]       = useState(false)
 
   const inputRef = useRef<HTMLInputElement>(null)
 
@@ -739,6 +777,18 @@ export default function Home() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { loadSubmittals(activeProjectId) }, [activeProjectId])
 
+  function loadRfis() {
+    setRfisLoading(true)
+    fetch("/api/rfis")
+      .then(r => r.json())
+      .then(d => setRfis(d.rfis ?? []))
+      .catch(() => setRfis([]))
+      .finally(() => setRfisLoading(false))
+  }
+
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { if (activeModule === "rfis") loadRfis() }, [activeModule])
+
   function openEditModal(s: SubmittalRecord) {
     setEditSubmittal(s)
     setEditStatus(s.review_status ?? "Received")
@@ -766,6 +816,37 @@ export default function Home() {
       })
       if (res.ok) { setEditSubmittal(null); loadSubmittals(); loadTree() }
     } finally { setEditSaving(false) }
+  }
+
+  async function createRfi(e: React.FormEvent) {
+    e.preventDefault()
+    setRfiSaving(true)
+    try {
+      const res = await fetch("/api/rfis", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ subject: rfiSubject, description: rfiDescription || null, submitted_by: rfiSubmittedBy || null, assigned_to: rfiAssignedTo || null, date_issued: rfiDateIssued || null, due_date: rfiDueDate || null, project_id: rfiProjectId || null }),
+      })
+      if (res.ok) {
+        setShowNewRfi(false)
+        setRfiSubject(""); setRfiDescription(""); setRfiSubmittedBy(""); setRfiAssignedTo(""); setRfiDueDate(""); setRfiProjectId("")
+        setRfiDateIssued(new Date().toISOString().slice(0, 10))
+        loadRfis()
+      }
+    } finally { setRfiSaving(false) }
+  }
+
+  async function respondRfi() {
+    if (!viewRfi) return
+    setRfiRespondSaving(true)
+    try {
+      const res = await fetch(`/api/rfis/${viewRfi.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ response: rfiResponse, status: rfiResponseStatus }),
+      })
+      if (res.ok) { setViewRfi(null); setRfiResponse(""); loadRfis() }
+    } finally { setRfiRespondSaving(false) }
   }
 
   function closeBatch() {
@@ -1160,7 +1241,20 @@ export default function Home() {
           </div>
         )}
 
-        {/* Project tabs + action bar */}
+        {/* Module navigation */}
+        <div className="flex-shrink-0 border-b border-[#2a3347] bg-[#161b27] flex items-center px-4 gap-1">
+          <button onClick={() => setActiveModule("submittals")}
+            className={`px-3 py-2.5 text-[13px] font-medium border-b-2 transition-colors whitespace-nowrap ${activeModule === "submittals" ? "border-[#2563eb] text-[#e8edf5]" : "border-transparent text-[#4f617a] hover:text-[#8b9ab5]"}`}>
+            Submittals
+          </button>
+          <button onClick={() => setActiveModule("rfis")}
+            className={`px-3 py-2.5 text-[13px] font-medium border-b-2 transition-colors whitespace-nowrap ${activeModule === "rfis" ? "border-[#2563eb] text-[#e8edf5]" : "border-transparent text-[#4f617a] hover:text-[#8b9ab5]"}`}>
+            RFIs
+          </button>
+        </div>
+
+        {/* Submittal action bar */}
+        {activeModule === "submittals" && (
         <div className="flex-shrink-0 border-b border-[#2a3347] bg-[#161b27] flex items-center justify-between">
           <div className="flex items-center overflow-x-auto">
             <button
@@ -1194,9 +1288,23 @@ export default function Home() {
             </button>
           </div>
         </div>
+        )}
 
-        {/* Submittal log */}
+        {/* RFI action bar */}
+        {activeModule === "rfis" && (
+          <div className="flex-shrink-0 border-b border-[#2a3347] bg-[#161b27] flex items-center justify-between px-4 py-2.5">
+            <p className="text-[13px] font-semibold text-[#e8edf5]">RFI Log <span className="text-[#4f617a] font-normal ml-1">({rfis.length})</span></p>
+            <button onClick={() => setShowNewRfi(true)} className="h-8 px-4 rounded-md bg-[#2563eb] text-white text-[13px] font-semibold hover:bg-[#1d4ed8] transition-colors flex items-center gap-1.5">
+              <PlusIcon /> New RFI
+            </button>
+          </div>
+        )}
+
+        {/* Content */}
         <div className="flex-1 overflow-y-auto min-h-0">
+
+          {/* Submittal log */}
+          {activeModule === "submittals" && (<>
           {logLoading ? (
             <div className="flex items-center justify-center h-40 gap-2 text-[13px] text-[#4f617a]">
               <SpinnerIcon className="h-4 w-4" /> Loading…
@@ -1264,8 +1372,209 @@ export default function Home() {
               </tbody>
             </table>
           )}
+          </>)}
+
+          {/* RFI log */}
+          {activeModule === "rfis" && (
+            rfisLoading ? (
+              <div className="flex items-center justify-center h-40 gap-2 text-[13px] text-[#4f617a]">
+                <SpinnerIcon className="h-4 w-4" /> Loading…
+              </div>
+            ) : rfis.length === 0 ? (
+              <div className="flex flex-col items-center justify-center h-full py-24 text-center">
+                <div className="w-14 h-14 rounded-2xl bg-[#2563eb]/10 border border-[#2563eb]/20 flex items-center justify-center mb-4">
+                  <svg className="w-7 h-7 text-[#3b82f6]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                </div>
+                <p className="text-[15px] font-bold text-[#c8d3e6]">No RFIs yet</p>
+                <p className="text-[13px] text-[#4f617a] mt-1.5">Create your first RFI to track questions and responses.</p>
+                <button onClick={() => setShowNewRfi(true)} className="mt-5 h-9 px-5 rounded-lg bg-[#2563eb] text-white text-[13px] font-semibold hover:bg-[#1d4ed8] transition-colors inline-flex items-center gap-2">
+                  <PlusIcon /> New RFI
+                </button>
+              </div>
+            ) : (
+              <table className="w-full text-[13px] border-collapse">
+                <thead className="sticky top-0 bg-[#161b27] z-10">
+                  <tr className="border-b border-[#2a3347]">
+                    <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#4f617a] uppercase tracking-widest w-10">#</th>
+                    <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#4f617a] uppercase tracking-widest w-24">RFI No.</th>
+                    <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#4f617a] uppercase tracking-widest">Subject</th>
+                    <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#4f617a] uppercase tracking-widest w-32">Assigned To</th>
+                    <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#4f617a] uppercase tracking-widest w-24">Issued</th>
+                    <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#4f617a] uppercase tracking-widest w-24">Due</th>
+                    <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#4f617a] uppercase tracking-widest w-28">Status</th>
+                    <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#4f617a] uppercase tracking-widest w-20">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rfis.map((r, i) => {
+                    const isOverdue = r.due_date && new Date(r.due_date) < new Date() && r.status !== "Closed" && r.status !== "Answered" && r.status !== "Void"
+                    return (
+                      <tr key={r.id} className="border-b border-[#2a3347]/40 hover:bg-white/[0.02] transition-colors">
+                        <td className="px-4 py-2.5 text-[#4f617a] tabular-nums text-[12px]">{rfis.length - i}</td>
+                        <td className="px-4 py-2.5 text-[12px] font-mono text-[#60a5fa]">{r.rfi_number}</td>
+                        <td className="px-4 py-2.5 max-w-0">
+                          <p className="text-[#c8d3e6] font-medium truncate" title={r.subject}>{r.subject}</p>
+                          {r.description && <p className="text-[11px] text-[#4f617a] truncate">{r.description}</p>}
+                        </td>
+                        <td className="px-4 py-2.5 text-[#8b9ab5] text-[12px]">{r.assigned_to ?? "—"}</td>
+                        <td className="px-4 py-2.5 text-[#4f617a] text-[12px] whitespace-nowrap">{r.date_issued ? fmtDateOnly(r.date_issued) : "—"}</td>
+                        <td className="px-4 py-2.5 text-[12px] whitespace-nowrap">
+                          {r.due_date
+                            ? <span className={isOverdue ? "text-red-400 font-medium" : "text-[#4f617a]"}>{fmtDateOnly(r.due_date)}{isOverdue ? " ⚠" : ""}</span>
+                            : <span className="text-[#4f617a]">—</span>}
+                        </td>
+                        <td className="px-4 py-2.5"><RfiStatusBadge status={r.status} /></td>
+                        <td className="px-4 py-2.5">
+                          <button onClick={() => { setViewRfi(r); setRfiResponse(r.response ?? ""); setRfiResponseStatus(r.status) }}
+                            className="text-[11px] text-[#8b9ab5] hover:text-[#e8edf5] px-2 py-1 rounded hover:bg-white/[0.05] transition-colors">
+                            View
+                          </button>
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            )
+          )}
         </div>
       </div>
+
+      {/* ── New RFI modal ────────────────────────────────────────────────── */}
+      {showNewRfi && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center"
+          onClick={e => { if (e.target === e.currentTarget) setShowNewRfi(false) }}>
+          <div className="bg-[#1c2333] rounded-xl border border-[#2a3347] shadow-2xl w-[520px]">
+            <div className="flex items-center justify-between px-6 pt-5 pb-4 border-b border-[#2a3347]">
+              <h2 className="text-[15px] font-bold text-[#e8edf5]">New RFI</h2>
+              <button onClick={() => setShowNewRfi(false)} className="text-[#4f617a] hover:text-[#8b9ab5] transition-colors">
+                <XIcon className="h-4 w-4" />
+              </button>
+            </div>
+            <form onSubmit={createRfi}>
+              <div className="px-6 py-4 space-y-3">
+                <div>
+                  <label className={labelCls}>Subject <span className="text-red-400">*</span></label>
+                  <input type="text" required value={rfiSubject} onChange={e => setRfiSubject(e.target.value)}
+                    placeholder="Brief description of the question or issue" autoFocus className={inputCls} />
+                </div>
+                <div>
+                  <label className={labelCls}>Description</label>
+                  <textarea value={rfiDescription} onChange={e => setRfiDescription(e.target.value)}
+                    rows={3} placeholder="Detailed description, reference specs, drawings, etc."
+                    className="w-full px-3 py-2 rounded-md border border-[#2a3347] text-[13px] text-[#e8edf5] bg-[#0d1117] focus:outline-none focus:ring-1 focus:ring-[#2563eb]/40 resize-none placeholder:text-[#4f617a]" />
+                </div>
+                <div className="flex gap-3">
+                  <div className="flex-1">
+                    <label className={labelCls}>Submitted By</label>
+                    <select value={rfiSubmittedBy} onChange={e => setRfiSubmittedBy(e.target.value)}
+                      className="w-full h-9 px-3 rounded-md border border-[#2a3347] text-[13px] text-[#e8edf5] bg-[#0d1117] focus:outline-none focus:ring-1 focus:ring-[#2563eb]/40">
+                      <option value="">Select…</option>
+                      {teamMembers.map(m => <option key={m.id} value={m.name}>{m.name}</option>)}
+                    </select>
+                  </div>
+                  <div className="flex-1">
+                    <label className={labelCls}>Assigned To</label>
+                    <input type="text" value={rfiAssignedTo} onChange={e => setRfiAssignedTo(e.target.value)}
+                      placeholder="Architect, Engineer, GC…" className={inputCls} />
+                  </div>
+                </div>
+                <div className="flex gap-3">
+                  <div className="flex-1">
+                    <label className={labelCls}>Date Issued</label>
+                    <input type="date" value={rfiDateIssued} onChange={e => setRfiDateIssued(e.target.value)} className={inputCls} />
+                  </div>
+                  <div className="flex-1">
+                    <label className={labelCls}>Due Date</label>
+                    <input type="date" value={rfiDueDate} onChange={e => setRfiDueDate(e.target.value)} className={inputCls} />
+                  </div>
+                </div>
+                {appProjects.length > 0 && (
+                  <div>
+                    <label className={labelCls}>Project</label>
+                    <select value={rfiProjectId} onChange={e => setRfiProjectId(e.target.value)}
+                      className="w-full h-9 px-3 rounded-md border border-[#2a3347] text-[13px] text-[#e8edf5] bg-[#0d1117] focus:outline-none focus:ring-1 focus:ring-[#2563eb]/40">
+                      <option value="">None</option>
+                      {appProjects.map(p => <option key={p.id} value={p.id}>{p.name}{p.number ? ` — ${p.number}` : ""}</option>)}
+                    </select>
+                  </div>
+                )}
+              </div>
+              <div className="flex justify-end gap-2 px-6 py-4 border-t border-[#2a3347]">
+                <button type="button" onClick={() => setShowNewRfi(false)}
+                  className="h-8 px-4 rounded-md border border-[#2a3347] text-[13px] text-[#8b9ab5] hover:bg-white/[0.05] transition-colors">
+                  Cancel
+                </button>
+                <button type="submit" disabled={rfiSaving || !rfiSubject.trim()}
+                  className="h-8 px-4 rounded-md bg-[#2563eb] text-white text-[13px] font-semibold hover:bg-[#1d4ed8] transition-colors disabled:opacity-50 flex items-center gap-2">
+                  {rfiSaving && <SpinnerIcon className="h-3 w-3" />}
+                  {rfiSaving ? "Creating…" : "Create RFI"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ── View/Respond RFI modal ────────────────────────────────────────── */}
+      {viewRfi && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center"
+          onClick={e => { if (e.target === e.currentTarget) setViewRfi(null) }}>
+          <div className="bg-[#1c2333] rounded-xl border border-[#2a3347] shadow-2xl w-[560px]">
+            <div className="flex items-center justify-between px-6 pt-5 pb-4 border-b border-[#2a3347]">
+              <div>
+                <span className="text-[11px] font-mono text-[#60a5fa]">{viewRfi.rfi_number}</span>
+                <h2 className="text-[15px] font-bold text-[#e8edf5] mt-0.5">{viewRfi.subject}</h2>
+              </div>
+              <button onClick={() => setViewRfi(null)} className="text-[#4f617a] hover:text-[#8b9ab5] transition-colors ml-4 flex-shrink-0">
+                <XIcon className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="px-6 py-4 space-y-4 max-h-[70vh] overflow-y-auto">
+              {viewRfi.description && (
+                <div className="rounded-md bg-[#2a3347]/50 px-3 py-2.5">
+                  <p className="text-[11px] font-bold text-[#4f617a] uppercase tracking-widest mb-1">Description</p>
+                  <p className="text-[13px] text-[#c8d3e6]">{viewRfi.description}</p>
+                </div>
+              )}
+              <div className="grid grid-cols-2 gap-3 text-[12px]">
+                {viewRfi.submitted_by && <div><span className="text-[#4f617a]">Submitted by: </span><span className="text-[#c8d3e6]">{viewRfi.submitted_by}</span></div>}
+                {viewRfi.assigned_to && <div><span className="text-[#4f617a]">Assigned to: </span><span className="text-[#c8d3e6]">{viewRfi.assigned_to}</span></div>}
+                {viewRfi.date_issued && <div><span className="text-[#4f617a]">Issued: </span><span className="text-[#c8d3e6]">{fmtDateOnly(viewRfi.date_issued)}</span></div>}
+                {viewRfi.due_date && <div><span className="text-[#4f617a]">Due: </span><span className={new Date(viewRfi.due_date) < new Date() && viewRfi.status !== "Closed" && viewRfi.status !== "Answered" ? "text-red-400 font-medium" : "text-[#c8d3e6]"}>{fmtDateOnly(viewRfi.due_date)}</span></div>}
+              </div>
+              <div className="border-t border-[#2a3347] pt-4 space-y-3">
+                <p className="text-[11px] font-bold text-[#4f617a] uppercase tracking-widest">Response</p>
+                <textarea value={rfiResponse} onChange={e => setRfiResponse(e.target.value)} rows={4}
+                  placeholder="Enter response here…"
+                  className="w-full px-3 py-2 rounded-md border border-[#2a3347] text-[13px] text-[#e8edf5] bg-[#0d1117] focus:outline-none focus:ring-1 focus:ring-[#2563eb]/40 resize-none placeholder:text-[#4f617a]" />
+                <div>
+                  <label className={labelCls}>Status</label>
+                  <select value={rfiResponseStatus} onChange={e => setRfiResponseStatus(e.target.value)}
+                    className="w-full h-9 px-3 rounded-md border border-[#2a3347] text-[13px] text-[#e8edf5] bg-[#0d1117] focus:outline-none focus:ring-1 focus:ring-[#2563eb]/40">
+                    {["Open", "Under Review", "Answered", "Closed", "Void"].map(s => (
+                      <option key={s} value={s}>{s}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 px-6 py-4 border-t border-[#2a3347]">
+              <button onClick={() => setViewRfi(null)}
+                className="h-8 px-4 rounded-md border border-[#2a3347] text-[13px] text-[#8b9ab5] hover:bg-white/[0.05] transition-colors">
+                Close
+              </button>
+              <button onClick={respondRfi} disabled={rfiRespondSaving}
+                className="h-8 px-4 rounded-md bg-[#2563eb] text-white text-[13px] font-semibold hover:bg-[#1d4ed8] transition-colors disabled:opacity-50 flex items-center gap-2">
+                {rfiRespondSaving && <SpinnerIcon className="h-3 w-3" />}
+                {rfiRespondSaving ? "Saving…" : "Save Response"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── File open modal ───────────────────────────────────────────────── */}
       {openFileCtx && fileModalStep === "project" && (
