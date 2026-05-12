@@ -363,6 +363,17 @@ async function processAttachment(ctx: AttachmentCtx): Promise<void> {
 
 // ─── AI classification ────────────────────────────────────────────────────────
 
+function extractCsiFromFilename(fileName: string): string | null {
+  const base = fileName.slice(0, fileName.lastIndexOf(".")) || fileName
+  // Match "09-22-16", "09 22 16", "09_22_16"
+  const spaced = base.match(/\b(\d{2})[-\s_](\d{2})[-\s_](\d{2})\b/)
+  if (spaced) return `${spaced[1]} ${spaced[2]} ${spaced[3]}`
+  // Match compact "092216" at word boundary
+  const compact = base.match(/\b(\d{2})(\d{2})(\d{2})\b/)
+  if (compact) return `${compact[1]} ${compact[2]} ${compact[3]}`
+  return null
+}
+
 async function classifyDocument(
   anthropic: Anthropic,
   fileBytes: Buffer,
@@ -371,14 +382,60 @@ async function classifyDocument(
   senderName: string,
   isPdf: boolean
 ): Promise<ClassificationResult> {
+  const embeddedSection = extractCsiFromFilename(fileName)
+
   const context = [
     `Filename: ${fileName}`,
+    embeddedSection ? `Detected CSI section in filename: ${embeddedSection}` : null,
     `Email Subject: ${subject}`,
     `Sender: ${senderName}`,
-  ].join("\n")
+  ].filter(Boolean).join("\n")
 
-  const prompt = `You are a construction submittal expert. Based on the following information about a submittal document, determine the correct CSI MasterFormat division and section. Return ONLY a JSON object with these exact fields: division_number, division_name, section_number, section_name, confidence_score (0-100), reasoning
+  const prompt = `You are a construction submittal classification expert with deep knowledge of CSI MasterFormat 2016.
 
+Follow these steps in order:
+1. If "Detected CSI section in filename" is present, use that section number directly — it is authoritative.
+2. Read the document content for explicit section/division references.
+3. Use the filename text, email subject, and sender as supporting signals.
+
+CSI MasterFormat Divisions (partial — use your full knowledge beyond this list):
+00 Procurement and Contracting Requirements
+01 General Requirements
+02 Existing Conditions
+03 Concrete
+04 Masonry
+05 Metals (structural steel, metal fabrications, cold-formed STRUCTURAL framing)
+06 Wood, Plastics, and Composites
+07 Thermal and Moisture Protection
+08 Openings (doors, windows, curtain walls, glazing hardware)
+09 Finishes (gypsum board, plaster, tiling, flooring, painting, acoustic ceilings — includes NON-STRUCTURAL metal framing 09 22 16)
+10 Specialties
+11 Equipment
+12 Furnishings
+13 Special Construction
+14 Conveying Equipment
+21 Fire Suppression
+22 Plumbing
+23 HVAC
+26 Electrical
+27 Communications
+28 Electronic Safety and Security
+31 Earthwork
+32 Exterior Improvements
+33 Utilities
+
+CRITICAL DISTINCTIONS:
+- "Non-Structural Metal Framing" → Division 09, section 09 22 16 (NOT Division 05)
+- "Structural Steel Framing" → Division 05
+- Cold-formed metal framing for walls/ceilings/soffits → 09 22 16
+- Cold-formed structural framing → 05 40 00
+- Doors → 08 11 xx, Windows → 08 50 xx, Curtain Walls → 08 44 xx
+- Roofing → 07 5x xx, Waterproofing → 07 1x xx, Insulation → 07 2x xx
+
+Return ONLY a valid JSON object with no extra text:
+{"division_number": "09", "division_name": "Finishes", "section_number": "09 22 16", "section_name": "Non-Structural Metal Framing", "confidence_score": 95, "reasoning": "Filename contains embedded section 09 22 16 and document confirms non-structural metal framing scope."}
+
+Context:
 ${context}`
 
   log("classify-start", { fileName, isPdf, fileSizeKb: Math.round(fileBytes.length / 1024) })
@@ -402,7 +459,7 @@ ${context}`
     }
 
     const response = await anthropic.messages.create({
-      model: "claude-haiku-4-5-20251001",
+      model: "claude-sonnet-4-6",
       max_tokens: 512,
       messages: [{ role: "user", content }],
     })
