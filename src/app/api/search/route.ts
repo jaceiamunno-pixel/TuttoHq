@@ -80,15 +80,9 @@ export async function GET(req: NextRequest) {
     return data ?? []
   })
 
-  // 2. Full-text search (search_vector is already case-insensitive)
-  queryFns.push(async () => {
-    const clean = q.replace(/[^a-zA-Z0-9\s]/g, " ")
-    const { data, error } = await supabase.from("submittals").select(SELECT)
-      .eq("status", "active")
-      .textSearch("search_vector", clean, { type: "websearch" })
-      .order("created_at", { ascending: false }).limit(30)
-    return error ? [] : (data ?? [])
-  })
+  // Full-text search on search_vector is intentionally omitted — that column
+  // includes ai_reasoning which causes false positives (e.g. "acoustic" matching
+  // metal framing because reasoning mentions "acoustic ceiling support").
 
   // 3. AI-expanded terms — ilike on each additional term
   for (const term of ai.terms) {
