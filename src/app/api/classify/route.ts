@@ -64,8 +64,12 @@ Also extract from the document (if present):
 - manufacturer: the manufacturer or brand name (e.g. "USG", "National Gypsum", "ClarkDietrich")
 - dimensions: size, thickness, or gauge (e.g. '5/8" x 4\' x 8\'', "25 Gauge", "3-5/8\" 20ga")
 
+Also provide:
+- confidence: integer 0–100 reflecting how certain you are (100 = explicit section code in document, 70–99 = clear product match, 50–69 = reasonable inference, <50 = guessing)
+- reasoning: one sentence explaining what in the document led to this classification
+
 Respond with ONLY a compact JSON object — no markdown, no explanation:
-{"division_num":"XX","division_name":"Name","section_code":"XX XX XX","section_name":"Name","material_name":"...or null","manufacturer":"...or null","dimensions":"...or null"}`
+{"division_num":"XX","division_name":"Name","section_code":"XX XX XX","section_name":"Name","material_name":"...or null","manufacturer":"...or null","dimensions":"...or null","confidence":85,"reasoning":"..."}`
 
 const MAX_PDF_BYTES = 20 * 1024 * 1024 // 20 MB
 
@@ -108,7 +112,7 @@ export async function POST(req: NextRequest) {
 
     const message = await client.messages.create({
       model: "claude-haiku-4-5-20251001",
-      max_tokens: 300,
+      max_tokens: 400,
       system: SYSTEM,
       messages: [{ role: "user", content: userContent }],
     })

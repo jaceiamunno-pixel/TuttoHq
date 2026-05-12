@@ -15,9 +15,12 @@ export async function POST(req: NextRequest) {
   const divisionName = formData.get("division_name") as string | null
   const sectionCode  = (formData.get("section_code") as string | null)?.trim() || null
   const sectionName  = (formData.get("section_name") as string | null)?.trim() || null
-  const materialName = (formData.get("material_name") as string | null)?.trim() || null
-  const manufacturer = (formData.get("manufacturer")  as string | null)?.trim() || null
-  const dimensions   = (formData.get("dimensions")    as string | null)?.trim() || null
+  const materialName  = (formData.get("material_name")  as string | null)?.trim() || null
+  const manufacturer  = (formData.get("manufacturer")   as string | null)?.trim() || null
+  const dimensions    = (formData.get("dimensions")     as string | null)?.trim() || null
+  const aiConfidence  = formData.get("ai_confidence")   ? parseInt(formData.get("ai_confidence") as string) : null
+  const aiReasoning   = (formData.get("ai_reasoning")  as string | null)?.trim() || null
+  const reviewStatus  = (aiConfidence !== null && aiConfidence < 70) ? "Needs Review" : "Received"
 
   if (!file || !divisionNum || !divisionName) {
     return NextResponse.json(
@@ -60,11 +63,14 @@ export async function POST(req: NextRequest) {
     division_name: divisionName,
     csi_section:   sectionCode,
     section_name:  sectionName,
-    material_name: materialName,
-    manufacturer:  manufacturer,
-    dimensions:    dimensions,
-    status:        "active",
-    uploaded_by:   user.id,
+    material_name:  materialName,
+    manufacturer:   manufacturer,
+    dimensions:     dimensions,
+    review_status:  reviewStatus,
+    ai_confidence:  aiConfidence,
+    ai_reasoning:   aiReasoning,
+    status:         "active",
+    uploaded_by:    user.id,
   })
 
   if (dbError) {

@@ -24,7 +24,29 @@ interface Division { num: string; name: string; sections: Section[]; file_count:
 
 type UploadStep = "file" | "classifying" | "suggested" | "manual" | "naming"
 interface NameOptions { materials: string[]; manufacturers: string[]; dimensions: string[] }
-interface AiResult { division_num: string; division_name: string; section_code: string; section_name: string; material_name?: string | null; manufacturer?: string | null; dimensions?: string | null }
+interface AiResult { division_num: string; division_name: string; section_code: string; section_name: string; material_name?: string | null; manufacturer?: string | null; dimensions?: string | null; confidence?: number; reasoning?: string }
+
+interface SubmittalRecord {
+  id: string
+  file_name: string
+  storage_path: string
+  mime_type: string | null
+  file_size: number | null
+  csi_division: string | null
+  division_name: string | null
+  csi_section: string | null
+  section_name: string | null
+  material_name: string | null
+  manufacturer: string | null
+  dimensions: string | null
+  review_status: string | null
+  ai_confidence: number | null
+  ai_reasoning: string | null
+  status: string
+  uploaded_by: string
+  created_at: string
+  project_id: string | null
+}
 
 type BatchStatus = "pending" | "classifying" | "ready" | "error" | "uploading" | "done" | "upload-error"
 type BatchPhase  = "select" | "classifying" | "review" | "uploading" | "done"
@@ -336,6 +358,20 @@ function SpinnerIcon({ className = "h-3 w-3" }: { className?: string }) {
   )
 }
 
+const STATUS_STYLES: Record<string, string> = {
+  "Received":               "bg-blue-400/15 text-blue-300 border-blue-400/20",
+  "Under Review":           "bg-amber-400/15 text-amber-300 border-amber-400/20",
+  "Approved":               "bg-emerald-400/15 text-emerald-300 border-emerald-400/20",
+  "Approved with Comments": "bg-teal-400/15 text-teal-300 border-teal-400/20",
+  "Rejected":               "bg-red-400/15 text-red-300 border-red-400/20",
+  "Revise and Resubmit":    "bg-orange-400/15 text-orange-300 border-orange-400/20",
+  "Needs Review":           "bg-amber-400/15 text-amber-300 border-amber-400/20",
+}
+function StatusBadge({ status }: { status: string }) {
+  const cls = STATUS_STYLES[status] ?? "bg-[#2a3347] text-[#8b9ab5] border-[#2a3347]"
+  return <span className={`inline-flex items-center px-2 py-0.5 rounded border text-[11px] font-medium ${cls}`}>{status}</span>
+}
+
 function LayersIcon() {
   return (
     <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -463,6 +499,18 @@ export default function Home() {
   const [nameMfr, setNameMfr]               = useState("")
   const [nameDims, setNameDims]             = useState("")
   const [nameOpts, setNameOpts]             = useState<NameOptions>({ materials: [], manufacturers: [], dimensions: [] })
+
+  // Submittal log
+  const [activeProjectId, setActiveProjectId] = useState<string | null>(null)
+  const [logSubmittals, setLogSubmittals]       = useState<SubmittalRecord[]>([])
+  const [logLoading, setLogLoading]             = useState(true)
+  const [editSubmittal, setEditSubmittal]       = useState<SubmittalRecord | null>(null)
+  const [editStatus, setEditStatus]             = useState("")
+  const [editDiv, setEditDiv]                   = useState("")
+  const [editDivName, setEditDivName]           = useState("")
+  const [editSec, setEditSec]                   = useState("")
+  const [editSecName, setEditSecName]           = useState("")
+  const [editSaving, setEditSaving]             = useState(false)
 
   // Batch upload
   const [showBatch, setShowBatch]     = useState(false)
@@ -678,6 +726,48 @@ export default function Home() {
       .finally(() => setLoadingSections(prev => { const n = new Set(prev); n.delete(code); return n }))
   }
 
+  function loadSubmittals(pid = activeProjectId) {
+    setLogLoading(true)
+    const url = pid ? `/api/submittals?project_id=${encodeURIComponent(pid)}` : "/api/submittals"
+    fetch(url)
+      .then(r => r.json())
+      .then(d => setLogSubmittals(d.submittals ?? []))
+      .catch(() => setLogSubmittals([]))
+      .finally(() => setLogLoading(false))
+  }
+
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { loadSubmittals(activeProjectId) }, [activeProjectId])
+
+  function openEditModal(s: SubmittalRecord) {
+    setEditSubmittal(s)
+    setEditStatus(s.review_status ?? "Received")
+    setEditDiv(s.csi_division ?? "")
+    setEditDivName(s.division_name ?? "")
+    setEditSec(s.csi_section ?? "")
+    setEditSecName(s.section_name ?? "")
+  }
+
+  async function saveEdit() {
+    if (!editSubmittal) return
+    setEditSaving(true)
+    const div = CSI_DIVISIONS.find(d => d.num === editDiv)
+    const sec = (CSI_SECTIONS[editDiv] ?? []).find(s => s.code === editSec)
+    const updates: Record<string, string | null> = {
+      review_status: editStatus || null,
+      csi_division:  editDiv || null,
+      division_name: div?.name ?? editDivName || null,
+      csi_section:   editSec || null,
+      section_name:  sec?.name ?? editSecName || null,
+    }
+    try {
+      const res = await fetch(`/api/submittals/${editSubmittal.id}`, {
+        method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(updates),
+      })
+      if (res.ok) { setEditSubmittal(null); loadSubmittals(); loadTree() }
+    } finally { setEditSaving(false) }
+  }
+
   function closeBatch() {
     setShowBatch(false)
     setBatchItems([])
@@ -760,6 +850,7 @@ export default function Home() {
     await Promise.all(toUpload.map(uploadOne))
     setBatchPhase("done")
     loadTree()
+    loadSubmittals()
     setSectionFiles({})
   }
 
@@ -778,6 +869,8 @@ export default function Home() {
     fd.append("material_name", nameMatl)
     fd.append("manufacturer",  nameMfr)
     fd.append("dimensions",    nameDims)
+    if (aiResult?.confidence != null) fd.append("ai_confidence", String(aiResult.confidence))
+    if (aiResult?.reasoning)          fd.append("ai_reasoning",  aiResult.reasoning)
 
     try {
       const res  = await fetch("/api/upload", { method: "POST", body: fd })
@@ -797,6 +890,7 @@ export default function Home() {
       setSectionFiles(prev => { const n = { ...prev }; delete n[uploadSec]; return n })
       refetchSection(uploadSec)
       loadTree()
+      loadSubmittals()
       closeModal()
     } catch (err) {
       setUploadError(err instanceof Error ? err.message : "Upload failed")
@@ -1057,31 +1151,120 @@ export default function Home() {
       </aside>
 
       {/* ── Main content area ─────────────────────────────────────────────── */}
-      <div className="flex-1 flex flex-col">
+      <div className="flex-1 flex flex-col min-h-0">
+
+        {/* Logo bar */}
         {logoUrl && (
-          <div className="flex-shrink-0 h-13 border-b border-[#2a3347] flex items-center justify-end px-6 bg-[#161b27]">
-            <img src={logoUrl} alt="Company logo" className="h-8 max-w-[180px] object-contain" />
+          <div className="flex-shrink-0 border-b border-[#2a3347] flex items-center justify-end px-6 py-2 bg-[#161b27]">
+            <img src={logoUrl} alt="Company logo" className="h-7 max-w-[160px] object-contain" />
           </div>
         )}
-      <main className="flex-1 flex items-center justify-center select-none">
-        <div className="text-center">
-          <div className="w-16 h-16 rounded-2xl bg-[#2563eb]/10 border border-[#2563eb]/20 flex items-center justify-center mx-auto mb-5">
-            <svg className="w-8 h-8 text-[#3b82f6]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-            </svg>
+
+        {/* Project tabs + action bar */}
+        <div className="flex-shrink-0 border-b border-[#2a3347] bg-[#161b27] flex items-center justify-between">
+          <div className="flex items-center overflow-x-auto">
+            <button
+              onClick={() => setActiveProjectId(null)}
+              className={`px-4 py-3 text-[13px] font-medium border-b-2 transition-colors whitespace-nowrap flex-shrink-0 ${activeProjectId === null ? "border-[#2563eb] text-[#e8edf5]" : "border-transparent text-[#4f617a] hover:text-[#8b9ab5]"}`}
+            >
+              All Submittals
+            </button>
+            {appProjects.map(p => (
+              <button
+                key={p.id}
+                onClick={() => setActiveProjectId(p.id)}
+                className={`px-4 py-3 text-[13px] font-medium border-b-2 transition-colors whitespace-nowrap flex-shrink-0 ${activeProjectId === p.id ? "border-[#2563eb] text-[#e8edf5]" : "border-transparent text-[#4f617a] hover:text-[#8b9ab5]"}`}
+              >
+                {p.name}{p.number ? ` — ${p.number}` : ""}
+              </button>
+            ))}
           </div>
-          <p className="text-[17px] font-bold text-[#c8d3e6] tracking-tight">Submittal Library</p>
-          <p className="text-[13px] text-[#4f617a] mt-1.5">
-            Expand a division to browse,<br />or search in the sidebar.
-          </p>
-          <button
-            onClick={() => setShowUpload(true)}
-            className="mt-6 h-9 px-5 rounded-lg bg-[#2563eb] text-white text-[13px] font-semibold hover:bg-[#1d4ed8] transition-colors inline-flex items-center gap-2"
-          >
-            <PlusIcon /> Upload submittal
-          </button>
+          <div className="flex items-center gap-2 px-4 flex-shrink-0">
+            <button
+              onClick={() => { setShowBatch(true); setBatchPhase("select"); setBatchItems([]) }}
+              className="h-8 px-3 rounded-md border border-[#2a3347] text-[12px] text-[#8b9ab5] hover:bg-white/[0.05] transition-colors flex items-center gap-1.5"
+            >
+              <LayersIcon /> Batch
+            </button>
+            <button
+              onClick={() => setShowUpload(true)}
+              className="h-8 px-4 rounded-md bg-[#2563eb] text-white text-[13px] font-semibold hover:bg-[#1d4ed8] transition-colors flex items-center gap-1.5"
+            >
+              <PlusIcon /> Upload
+            </button>
+          </div>
         </div>
-      </main>
+
+        {/* Submittal log */}
+        <div className="flex-1 overflow-y-auto min-h-0">
+          {logLoading ? (
+            <div className="flex items-center justify-center h-40 gap-2 text-[13px] text-[#4f617a]">
+              <SpinnerIcon className="h-4 w-4" /> Loading…
+            </div>
+          ) : logSubmittals.length === 0 ? (
+            <div className="flex flex-col items-center justify-center h-full py-24 text-center">
+              <div className="w-14 h-14 rounded-2xl bg-[#2563eb]/10 border border-[#2563eb]/20 flex items-center justify-center mb-4">
+                <svg className="w-7 h-7 text-[#3b82f6]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>
+              </div>
+              <p className="text-[15px] font-bold text-[#c8d3e6]">No submittals yet</p>
+              <p className="text-[13px] text-[#4f617a] mt-1.5">Upload your first submittal to get started.</p>
+              <button onClick={() => setShowUpload(true)} className="mt-5 h-9 px-5 rounded-lg bg-[#2563eb] text-white text-[13px] font-semibold hover:bg-[#1d4ed8] transition-colors inline-flex items-center gap-2">
+                <PlusIcon /> Upload submittal
+              </button>
+            </div>
+          ) : (
+            <table className="w-full text-[13px] border-collapse">
+              <thead className="sticky top-0 bg-[#161b27] z-10">
+                <tr className="border-b border-[#2a3347]">
+                  <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#4f617a] uppercase tracking-widest w-10">#</th>
+                  <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#4f617a] uppercase tracking-widest">Title</th>
+                  <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#4f617a] uppercase tracking-widest w-32">Division</th>
+                  <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#4f617a] uppercase tracking-widest w-48">Section</th>
+                  <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#4f617a] uppercase tracking-widest w-24">Date</th>
+                  <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#4f617a] uppercase tracking-widest w-36">Status</th>
+                  <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#4f617a] uppercase tracking-widest w-24">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {logSubmittals.map((s, i) => (
+                  <tr key={s.id} className="border-b border-[#2a3347]/40 hover:bg-white/[0.02] transition-colors group">
+                    <td className="px-4 py-2.5 text-[#4f617a] tabular-nums text-[12px]">{logSubmittals.length - i}</td>
+                    <td className="px-4 py-2.5 max-w-0">
+                      <p className="text-[#c8d3e6] font-medium truncate" title={s.file_name}>{s.file_name}</p>
+                      {s.ai_confidence != null && s.ai_confidence < 70 && (
+                        <span className="text-[10px] text-amber-400">⚠ Low confidence</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-2.5 text-[#8b9ab5] text-[12px] whitespace-nowrap">
+                      {s.csi_division && <span className="font-mono text-[#4f617a] mr-1">{s.csi_division}</span>}
+                      {s.division_name}
+                    </td>
+                    <td className="px-4 py-2.5 text-[#8b9ab5] text-[12px]">{s.section_name ?? s.csi_section ?? "—"}</td>
+                    <td className="px-4 py-2.5 text-[#4f617a] text-[12px] whitespace-nowrap">{fmtDate(s.created_at)}</td>
+                    <td className="px-4 py-2.5"><StatusBadge status={s.review_status ?? "Received"} /></td>
+                    <td className="px-4 py-2.5">
+                      <div className="flex items-center gap-1">
+                        <button
+                          onClick={() => handleFileOpen(
+                            { id: s.id, file_name: s.file_name, file_url: "", mime_type: s.mime_type, file_size: s.file_size, created_at: s.created_at },
+                            s.csi_division ?? "", s.division_name ?? "", s.csi_section ?? "", s.section_name ?? ""
+                          )}
+                          className="text-[11px] text-[#8b9ab5] hover:text-[#e8edf5] px-2 py-1 rounded hover:bg-white/[0.05] transition-colors"
+                        >Open</button>
+                        <button
+                          onClick={() => openEditModal(s)}
+                          className="text-[11px] text-[#8b9ab5] hover:text-[#e8edf5] px-2 py-1 rounded hover:bg-white/[0.05] transition-colors"
+                        >Edit</button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
       </div>
 
       {/* ── File open modal ───────────────────────────────────────────────── */}
@@ -1375,6 +1558,18 @@ export default function Home() {
                       {aiResult.dimensions    && <p className="text-[12px] text-[#c8d3e6]"><span className="text-[#4f617a]">Dims:</span> {aiResult.dimensions}</p>}
                     </div>
                   )}
+                  {aiResult.confidence != null && (
+                    <div className="border-t border-[#2563eb]/20 pt-2 flex items-center gap-2">
+                      <div className="flex-1 h-1 rounded-full bg-[#2a3347] overflow-hidden">
+                        <div className={`h-full rounded-full transition-all ${aiResult.confidence >= 70 ? "bg-emerald-400" : "bg-amber-400"}`} style={{ width: `${aiResult.confidence}%` }} />
+                      </div>
+                      <span className={`text-[11px] font-medium ${aiResult.confidence >= 70 ? "text-emerald-400" : "text-amber-400"}`}>{aiResult.confidence}% confident</span>
+                    </div>
+                  )}
+                  {aiResult.confidence != null && aiResult.confidence < 70 && (
+                    <p className="text-[11px] text-amber-300 bg-amber-400/10 rounded px-2 py-1">Low confidence — verify the classification before uploading</p>
+                  )}
+                  {aiResult.reasoning && <p className="text-[11px] text-[#4f617a] italic">{aiResult.reasoning}</p>}
                   <div className="flex gap-2 pt-0.5">
                     <button type="button" onClick={acceptSuggestion}
                       className="h-7 px-3 rounded-md bg-[#2563eb] text-white text-[12px] font-semibold hover:bg-[#1d4ed8] transition-colors">
@@ -1507,6 +1702,70 @@ export default function Home() {
                 )}
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* ── Edit submittal modal ─────────────────────────────────────────── */}
+      {editSubmittal && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center"
+          onClick={e => { if (e.target === e.currentTarget) setEditSubmittal(null) }}>
+          <div className="bg-[#1c2333] rounded-xl border border-[#2a3347] shadow-2xl w-[460px] p-6">
+            <div className="flex items-center justify-between mb-1">
+              <h2 className="text-[15px] font-bold text-[#e8edf5]">Edit Submittal</h2>
+              <button onClick={() => setEditSubmittal(null)} className="text-[#4f617a] hover:text-[#8b9ab5] transition-colors"><XIcon className="h-4 w-4" /></button>
+            </div>
+            <p className="text-[12px] text-[#4f617a] mb-4 truncate">{editSubmittal.file_name}</p>
+
+            <div className="space-y-3">
+              <div>
+                <label className="block text-[12px] font-medium text-[#8b9ab5] mb-1">Status</label>
+                <select value={editStatus} onChange={e => setEditStatus(e.target.value)}
+                  className="w-full h-9 px-3 rounded-md border border-[#2a3347] text-[13px] text-[#e8edf5] bg-[#0d1117] focus:outline-none focus:ring-1 focus:ring-[#2563eb]/40">
+                  {["Received","Under Review","Approved","Approved with Comments","Rejected","Revise and Resubmit","Needs Review"].map(s => (
+                    <option key={s} value={s}>{s}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-[12px] font-medium text-[#8b9ab5] mb-1">Division</label>
+                <select value={editDiv} onChange={e => {
+                  const d = CSI_DIVISIONS.find(d => d.num === e.target.value)
+                  setEditDiv(e.target.value); setEditDivName(d?.name ?? ""); setEditSec(""); setEditSecName("")
+                }} className="w-full h-9 px-3 rounded-md border border-[#2a3347] text-[13px] text-[#e8edf5] bg-[#0d1117] focus:outline-none focus:ring-1 focus:ring-[#2563eb]/40">
+                  <option value="">Select division…</option>
+                  {CSI_DIVISIONS.map(d => <option key={d.num} value={d.num}>{d.num} — {d.name}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-[12px] font-medium text-[#8b9ab5] mb-1">Section</label>
+                <select value={editSec} disabled={!editDiv} onChange={e => {
+                  const s = (CSI_SECTIONS[editDiv] ?? []).find(s => s.code === e.target.value)
+                  setEditSec(e.target.value); setEditSecName(s?.name ?? "")
+                }} className="w-full h-9 px-3 rounded-md border border-[#2a3347] text-[13px] text-[#e8edf5] bg-[#0d1117] focus:outline-none focus:ring-1 focus:ring-[#2563eb]/40 disabled:opacity-50">
+                  <option value="">{editDiv ? "Select section…" : "Select a division first"}</option>
+                  {(CSI_SECTIONS[editDiv] ?? []).map(s => <option key={s.code} value={s.code}>{s.code} — {s.name}</option>)}
+                </select>
+              </div>
+              {editSubmittal.ai_reasoning && (
+                <div className="rounded-md bg-[#2a3347]/50 px-3 py-2">
+                  <p className="text-[10px] font-bold text-[#4f617a] uppercase tracking-widest mb-0.5">AI Reasoning</p>
+                  <p className="text-[12px] text-[#8b9ab5] italic">{editSubmittal.ai_reasoning}</p>
+                </div>
+              )}
+            </div>
+
+            <div className="flex justify-end gap-2 mt-5">
+              <button onClick={() => setEditSubmittal(null)}
+                className="h-8 px-4 rounded-md border border-[#2a3347] text-[13px] text-[#8b9ab5] hover:bg-white/[0.05] transition-colors">
+                Cancel
+              </button>
+              <button onClick={saveEdit} disabled={editSaving}
+                className="h-8 px-4 rounded-md bg-[#2563eb] text-white text-[13px] font-semibold hover:bg-[#1d4ed8] transition-colors disabled:opacity-50 flex items-center gap-2">
+                {editSaving && <SpinnerIcon className="h-3 w-3" />}
+                {editSaving ? "Saving…" : "Save"}
+              </button>
+            </div>
           </div>
         </div>
       )}
