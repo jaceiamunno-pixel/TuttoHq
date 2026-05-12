@@ -57,6 +57,7 @@ interface TeamMember { id: string; name: string; title: string | null; email: st
 interface RFI { id: string; rfi_number: string; subject: string; description: string | null; submitted_by: string | null; assigned_to: string | null; date_issued: string | null; due_date: string | null; status: string; response: string | null; project_id: string | null; created_at: string; uploaded_by: string }
 interface PunchItem { id: string; item_number: string; description: string; location: string | null; assigned_to: string | null; due_date: string | null; priority: string; status: string; notes: string | null; project_id: string | null; created_at: string; completed_at: string | null; uploaded_by: string }
 interface DailyReport { id: string; report_date: string; project_id: string | null; prepared_by: string | null; weather_conditions: string | null; temperature: string | null; manpower_count: number | null; work_performed: string | null; equipment: string | null; materials_delivered: string | null; visitors: string | null; issues_delays: string | null; safety_notes: string | null; created_at: string; uploaded_by: string }
+interface DrawingRecord { id: string; drawing_number: string; sheet_title: string; discipline: string | null; revision: string; revision_date: string | null; status: string; scale: string | null; notes: string | null; project_id: string | null; is_current: boolean; superseded_at: string | null; created_at: string; uploaded_by: string }
 type FileModalStep = "project" | "coversheet" | "form"
 interface OpenFileCtx { file: SubmittalFile; divNum: string; divName: string; secCode: string; secName: string }
 interface CoverFormData { projectName: string; projectNumber: string; projectLocation: string; gcName: string; architect: string; specSectionNo: string; specSectionTitle: string; description: string; dateSubmitted: string; submittalNo: string; reviewedBy: string; certifiedBy: string; notes: string }
@@ -413,6 +414,26 @@ function PunchPriorityBadge({ priority }: { priority: string }) {
   return <span className={`inline-flex items-center px-2 py-0.5 rounded border text-[11px] font-medium ${cls}`}>{priority}</span>
 }
 
+const DRAWING_STATUS_STYLES: Record<string, string> = {
+  "Issued for Construction": "bg-emerald-400/15 text-emerald-300 border-emerald-400/20",
+  "Issued for Bid":          "bg-blue-400/15 text-blue-300 border-blue-400/20",
+  "Issued for Review":       "bg-amber-400/15 text-amber-300 border-amber-400/20",
+  "Record Drawings":         "bg-teal-400/15 text-teal-300 border-teal-400/20",
+  "Superseded":              "bg-[#2a3347] text-[#4f617a] border-[#2a3347]",
+  "Void":                    "bg-red-400/15 text-red-300 border-red-400/20",
+}
+function DrawingStatusBadge({ status }: { status: string }) {
+  const cls = DRAWING_STATUS_STYLES[status] ?? "bg-[#2a3347] text-[#8b9ab5] border-[#2a3347]"
+  return <span className={`inline-flex items-center px-2 py-0.5 rounded border text-[11px] font-medium ${cls}`}>{status}</span>
+}
+
+function nextRevision(rev: string): string {
+  const n = parseInt(rev)
+  if (!isNaN(n)) return String(n + 1)
+  if (/^[A-Za-z]$/.test(rev)) return String.fromCharCode(rev.toUpperCase().charCodeAt(0) + 1)
+  return ""
+}
+
 function LayersIcon() {
   return (
     <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -579,7 +600,7 @@ export default function Home() {
   const [generatingCover, setGeneratingCover] = useState(false)
 
   // Module navigation
-  const [activeModule, setActiveModule] = useState<"submittals" | "rfis" | "punch" | "daily">("submittals")
+  const [activeModule, setActiveModule] = useState<"submittals" | "rfis" | "punch" | "daily" | "drawings">("submittals")
 
   // RFI log
   const [rfis, setRfis]                               = useState<RFI[]>([])
@@ -635,6 +656,23 @@ export default function Home() {
   const [dailySaving, setDailySaving]                 = useState(false)
   const [dailyEditing, setDailyEditing]               = useState(false)
   const [dailyEditSaving, setDailyEditSaving]         = useState(false)
+
+  // Drawing log
+  const [drawings, setDrawings]                       = useState<DrawingRecord[]>([])
+  const [drawingsLoading, setDrawingsLoading]         = useState(false)
+  const [showNewDrawing, setShowNewDrawing]           = useState(false)
+  const [addRevisionFor, setAddRevisionFor]           = useState<DrawingRecord | null>(null)
+  const [expandedDrawings, setExpandedDrawings]       = useState<Set<string>>(new Set())
+  const [dwgNumber, setDwgNumber]                     = useState("")
+  const [dwgTitle, setDwgTitle]                       = useState("")
+  const [dwgDiscipline, setDwgDiscipline]             = useState("")
+  const [dwgRevision, setDwgRevision]                 = useState("0")
+  const [dwgRevDate, setDwgRevDate]                   = useState("")
+  const [dwgStatus, setDwgStatus]                     = useState("Issued for Review")
+  const [dwgScale, setDwgScale]                       = useState("")
+  const [dwgNotes, setDwgNotes]                       = useState("")
+  const [dwgProjectId, setDwgProjectId]               = useState("")
+  const [dwgSaving, setDwgSaving]                     = useState(false)
 
   const inputRef = useRef<HTMLInputElement>(null)
 
@@ -895,6 +933,53 @@ export default function Home() {
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { if (activeModule === "daily") loadDaily() }, [activeModule])
+
+  function loadDrawings() {
+    setDrawingsLoading(true)
+    fetch("/api/drawings")
+      .then(r => r.json())
+      .then(d => setDrawings(d.drawings ?? []))
+      .catch(() => setDrawings([]))
+      .finally(() => setDrawingsLoading(false))
+  }
+
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { if (activeModule === "drawings") loadDrawings() }, [activeModule])
+
+  function openAddRevision(d: DrawingRecord) {
+    setAddRevisionFor(d)
+    setDwgNumber(d.drawing_number)
+    setDwgTitle(d.sheet_title)
+    setDwgDiscipline(d.discipline ?? "")
+    setDwgRevision(nextRevision(d.revision))
+    setDwgRevDate("")
+    setDwgStatus(d.status)
+    setDwgScale(d.scale ?? "")
+    setDwgNotes("")
+    setDwgProjectId(d.project_id ?? "")
+  }
+
+  function resetDwgForm() {
+    setDwgNumber(""); setDwgTitle(""); setDwgDiscipline(""); setDwgRevision("0")
+    setDwgRevDate(""); setDwgStatus("Issued for Review"); setDwgScale(""); setDwgNotes(""); setDwgProjectId("")
+  }
+
+  async function createDrawing(e: React.FormEvent) {
+    e.preventDefault()
+    setDwgSaving(true)
+    try {
+      const res = await fetch("/api/drawings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ drawing_number: dwgNumber, sheet_title: dwgTitle, discipline: dwgDiscipline || null, revision: dwgRevision, revision_date: dwgRevDate || null, status: dwgStatus, scale: dwgScale || null, notes: dwgNotes || null, project_id: dwgProjectId || null }),
+      })
+      if (res.ok) {
+        setShowNewDrawing(false); setAddRevisionFor(null); resetDwgForm(); loadDrawings()
+        // Collapse revision history so updated row is visible
+        setExpandedDrawings(prev => { const n = new Set(prev); n.delete(dwgNumber); return n })
+      }
+    } finally { setDwgSaving(false) }
+  }
 
   function openEditModal(s: SubmittalRecord) {
     setEditSubmittal(s)
@@ -1444,6 +1529,10 @@ export default function Home() {
             className={`px-3 py-2.5 text-[13px] font-medium border-b-2 transition-colors whitespace-nowrap ${activeModule === "daily" ? "border-[#2563eb] text-[#e8edf5]" : "border-transparent text-[#4f617a] hover:text-[#8b9ab5]"}`}>
             Daily Reports
           </button>
+          <button onClick={() => setActiveModule("drawings")}
+            className={`px-3 py-2.5 text-[13px] font-medium border-b-2 transition-colors whitespace-nowrap ${activeModule === "drawings" ? "border-[#2563eb] text-[#e8edf5]" : "border-transparent text-[#4f617a] hover:text-[#8b9ab5]"}`}>
+            Drawing Log
+          </button>
         </div>
 
         {/* Submittal action bar */}
@@ -1514,6 +1603,16 @@ export default function Home() {
             <p className="text-[13px] font-semibold text-[#e8edf5]">Daily Reports <span className="text-[#4f617a] font-normal ml-1">({dailyReports.length})</span></p>
             <button onClick={() => setShowNewDaily(true)} className="h-8 px-4 rounded-md bg-[#2563eb] text-white text-[13px] font-semibold hover:bg-[#1d4ed8] transition-colors flex items-center gap-1.5">
               <PlusIcon /> New Report
+            </button>
+          </div>
+        )}
+
+        {/* Drawing log action bar */}
+        {activeModule === "drawings" && (
+          <div className="flex-shrink-0 border-b border-[#2a3347] bg-[#161b27] flex items-center justify-between px-4 py-2.5">
+            <p className="text-[13px] font-semibold text-[#e8edf5]">Drawing Log <span className="text-[#4f617a] font-normal ml-1">({drawings.filter(d => d.is_current).length} sheets)</span></p>
+            <button onClick={() => { setShowNewDrawing(true); setAddRevisionFor(null); resetDwgForm() }} className="h-8 px-4 rounded-md bg-[#2563eb] text-white text-[13px] font-semibold hover:bg-[#1d4ed8] transition-colors flex items-center gap-1.5">
+              <PlusIcon /> Add Drawing
             </button>
           </div>
         )}
@@ -1784,6 +1883,91 @@ export default function Home() {
               </table>
             )
           )}
+          {/* Drawing log */}
+          {activeModule === "drawings" && (() => {
+            const currentDrawings = drawings.filter(d => d.is_current)
+            const allSuperseded   = drawings.filter(d => !d.is_current)
+            return drawingsLoading ? (
+              <div className="flex items-center justify-center h-40 gap-2 text-[13px] text-[#4f617a]">
+                <SpinnerIcon className="h-4 w-4" /> Loading…
+              </div>
+            ) : currentDrawings.length === 0 ? (
+              <div className="flex flex-col items-center justify-center h-full py-24 text-center">
+                <div className="w-14 h-14 rounded-2xl bg-[#2563eb]/10 border border-[#2563eb]/20 flex items-center justify-center mb-4">
+                  <svg className="w-7 h-7 text-[#3b82f6]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                  </svg>
+                </div>
+                <p className="text-[15px] font-bold text-[#c8d3e6]">No drawings yet</p>
+                <p className="text-[13px] text-[#4f617a] mt-1.5">Add drawings to track revisions and status.</p>
+                <button onClick={() => { setShowNewDrawing(true); setAddRevisionFor(null); resetDwgForm() }} className="mt-5 h-9 px-5 rounded-lg bg-[#2563eb] text-white text-[13px] font-semibold hover:bg-[#1d4ed8] transition-colors inline-flex items-center gap-2">
+                  <PlusIcon /> Add Drawing
+                </button>
+              </div>
+            ) : (
+              <table className="w-full text-[13px] border-collapse">
+                <thead className="sticky top-0 bg-[#161b27] z-10">
+                  <tr className="border-b border-[#2a3347]">
+                    <th className="w-8" />
+                    <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#4f617a] uppercase tracking-widest w-28">Drawing No.</th>
+                    <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#4f617a] uppercase tracking-widest">Sheet Title</th>
+                    <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#4f617a] uppercase tracking-widest w-28">Discipline</th>
+                    <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#4f617a] uppercase tracking-widest w-16">Rev</th>
+                    <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#4f617a] uppercase tracking-widest w-24">Rev Date</th>
+                    <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#4f617a] uppercase tracking-widest w-44">Status</th>
+                    <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#4f617a] uppercase tracking-widest w-28">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {currentDrawings.map(d => {
+                    const history = allSuperseded.filter(s => s.drawing_number === d.drawing_number)
+                    const isExpanded = expandedDrawings.has(d.drawing_number)
+                    return (
+                      <>
+                        <tr key={d.id} className="border-b border-[#2a3347]/40 hover:bg-white/[0.02] transition-colors">
+                          <td className="px-2 py-2.5 text-center">
+                            {history.length > 0 && (
+                              <button onClick={() => setExpandedDrawings(prev => { const n = new Set(prev); isExpanded ? n.delete(d.drawing_number) : n.add(d.drawing_number); return n })}
+                                className="text-[#4f617a] hover:text-[#8b9ab5] transition-colors flex items-center justify-center w-full" title={`${history.length} previous revision${history.length !== 1 ? "s" : ""}`}>
+                                <ToggleIcon open={isExpanded} />
+                              </button>
+                            )}
+                          </td>
+                          <td className="px-4 py-2.5 text-[12px] font-mono text-[#60a5fa] whitespace-nowrap">{d.drawing_number}</td>
+                          <td className="px-4 py-2.5 max-w-0"><p className="text-[#c8d3e6] font-medium truncate" title={d.sheet_title}>{d.sheet_title}</p></td>
+                          <td className="px-4 py-2.5 text-[#8b9ab5] text-[12px]">{d.discipline ?? "—"}</td>
+                          <td className="px-4 py-2.5 text-[12px] font-mono font-bold text-[#e8edf5]">{d.revision}</td>
+                          <td className="px-4 py-2.5 text-[#4f617a] text-[12px] whitespace-nowrap">{d.revision_date ? fmtDateOnly(d.revision_date) : "—"}</td>
+                          <td className="px-4 py-2.5"><DrawingStatusBadge status={d.status} /></td>
+                          <td className="px-4 py-2.5">
+                            <div className="flex items-center gap-1">
+                              <button onClick={() => openAddRevision(d)}
+                                className="text-[11px] text-[#60a5fa] hover:text-[#93c5fd] px-2 py-1 rounded hover:bg-white/[0.05] transition-colors whitespace-nowrap">
+                                + Rev
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                        {/* Revision history rows */}
+                        {isExpanded && history.map(h => (
+                          <tr key={h.id} className="border-b border-[#2a3347]/20 bg-[#0d1117]/40">
+                            <td />
+                            <td className="px-4 py-1.5 text-[11px] font-mono text-[#4f617a]">{h.drawing_number}</td>
+                            <td className="px-4 py-1.5 text-[11px] text-[#4f617a] truncate max-w-0">{h.sheet_title}</td>
+                            <td className="px-4 py-1.5 text-[11px] text-[#4f617a]">{h.discipline ?? "—"}</td>
+                            <td className="px-4 py-1.5 text-[11px] font-mono text-[#4f617a]">{h.revision}</td>
+                            <td className="px-4 py-1.5 text-[11px] text-[#4f617a] whitespace-nowrap">{h.revision_date ? fmtDateOnly(h.revision_date) : "—"}</td>
+                            <td className="px-4 py-1.5"><span className="text-[10px] text-[#4f617a]">Superseded {h.superseded_at ? fmtDate(h.superseded_at) : ""}</span></td>
+                            <td />
+                          </tr>
+                        ))}
+                      </>
+                    )
+                  })}
+                </tbody>
+              </table>
+            )
+          })()}
         </div>
       </div>
 
@@ -1947,6 +2131,100 @@ export default function Home() {
                 </div>
               ))}
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── New Drawing / Add Revision modal ─────────────────────────────── */}
+      {(showNewDrawing || addRevisionFor) && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center"
+          onClick={e => { if (e.target === e.currentTarget) { setShowNewDrawing(false); setAddRevisionFor(null) } }}>
+          <div className="bg-[#1c2333] rounded-xl border border-[#2a3347] shadow-2xl w-[560px]">
+            <div className="flex items-center justify-between px-6 pt-5 pb-4 border-b border-[#2a3347]">
+              <div>
+                <h2 className="text-[15px] font-bold text-[#e8edf5]">{addRevisionFor ? "Add Revision" : "Add Drawing"}</h2>
+                {addRevisionFor && <p className="text-[12px] text-[#4f617a] mt-0.5">Supersedes {addRevisionFor.drawing_number} Rev {addRevisionFor.revision}</p>}
+              </div>
+              <button onClick={() => { setShowNewDrawing(false); setAddRevisionFor(null) }} className="text-[#4f617a] hover:text-[#8b9ab5] transition-colors">
+                <XIcon className="h-4 w-4" />
+              </button>
+            </div>
+            <form onSubmit={createDrawing}>
+              <div className="px-6 py-4 space-y-3">
+                <div className="flex gap-3">
+                  <div className="flex-1">
+                    <label className={labelCls}>Drawing Number <span className="text-red-400">*</span></label>
+                    <input type="text" required value={dwgNumber} onChange={e => setDwgNumber(e.target.value)}
+                      placeholder="e.g. A-101" readOnly={!!addRevisionFor} autoFocus={!addRevisionFor}
+                      className={`${inputCls} ${addRevisionFor ? "opacity-60 cursor-not-allowed" : ""}`} />
+                  </div>
+                  <div className="w-24 flex-shrink-0">
+                    <label className={labelCls}>Revision <span className="text-red-400">*</span></label>
+                    <input type="text" required value={dwgRevision} onChange={e => setDwgRevision(e.target.value)}
+                      placeholder="0" autoFocus={!!addRevisionFor} className={inputCls} />
+                  </div>
+                </div>
+                <div>
+                  <label className={labelCls}>Sheet Title <span className="text-red-400">*</span></label>
+                  <input type="text" required value={dwgTitle} onChange={e => setDwgTitle(e.target.value)}
+                    placeholder="e.g. First Floor Plan" className={inputCls} />
+                </div>
+                <div className="flex gap-3">
+                  <div className="flex-1">
+                    <label className={labelCls}>Discipline</label>
+                    <select value={dwgDiscipline} onChange={e => setDwgDiscipline(e.target.value)}
+                      className="w-full h-9 px-3 rounded-md border border-[#2a3347] text-[13px] text-[#e8edf5] bg-[#0d1117] focus:outline-none focus:ring-1 focus:ring-[#2563eb]/40">
+                      <option value="">Select…</option>
+                      {["Architectural","Structural","Mechanical","Electrical","Plumbing","Civil","Landscape","Fire Protection","Low Voltage","General"].map(d => <option key={d} value={d}>{d}</option>)}
+                    </select>
+                  </div>
+                  <div className="flex-1">
+                    <label className={labelCls}>Status</label>
+                    <select value={dwgStatus} onChange={e => setDwgStatus(e.target.value)}
+                      className="w-full h-9 px-3 rounded-md border border-[#2a3347] text-[13px] text-[#e8edf5] bg-[#0d1117] focus:outline-none focus:ring-1 focus:ring-[#2563eb]/40">
+                      {["Issued for Construction","Issued for Bid","Issued for Review","Record Drawings","Void"].map(s => <option key={s} value={s}>{s}</option>)}
+                    </select>
+                  </div>
+                </div>
+                <div className="flex gap-3">
+                  <div className="flex-1">
+                    <label className={labelCls}>Revision Date</label>
+                    <input type="date" value={dwgRevDate} onChange={e => setDwgRevDate(e.target.value)} className={inputCls} />
+                  </div>
+                  <div className="flex-1">
+                    <label className={labelCls}>Scale</label>
+                    <input type="text" value={dwgScale} onChange={e => setDwgScale(e.target.value)} placeholder='e.g. 1/4" = 1&apos;-0"' className={inputCls} />
+                  </div>
+                </div>
+                {appProjects.length > 0 && (
+                  <div>
+                    <label className={labelCls}>Project</label>
+                    <select value={dwgProjectId} onChange={e => setDwgProjectId(e.target.value)}
+                      className="w-full h-9 px-3 rounded-md border border-[#2a3347] text-[13px] text-[#e8edf5] bg-[#0d1117] focus:outline-none focus:ring-1 focus:ring-[#2563eb]/40">
+                      <option value="">None</option>
+                      {appProjects.map(p => <option key={p.id} value={p.id}>{p.name}{p.number ? ` — ${p.number}` : ""}</option>)}
+                    </select>
+                  </div>
+                )}
+                <div>
+                  <label className={labelCls}>Notes</label>
+                  <textarea rows={2} value={dwgNotes} onChange={e => setDwgNotes(e.target.value)}
+                    placeholder="Revision notes, changes from previous…"
+                    className="w-full px-3 py-2 rounded-md border border-[#2a3347] text-[13px] text-[#e8edf5] bg-[#0d1117] focus:outline-none focus:ring-1 focus:ring-[#2563eb]/40 resize-none placeholder:text-[#4f617a]" />
+                </div>
+              </div>
+              <div className="flex justify-end gap-2 px-6 py-4 border-t border-[#2a3347]">
+                <button type="button" onClick={() => { setShowNewDrawing(false); setAddRevisionFor(null) }}
+                  className="h-8 px-4 rounded-md border border-[#2a3347] text-[13px] text-[#8b9ab5] hover:bg-white/[0.05] transition-colors">
+                  Cancel
+                </button>
+                <button type="submit" disabled={dwgSaving}
+                  className="h-8 px-4 rounded-md bg-[#2563eb] text-white text-[13px] font-semibold hover:bg-[#1d4ed8] transition-colors disabled:opacity-50 flex items-center gap-2">
+                  {dwgSaving && <SpinnerIcon className="h-3 w-3" />}
+                  {dwgSaving ? "Saving…" : addRevisionFor ? "Add Revision" : "Add Drawing"}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
