@@ -313,6 +313,21 @@ async function processAttachment(ctx: AttachmentCtx): Promise<void> {
     reasoning: classification.reasoning,
   })
 
+  // ── Deduplication check ────────────────────────────────────────────────────
+  const { data: existing } = await supabase
+    .from("submittals")
+    .select("id")
+    .eq("file_name", fileName)
+    .eq("sender_email", senderEmail)
+    .eq("received_at", receivedAt)
+    .neq("status", "deleted")
+    .limit(1)
+
+  if (existing && existing.length > 0) {
+    log("attachment-skip: duplicate already exists", { fileName, senderEmail, receivedAt })
+    return
+  }
+
   // ── Upload to Supabase storage ─────────────────────────────────────────────
   const safeName    = fileName.replace(/[^a-zA-Z0-9._-]/g, "_")
   const storagePath = `gmail-intake/${new Date().toISOString().slice(0, 10)}/${Date.now()}_${safeName}`

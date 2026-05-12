@@ -1428,7 +1428,7 @@ export default function Home() {
                 <div className={`grid transition-all duration-150 ${isOpen ? "grid-rows-[1fr]" : "grid-rows-[0fr]"}`}>
                   <div className="overflow-hidden">
                     <div className="ml-[20px] border-l border-[#2a3347] pl-1">
-                      {(CSI_SECTIONS[div.num] ?? div.sections).map(sec => {
+                      {div.sections.map(sec => {
                         const secOpen    = openSections.has(sec.code)
                         const secLoading = loadingSections.has(sec.code)
                         const files      = sectionFiles[sec.code] ?? []

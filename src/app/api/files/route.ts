@@ -13,7 +13,7 @@ export async function GET(req: NextRequest) {
   const { data, error } = await supabase
     .from("submittals")
     .select("id, file_name, storage_path, mime_type, file_size, created_at")
-    .or(`csi_section.eq.${code},section_name.eq.${code}`)
+    .eq("csi_section", code)
     .eq("status", "active")
     .order("file_name")
 
