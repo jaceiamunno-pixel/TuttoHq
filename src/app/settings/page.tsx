@@ -816,23 +816,25 @@ export default function SettingsPage() {
                             </span>
                           </div>
                         )}
-                        {gmailConn.watch_expiry && (
-                          <div className="flex items-center justify-between px-4 py-3">
-                            <span className="text-[12px] text-[#8b9ab5]">Push notifications active until</span>
-                            <div className="flex items-center gap-2">
+                        <div className="flex items-center justify-between px-4 py-3">
+                          <span className="text-[12px] text-[#8b9ab5]">Push notifications</span>
+                          <div className="flex items-center gap-2">
+                            {gmailConn.watch_expiry ? (
                               <span className="text-[13px] text-[#8b9ab5]">
-                                {new Date(gmailConn.watch_expiry).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                                active until {new Date(gmailConn.watch_expiry).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
                               </span>
-                              <button
-                                onClick={renewWatch}
-                                disabled={renewingWatch}
-                                className="text-[11px] text-[#60a5fa] hover:text-[#93c5fd] disabled:opacity-50 transition-colors"
-                              >
-                                {renewingWatch ? "Renewing…" : "Renew"}
-                              </button>
-                            </div>
+                            ) : (
+                              <span className="text-[13px] text-amber-400">Not active</span>
+                            )}
+                            <button
+                              onClick={renewWatch}
+                              disabled={renewingWatch}
+                              className="text-[11px] text-[#60a5fa] hover:text-[#93c5fd] disabled:opacity-50 transition-colors"
+                            >
+                              {renewingWatch ? "Setting up…" : gmailConn.watch_expiry ? "Renew" : "Set up"}
+                            </button>
                           </div>
-                        )}
+                        </div>
                       </div>
 
                       <div className="flex gap-2">
