@@ -40,12 +40,14 @@ export async function GET(req: NextRequest) {
   const { access_token, refresh_token, expires_in } = await tokenRes.json()
   if (!refresh_token) return redirect("/settings?tab=gmail&error=no_refresh_token")
 
-  // Get Gmail address from userinfo
-  const userinfoRes = await fetch("https://www.googleapis.com/oauth2/v2/userinfo", {
+  // Get the Gmail address from the Gmail Profile API — requires only gmail.readonly scope,
+  // unlike /oauth2/v2/userinfo which needs the separate `email` scope we don't request.
+  const profileRes = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/profile", {
     headers: { Authorization: `Bearer ${access_token}` },
   })
-  const { email: gmail_address } = await userinfoRes.json()
-  if (!gmail_address) return redirect("/settings?tab=gmail&error=userinfo_failed")
+  if (!profileRes.ok) return redirect("/settings?tab=gmail&error=profile_fetch_failed")
+  const { emailAddress: gmail_address } = await profileRes.json()
+  if (!gmail_address) return redirect("/settings?tab=gmail&error=profile_missing_email")
 
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()

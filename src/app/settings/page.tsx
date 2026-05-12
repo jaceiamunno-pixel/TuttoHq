@@ -882,7 +882,7 @@ export default function SettingsPage() {
                       <span>
                         In Google Cloud Console, create a Pub/Sub topic and a push subscription. Set the push endpoint to:
                         <code className="block mt-1.5 px-2.5 py-1.5 rounded bg-[#0d1117] border border-[#2a3347] text-[11px] text-[#c8d3e6] font-mono break-all">
-                          {"{NEXT_PUBLIC_APP_URL}"}/api/gmail-intake?token={"{GMAIL_WEBHOOK_SECRET}"}
+                          {process.env.NEXT_PUBLIC_APP_URL}/api/gmail-intake?token=<span className="text-[#4f617a]">&lt;GMAIL_WEBHOOK_SECRET&gt;</span>
                         </code>
                         Set <code className="text-[#c8d3e6]">GMAIL_WEBHOOK_SECRET</code> and <code className="text-[#c8d3e6]">GOOGLE_PUBSUB_TOPIC</code> as environment variables in your deployment.
                       </span>
