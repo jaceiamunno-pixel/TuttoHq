@@ -3,7 +3,14 @@
 import { useState, useEffect, useRef } from "react"
 import Link from "next/link"
 
-type Tab = "company" | "team" | "projects"
+type Tab = "company" | "team" | "projects" | "gmail"
+
+interface GmailConnection {
+  connected: boolean
+  gmail_address?: string
+  watch_expiry?: string
+  created_at?: string
+}
 
 interface TeamMember {
   id: string
@@ -75,6 +82,13 @@ export default function SettingsPage() {
   const [savingProject, setSavingProject] = useState(false)
   const [projectMessage, setProjectMessage] = useState<{ text: string; ok: boolean } | null>(null)
 
+  const [gmailConn, setGmailConn]         = useState<GmailConnection | null>(null)
+  const [gmailLoading, setGmailLoading]   = useState(false)
+  const [gmailLoaded, setGmailLoaded]     = useState(false)
+  const [disconnecting, setDisconnecting] = useState(false)
+  const [renewingWatch, setRenewingWatch] = useState(false)
+  const [gmailMessage, setGmailMessage]   = useState<{ text: string; ok: boolean } | null>(null)
+
   const logoInputRef  = useRef<HTMLInputElement>(null)
   const coverInputRef = useRef<HTMLInputElement>(null)
 
@@ -83,6 +97,22 @@ export default function SettingsPage() {
       .then(r => r.json())
       .then(d => { setLogoUrl(d.logo_url); setHasCoverPage(d.has_cover_page) })
       .finally(() => setLoadingCompany(false))
+
+    // Handle OAuth callback redirect params (?tab=gmail&connected=1 or &error=...)
+    const params = new URLSearchParams(window.location.search)
+    if (params.get("tab") === "gmail") {
+      setActiveTab("gmail")
+      const connected = params.get("connected")
+      const err = params.get("error")
+      if (connected === "1") {
+        setGmailMessage({ text: "Gmail account connected successfully.", ok: true })
+        setTimeout(() => setGmailMessage(null), 5000)
+      } else if (err) {
+        setGmailMessage({ text: `Connection failed: ${decodeURIComponent(err)}`, ok: false })
+        setTimeout(() => setGmailMessage(null), 8000)
+      }
+      window.history.replaceState({}, "", "/settings?tab=gmail")
+    }
   }, [])
 
   useEffect(() => {
@@ -91,6 +121,9 @@ export default function SettingsPage() {
     }
     if (activeTab === "projects" && !projectsLoaded) {
       loadProjects()
+    }
+    if (activeTab === "gmail" && !gmailLoaded) {
+      loadGmailConnection()
     }
   }, [activeTab])
 
@@ -125,6 +158,51 @@ export default function SettingsPage() {
   function flashProject(text: string, ok = true) {
     setProjectMessage({ text, ok })
     setTimeout(() => setProjectMessage(null), 3000)
+  }
+
+  function flashGmail(text: string, ok = true) {
+    setGmailMessage({ text, ok })
+    setTimeout(() => setGmailMessage(null), 5000)
+  }
+
+  function loadGmailConnection() {
+    setGmailLoading(true)
+    fetch("/api/gmail/connection")
+      .then(r => r.json())
+      .then(d => { setGmailConn(d); setGmailLoaded(true) })
+      .catch(() => {})
+      .finally(() => setGmailLoading(false))
+  }
+
+  async function disconnectGmail() {
+    if (!window.confirm("Disconnect your Gmail account? TuttoHQ will stop receiving email notifications.")) return
+    setDisconnecting(true)
+    try {
+      const res = await fetch("/api/gmail/connection", { method: "DELETE" })
+      if (!res.ok) throw new Error("Delete failed")
+      setGmailConn({ connected: false })
+      flashGmail("Gmail account disconnected.")
+    } catch {
+      flashGmail("Failed to disconnect. Please try again.", false)
+    } finally {
+      setDisconnecting(false)
+    }
+  }
+
+  async function renewWatch() {
+    setRenewingWatch(true)
+    try {
+      const res = await fetch("/api/gmail/watch", { method: "POST" })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error ?? "Failed")
+      setGmailConn(prev => prev ? { ...prev, watch_expiry: data.watch_expiry } : prev)
+      flashGmail("Gmail watch renewed successfully.")
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Renewal failed"
+      flashGmail(msg, false)
+    } finally {
+      setRenewingWatch(false)
+    }
   }
 
   async function uploadAsset(type: "logo" | "cover_page", file: File) {
@@ -303,6 +381,7 @@ export default function SettingsPage() {
     { key: "company",  label: "Company" },
     { key: "team",     label: "Team" },
     { key: "projects", label: "Projects" },
+    { key: "gmail",    label: "Gmail" },
   ]
 
   return (
@@ -693,6 +772,127 @@ export default function SettingsPage() {
             {projectMessage && (
               <div className={`text-center text-[13px] ${projectMessage.ok ? "text-[#60a5fa]" : "text-red-400"}`}>
                 {projectMessage.text}
+              </div>
+            )}
+          </div>
+        )}
+
+        {activeTab === "gmail" && (
+          <div className="space-y-4">
+            {gmailLoading ? (
+              <div className="text-[13px] text-[#8b9ab5]">Loading…</div>
+            ) : (
+              <>
+                <div className="bg-[#161b27] rounded-xl border border-[#2a3347] p-5">
+                  <div className="flex items-start justify-between gap-4">
+                    <div>
+                      <h2 className="text-[14px] font-semibold text-[#e8edf5] mb-0.5">Gmail Integration</h2>
+                      <p className="text-[12px] text-[#8b9ab5]">
+                        Connect a Gmail account so TuttoHQ can receive submittal files sent to that inbox.
+                      </p>
+                    </div>
+                    <div className={`flex-shrink-0 flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium border ${
+                      gmailConn?.connected
+                        ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400"
+                        : "bg-[#0d1117] border-[#2a3347] text-[#4f617a]"
+                    }`}>
+                      <span className={`w-1.5 h-1.5 rounded-full ${gmailConn?.connected ? "bg-emerald-400" : "bg-[#4f617a]"}`} />
+                      {gmailConn?.connected ? "Connected" : "Not connected"}
+                    </div>
+                  </div>
+
+                  {gmailConn?.connected ? (
+                    <div className="mt-5 space-y-4">
+                      <div className="bg-[#0d1117] rounded-lg border border-[#2a3347] divide-y divide-[#2a3347]">
+                        <div className="flex items-center justify-between px-4 py-3">
+                          <span className="text-[12px] text-[#8b9ab5]">Connected account</span>
+                          <span className="text-[13px] text-[#e8edf5] font-medium">{gmailConn.gmail_address}</span>
+                        </div>
+                        {gmailConn.created_at && (
+                          <div className="flex items-center justify-between px-4 py-3">
+                            <span className="text-[12px] text-[#8b9ab5]">Connected since</span>
+                            <span className="text-[13px] text-[#8b9ab5]">
+                              {new Date(gmailConn.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                            </span>
+                          </div>
+                        )}
+                        {gmailConn.watch_expiry && (
+                          <div className="flex items-center justify-between px-4 py-3">
+                            <span className="text-[12px] text-[#8b9ab5]">Push notifications active until</span>
+                            <div className="flex items-center gap-2">
+                              <span className="text-[13px] text-[#8b9ab5]">
+                                {new Date(gmailConn.watch_expiry).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                              </span>
+                              <button
+                                onClick={renewWatch}
+                                disabled={renewingWatch}
+                                className="text-[11px] text-[#60a5fa] hover:text-[#93c5fd] disabled:opacity-50 transition-colors"
+                              >
+                                {renewingWatch ? "Renewing…" : "Renew"}
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="flex gap-2">
+                        <a
+                          href="/api/auth/gmail"
+                          className="h-8 px-4 rounded-md border border-[#2a3347] text-[13px] text-[#c8d3e6] hover:bg-white/[0.05] transition-colors inline-flex items-center"
+                        >
+                          Reconnect
+                        </a>
+                        <button
+                          onClick={disconnectGmail}
+                          disabled={disconnecting}
+                          className="h-8 px-4 rounded-md border border-red-500/30 text-[13px] text-red-400 hover:bg-red-500/10 transition-colors disabled:opacity-50"
+                        >
+                          {disconnecting ? "Disconnecting…" : "Disconnect"}
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="mt-5">
+                      <a
+                        href="/api/auth/gmail"
+                        className="inline-flex items-center gap-2 h-9 px-5 rounded-md bg-[#2563eb] text-white text-[13px] font-medium hover:bg-[#1d4ed8] transition-colors"
+                      >
+                        <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor">
+                          <path d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 4l-8 5-8-5V6l8 5 8-5v2z" />
+                        </svg>
+                        Connect Gmail account
+                      </a>
+                    </div>
+                  )}
+                </div>
+
+                <div className="bg-[#161b27] rounded-xl border border-[#2a3347] p-5">
+                  <h2 className="text-[14px] font-semibold text-[#e8edf5] mb-3">Setup Instructions</h2>
+                  <ol className="space-y-3 text-[13px] text-[#8b9ab5]">
+                    <li className="flex gap-3">
+                      <span className="flex-shrink-0 w-5 h-5 rounded-full bg-[#2563eb]/20 text-[#60a5fa] text-[11px] font-semibold flex items-center justify-center">1</span>
+                      <span>Click <strong className="text-[#c8d3e6]">Connect Gmail account</strong> above and sign in with the Gmail account you want TuttoHQ to monitor.</span>
+                    </li>
+                    <li className="flex gap-3">
+                      <span className="flex-shrink-0 w-5 h-5 rounded-full bg-[#2563eb]/20 text-[#60a5fa] text-[11px] font-semibold flex items-center justify-center">2</span>
+                      <span>Grant the requested permissions — TuttoHQ needs read access to detect incoming submittals and the ability to label or archive processed emails.</span>
+                    </li>
+                    <li className="flex gap-3">
+                      <span className="flex-shrink-0 w-5 h-5 rounded-full bg-[#2563eb]/20 text-[#60a5fa] text-[11px] font-semibold flex items-center justify-center">3</span>
+                      <span>Once connected, TuttoHQ will automatically detect emails with PDF attachments and add them to your submittal library.</span>
+                    </li>
+                    <li className="flex gap-3">
+                      <span className="flex-shrink-0 w-5 h-5 rounded-full bg-[#2563eb]/20 text-[#60a5fa] text-[11px] font-semibold flex items-center justify-center">4</span>
+                      <span>Push notifications expire every 7 days. TuttoHQ auto-renews them — you can also manually renew from the connection details above.</span>
+                    </li>
+                  </ol>
+                </div>
+              </>
+            )}
+
+            {gmailMessage && (
+              <div className={`text-center text-[13px] ${gmailMessage.ok ? "text-[#60a5fa]" : "text-red-400"}`}>
+                {gmailMessage.text}
               </div>
             )}
           </div>
