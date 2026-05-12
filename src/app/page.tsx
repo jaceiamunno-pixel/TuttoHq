@@ -756,9 +756,9 @@ export default function Home() {
     const updates: Record<string, string | null> = {
       review_status: editStatus || null,
       csi_division:  editDiv || null,
-      division_name: div?.name ?? editDivName || null,
+      division_name: (div?.name ?? editDivName) || null,
       csi_section:   editSec || null,
-      section_name:  sec?.name ?? editSecName || null,
+      section_name:  (sec?.name ?? editSecName) || null,
     }
     try {
       const res = await fetch(`/api/submittals/${editSubmittal.id}`, {
