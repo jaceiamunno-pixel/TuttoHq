@@ -58,7 +58,25 @@ interface BatchItem { id: string; file: File; status: BatchStatus; divNum: strin
 
 interface Project { id: string; name: string; number: string | null; location: string | null; gc_name: string | null; architect: string | null }
 interface TeamMember { id: string; name: string; title: string | null; email: string | null }
-interface RFI { id: string; rfi_number: string; subject: string; description: string | null; submitted_by: string | null; assigned_to: string | null; date_issued: string | null; due_date: string | null; status: string; response: string | null; project_id: string | null; created_at: string; uploaded_by: string }
+interface RFI {
+  id: string; rfi_number: string; subject: string; description: string | null;
+  received_from: string | null; submitted_by: string | null;
+  specification_section: string | null; location: string | null;
+  schedule_impact: string; cost_impact: string;
+  assigned_to: string | null; date_issued: string | null; due_date: string | null;
+  status: string; response: string | null; project_id: string | null;
+  file_path: string | null; file_name: string | null; generated_pdf_path: string | null;
+  created_at: string; uploaded_by: string;
+}
+interface ChangeOrder {
+  id: string; co_number: string; project_id: string | null; date: string | null;
+  proposal: string | null; qualifications: string | null; pricing_sum: number | null;
+  schedule_impact: string; schedule_impact_days: number | null;
+  file_path: string | null; file_name: string | null;
+  status: string; submitted_by: string | null; assigned_to: string | null;
+  generated_pdf_path: string | null; approved_at: string | null;
+  created_at: string; uploaded_by: string;
+}
 interface PunchItem { id: string; item_number: string; description: string; location: string | null; assigned_to: string | null; due_date: string | null; priority: string; status: string; notes: string | null; project_id: string | null; created_at: string; completed_at: string | null; uploaded_by: string }
 interface DailyReport { id: string; report_date: string; project_id: string | null; prepared_by: string | null; weather_conditions: string | null; temperature: string | null; manpower_count: number | null; work_performed: string | null; equipment: string | null; materials_delivered: string | null; visitors: string | null; issues_delays: string | null; safety_notes: string | null; created_at: string; uploaded_by: string }
 interface DrawingRecord { id: string; drawing_number: string; sheet_title: string; discipline: string | null; revision: string; revision_date: string | null; status: string; scale: string | null; notes: string | null; project_id: string | null; is_current: boolean; superseded_at: string | null; created_at: string; uploaded_by: string }
@@ -605,7 +623,7 @@ export default function Home() {
   const [generatingCover, setGeneratingCover] = useState(false)
 
   // Module navigation
-  const [activeModule, setActiveModule] = useState<"submittals" | "rfis" | "punch" | "daily" | "drawings">("submittals")
+  const [activeModule, setActiveModule] = useState<"submittals" | "rfis" | "changeorders" | "punch" | "daily" | "drawings">("submittals")
 
   // RFI log
   const [rfis, setRfis]                               = useState<RFI[]>([])
@@ -623,6 +641,36 @@ export default function Home() {
   const [rfiResponse, setRfiResponse]                 = useState("")
   const [rfiResponseStatus, setRfiResponseStatus]     = useState("")
   const [rfiRespondSaving, setRfiRespondSaving]       = useState(false)
+  const [rfiQuestion, setRfiQuestion]                 = useState("")
+  const [rfiReceivedFrom, setRfiReceivedFrom]         = useState("")
+  const [rfiReceivedFromCustom, setRfiReceivedFromCustom] = useState("")
+  const [rfiSpecSection, setRfiSpecSection]           = useState("")
+  const [rfiLocation, setRfiLocation]                 = useState("")
+  const [rfiScheduleImpact, setRfiScheduleImpact]     = useState("TBD")
+  const [rfiCostImpact, setRfiCostImpact]             = useState("TBD")
+  const [rfiFile, setRfiFile]                         = useState<File | null>(null)
+  const [rfiGeneratingPdf, setRfiGeneratingPdf]       = useState(false)
+
+  // Change Orders
+  const [changeOrders, setChangeOrders]               = useState<ChangeOrder[]>([])
+  const [coLoading, setCoLoading]                     = useState(false)
+  const [showNewCo, setShowNewCo]                     = useState(false)
+  const [viewCo, setViewCo]                           = useState<ChangeOrder | null>(null)
+  const [coProjectId, setCoProjectId]                 = useState("")
+  const [coDate, setCoDate]                           = useState(() => new Date().toISOString().slice(0, 10))
+  const [coProposal, setCoProposal]                   = useState("")
+  const [coQualifications, setCoQualifications]       = useState("")
+  const [coPricingSum, setCoPricingSum]               = useState("")
+  const [coScheduleImpact, setCoScheduleImpact]       = useState("TBD")
+  const [coScheduleDays, setCoScheduleDays]           = useState("")
+  const [coSubmittedBy, setCoSubmittedBy]             = useState("")
+  const [coAssignedTo, setCoAssignedTo]               = useState("")
+  const [coStatus, setCoStatus]                       = useState("Draft")
+  const [coFile, setCoFile]                           = useState<File | null>(null)
+  const [coSaving, setCoSaving]                       = useState(false)
+  const [coRespondSaving, setCoRespondSaving]         = useState(false)
+  const [coResponseStatus, setCoResponseStatus]       = useState("")
+  const [coGeneratingPdf, setCoGeneratingPdf]         = useState(false)
 
   // Punch list
   const [punchItems, setPunchItems]               = useState<PunchItem[]>([])
@@ -918,6 +966,18 @@ export default function Home() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { if (activeModule === "rfis") loadRfis() }, [activeModule])
 
+  function loadChangeOrders() {
+    setCoLoading(true)
+    fetch("/api/change-orders")
+      .then(r => r.json())
+      .then(d => setChangeOrders(d.changeOrders ?? []))
+      .catch(() => setChangeOrders([]))
+      .finally(() => setCoLoading(false))
+  }
+
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { if (activeModule === "changeorders") loadChangeOrders() }, [activeModule])
+
   function loadPunch() {
     setPunchLoading(true)
     fetch("/api/punch")
@@ -1038,18 +1098,94 @@ export default function Home() {
     e.preventDefault()
     setRfiSaving(true)
     try {
-      const res = await fetch("/api/rfis", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ subject: rfiSubject, description: rfiDescription || null, submitted_by: rfiSubmittedBy || null, assigned_to: rfiAssignedTo || null, date_issued: rfiDateIssued || null, due_date: rfiDueDate || null, project_id: rfiProjectId || null }),
-      })
+      const receivedFrom = rfiReceivedFrom === "__other__" ? rfiReceivedFromCustom : rfiReceivedFrom
+      const fd = new FormData()
+      fd.append("subject", rfiSubject)
+      fd.append("question", rfiQuestion)
+      fd.append("received_from", receivedFrom)
+      fd.append("specification_section", rfiSpecSection)
+      fd.append("location", rfiLocation)
+      fd.append("schedule_impact", rfiScheduleImpact)
+      fd.append("cost_impact", rfiCostImpact)
+      fd.append("assigned_to", rfiAssignedTo)
+      fd.append("date_issued", rfiDateIssued)
+      fd.append("due_date", rfiDueDate)
+      fd.append("project_id", rfiProjectId)
+      if (rfiFile) fd.append("file", rfiFile)
+      const res = await fetch("/api/rfis", { method: "POST", body: fd })
       if (res.ok) {
         setShowNewRfi(false)
-        setRfiSubject(""); setRfiDescription(""); setRfiSubmittedBy(""); setRfiAssignedTo(""); setRfiDueDate(""); setRfiProjectId("")
+        setRfiSubject(""); setRfiQuestion(""); setRfiReceivedFrom(""); setRfiReceivedFromCustom("")
+        setRfiSpecSection(""); setRfiLocation(""); setRfiScheduleImpact("TBD"); setRfiCostImpact("TBD")
+        setRfiAssignedTo(""); setRfiDueDate(""); setRfiProjectId(""); setRfiFile(null)
         setRfiDateIssued(new Date().toISOString().slice(0, 10))
         loadRfis()
       }
     } finally { setRfiSaving(false) }
+  }
+
+  async function createCo(e: React.FormEvent) {
+    e.preventDefault()
+    setCoSaving(true)
+    try {
+      const fd = new FormData()
+      fd.append("project_id", coProjectId)
+      fd.append("date", coDate)
+      fd.append("proposal", coProposal)
+      fd.append("qualifications", coQualifications)
+      fd.append("pricing_sum", coPricingSum)
+      fd.append("schedule_impact", coScheduleImpact)
+      fd.append("schedule_impact_days", coScheduleDays)
+      fd.append("submitted_by", coSubmittedBy)
+      fd.append("assigned_to", coAssignedTo)
+      fd.append("status", coStatus)
+      if (coFile) fd.append("file", coFile)
+      const res = await fetch("/api/change-orders", { method: "POST", body: fd })
+      if (res.ok) {
+        setShowNewCo(false)
+        setCoProjectId(""); setCoProposal(""); setCoQualifications(""); setCoPricingSum("")
+        setCoScheduleImpact("TBD"); setCoScheduleDays(""); setCoSubmittedBy(""); setCoAssignedTo("")
+        setCoStatus("Draft"); setCoFile(null)
+        setCoDate(new Date().toISOString().slice(0, 10))
+        loadChangeOrders()
+      }
+    } finally { setCoSaving(false) }
+  }
+
+  async function generateRfiPdf(rfiId: string) {
+    setRfiGeneratingPdf(true)
+    try {
+      const res  = await fetch(`/api/rfis/${rfiId}/pdf`, { method: "POST" })
+      const data = await res.json()
+      if (res.ok && data.url) {
+        window.open(data.url, "_blank")
+        loadRfis()
+      }
+    } finally { setRfiGeneratingPdf(false) }
+  }
+
+  async function generateCoPdf(coId: string) {
+    setCoGeneratingPdf(true)
+    try {
+      const res  = await fetch(`/api/change-orders/${coId}/pdf`, { method: "POST" })
+      const data = await res.json()
+      if (res.ok && data.url) {
+        window.open(data.url, "_blank")
+        loadChangeOrders()
+      }
+    } finally { setCoGeneratingPdf(false) }
+  }
+
+  async function saveCoStatus() {
+    if (!viewCo) return
+    setCoRespondSaving(true)
+    try {
+      const res = await fetch(`/api/change-orders/${viewCo.id}`, {
+        method: "PATCH", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: coResponseStatus, assigned_to: coAssignedTo }),
+      })
+      if (res.ok) { setViewCo(null); loadChangeOrders() }
+    } finally { setCoRespondSaving(false) }
   }
 
   function openDailyForEdit(r: DailyReport) {
@@ -1555,6 +1691,10 @@ export default function Home() {
             className={`px-3 py-2.5 text-[13px] font-medium border-b-2 transition-colors whitespace-nowrap ${activeModule === "rfis" ? "border-[#2563eb] text-[#e8edf5]" : "border-transparent text-[#4f617a] hover:text-[#8b9ab5]"}`}>
             RFIs
           </button>
+          <button onClick={() => setActiveModule("changeorders")}
+            className={`px-3 py-2.5 text-[13px] font-medium border-b-2 transition-colors whitespace-nowrap ${activeModule === "changeorders" ? "border-[#2563eb] text-[#e8edf5]" : "border-transparent text-[#4f617a] hover:text-[#8b9ab5]"}`}>
+            Change Orders
+          </button>
           <button onClick={() => setActiveModule("punch")}
             className={`px-3 py-2.5 text-[13px] font-medium border-b-2 transition-colors whitespace-nowrap ${activeModule === "punch" ? "border-[#2563eb] text-[#e8edf5]" : "border-transparent text-[#4f617a] hover:text-[#8b9ab5]"}`}>
             Punch List
@@ -1612,6 +1752,16 @@ export default function Home() {
             <p className="text-[13px] font-semibold text-[#e8edf5]">RFI Log <span className="text-[#4f617a] font-normal ml-1">({rfis.length})</span></p>
             <button onClick={() => setShowNewRfi(true)} className="h-8 px-4 rounded-md bg-[#2563eb] text-white text-[13px] font-semibold hover:bg-[#1d4ed8] transition-colors flex items-center gap-1.5">
               <PlusIcon /> New RFI
+            </button>
+          </div>
+        )}
+
+        {/* Change Orders action bar */}
+        {activeModule === "changeorders" && (
+          <div className="flex-shrink-0 border-b border-[#2a3347] bg-[#161b27] flex items-center justify-between px-4 py-2.5">
+            <p className="text-[13px] font-semibold text-[#e8edf5]">Change Orders <span className="text-[#4f617a] font-normal ml-1">({changeOrders.length})</span></p>
+            <button onClick={() => setShowNewCo(true)} className="h-8 px-4 rounded-md bg-[#2563eb] text-white text-[13px] font-semibold hover:bg-[#1d4ed8] transition-colors flex items-center gap-1.5">
+              <PlusIcon /> New CO
             </button>
           </div>
         )}
@@ -1771,46 +1921,156 @@ export default function Home() {
               <table className="w-full text-[13px] border-collapse">
                 <thead className="sticky top-0 bg-[#161b27] z-10">
                   <tr className="border-b border-[#2a3347]">
-                    <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#4f617a] uppercase tracking-widest w-10">#</th>
-                    <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#4f617a] uppercase tracking-widest w-24">RFI No.</th>
+                    <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#4f617a] uppercase tracking-widest w-24">RFI #</th>
                     <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#4f617a] uppercase tracking-widest">Subject</th>
-                    <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#4f617a] uppercase tracking-widest w-32">Assigned To</th>
-                    <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#4f617a] uppercase tracking-widest w-24">Issued</th>
+                    <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#4f617a] uppercase tracking-widest w-32">Received From</th>
+                    <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#4f617a] uppercase tracking-widest w-28">Spec Section</th>
+                    <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#4f617a] uppercase tracking-widest w-20">Sched.</th>
+                    <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#4f617a] uppercase tracking-widest w-20">Cost</th>
                     <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#4f617a] uppercase tracking-widest w-24">Due</th>
                     <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#4f617a] uppercase tracking-widest w-28">Status</th>
-                    <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#4f617a] uppercase tracking-widest w-20">Actions</th>
+                    <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#4f617a] uppercase tracking-widest w-28">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {rfis.map((r, i) => {
+                  {rfis.map(r => {
                     const isOverdue = r.due_date && new Date(r.due_date) < new Date() && r.status !== "Closed" && r.status !== "Answered" && r.status !== "Void"
                     return (
                       <tr key={r.id} className="border-b border-[#2a3347]/40 hover:bg-white/[0.02] transition-colors">
-                        <td className="px-4 py-2.5 text-[#4f617a] tabular-nums text-[12px]">{rfis.length - i}</td>
                         <td className="px-4 py-2.5 text-[12px] font-mono text-[#60a5fa]">{r.rfi_number}</td>
                         <td className="px-4 py-2.5 max-w-0">
                           <p className="text-[#c8d3e6] font-medium truncate" title={r.subject}>{r.subject}</p>
                           {r.description && <p className="text-[11px] text-[#4f617a] truncate">{r.description}</p>}
                         </td>
-                        <td className="px-4 py-2.5 text-[#8b9ab5] text-[12px]">{r.assigned_to ?? "—"}</td>
-                        <td className="px-4 py-2.5 text-[#4f617a] text-[12px] whitespace-nowrap">{r.date_issued ? fmtDateOnly(r.date_issued) : "—"}</td>
+                        <td className="px-4 py-2.5 text-[#8b9ab5] text-[12px] truncate">{r.received_from ?? r.submitted_by ?? "—"}</td>
+                        <td className="px-4 py-2.5 text-[#8b9ab5] text-[12px] font-mono">{r.specification_section ?? "—"}</td>
+                        <td className="px-4 py-2.5 text-[12px]">
+                          <span className={r.schedule_impact === "Yes" ? "text-amber-400" : r.schedule_impact === "No" ? "text-green-400" : "text-[#4f617a]"}>{r.schedule_impact ?? "TBD"}</span>
+                        </td>
+                        <td className="px-4 py-2.5 text-[12px]">
+                          <span className={r.cost_impact === "Yes" ? "text-amber-400" : r.cost_impact === "No" ? "text-green-400" : "text-[#4f617a]"}>{r.cost_impact ?? "TBD"}</span>
+                        </td>
                         <td className="px-4 py-2.5 text-[12px] whitespace-nowrap">
-                          {r.due_date
-                            ? <span className={isOverdue ? "text-red-400 font-medium" : "text-[#4f617a]"}>{fmtDateOnly(r.due_date)}{isOverdue ? " ⚠" : ""}</span>
-                            : <span className="text-[#4f617a]">—</span>}
+                          {r.due_date ? <span className={isOverdue ? "text-red-400 font-medium" : "text-[#4f617a]"}>{fmtDateOnly(r.due_date)}{isOverdue ? " ⚠" : ""}</span> : <span className="text-[#4f617a]">—</span>}
                         </td>
                         <td className="px-4 py-2.5"><RfiStatusBadge status={r.status} /></td>
                         <td className="px-4 py-2.5">
-                          <button onClick={() => { setViewRfi(r); setRfiResponse(r.response ?? ""); setRfiResponseStatus(r.status) }}
-                            className="text-[11px] text-[#8b9ab5] hover:text-[#e8edf5] px-2 py-1 rounded hover:bg-white/[0.05] transition-colors">
-                            View
-                          </button>
+                          <div className="flex items-center gap-1">
+                            <button onClick={() => { setViewRfi(r); setRfiResponse(r.response ?? ""); setRfiResponseStatus(r.status) }}
+                              className="text-[11px] text-[#8b9ab5] hover:text-[#e8edf5] px-2 py-1 rounded hover:bg-white/[0.05] transition-colors">View</button>
+                            <button onClick={() => generateRfiPdf(r.id)} disabled={rfiGeneratingPdf}
+                              className="text-[11px] text-[#60a5fa] hover:text-[#93c5fd] px-2 py-1 rounded hover:bg-white/[0.05] transition-colors disabled:opacity-50">PDF</button>
+                          </div>
                         </td>
                       </tr>
                     )
                   })}
                 </tbody>
               </table>
+            )
+          )}
+
+          {/* Change Orders */}
+          {activeModule === "changeorders" && (
+            coLoading ? (
+              <div className="flex items-center justify-center h-40 gap-2 text-[13px] text-[#4f617a]">
+                <SpinnerIcon className="h-4 w-4" /> Loading…
+              </div>
+            ) : (
+              <div className="flex flex-col min-h-full">
+                {/* Running totals */}
+                {changeOrders.length > 0 && (() => {
+                  const approved = changeOrders.filter(c => c.status === "Approved")
+                  const pending  = changeOrders.filter(c => ["Draft","Submitted","Under Review"].includes(c.status))
+                  const open     = changeOrders.filter(c => !["Approved","Rejected","Void"].includes(c.status))
+                  const sumApproved = approved.reduce((s, c) => s + (c.pricing_sum ?? 0), 0)
+                  const sumPending  = pending.reduce((s,  c) => s + (c.pricing_sum ?? 0), 0)
+                  const fmt = (n: number) => new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(n)
+                  return (
+                    <div className="flex items-stretch gap-3 px-4 py-3 border-b border-[#2a3347] flex-shrink-0">
+                      {[
+                        { label: "Total COs", value: String(changeOrders.length), muted: false },
+                        { label: "Approved", value: fmt(sumApproved), muted: false, green: true },
+                        { label: "Pending", value: fmt(sumPending), muted: true },
+                        { label: "Open", value: String(open.length), muted: open.length > 0 },
+                      ].map(({ label, value, green }) => (
+                        <div key={label} className="flex-1 rounded-lg bg-[#1e2535] border border-[#2a3347] px-3 py-2">
+                          <p className="text-[10px] font-bold text-[#4f617a] uppercase tracking-widest mb-1">{label}</p>
+                          <p className={`text-[15px] font-bold tabular-nums ${green ? "text-green-400" : "text-[#e8edf5]"}`}>{value}</p>
+                        </div>
+                      ))}
+                    </div>
+                  )
+                })()}
+                {changeOrders.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center flex-1 py-24 text-center">
+                    <div className="w-14 h-14 rounded-2xl bg-[#2563eb]/10 border border-[#2563eb]/20 flex items-center justify-center mb-4">
+                      <svg className="w-7 h-7 text-[#3b82f6]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 14l6-6m-5.5.5h.01m4.99 5h.01M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16l3.5-2 3.5 2 3.5-2 3.5 2z" />
+                      </svg>
+                    </div>
+                    <p className="text-[15px] font-bold text-[#c8d3e6]">No change orders yet</p>
+                    <p className="text-[13px] text-[#4f617a] mt-1.5">Create your first change order to track scope changes.</p>
+                    <button onClick={() => setShowNewCo(true)} className="mt-5 h-9 px-5 rounded-lg bg-[#2563eb] text-white text-[13px] font-semibold hover:bg-[#1d4ed8] transition-colors inline-flex items-center gap-2">
+                      <PlusIcon /> New CO
+                    </button>
+                  </div>
+                ) : (
+                  <table className="w-full text-[13px] border-collapse">
+                    <thead className="sticky top-0 bg-[#161b27] z-10">
+                      <tr className="border-b border-[#2a3347]">
+                        <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#4f617a] uppercase tracking-widest w-20">CO #</th>
+                        <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#4f617a] uppercase tracking-widest w-32">Project</th>
+                        <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#4f617a] uppercase tracking-widest">Proposal</th>
+                        <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#4f617a] uppercase tracking-widest w-28">Pricing</th>
+                        <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#4f617a] uppercase tracking-widest w-20">Sched.</th>
+                        <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#4f617a] uppercase tracking-widest w-24">Date</th>
+                        <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#4f617a] uppercase tracking-widest w-28">Status</th>
+                        <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#4f617a] uppercase tracking-widest w-28">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {changeOrders.map(c => {
+                        const proj = appProjects.find(p => p.id === c.project_id)
+                        const statusColor: Record<string, string> = {
+                          Draft: "bg-[#2a3347] text-[#8b9ab5]",
+                          Submitted: "bg-[#1e3a5f] text-[#60a5fa]",
+                          "Under Review": "bg-[#3b2a00] text-amber-400",
+                          Approved: "bg-[#0d2e1a] text-green-400",
+                          Rejected: "bg-[#2d0f0f] text-red-400",
+                          Void: "bg-[#1a1a2e] text-[#4f617a]",
+                        }
+                        const badgeCls = statusColor[c.status] ?? "bg-[#2a3347] text-[#8b9ab5]"
+                        return (
+                          <tr key={c.id} className="border-b border-[#2a3347]/40 hover:bg-white/[0.02] transition-colors">
+                            <td className="px-4 py-2.5 text-[12px] font-mono text-[#60a5fa]">{c.co_number}</td>
+                            <td className="px-4 py-2.5 text-[#8b9ab5] text-[12px] truncate">{proj?.name ?? "—"}</td>
+                            <td className="px-4 py-2.5 max-w-0"><p className="text-[#c8d3e6] truncate">{c.proposal ?? "—"}</p></td>
+                            <td className="px-4 py-2.5 text-[#c8d3e6] text-[12px] tabular-nums font-medium">
+                              {c.pricing_sum != null ? new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(c.pricing_sum) : "—"}
+                            </td>
+                            <td className="px-4 py-2.5 text-[12px]">
+                              <span className={c.schedule_impact === "Yes" ? "text-amber-400" : c.schedule_impact === "No" ? "text-green-400" : "text-[#4f617a]"}>{c.schedule_impact ?? "TBD"}</span>
+                            </td>
+                            <td className="px-4 py-2.5 text-[#4f617a] text-[12px] whitespace-nowrap">{c.date ? fmtDateOnly(c.date) : "—"}</td>
+                            <td className="px-4 py-2.5">
+                              <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold ${badgeCls}`}>{c.status}</span>
+                            </td>
+                            <td className="px-4 py-2.5">
+                              <div className="flex items-center gap-1">
+                                <button onClick={() => { setViewCo(c); setCoResponseStatus(c.status); setCoAssignedTo(c.assigned_to ?? "") }}
+                                  className="text-[11px] text-[#8b9ab5] hover:text-[#e8edf5] px-2 py-1 rounded hover:bg-white/[0.05] transition-colors">View</button>
+                                <button onClick={() => generateCoPdf(c.id)} disabled={coGeneratingPdf}
+                                  className="text-[11px] text-[#60a5fa] hover:text-[#93c5fd] px-2 py-1 rounded hover:bg-white/[0.05] transition-colors disabled:opacity-50">PDF</button>
+                              </div>
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                )}
+              </div>
             )
           )}
 
@@ -2421,42 +2681,86 @@ export default function Home() {
 
       {/* ── New RFI modal ────────────────────────────────────────────────── */}
       {showNewRfi && (
-        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center"
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4"
           onClick={e => { if (e.target === e.currentTarget) setShowNewRfi(false) }}>
-          <div className="bg-[#1c2333] rounded-xl border border-[#2a3347] shadow-2xl w-[520px]">
-            <div className="flex items-center justify-between px-6 pt-5 pb-4 border-b border-[#2a3347]">
+          <div className="bg-[#1c2333] rounded-xl border border-[#2a3347] shadow-2xl w-[580px] flex flex-col max-h-[90vh]">
+            <div className="flex items-center justify-between px-6 pt-5 pb-4 border-b border-[#2a3347] flex-shrink-0">
               <h2 className="text-[15px] font-bold text-[#e8edf5]">New RFI</h2>
               <button onClick={() => setShowNewRfi(false)} className="text-[#4f617a] hover:text-[#8b9ab5] transition-colors">
                 <XIcon className="h-4 w-4" />
               </button>
             </div>
-            <form onSubmit={createRfi}>
-              <div className="px-6 py-4 space-y-3">
+            <form onSubmit={createRfi} className="flex flex-col min-h-0">
+              <div className="px-6 py-4 space-y-3 overflow-y-auto">
+                {appProjects.length > 0 && (
+                  <div>
+                    <label className={labelCls}>Project</label>
+                    <select value={rfiProjectId} onChange={e => setRfiProjectId(e.target.value)}
+                      className="w-full h-9 px-3 rounded-md border border-[#2a3347] text-[13px] text-[#e8edf5] bg-[#0d1117] focus:outline-none focus:ring-1 focus:ring-[#2563eb]/40">
+                      <option value="">None</option>
+                      {appProjects.map(p => <option key={p.id} value={p.id}>{p.name}{p.number ? ` — ${p.number}` : ""}</option>)}
+                    </select>
+                  </div>
+                )}
                 <div>
                   <label className={labelCls}>Subject <span className="text-red-400">*</span></label>
                   <input type="text" required value={rfiSubject} onChange={e => setRfiSubject(e.target.value)}
-                    placeholder="Brief description of the question or issue" autoFocus className={inputCls} />
+                    placeholder="Brief description of the question" autoFocus className={inputCls} />
                 </div>
                 <div>
-                  <label className={labelCls}>Description</label>
-                  <textarea value={rfiDescription} onChange={e => setRfiDescription(e.target.value)}
-                    rows={3} placeholder="Detailed description, reference specs, drawings, etc."
+                  <label className={labelCls}>Question</label>
+                  <textarea value={rfiQuestion} onChange={e => setRfiQuestion(e.target.value)} rows={4}
+                    placeholder="Detailed question — reference specs, drawings, field conditions…"
                     className="w-full px-3 py-2 rounded-md border border-[#2a3347] text-[13px] text-[#e8edf5] bg-[#0d1117] focus:outline-none focus:ring-1 focus:ring-[#2563eb]/40 resize-none placeholder:text-[#4f617a]" />
+                </div>
+                <div>
+                  <label className={labelCls}>Received From</label>
+                  <select value={rfiReceivedFrom} onChange={e => setRfiReceivedFrom(e.target.value)}
+                    className="w-full h-9 px-3 rounded-md border border-[#2a3347] text-[13px] text-[#e8edf5] bg-[#0d1117] focus:outline-none focus:ring-1 focus:ring-[#2563eb]/40">
+                    <option value="">Select or type below…</option>
+                    {teamMembers.map(m => <option key={m.id} value={m.name}>{m.name}</option>)}
+                    <option value="__other__">Other (type name)…</option>
+                  </select>
+                  {rfiReceivedFrom === "__other__" && (
+                    <input type="text" value={rfiReceivedFromCustom} onChange={e => setRfiReceivedFromCustom(e.target.value)}
+                      placeholder="Name of subcontractor, vendor, etc." className={`${inputCls} mt-1.5`} />
+                  )}
                 </div>
                 <div className="flex gap-3">
                   <div className="flex-1">
-                    <label className={labelCls}>Submitted By</label>
-                    <select value={rfiSubmittedBy} onChange={e => setRfiSubmittedBy(e.target.value)}
+                    <label className={labelCls}>Specification Section</label>
+                    <input type="text" value={rfiSpecSection} onChange={e => setRfiSpecSection(e.target.value)}
+                      placeholder="e.g. 09 22 16" className={inputCls} />
+                  </div>
+                  <div className="flex-1">
+                    <label className={labelCls}>Location</label>
+                    <input type="text" value={rfiLocation} onChange={e => setRfiLocation(e.target.value)}
+                      placeholder="Area or room" className={inputCls} />
+                  </div>
+                </div>
+                <div className="flex gap-3">
+                  <div className="flex-1">
+                    <label className={labelCls}>Schedule Impact</label>
+                    <select value={rfiScheduleImpact} onChange={e => setRfiScheduleImpact(e.target.value)}
                       className="w-full h-9 px-3 rounded-md border border-[#2a3347] text-[13px] text-[#e8edf5] bg-[#0d1117] focus:outline-none focus:ring-1 focus:ring-[#2563eb]/40">
-                      <option value="">Select…</option>
-                      {teamMembers.map(m => <option key={m.id} value={m.name}>{m.name}</option>)}
+                      {["Yes","No","TBD"].map(v => <option key={v} value={v}>{v}</option>)}
                     </select>
                   </div>
                   <div className="flex-1">
-                    <label className={labelCls}>Assigned To</label>
-                    <input type="text" value={rfiAssignedTo} onChange={e => setRfiAssignedTo(e.target.value)}
-                      placeholder="Architect, Engineer, GC…" className={inputCls} />
+                    <label className={labelCls}>Cost Impact</label>
+                    <select value={rfiCostImpact} onChange={e => setRfiCostImpact(e.target.value)}
+                      className="w-full h-9 px-3 rounded-md border border-[#2a3347] text-[13px] text-[#e8edf5] bg-[#0d1117] focus:outline-none focus:ring-1 focus:ring-[#2563eb]/40">
+                      {["Yes","No","TBD"].map(v => <option key={v} value={v}>{v}</option>)}
+                    </select>
                   </div>
+                </div>
+                <div>
+                  <label className={labelCls}>Assigned To</label>
+                  <select value={rfiAssignedTo} onChange={e => setRfiAssignedTo(e.target.value)}
+                    className="w-full h-9 px-3 rounded-md border border-[#2a3347] text-[13px] text-[#e8edf5] bg-[#0d1117] focus:outline-none focus:ring-1 focus:ring-[#2563eb]/40">
+                    <option value="">Select…</option>
+                    {teamMembers.map(m => <option key={m.id} value={m.name}>{m.name}</option>)}
+                  </select>
                 </div>
                 <div className="flex gap-3">
                   <div className="flex-1">
@@ -2468,22 +2772,16 @@ export default function Home() {
                     <input type="date" value={rfiDueDate} onChange={e => setRfiDueDate(e.target.value)} className={inputCls} />
                   </div>
                 </div>
-                {appProjects.length > 0 && (
-                  <div>
-                    <label className={labelCls}>Project</label>
-                    <select value={rfiProjectId} onChange={e => setRfiProjectId(e.target.value)}
-                      className="w-full h-9 px-3 rounded-md border border-[#2a3347] text-[13px] text-[#e8edf5] bg-[#0d1117] focus:outline-none focus:ring-1 focus:ring-[#2563eb]/40">
-                      <option value="">None</option>
-                      {appProjects.map(p => <option key={p.id} value={p.id}>{p.name}{p.number ? ` — ${p.number}` : ""}</option>)}
-                    </select>
-                  </div>
-                )}
+                <div>
+                  <label className={labelCls}>Attach File</label>
+                  <input type="file" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png"
+                    onChange={e => setRfiFile(e.target.files?.[0] ?? null)}
+                    className="w-full text-[13px] text-[#8b9ab5] file:mr-3 file:py-1 file:px-3 file:rounded file:border-0 file:text-[12px] file:bg-[#2a3347] file:text-[#c8d3e6] hover:file:bg-[#374158]" />
+                </div>
               </div>
-              <div className="flex justify-end gap-2 px-6 py-4 border-t border-[#2a3347]">
+              <div className="flex justify-end gap-2 px-6 py-4 border-t border-[#2a3347] flex-shrink-0">
                 <button type="button" onClick={() => setShowNewRfi(false)}
-                  className="h-8 px-4 rounded-md border border-[#2a3347] text-[13px] text-[#8b9ab5] hover:bg-white/[0.05] transition-colors">
-                  Cancel
-                </button>
+                  className="h-8 px-4 rounded-md border border-[#2a3347] text-[13px] text-[#8b9ab5] hover:bg-white/[0.05] transition-colors">Cancel</button>
                 <button type="submit" disabled={rfiSaving || !rfiSubject.trim()}
                   className="h-8 px-4 rounded-md bg-[#2563eb] text-white text-[13px] font-semibold hover:bg-[#1d4ed8] transition-colors disabled:opacity-50 flex items-center gap-2">
                   {rfiSaving && <SpinnerIcon className="h-3 w-3" />}
@@ -2497,31 +2795,59 @@ export default function Home() {
 
       {/* ── View/Respond RFI modal ────────────────────────────────────────── */}
       {viewRfi && (
-        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center"
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4"
           onClick={e => { if (e.target === e.currentTarget) setViewRfi(null) }}>
-          <div className="bg-[#1c2333] rounded-xl border border-[#2a3347] shadow-2xl w-[560px]">
-            <div className="flex items-center justify-between px-6 pt-5 pb-4 border-b border-[#2a3347]">
-              <div>
-                <span className="text-[11px] font-mono text-[#60a5fa]">{viewRfi.rfi_number}</span>
-                <h2 className="text-[15px] font-bold text-[#e8edf5] mt-0.5">{viewRfi.subject}</h2>
+          <div className="bg-[#1c2333] rounded-xl border border-[#2a3347] shadow-2xl w-[680px] flex flex-col max-h-[90vh]">
+            <div className="flex items-center justify-between px-6 pt-5 pb-4 border-b border-[#2a3347] flex-shrink-0">
+              <div className="flex items-center gap-3">
+                <span className="text-[12px] font-mono text-[#60a5fa] flex-shrink-0">{viewRfi.rfi_number}</span>
+                <h2 className="text-[15px] font-bold text-[#e8edf5]">{viewRfi.subject}</h2>
+                <RfiStatusBadge status={viewRfi.status} />
               </div>
               <button onClick={() => setViewRfi(null)} className="text-[#4f617a] hover:text-[#8b9ab5] transition-colors ml-4 flex-shrink-0">
                 <XIcon className="h-4 w-4" />
               </button>
             </div>
-            <div className="px-6 py-4 space-y-4 max-h-[70vh] overflow-y-auto">
+            <div className="px-6 py-4 space-y-4 overflow-y-auto">
+              {/* Meta grid */}
+              <div className="grid grid-cols-3 gap-3">
+                {[
+                  { label: "Received From", value: viewRfi.received_from ?? viewRfi.submitted_by ?? "—" },
+                  { label: "Assigned To",   value: viewRfi.assigned_to ?? "—" },
+                  { label: "Spec Section",  value: viewRfi.specification_section ?? "—" },
+                  { label: "Location",      value: viewRfi.location ?? "—" },
+                  { label: "Schedule Impact", value: viewRfi.schedule_impact ?? "TBD" },
+                  { label: "Cost Impact",   value: viewRfi.cost_impact ?? "TBD" },
+                  { label: "Date Issued",   value: viewRfi.date_issued ? fmtDateOnly(viewRfi.date_issued) : "—" },
+                  { label: "Due Date",      value: viewRfi.due_date ? fmtDateOnly(viewRfi.due_date) : "—" },
+                ].map(({ label, value }) => (
+                  <div key={label} className="rounded-md bg-[#161b27] px-3 py-2">
+                    <p className="text-[10px] font-bold text-[#4f617a] uppercase tracking-widest mb-0.5">{label}</p>
+                    <p className="text-[12px] text-[#c8d3e6]">{value}</p>
+                  </div>
+                ))}
+              </div>
+              {/* Question */}
               {viewRfi.description && (
                 <div className="rounded-md bg-[#2a3347]/50 px-3 py-2.5">
-                  <p className="text-[11px] font-bold text-[#4f617a] uppercase tracking-widest mb-1">Description</p>
-                  <p className="text-[13px] text-[#c8d3e6]">{viewRfi.description}</p>
+                  <p className="text-[10px] font-bold text-[#4f617a] uppercase tracking-widest mb-1.5">Question</p>
+                  <p className="text-[13px] text-[#c8d3e6] whitespace-pre-wrap">{viewRfi.description}</p>
                 </div>
               )}
-              <div className="grid grid-cols-2 gap-3 text-[12px]">
-                {viewRfi.submitted_by && <div><span className="text-[#4f617a]">Submitted by: </span><span className="text-[#c8d3e6]">{viewRfi.submitted_by}</span></div>}
-                {viewRfi.assigned_to && <div><span className="text-[#4f617a]">Assigned to: </span><span className="text-[#c8d3e6]">{viewRfi.assigned_to}</span></div>}
-                {viewRfi.date_issued && <div><span className="text-[#4f617a]">Issued: </span><span className="text-[#c8d3e6]">{fmtDateOnly(viewRfi.date_issued)}</span></div>}
-                {viewRfi.due_date && <div><span className="text-[#4f617a]">Due: </span><span className={new Date(viewRfi.due_date) < new Date() && viewRfi.status !== "Closed" && viewRfi.status !== "Answered" ? "text-red-400 font-medium" : "text-[#c8d3e6]"}>{fmtDateOnly(viewRfi.due_date)}</span></div>}
-              </div>
+              {/* Attachment */}
+              {viewRfi.file_name && (
+                <div className="flex items-center gap-2 text-[12px]">
+                  <svg className="w-4 h-4 text-[#4f617a]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" /></svg>
+                  <span className="text-[#8b9ab5]">{viewRfi.file_name}</span>
+                </div>
+              )}
+              {viewRfi.generated_pdf_path && (
+                <div className="flex items-center gap-2 text-[12px]">
+                  <svg className="w-4 h-4 text-[#60a5fa]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" /></svg>
+                  <button onClick={() => generateRfiPdf(viewRfi.id)} className="text-[#60a5fa] hover:text-[#93c5fd] transition-colors">View / Regenerate PDF</button>
+                </div>
+              )}
+              {/* Response */}
               <div className="border-t border-[#2a3347] pt-4 space-y-3">
                 <p className="text-[11px] font-bold text-[#4f617a] uppercase tracking-widest">Response</p>
                 <textarea value={rfiResponse} onChange={e => setRfiResponse(e.target.value)} rows={4}
@@ -2531,23 +2857,275 @@ export default function Home() {
                   <label className={labelCls}>Status</label>
                   <select value={rfiResponseStatus} onChange={e => setRfiResponseStatus(e.target.value)}
                     className="w-full h-9 px-3 rounded-md border border-[#2a3347] text-[13px] text-[#e8edf5] bg-[#0d1117] focus:outline-none focus:ring-1 focus:ring-[#2563eb]/40">
-                    {["Open", "Under Review", "Answered", "Closed", "Void"].map(s => (
-                      <option key={s} value={s}>{s}</option>
-                    ))}
+                    {["Open","In Review","Answered","Closed","Void"].map(s => <option key={s} value={s}>{s}</option>)}
                   </select>
                 </div>
               </div>
             </div>
-            <div className="flex justify-end gap-2 px-6 py-4 border-t border-[#2a3347]">
-              <button onClick={() => setViewRfi(null)}
-                className="h-8 px-4 rounded-md border border-[#2a3347] text-[13px] text-[#8b9ab5] hover:bg-white/[0.05] transition-colors">
-                Close
+            <div className="flex justify-between px-6 py-4 border-t border-[#2a3347] flex-shrink-0">
+              <button onClick={() => generateRfiPdf(viewRfi.id)} disabled={rfiGeneratingPdf}
+                className="h-8 px-4 rounded-md border border-[#2a3347] text-[13px] text-[#8b9ab5] hover:bg-white/[0.05] transition-colors disabled:opacity-50 flex items-center gap-2">
+                {rfiGeneratingPdf ? <><SpinnerIcon className="h-3 w-3" /> Generating…</> : "Generate PDF"}
               </button>
-              <button onClick={respondRfi} disabled={rfiRespondSaving}
+              <div className="flex gap-2">
+                <button onClick={() => setViewRfi(null)}
+                  className="h-8 px-4 rounded-md border border-[#2a3347] text-[13px] text-[#8b9ab5] hover:bg-white/[0.05] transition-colors">Close</button>
+                <button onClick={respondRfi} disabled={rfiRespondSaving}
+                  className="h-8 px-4 rounded-md bg-[#2563eb] text-white text-[13px] font-semibold hover:bg-[#1d4ed8] transition-colors disabled:opacity-50 flex items-center gap-2">
+                  {rfiRespondSaving && <SpinnerIcon className="h-3 w-3" />}
+                  {rfiRespondSaving ? "Saving…" : "Save Response"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── New Change Order modal ────────────────────────────────────────── */}
+      {showNewCo && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4"
+          onClick={e => { if (e.target === e.currentTarget) setShowNewCo(false) }}>
+          <div className="bg-[#1c2333] border border-[#2a3347] rounded-xl w-full max-w-2xl flex flex-col max-h-[90vh]">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-[#2a3347] flex-shrink-0">
+              <h2 className="text-[16px] font-bold text-[#e8edf5]">New Change Order</h2>
+              <button onClick={() => setShowNewCo(false)} className="text-[#4f617a] hover:text-[#e8edf5] transition-colors">
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+              </button>
+            </div>
+            <form onSubmit={createCo} className="overflow-y-auto flex-1 px-6 py-4 space-y-4">
+              {(() => {
+                const labelCls2 = "block text-[11px] font-semibold text-[#4f617a] uppercase tracking-widest mb-1"
+                const inputCls2 = "w-full h-9 px-3 rounded-md border border-[#2a3347] text-[13px] text-[#e8edf5] bg-[#0d1117] focus:outline-none focus:ring-1 focus:ring-[#2563eb]/40 placeholder:text-[#4f617a]"
+                const selCls2   = "w-full h-9 px-3 rounded-md border border-[#2a3347] text-[13px] text-[#e8edf5] bg-[#0d1117] focus:outline-none focus:ring-1 focus:ring-[#2563eb]/40"
+                const coProj = appProjects.find(p => p.id === coProjectId)
+                return (<>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className={labelCls2}>Project</label>
+                      <select value={coProjectId} onChange={e => setCoProjectId(e.target.value)} className={selCls2}>
+                        <option value="">— Select project —</option>
+                        {appProjects.map(p => <option key={p.id} value={p.id}>{p.name}{p.number ? ` (${p.number})` : ""}</option>)}
+                      </select>
+                      {coProj && (
+                        <p className="text-[11px] text-[#4f617a] mt-1">{[coProj.gc_name, coProj.location].filter(Boolean).join(" · ")}</p>
+                      )}
+                    </div>
+                    <div>
+                      <label className={labelCls2}>Date</label>
+                      <input type="date" value={coDate} onChange={e => setCoDate(e.target.value)} className={inputCls2} />
+                    </div>
+                  </div>
+                  <div>
+                    <label className={labelCls2}>Proposal <span className="text-red-400">*</span></label>
+                    <textarea required value={coProposal} onChange={e => setCoProposal(e.target.value)} rows={4}
+                      placeholder="Describe the scope of work for this change order…"
+                      className="w-full px-3 py-2 rounded-md border border-[#2a3347] text-[13px] text-[#e8edf5] bg-[#0d1117] focus:outline-none focus:ring-1 focus:ring-[#2563eb]/40 resize-none placeholder:text-[#4f617a]" />
+                  </div>
+                  <div>
+                    <label className={labelCls2}>Qualifications / Exclusions</label>
+                    <textarea value={coQualifications} onChange={e => setCoQualifications(e.target.value)} rows={3}
+                      placeholder="List any qualifications or exclusions…"
+                      className="w-full px-3 py-2 rounded-md border border-[#2a3347] text-[13px] text-[#e8edf5] bg-[#0d1117] focus:outline-none focus:ring-1 focus:ring-[#2563eb]/40 resize-none placeholder:text-[#4f617a]" />
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className={labelCls2}>Pricing Sum ($)</label>
+                      <input type="number" step="0.01" min="0" value={coPricingSum} onChange={e => setCoPricingSum(e.target.value)}
+                        placeholder="0.00" className={inputCls2} />
+                    </div>
+                    <div>
+                      <label className={labelCls2}>Status</label>
+                      <select value={coStatus} onChange={e => setCoStatus(e.target.value)} className={selCls2}>
+                        {["Draft","Submitted","Under Review","Approved","Rejected","Void"].map(s => <option key={s} value={s}>{s}</option>)}
+                      </select>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className={labelCls2}>Schedule Impact</label>
+                      <select value={coScheduleImpact} onChange={e => setCoScheduleImpact(e.target.value)} className={selCls2}>
+                        {["TBD","Yes","No"].map(s => <option key={s} value={s}>{s}</option>)}
+                      </select>
+                    </div>
+                    {coScheduleImpact === "Yes" && (
+                      <div>
+                        <label className={labelCls2}>Days Impact</label>
+                        <input type="number" min="0" value={coScheduleDays} onChange={e => setCoScheduleDays(e.target.value)}
+                          placeholder="0" className={inputCls2} />
+                      </div>
+                    )}
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className={labelCls2}>Submitted By</label>
+                      <input type="text" value={coSubmittedBy} onChange={e => setCoSubmittedBy(e.target.value)}
+                        placeholder="Name or company" className={inputCls2} />
+                    </div>
+                    <div>
+                      <label className={labelCls2}>Assigned To</label>
+                      <input type="text" value={coAssignedTo} onChange={e => setCoAssignedTo(e.target.value)}
+                        placeholder="Reviewer name" className={inputCls2} />
+                    </div>
+                  </div>
+                  <div>
+                    <label className={labelCls2}>Attach File</label>
+                    <input type="file" accept=".pdf,.doc,.docx,.xlsx,.xls,.png,.jpg,.jpeg"
+                      onChange={e => setCoFile(e.target.files?.[0] ?? null)}
+                      className="w-full text-[13px] text-[#8b9ab5] file:mr-3 file:py-1.5 file:px-3 file:rounded file:border-0 file:bg-[#2a3347] file:text-[#c8d3e6] file:text-[12px] file:cursor-pointer hover:file:bg-[#374151] cursor-pointer" />
+                  </div>
+                </>)
+              })()}
+            </form>
+            <div className="flex justify-end gap-2 px-6 py-4 border-t border-[#2a3347] flex-shrink-0">
+              <button type="button" onClick={() => setShowNewCo(false)}
+                className="h-8 px-4 rounded-md border border-[#2a3347] text-[13px] text-[#8b9ab5] hover:bg-white/[0.05] transition-colors">Cancel</button>
+              <button type="submit" form="" onClick={createCo} disabled={coSaving || !coProposal.trim()}
                 className="h-8 px-4 rounded-md bg-[#2563eb] text-white text-[13px] font-semibold hover:bg-[#1d4ed8] transition-colors disabled:opacity-50 flex items-center gap-2">
-                {rfiRespondSaving && <SpinnerIcon className="h-3 w-3" />}
-                {rfiRespondSaving ? "Saving…" : "Save Response"}
+                {coSaving && <SpinnerIcon className="h-3 w-3" />}
+                {coSaving ? "Creating…" : "Create CO"}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── View Change Order modal ───────────────────────────────────────── */}
+      {viewCo && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4"
+          onClick={e => { if (e.target === e.currentTarget) setViewCo(null) }}>
+          <div className="bg-[#1c2333] border border-[#2a3347] rounded-xl w-full max-w-2xl flex flex-col max-h-[90vh]">
+            {/* Header */}
+            <div className="flex items-start justify-between px-6 py-4 border-b border-[#2a3347] flex-shrink-0">
+              <div>
+                <div className="flex items-center gap-3">
+                  <h2 className="text-[16px] font-bold text-[#e8edf5]">{viewCo.co_number}</h2>
+                  {(() => {
+                    const statusColor: Record<string, string> = {
+                      Draft: "bg-[#2a3347] text-[#8b9ab5]",
+                      Submitted: "bg-[#1e3a5f] text-[#60a5fa]",
+                      "Under Review": "bg-[#3b2a00] text-amber-400",
+                      Approved: "bg-[#0d2e1a] text-green-400",
+                      Rejected: "bg-[#2d0f0f] text-red-400",
+                      Void: "bg-[#1a1a2e] text-[#4f617a]",
+                    }
+                    return <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-semibold ${statusColor[viewCo.status] ?? "bg-[#2a3347] text-[#8b9ab5]"}`}>{viewCo.status}</span>
+                  })()}
+                </div>
+                <p className="text-[12px] text-[#4f617a] mt-0.5">{viewCo.date ? fmtDateOnly(viewCo.date) : "No date"}</p>
+              </div>
+              <button onClick={() => setViewCo(null)} className="text-[#4f617a] hover:text-[#e8edf5] transition-colors mt-0.5">
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+              </button>
+            </div>
+
+            <div className="overflow-y-auto flex-1 px-6 py-4 space-y-5">
+              {/* Project info */}
+              {viewCo.project_id && (() => {
+                const proj = appProjects.find(p => p.id === viewCo.project_id)
+                if (!proj) return null
+                return (
+                  <div className="rounded-lg bg-[#161b27] border border-[#2a3347] px-4 py-3 grid grid-cols-2 gap-x-6 gap-y-1.5 text-[12px]">
+                    {proj.name    && <div><span className="text-[#4f617a]">Project: </span><span className="text-[#c8d3e6] font-medium">{proj.name}</span></div>}
+                    {proj.number  && <div><span className="text-[#4f617a]">No.: </span><span className="text-[#c8d3e6]">{proj.number}</span></div>}
+                    {proj.gc_name && <div><span className="text-[#4f617a]">GC: </span><span className="text-[#c8d3e6]">{proj.gc_name}</span></div>}
+                    {proj.architect && <div><span className="text-[#4f617a]">Architect: </span><span className="text-[#c8d3e6]">{proj.architect}</span></div>}
+                    {proj.location && <div className="col-span-2"><span className="text-[#4f617a]">Location: </span><span className="text-[#c8d3e6]">{proj.location}</span></div>}
+                  </div>
+                )
+              })()}
+
+              {/* Meta grid */}
+              <div className="grid grid-cols-3 gap-3 text-[12px]">
+                {[
+                  { label: "Submitted By", value: viewCo.submitted_by ?? "—" },
+                  { label: "Assigned To",  value: viewCo.assigned_to  ?? "—" },
+                  { label: "Schedule Impact", value: viewCo.schedule_impact ?? "TBD" },
+                  { label: "Days Impact", value: viewCo.schedule_impact_days != null ? String(viewCo.schedule_impact_days) : "—" },
+                  { label: "Approved At", value: viewCo.approved_at ? fmtDateOnly(viewCo.approved_at) : "—" },
+                  { label: "Created",     value: fmtDateOnly(viewCo.created_at) },
+                ].map(({ label, value }) => (
+                  <div key={label}>
+                    <p className="text-[10px] font-bold text-[#4f617a] uppercase tracking-widest mb-0.5">{label}</p>
+                    <p className="text-[#c8d3e6]">{value}</p>
+                  </div>
+                ))}
+              </div>
+
+              {/* Pricing */}
+              <div className="rounded-lg bg-[#161b27] border border-[#2a3347] px-4 py-3">
+                <p className="text-[10px] font-bold text-[#4f617a] uppercase tracking-widest mb-1">Total Change Order Amount</p>
+                <p className={`text-[22px] font-bold tabular-nums ${viewCo.status === "Approved" ? "text-green-400" : "text-[#e8edf5]"}`}>
+                  {viewCo.pricing_sum != null
+                    ? new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(viewCo.pricing_sum)
+                    : "—"}
+                </p>
+              </div>
+
+              {/* Proposal */}
+              {viewCo.proposal && (
+                <div>
+                  <p className="text-[11px] font-bold text-[#4f617a] uppercase tracking-widest mb-2">Proposal</p>
+                  <p className="text-[13px] text-[#c8d3e6] whitespace-pre-wrap leading-relaxed">{viewCo.proposal}</p>
+                </div>
+              )}
+
+              {/* Qualifications */}
+              {viewCo.qualifications && (
+                <div>
+                  <p className="text-[11px] font-bold text-[#4f617a] uppercase tracking-widest mb-2">Qualifications / Exclusions</p>
+                  <p className="text-[13px] text-[#c8d3e6] whitespace-pre-wrap leading-relaxed">{viewCo.qualifications}</p>
+                </div>
+              )}
+
+              {/* Attachment + PDF */}
+              {viewCo.file_name && (
+                <div className="flex items-center gap-2 text-[12px]">
+                  <svg className="w-4 h-4 text-[#4f617a]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" /></svg>
+                  <span className="text-[#8b9ab5]">{viewCo.file_name}</span>
+                </div>
+              )}
+              {viewCo.generated_pdf_path && (
+                <div className="flex items-center gap-2 text-[12px]">
+                  <svg className="w-4 h-4 text-[#60a5fa]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" /></svg>
+                  <button onClick={() => generateCoPdf(viewCo.id)} className="text-[#60a5fa] hover:text-[#93c5fd] transition-colors">View / Regenerate PDF</button>
+                </div>
+              )}
+
+              {/* Status update */}
+              <div className="border-t border-[#2a3347] pt-4 space-y-3">
+                <p className="text-[11px] font-bold text-[#4f617a] uppercase tracking-widest">Update</p>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[11px] font-semibold text-[#4f617a] uppercase tracking-widest mb-1">Status</label>
+                    <select value={coResponseStatus} onChange={e => setCoResponseStatus(e.target.value)}
+                      className="w-full h-9 px-3 rounded-md border border-[#2a3347] text-[13px] text-[#e8edf5] bg-[#0d1117] focus:outline-none focus:ring-1 focus:ring-[#2563eb]/40">
+                      {["Draft","Submitted","Under Review","Approved","Rejected","Void"].map(s => <option key={s} value={s}>{s}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-semibold text-[#4f617a] uppercase tracking-widest mb-1">Assigned To</label>
+                    <input type="text" value={coAssignedTo} onChange={e => setCoAssignedTo(e.target.value)}
+                      placeholder="Reviewer name"
+                      className="w-full h-9 px-3 rounded-md border border-[#2a3347] text-[13px] text-[#e8edf5] bg-[#0d1117] focus:outline-none focus:ring-1 focus:ring-[#2563eb]/40 placeholder:text-[#4f617a]" />
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex justify-between px-6 py-4 border-t border-[#2a3347] flex-shrink-0">
+              <button onClick={() => generateCoPdf(viewCo.id)} disabled={coGeneratingPdf}
+                className="h-8 px-4 rounded-md border border-[#2a3347] text-[13px] text-[#8b9ab5] hover:bg-white/[0.05] transition-colors disabled:opacity-50 flex items-center gap-2">
+                {coGeneratingPdf ? <><SpinnerIcon className="h-3 w-3" /> Generating…</> : "Generate PDF"}
+              </button>
+              <div className="flex gap-2">
+                <button onClick={() => setViewCo(null)}
+                  className="h-8 px-4 rounded-md border border-[#2a3347] text-[13px] text-[#8b9ab5] hover:bg-white/[0.05] transition-colors">Close</button>
+                <button onClick={saveCoStatus} disabled={coRespondSaving}
+                  className="h-8 px-4 rounded-md bg-[#2563eb] text-white text-[13px] font-semibold hover:bg-[#1d4ed8] transition-colors disabled:opacity-50 flex items-center gap-2">
+                  {coRespondSaving && <SpinnerIcon className="h-3 w-3" />}
+                  {coRespondSaving ? "Saving…" : "Save Changes"}
+                </button>
+              </div>
             </div>
           </div>
         </div>
