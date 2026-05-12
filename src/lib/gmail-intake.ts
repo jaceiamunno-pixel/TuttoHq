@@ -314,17 +314,17 @@ async function processAttachment(ctx: AttachmentCtx): Promise<void> {
   })
 
   // ── Deduplication check ────────────────────────────────────────────────────
+  // Check by messageId + fileName across ALL statuses so deleted records still
+  // block re-insertion when Pub/Sub retries the same notification.
   const { data: existing } = await supabase
     .from("submittals")
     .select("id")
+    .eq("gmail_message_id", messageId)
     .eq("file_name", fileName)
-    .eq("sender_email", senderEmail)
-    .eq("received_at", receivedAt)
-    .neq("status", "deleted")
     .limit(1)
 
   if (existing && existing.length > 0) {
-    log("attachment-skip: duplicate already exists", { fileName, senderEmail, receivedAt })
+    log("attachment-skip: already processed", { fileName, messageId })
     return
   }
 
@@ -347,22 +347,23 @@ async function processAttachment(ctx: AttachmentCtx): Promise<void> {
   const reviewStatus = (classification.confidence_score ?? 0) >= 70 ? "Received" : "Needs Review"
 
   const record = {
-    file_name:     fileName,
-    storage_path:  storagePath,
-    mime_type:     mimeType,
-    file_size:     fileBytes.length,
-    csi_division:  classification.division_number,
-    division_name: classification.division_name,
-    csi_section:   classification.section_number,
-    section_name:  classification.section_name,
-    review_status: reviewStatus,
-    ai_confidence: classification.confidence_score,
-    ai_reasoning:  classification.reasoning,
-    sender_email:  senderEmail,
-    received_at:   receivedAt,
-    project_id:    null,
-    status:        "active",
-    uploaded_by:   userId,
+    file_name:       fileName,
+    storage_path:    storagePath,
+    mime_type:       mimeType,
+    file_size:       fileBytes.length,
+    csi_division:    classification.division_number,
+    division_name:   classification.division_name,
+    csi_section:     classification.section_number,
+    section_name:    classification.section_name,
+    review_status:   reviewStatus,
+    ai_confidence:   classification.confidence_score,
+    ai_reasoning:    classification.reasoning,
+    sender_email:    senderEmail,
+    received_at:     receivedAt,
+    gmail_message_id: messageId,
+    project_id:      null,
+    status:          "active",
+    uploaded_by:     userId,
   }
 
   log("db-insert-start", { file_name: fileName, review_status: reviewStatus, uploaded_by: userId })
