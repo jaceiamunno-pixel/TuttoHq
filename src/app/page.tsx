@@ -994,6 +994,22 @@ export default function Home() {
     setEditSecName(s.section_name ?? "")
   }
 
+  async function deleteSubmittal(s: SubmittalRecord) {
+    if (!window.confirm(`Delete "${s.file_name}"? This cannot be undone.`)) return
+    const res = await fetch(`/api/submittals/${s.id}`, { method: "DELETE" })
+    if (res.ok) {
+      setLogSubmittals(prev => prev.filter(x => x.id !== s.id))
+      setSectionFiles(prev => {
+        const next = { ...prev }
+        for (const code of Object.keys(next)) {
+          next[code] = next[code].filter(f => f.id !== s.id)
+        }
+        return next
+      })
+      loadTree()
+    }
+  }
+
   async function saveEdit() {
     if (!editSubmittal) return
     setEditSaving(true)
@@ -1704,6 +1720,11 @@ export default function Home() {
                           onClick={() => openTransmittal(s)}
                           className="text-[11px] text-[#60a5fa] hover:text-[#93c5fd] px-2 py-1 rounded hover:bg-white/[0.05] transition-colors"
                         >Transmittal</button>
+                        <button
+                          onClick={() => deleteSubmittal(s)}
+                          className="text-[11px] text-[#4f617a] hover:text-red-400 px-2 py-1 rounded hover:bg-white/[0.05] transition-colors"
+                          title="Delete submittal"
+                        >Delete</button>
                       </div>
                     </td>
                   </tr>

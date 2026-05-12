@@ -50,10 +50,11 @@ export async function GET() {
 
   for (const row of data ?? []) {
     if (!row.csi_division) continue
-    countsByDiv.set(row.csi_division, (countsByDiv.get(row.csi_division) ?? 0) + 1)
+    const divNum = row.csi_division.trim().padStart(2, "0")
+    countsByDiv.set(divNum, (countsByDiv.get(divNum) ?? 0) + 1)
     if (!row.csi_section) continue
-    if (!sectionsByDiv.has(row.csi_division)) sectionsByDiv.set(row.csi_division, [])
-    const sections = sectionsByDiv.get(row.csi_division)!
+    if (!sectionsByDiv.has(divNum)) sectionsByDiv.set(divNum, [])
+    const sections = sectionsByDiv.get(divNum)!
     if (!sections.find(s => s.code === row.csi_section)) {
       sections.push({ code: row.csi_section, name: row.section_name ?? row.csi_section })
     }
