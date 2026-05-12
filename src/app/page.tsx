@@ -55,6 +55,7 @@ interface BatchItem { id: string; file: File; status: BatchStatus; divNum: strin
 interface Project { id: string; name: string; number: string | null; location: string | null; gc_name: string | null; architect: string | null }
 interface TeamMember { id: string; name: string; title: string | null; email: string | null }
 interface RFI { id: string; rfi_number: string; subject: string; description: string | null; submitted_by: string | null; assigned_to: string | null; date_issued: string | null; due_date: string | null; status: string; response: string | null; project_id: string | null; created_at: string; uploaded_by: string }
+interface PunchItem { id: string; item_number: string; description: string; location: string | null; assigned_to: string | null; due_date: string | null; priority: string; status: string; notes: string | null; project_id: string | null; created_at: string; completed_at: string | null; uploaded_by: string }
 type FileModalStep = "project" | "coversheet" | "form"
 interface OpenFileCtx { file: SubmittalFile; divNum: string; divName: string; secCode: string; secName: string }
 interface CoverFormData { projectName: string; projectNumber: string; projectLocation: string; gcName: string; architect: string; specSectionNo: string; specSectionTitle: string; description: string; dateSubmitted: string; submittalNo: string; reviewedBy: string; certifiedBy: string; notes: string }
@@ -390,6 +391,27 @@ function RfiStatusBadge({ status }: { status: string }) {
   return <span className={`inline-flex items-center px-2 py-0.5 rounded border text-[11px] font-medium ${cls}`}>{status}</span>
 }
 
+const PUNCH_STATUS_STYLES: Record<string, string> = {
+  "Open":        "bg-blue-400/15 text-blue-300 border-blue-400/20",
+  "In Progress": "bg-amber-400/15 text-amber-300 border-amber-400/20",
+  "Completed":   "bg-emerald-400/15 text-emerald-300 border-emerald-400/20",
+  "Void":        "bg-[#2a3347] text-[#4f617a] border-[#2a3347]",
+}
+const PUNCH_PRIORITY_STYLES: Record<string, string> = {
+  "Low":      "bg-[#2a3347] text-[#8b9ab5] border-[#2a3347]",
+  "Medium":   "bg-blue-400/15 text-blue-300 border-blue-400/20",
+  "High":     "bg-amber-400/15 text-amber-300 border-amber-400/20",
+  "Critical": "bg-red-400/15 text-red-300 border-red-400/20",
+}
+function PunchStatusBadge({ status }: { status: string }) {
+  const cls = PUNCH_STATUS_STYLES[status] ?? "bg-[#2a3347] text-[#8b9ab5] border-[#2a3347]"
+  return <span className={`inline-flex items-center px-2 py-0.5 rounded border text-[11px] font-medium ${cls}`}>{status}</span>
+}
+function PunchPriorityBadge({ priority }: { priority: string }) {
+  const cls = PUNCH_PRIORITY_STYLES[priority] ?? "bg-[#2a3347] text-[#8b9ab5] border-[#2a3347]"
+  return <span className={`inline-flex items-center px-2 py-0.5 rounded border text-[11px] font-medium ${cls}`}>{priority}</span>
+}
+
 function LayersIcon() {
   return (
     <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -556,7 +578,7 @@ export default function Home() {
   const [generatingCover, setGeneratingCover] = useState(false)
 
   // Module navigation
-  const [activeModule, setActiveModule] = useState<"submittals" | "rfis">("submittals")
+  const [activeModule, setActiveModule] = useState<"submittals" | "rfis" | "punch">("submittals")
 
   // RFI log
   const [rfis, setRfis]                               = useState<RFI[]>([])
@@ -574,6 +596,23 @@ export default function Home() {
   const [rfiResponse, setRfiResponse]                 = useState("")
   const [rfiResponseStatus, setRfiResponseStatus]     = useState("")
   const [rfiRespondSaving, setRfiRespondSaving]       = useState(false)
+
+  // Punch list
+  const [punchItems, setPunchItems]               = useState<PunchItem[]>([])
+  const [punchLoading, setPunchLoading]           = useState(false)
+  const [showNewPunch, setShowNewPunch]           = useState(false)
+  const [viewPunch, setViewPunch]                 = useState<PunchItem | null>(null)
+  const [punchDesc, setPunchDesc]                 = useState("")
+  const [punchLocation, setPunchLocation]         = useState("")
+  const [punchAssignedTo, setPunchAssignedTo]     = useState("")
+  const [punchDueDate, setPunchDueDate]           = useState("")
+  const [punchPriority, setPunchPriority]         = useState("Medium")
+  const [punchProjectId, setPunchProjectId]       = useState("")
+  const [punchNotes, setPunchNotes]               = useState("")
+  const [punchSaving, setPunchSaving]             = useState(false)
+  const [punchEditStatus, setPunchEditStatus]     = useState("")
+  const [punchEditNotes, setPunchEditNotes]       = useState("")
+  const [punchEditSaving, setPunchEditSaving]     = useState(false)
 
   const inputRef = useRef<HTMLInputElement>(null)
 
@@ -811,6 +850,18 @@ export default function Home() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { if (activeModule === "rfis") loadRfis() }, [activeModule])
 
+  function loadPunch() {
+    setPunchLoading(true)
+    fetch("/api/punch")
+      .then(r => r.json())
+      .then(d => setPunchItems(d.items ?? []))
+      .catch(() => setPunchItems([]))
+      .finally(() => setPunchLoading(false))
+  }
+
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { if (activeModule === "punch") loadPunch() }, [activeModule])
+
   function openEditModal(s: SubmittalRecord) {
     setEditSubmittal(s)
     setEditStatus(s.review_status ?? "Received")
@@ -856,6 +907,36 @@ export default function Home() {
         loadRfis()
       }
     } finally { setRfiSaving(false) }
+  }
+
+  async function createPunch(e: React.FormEvent) {
+    e.preventDefault()
+    setPunchSaving(true)
+    try {
+      const res = await fetch("/api/punch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ description: punchDesc, location: punchLocation || null, assigned_to: punchAssignedTo || null, due_date: punchDueDate || null, priority: punchPriority, project_id: punchProjectId || null, notes: punchNotes || null }),
+      })
+      if (res.ok) {
+        setShowNewPunch(false)
+        setPunchDesc(""); setPunchLocation(""); setPunchAssignedTo(""); setPunchDueDate(""); setPunchPriority("Medium"); setPunchProjectId(""); setPunchNotes("")
+        loadPunch()
+      }
+    } finally { setPunchSaving(false) }
+  }
+
+  async function updatePunch() {
+    if (!viewPunch) return
+    setPunchEditSaving(true)
+    try {
+      const res = await fetch(`/api/punch/${viewPunch.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: punchEditStatus, notes: punchEditNotes }),
+      })
+      if (res.ok) { setViewPunch(null); loadPunch() }
+    } finally { setPunchEditSaving(false) }
   }
 
   async function respondRfi() {
@@ -1273,6 +1354,10 @@ export default function Home() {
             className={`px-3 py-2.5 text-[13px] font-medium border-b-2 transition-colors whitespace-nowrap ${activeModule === "rfis" ? "border-[#2563eb] text-[#e8edf5]" : "border-transparent text-[#4f617a] hover:text-[#8b9ab5]"}`}>
             RFIs
           </button>
+          <button onClick={() => setActiveModule("punch")}
+            className={`px-3 py-2.5 text-[13px] font-medium border-b-2 transition-colors whitespace-nowrap ${activeModule === "punch" ? "border-[#2563eb] text-[#e8edf5]" : "border-transparent text-[#4f617a] hover:text-[#8b9ab5]"}`}>
+            Punch List
+          </button>
         </div>
 
         {/* Submittal action bar */}
@@ -1318,6 +1403,21 @@ export default function Home() {
             <p className="text-[13px] font-semibold text-[#e8edf5]">RFI Log <span className="text-[#4f617a] font-normal ml-1">({rfis.length})</span></p>
             <button onClick={() => setShowNewRfi(true)} className="h-8 px-4 rounded-md bg-[#2563eb] text-white text-[13px] font-semibold hover:bg-[#1d4ed8] transition-colors flex items-center gap-1.5">
               <PlusIcon /> New RFI
+            </button>
+          </div>
+        )}
+
+        {/* Punch list action bar */}
+        {activeModule === "punch" && (
+          <div className="flex-shrink-0 border-b border-[#2a3347] bg-[#161b27] flex items-center justify-between px-4 py-2.5">
+            <div className="flex items-center gap-3">
+              <p className="text-[13px] font-semibold text-[#e8edf5]">Punch List <span className="text-[#4f617a] font-normal ml-1">({punchItems.filter(p => p.status !== "Void").length} items)</span></p>
+              {punchItems.filter(p => p.status === "Open" || p.status === "In Progress").length > 0 && (
+                <span className="text-[11px] text-amber-400">{punchItems.filter(p => p.status === "Open" || p.status === "In Progress").length} open</span>
+              )}
+            </div>
+            <button onClick={() => setShowNewPunch(true)} className="h-8 px-4 rounded-md bg-[#2563eb] text-white text-[13px] font-semibold hover:bg-[#1d4ed8] transition-colors flex items-center gap-1.5">
+              <PlusIcon /> New Item
             </button>
           </div>
         )}
@@ -1465,8 +1565,213 @@ export default function Home() {
               </table>
             )
           )}
+
+          {/* Punch list */}
+          {activeModule === "punch" && (
+            punchLoading ? (
+              <div className="flex items-center justify-center h-40 gap-2 text-[13px] text-[#4f617a]">
+                <SpinnerIcon className="h-4 w-4" /> Loading…
+              </div>
+            ) : punchItems.length === 0 ? (
+              <div className="flex flex-col items-center justify-center h-full py-24 text-center">
+                <div className="w-14 h-14 rounded-2xl bg-[#2563eb]/10 border border-[#2563eb]/20 flex items-center justify-center mb-4">
+                  <svg className="w-7 h-7 text-[#3b82f6]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
+                  </svg>
+                </div>
+                <p className="text-[15px] font-bold text-[#c8d3e6]">No punch items yet</p>
+                <p className="text-[13px] text-[#4f617a] mt-1.5">Add items to track deficiencies and corrections.</p>
+                <button onClick={() => setShowNewPunch(true)} className="mt-5 h-9 px-5 rounded-lg bg-[#2563eb] text-white text-[13px] font-semibold hover:bg-[#1d4ed8] transition-colors inline-flex items-center gap-2">
+                  <PlusIcon /> New Item
+                </button>
+              </div>
+            ) : (
+              <table className="w-full text-[13px] border-collapse">
+                <thead className="sticky top-0 bg-[#161b27] z-10">
+                  <tr className="border-b border-[#2a3347]">
+                    <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#4f617a] uppercase tracking-widest w-10">#</th>
+                    <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#4f617a] uppercase tracking-widest w-20">Item</th>
+                    <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#4f617a] uppercase tracking-widest">Description</th>
+                    <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#4f617a] uppercase tracking-widest w-32">Location</th>
+                    <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#4f617a] uppercase tracking-widest w-32">Assigned To</th>
+                    <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#4f617a] uppercase tracking-widest w-24">Due</th>
+                    <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#4f617a] uppercase tracking-widest w-24">Priority</th>
+                    <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#4f617a] uppercase tracking-widest w-28">Status</th>
+                    <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#4f617a] uppercase tracking-widest w-16">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {punchItems.map((p, i) => {
+                    const isOverdue = p.due_date && new Date(p.due_date) < new Date() && p.status !== "Completed" && p.status !== "Void"
+                    const isStruck  = p.status === "Completed" || p.status === "Void"
+                    return (
+                      <tr key={p.id} className={`border-b border-[#2a3347]/40 hover:bg-white/[0.02] transition-colors ${isStruck ? "opacity-50" : ""}`}>
+                        <td className="px-4 py-2.5 text-[#4f617a] tabular-nums text-[12px]">{punchItems.length - i}</td>
+                        <td className="px-4 py-2.5 text-[12px] font-mono text-[#60a5fa]">{p.item_number}</td>
+                        <td className="px-4 py-2.5 max-w-0">
+                          <p className={`font-medium truncate ${isStruck ? "line-through text-[#4f617a]" : "text-[#c8d3e6]"}`} title={p.description}>{p.description}</p>
+                        </td>
+                        <td className="px-4 py-2.5 text-[#8b9ab5] text-[12px]">{p.location ?? "—"}</td>
+                        <td className="px-4 py-2.5 text-[#8b9ab5] text-[12px]">{p.assigned_to ?? "—"}</td>
+                        <td className="px-4 py-2.5 text-[12px] whitespace-nowrap">
+                          {p.due_date
+                            ? <span className={isOverdue ? "text-red-400 font-medium" : "text-[#4f617a]"}>{fmtDateOnly(p.due_date)}{isOverdue ? " ⚠" : ""}</span>
+                            : <span className="text-[#4f617a]">—</span>}
+                        </td>
+                        <td className="px-4 py-2.5"><PunchPriorityBadge priority={p.priority} /></td>
+                        <td className="px-4 py-2.5"><PunchStatusBadge status={p.status} /></td>
+                        <td className="px-4 py-2.5">
+                          <button onClick={() => { setViewPunch(p); setPunchEditStatus(p.status); setPunchEditNotes(p.notes ?? "") }}
+                            className="text-[11px] text-[#8b9ab5] hover:text-[#e8edf5] px-2 py-1 rounded hover:bg-white/[0.05] transition-colors">
+                            Edit
+                          </button>
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            )
+          )}
         </div>
       </div>
+
+      {/* ── New Punch Item modal ─────────────────────────────────────────── */}
+      {showNewPunch && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center"
+          onClick={e => { if (e.target === e.currentTarget) setShowNewPunch(false) }}>
+          <div className="bg-[#1c2333] rounded-xl border border-[#2a3347] shadow-2xl w-[520px]">
+            <div className="flex items-center justify-between px-6 pt-5 pb-4 border-b border-[#2a3347]">
+              <h2 className="text-[15px] font-bold text-[#e8edf5]">New Punch Item</h2>
+              <button onClick={() => setShowNewPunch(false)} className="text-[#4f617a] hover:text-[#8b9ab5] transition-colors">
+                <XIcon className="h-4 w-4" />
+              </button>
+            </div>
+            <form onSubmit={createPunch}>
+              <div className="px-6 py-4 space-y-3">
+                <div>
+                  <label className={labelCls}>Description <span className="text-red-400">*</span></label>
+                  <textarea required rows={2} value={punchDesc} onChange={e => setPunchDesc(e.target.value)} autoFocus
+                    placeholder="Describe the deficiency, item to correct, or work to complete"
+                    className="w-full px-3 py-2 rounded-md border border-[#2a3347] text-[13px] text-[#e8edf5] bg-[#0d1117] focus:outline-none focus:ring-1 focus:ring-[#2563eb]/40 resize-none placeholder:text-[#4f617a]" />
+                </div>
+                <div className="flex gap-3">
+                  <div className="flex-1">
+                    <label className={labelCls}>Location / Room</label>
+                    <input type="text" value={punchLocation} onChange={e => setPunchLocation(e.target.value)}
+                      placeholder="e.g. Room 201, Lobby, Roof" className={inputCls} />
+                  </div>
+                  <div className="flex-1">
+                    <label className={labelCls}>Assigned To</label>
+                    <input type="text" value={punchAssignedTo} onChange={e => setPunchAssignedTo(e.target.value)}
+                      placeholder="Trade or subcontractor" className={inputCls} />
+                  </div>
+                </div>
+                <div className="flex gap-3">
+                  <div className="flex-1">
+                    <label className={labelCls}>Priority</label>
+                    <select value={punchPriority} onChange={e => setPunchPriority(e.target.value)}
+                      className="w-full h-9 px-3 rounded-md border border-[#2a3347] text-[13px] text-[#e8edf5] bg-[#0d1117] focus:outline-none focus:ring-1 focus:ring-[#2563eb]/40">
+                      {["Low", "Medium", "High", "Critical"].map(p => <option key={p} value={p}>{p}</option>)}
+                    </select>
+                  </div>
+                  <div className="flex-1">
+                    <label className={labelCls}>Due Date</label>
+                    <input type="date" value={punchDueDate} onChange={e => setPunchDueDate(e.target.value)} className={inputCls} />
+                  </div>
+                </div>
+                {appProjects.length > 0 && (
+                  <div>
+                    <label className={labelCls}>Project</label>
+                    <select value={punchProjectId} onChange={e => setPunchProjectId(e.target.value)}
+                      className="w-full h-9 px-3 rounded-md border border-[#2a3347] text-[13px] text-[#e8edf5] bg-[#0d1117] focus:outline-none focus:ring-1 focus:ring-[#2563eb]/40">
+                      <option value="">None</option>
+                      {appProjects.map(p => <option key={p.id} value={p.id}>{p.name}{p.number ? ` — ${p.number}` : ""}</option>)}
+                    </select>
+                  </div>
+                )}
+                <div>
+                  <label className={labelCls}>Notes</label>
+                  <textarea rows={2} value={punchNotes} onChange={e => setPunchNotes(e.target.value)}
+                    placeholder="Additional context, spec references, etc."
+                    className="w-full px-3 py-2 rounded-md border border-[#2a3347] text-[13px] text-[#e8edf5] bg-[#0d1117] focus:outline-none focus:ring-1 focus:ring-[#2563eb]/40 resize-none placeholder:text-[#4f617a]" />
+                </div>
+              </div>
+              <div className="flex justify-end gap-2 px-6 py-4 border-t border-[#2a3347]">
+                <button type="button" onClick={() => setShowNewPunch(false)}
+                  className="h-8 px-4 rounded-md border border-[#2a3347] text-[13px] text-[#8b9ab5] hover:bg-white/[0.05] transition-colors">
+                  Cancel
+                </button>
+                <button type="submit" disabled={punchSaving || !punchDesc.trim()}
+                  className="h-8 px-4 rounded-md bg-[#2563eb] text-white text-[13px] font-semibold hover:bg-[#1d4ed8] transition-colors disabled:opacity-50 flex items-center gap-2">
+                  {punchSaving && <SpinnerIcon className="h-3 w-3" />}
+                  {punchSaving ? "Adding…" : "Add Item"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ── View/Edit Punch Item modal ────────────────────────────────────── */}
+      {viewPunch && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center"
+          onClick={e => { if (e.target === e.currentTarget) setViewPunch(null) }}>
+          <div className="bg-[#1c2333] rounded-xl border border-[#2a3347] shadow-2xl w-[500px]">
+            <div className="flex items-center justify-between px-6 pt-5 pb-4 border-b border-[#2a3347]">
+              <div>
+                <span className="text-[11px] font-mono text-[#60a5fa]">{viewPunch.item_number}</span>
+                <h2 className="text-[15px] font-bold text-[#e8edf5] mt-0.5">{viewPunch.description}</h2>
+              </div>
+              <button onClick={() => setViewPunch(null)} className="text-[#4f617a] hover:text-[#8b9ab5] transition-colors ml-4 flex-shrink-0">
+                <XIcon className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="px-6 py-4 space-y-4">
+              <div className="grid grid-cols-2 gap-3 text-[12px]">
+                {viewPunch.location && <div><span className="text-[#4f617a]">Location: </span><span className="text-[#c8d3e6]">{viewPunch.location}</span></div>}
+                {viewPunch.assigned_to && <div><span className="text-[#4f617a]">Assigned to: </span><span className="text-[#c8d3e6]">{viewPunch.assigned_to}</span></div>}
+                {viewPunch.due_date && <div><span className="text-[#4f617a]">Due: </span><span className={new Date(viewPunch.due_date) < new Date() && viewPunch.status !== "Completed" ? "text-red-400 font-medium" : "text-[#c8d3e6]"}>{fmtDateOnly(viewPunch.due_date)}</span></div>}
+                <div className="flex items-center gap-1.5"><span className="text-[#4f617a]">Priority: </span><PunchPriorityBadge priority={viewPunch.priority} /></div>
+              </div>
+              {viewPunch.notes && (
+                <div className="rounded-md bg-[#2a3347]/50 px-3 py-2">
+                  <p className="text-[11px] font-bold text-[#4f617a] uppercase tracking-widest mb-1">Notes</p>
+                  <p className="text-[13px] text-[#c8d3e6]">{viewPunch.notes}</p>
+                </div>
+              )}
+              <div className="border-t border-[#2a3347] pt-4 space-y-3">
+                <div>
+                  <label className={labelCls}>Update Notes</label>
+                  <textarea value={punchEditNotes} onChange={e => setPunchEditNotes(e.target.value)} rows={3}
+                    placeholder="Add resolution notes, corrective action taken, etc."
+                    className="w-full px-3 py-2 rounded-md border border-[#2a3347] text-[13px] text-[#e8edf5] bg-[#0d1117] focus:outline-none focus:ring-1 focus:ring-[#2563eb]/40 resize-none placeholder:text-[#4f617a]" />
+                </div>
+                <div>
+                  <label className={labelCls}>Status</label>
+                  <select value={punchEditStatus} onChange={e => setPunchEditStatus(e.target.value)}
+                    className="w-full h-9 px-3 rounded-md border border-[#2a3347] text-[13px] text-[#e8edf5] bg-[#0d1117] focus:outline-none focus:ring-1 focus:ring-[#2563eb]/40">
+                    {["Open", "In Progress", "Completed", "Void"].map(s => (
+                      <option key={s} value={s}>{s}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 px-6 py-4 border-t border-[#2a3347]">
+              <button onClick={() => setViewPunch(null)}
+                className="h-8 px-4 rounded-md border border-[#2a3347] text-[13px] text-[#8b9ab5] hover:bg-white/[0.05] transition-colors">
+                Close
+              </button>
+              <button onClick={updatePunch} disabled={punchEditSaving}
+                className="h-8 px-4 rounded-md bg-[#2563eb] text-white text-[13px] font-semibold hover:bg-[#1d4ed8] transition-colors disabled:opacity-50 flex items-center gap-2">
+                {punchEditSaving && <SpinnerIcon className="h-3 w-3" />}
+                {punchEditSaving ? "Saving…" : "Save"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── New RFI modal ────────────────────────────────────────────────── */}
       {showNewRfi && (
