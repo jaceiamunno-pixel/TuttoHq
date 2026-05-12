@@ -1444,7 +1444,9 @@ export default function Home() {
                                   : <ToggleIcon open={secOpen} />
                                 }
                               </span>
-                              <span className="flex-1 text-[12px] text-[#8b9ab5] truncate">{sec.name}</span>
+                              <span className="flex-1 text-[12px] text-[#8b9ab5] truncate">
+                                <span className="font-mono text-[#4f617a] mr-1.5">{sec.code}</span>{sec.name}
+                              </span>
                               {!secLoading && sectionFiles[sec.code] !== undefined && (
                                 <span className="text-[10px] text-[#4f617a] flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
                                   {files.length}
