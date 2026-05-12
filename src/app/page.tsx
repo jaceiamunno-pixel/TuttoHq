@@ -1152,6 +1152,13 @@ export default function Home() {
     } finally { setCoSaving(false) }
   }
 
+  async function deleteRfi(rfiId: string) {
+    if (!confirm("Delete this RFI? This cannot be undone.")) return
+    await fetch(`/api/rfis/${rfiId}`, { method: "DELETE" })
+    setViewRfi(null)
+    loadRfis()
+  }
+
   async function generateRfiPdf(rfiId: string) {
     setRfiGeneratingPdf(true)
     try {
@@ -1960,6 +1967,8 @@ export default function Home() {
                               className="text-[11px] text-[#8b9ab5] hover:text-[#e8edf5] px-2 py-1 rounded hover:bg-white/[0.05] transition-colors">View</button>
                             <button onClick={() => generateRfiPdf(r.id)} disabled={rfiGeneratingPdf}
                               className="text-[11px] text-[#60a5fa] hover:text-[#93c5fd] px-2 py-1 rounded hover:bg-white/[0.05] transition-colors disabled:opacity-50">PDF</button>
+                            <button onClick={() => deleteRfi(r.id)}
+                              className="text-[11px] text-red-400/60 hover:text-red-400 px-2 py-1 rounded hover:bg-white/[0.05] transition-colors">Del</button>
                           </div>
                         </td>
                       </tr>
@@ -2863,10 +2872,14 @@ export default function Home() {
               </div>
             </div>
             <div className="flex justify-between px-6 py-4 border-t border-[#2a3347] flex-shrink-0">
-              <button onClick={() => generateRfiPdf(viewRfi.id)} disabled={rfiGeneratingPdf}
-                className="h-8 px-4 rounded-md border border-[#2a3347] text-[13px] text-[#8b9ab5] hover:bg-white/[0.05] transition-colors disabled:opacity-50 flex items-center gap-2">
-                {rfiGeneratingPdf ? <><SpinnerIcon className="h-3 w-3" /> Generating…</> : "Generate PDF"}
-              </button>
+              <div className="flex gap-2">
+                <button onClick={() => generateRfiPdf(viewRfi.id)} disabled={rfiGeneratingPdf}
+                  className="h-8 px-4 rounded-md border border-[#2a3347] text-[13px] text-[#8b9ab5] hover:bg-white/[0.05] transition-colors disabled:opacity-50 flex items-center gap-2">
+                  {rfiGeneratingPdf ? <><SpinnerIcon className="h-3 w-3" /> Generating…</> : "Generate PDF"}
+                </button>
+                <button onClick={() => deleteRfi(viewRfi.id)}
+                  className="h-8 px-4 rounded-md border border-red-500/30 text-[13px] text-red-400 hover:bg-red-500/10 transition-colors">Delete</button>
+              </div>
               <div className="flex gap-2">
                 <button onClick={() => setViewRfi(null)}
                   className="h-8 px-4 rounded-md border border-[#2a3347] text-[13px] text-[#8b9ab5] hover:bg-white/[0.05] transition-colors">Close</button>
