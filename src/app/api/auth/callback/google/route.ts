@@ -3,10 +3,11 @@ import { cookies } from "next/headers"
 import { createClient } from "@/lib/supabase/server"
 import { setupWatch } from "@/lib/gmail"
 
-const BASE = () => process.env.NEXT_PUBLIC_APP_URL!
-const redirect = (path: string) => NextResponse.redirect(`${BASE()}${path}`)
-
 export async function GET(req: NextRequest) {
+  // Derive the app origin from the live request — no env var needed for internal redirects
+  const appOrigin = new URL(req.url).origin
+  const redirect = (path: string) => NextResponse.redirect(`${appOrigin}${path}`)
+
   const cookieStore = await cookies()
   const savedState = cookieStore.get("gmail_oauth_state")?.value
   cookieStore.delete("gmail_oauth_state")
@@ -21,14 +22,14 @@ export async function GET(req: NextRequest) {
     return redirect("/settings?tab=gmail&error=invalid_state")
   }
 
-  // Exchange authorization code for tokens — redirect_uri must exactly match what Google has registered
+  // Token exchange: redirect_uri must be the identical string Google has registered
   const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
       grant_type: "authorization_code",
       code,
-      redirect_uri: `${BASE()}/api/auth/callback/google`,
+      redirect_uri: process.env.GOOGLE_REDIRECT_URI!,
       client_id: process.env.GOOGLE_CLIENT_ID!,
       client_secret: process.env.GOOGLE_CLIENT_SECRET!,
     }),
@@ -72,7 +73,7 @@ export async function GET(req: NextRequest) {
       })
       .eq("user_id", user.id)
   } catch {
-    // Pub/Sub not configured — watch won't run, polling can be used instead
+    // Pub/Sub not configured — intake will fall back to polling
   }
 
   return redirect("/settings?tab=gmail&connected=1")
