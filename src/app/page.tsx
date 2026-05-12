@@ -685,6 +685,28 @@ export default function Home() {
     setFileModalStep("form")
   }
 
+  function openTransmittal(s: SubmittalRecord) {
+    setOpenFileCtx({
+      file: { id: s.id, file_name: s.file_name, file_url: "", mime_type: s.mime_type, file_size: s.file_size, created_at: s.created_at },
+      divNum: s.csi_division ?? "", divName: s.division_name ?? "",
+      secCode: s.csi_section ?? "", secName: s.section_name ?? "",
+    })
+    const pid = s.project_id ?? ""
+    setModalProjectId(pid)
+    const proj = appProjects.find(p => p.id === pid)
+    const today = new Date().toLocaleDateString("en-US", { month: "2-digit", day: "2-digit", year: "numeric" })
+    setCoverForm({
+      projectName: proj?.name ?? "", projectNumber: proj?.number ?? "",
+      projectLocation: proj?.location ?? "", gcName: proj?.gc_name ?? "",
+      architect: proj?.architect ?? "", specSectionNo: s.csi_section ?? "",
+      specSectionTitle: s.section_name ?? "",
+      description: s.file_name.replace(/\.[^.]+$/, ""),
+      dateSubmitted: today, submittalNo: "1",
+      reviewedBy: "", certifiedBy: "", notes: "",
+    })
+    setFileModalStep("form")
+  }
+
   async function handleGenerateCover(e: React.FormEvent) {
     e.preventDefault()
     if (!coverForm || !openFileCtx) return
@@ -1332,7 +1354,7 @@ export default function Home() {
                   <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#4f617a] uppercase tracking-widest w-48">Section</th>
                   <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#4f617a] uppercase tracking-widest w-24">Date</th>
                   <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#4f617a] uppercase tracking-widest w-36">Status</th>
-                  <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#4f617a] uppercase tracking-widest w-24">Actions</th>
+                  <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#4f617a] uppercase tracking-widest w-40">Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -1365,6 +1387,10 @@ export default function Home() {
                           onClick={() => openEditModal(s)}
                           className="text-[11px] text-[#8b9ab5] hover:text-[#e8edf5] px-2 py-1 rounded hover:bg-white/[0.05] transition-colors"
                         >Edit</button>
+                        <button
+                          onClick={() => openTransmittal(s)}
+                          className="text-[11px] text-[#60a5fa] hover:text-[#93c5fd] px-2 py-1 rounded hover:bg-white/[0.05] transition-colors"
+                        >Transmittal</button>
                       </div>
                     </td>
                   </tr>
