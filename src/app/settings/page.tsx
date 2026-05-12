@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from "react"
 import Link from "next/link"
+import Papa from "papaparse"
 
 type Tab = "company" | "team" | "projects" | "gmail"
 
@@ -28,6 +29,20 @@ interface Project {
   gc_name: string | null
   architect: string | null
   created_at: string
+}
+
+interface TeamImportRow {
+  name: string
+  title: string
+  email: string
+}
+
+interface ProjectImportRow {
+  name: string
+  number: string
+  location: string
+  gc_name: string
+  architect: string
 }
 
 function XIcon({ className = "h-3 w-3" }: { className?: string }) {
@@ -89,8 +104,18 @@ export default function SettingsPage() {
   const [renewingWatch, setRenewingWatch] = useState(false)
   const [gmailMessage, setGmailMessage]   = useState<{ text: string; ok: boolean } | null>(null)
 
-  const logoInputRef  = useRef<HTMLInputElement>(null)
-  const coverInputRef = useRef<HTMLInputElement>(null)
+  const [teamImportRows, setTeamImportRows]       = useState<TeamImportRow[] | null>(null)
+  const [teamImporting, setTeamImporting]         = useState(false)
+  const [teamImportResult, setTeamImportResult]   = useState<{ imported: number; errors: string[] } | null>(null)
+
+  const [projectImportRows, setProjectImportRows]     = useState<ProjectImportRow[] | null>(null)
+  const [projectImporting, setProjectImporting]       = useState(false)
+  const [projectImportResult, setProjectImportResult] = useState<{ imported: number; errors: string[] } | null>(null)
+
+  const logoInputRef        = useRef<HTMLInputElement>(null)
+  const coverInputRef       = useRef<HTMLInputElement>(null)
+  const teamCsvInputRef     = useRef<HTMLInputElement>(null)
+  const projectCsvInputRef  = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     fetch("/api/settings")
@@ -374,6 +399,122 @@ export default function SettingsPage() {
     }
   }
 
+  function downloadTeamTemplate() {
+    const csv = "Name,Title,Email\nJane Smith,Project Manager,jane@company.com\nBob Jones,Superintendent,bob@company.com\n"
+    const a = document.createElement("a")
+    a.href = "data:text/csv;charset=utf-8," + encodeURIComponent(csv)
+    a.download = "team_members_template.csv"
+    a.click()
+  }
+
+  function downloadProjectTemplate() {
+    const csv = "Project Name,Project Number,Location,General Contractor,Architect\nRiverside Office Complex,2024-001,Austin TX,Turner Construction,Gensler\n"
+    const a = document.createElement("a")
+    a.href = "data:text/csv;charset=utf-8," + encodeURIComponent(csv)
+    a.download = "projects_template.csv"
+    a.click()
+  }
+
+  function handleTeamCsvChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    e.target.value = ""
+    Papa.parse<Record<string, string>>(file, {
+      header: true,
+      skipEmptyLines: true,
+      complete: (results) => {
+        const rows: TeamImportRow[] = results.data.map(r => ({
+          name:  (r["Name"]  ?? r["name"]  ?? "").trim(),
+          title: (r["Title"] ?? r["title"] ?? "").trim(),
+          email: (r["Email"] ?? r["email"] ?? "").trim(),
+        }))
+        setTeamImportRows(rows)
+        setTeamImportResult(null)
+      },
+    })
+  }
+
+  async function confirmTeamImport() {
+    if (!teamImportRows) return
+    const valid = teamImportRows.filter(r => r.name)
+    if (!valid.length) return
+    setTeamImporting(true)
+    try {
+      const res  = await fetch("/api/team/batch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ members: valid }),
+      })
+      const data = await res.json()
+      setTeamImportResult({ imported: data.imported ?? 0, errors: data.errors ?? [] })
+      if (data.members?.length) {
+        setTeamMembers(prev => [...prev, ...data.members])
+      }
+      setTeamImportRows(null)
+      flashTeam(`Imported ${data.imported} member${data.imported !== 1 ? "s" : ""} successfully`)
+    } catch {
+      flashTeam("Import failed", false)
+    } finally {
+      setTeamImporting(false)
+    }
+  }
+
+  function cancelTeamImport() {
+    setTeamImportRows(null)
+    setTeamImportResult(null)
+  }
+
+  function handleProjectCsvChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    e.target.value = ""
+    Papa.parse<Record<string, string>>(file, {
+      header: true,
+      skipEmptyLines: true,
+      complete: (results) => {
+        const rows: ProjectImportRow[] = results.data.map(r => ({
+          name:      (r["Project Name"]      ?? r["name"]      ?? "").trim(),
+          number:    (r["Project Number"]    ?? r["number"]    ?? "").trim(),
+          location:  (r["Location"]          ?? r["location"]  ?? "").trim(),
+          gc_name:   (r["General Contractor"] ?? r["gc_name"]  ?? "").trim(),
+          architect: (r["Architect"]         ?? r["architect"] ?? "").trim(),
+        }))
+        setProjectImportRows(rows)
+        setProjectImportResult(null)
+      },
+    })
+  }
+
+  async function confirmProjectImport() {
+    if (!projectImportRows) return
+    const valid = projectImportRows.filter(r => r.name)
+    if (!valid.length) return
+    setProjectImporting(true)
+    try {
+      const res  = await fetch("/api/projects/batch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ projects: valid }),
+      })
+      const data = await res.json()
+      setProjectImportResult({ imported: data.imported ?? 0, errors: data.errors ?? [] })
+      if (data.projects?.length) {
+        setProjects(prev => [...prev, ...data.projects])
+      }
+      setProjectImportRows(null)
+      flashProject(`Imported ${data.imported} project${data.imported !== 1 ? "s" : ""} successfully`)
+    } catch {
+      flashProject("Import failed", false)
+    } finally {
+      setProjectImporting(false)
+    }
+  }
+
+  function cancelProjectImport() {
+    setProjectImportRows(null)
+    setProjectImportResult(null)
+  }
+
   const inputCls = "w-full h-9 px-3 rounded-md border border-[#2a3347] text-[13px] text-[#e8edf5] bg-[#0d1117] focus:outline-none focus:ring-1 focus:ring-[#2563eb]/40 focus:border-[#2563eb]/50 placeholder:text-[#4f617a] transition-all"
   const labelCls = "block text-[12px] font-medium text-[#8b9ab5] mb-1"
 
@@ -491,15 +632,27 @@ export default function SettingsPage() {
                   <h2 className="text-[14px] font-semibold text-[#e8edf5]">Team Members</h2>
                   <p className="text-[12px] text-[#8b9ab5] mt-0.5">Used to populate Reviewed By / Certified By fields on cover sheets.</p>
                 </div>
-                {!showTeamForm && (
-                  <button
-                    onClick={openAddMember}
-                    className="h-8 px-3 rounded-md bg-[#2563eb] text-white text-[13px] font-medium hover:bg-[#1d4ed8] transition-colors flex items-center gap-1.5 flex-shrink-0"
-                  >
-                    <PlusIcon /> Add member
-                  </button>
+                {!showTeamForm && !teamImportRows && (
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    <button
+                      onClick={() => teamCsvInputRef.current?.click()}
+                      className="h-8 px-3 rounded-md border border-[#2a3347] text-[13px] text-[#c8d3e6] hover:bg-white/[0.05] transition-colors flex items-center gap-1.5"
+                    >
+                      <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+                      </svg>
+                      Import CSV
+                    </button>
+                    <button
+                      onClick={openAddMember}
+                      className="h-8 px-3 rounded-md bg-[#2563eb] text-white text-[13px] font-medium hover:bg-[#1d4ed8] transition-colors flex items-center gap-1.5"
+                    >
+                      <PlusIcon /> Add member
+                    </button>
+                  </div>
                 )}
               </div>
+              <input ref={teamCsvInputRef} type="file" accept=".csv,text/csv" onChange={handleTeamCsvChange} className="hidden" />
 
               {showTeamForm && (
                 <div className="px-5 py-4 border-b border-[#2a3347] bg-[#0d1117]/50">
@@ -561,12 +714,92 @@ export default function SettingsPage() {
                 </div>
               )}
 
+              {teamImportRows && (
+                <div className="border-b border-[#2a3347] bg-[#0d1117]/50">
+                  <div className="px-5 py-3 flex items-center justify-between">
+                    <div className="text-[13px] font-semibold text-[#e8edf5]">
+                      Preview — {teamImportRows.length} row{teamImportRows.length !== 1 ? "s" : ""}
+                      {teamImportRows.filter(r => !r.name).length > 0 && (
+                        <span className="ml-2 text-[12px] font-normal text-amber-400">
+                          ({teamImportRows.filter(r => !r.name).length} missing name — will be skipped)
+                        </span>
+                      )}
+                    </div>
+                    <button
+                      onClick={downloadTeamTemplate}
+                      className="text-[11px] text-[#60a5fa] hover:text-[#93c5fd] transition-colors"
+                    >
+                      Download template
+                    </button>
+                  </div>
+                  <div className="overflow-x-auto max-h-60 overflow-y-auto">
+                    <table className="w-full">
+                      <thead className="sticky top-0 bg-[#0d1117]">
+                        <tr className="border-b border-[#2a3347]">
+                          <th className="text-left px-5 py-2 text-[11px] font-semibold text-[#4f617a] uppercase tracking-wider">Name</th>
+                          <th className="text-left px-3 py-2 text-[11px] font-semibold text-[#4f617a] uppercase tracking-wider">Title</th>
+                          <th className="text-left px-3 py-2 text-[11px] font-semibold text-[#4f617a] uppercase tracking-wider">Email</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {teamImportRows.map((r, i) => (
+                          <tr key={i} className={`border-b border-[#2a3347]/50 ${!r.name ? "bg-red-500/5" : ""}`}>
+                            <td className="px-5 py-2 text-[13px]">
+                              {r.name
+                                ? <span className="text-[#e8edf5]">{r.name}</span>
+                                : <span className="text-red-400 italic">missing</span>}
+                            </td>
+                            <td className="px-3 py-2 text-[13px] text-[#8b9ab5]">{r.title || <span className="text-[#4f617a]">—</span>}</td>
+                            <td className="px-3 py-2 text-[13px] text-[#8b9ab5]">{r.email || <span className="text-[#4f617a]">—</span>}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <div className="px-5 py-3 flex items-center justify-between border-t border-[#2a3347]">
+                    <span className="text-[12px] text-[#8b9ab5]">
+                      {teamImportRows.filter(r => r.name).length} of {teamImportRows.length} rows will be imported
+                    </span>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={cancelTeamImport}
+                        disabled={teamImporting}
+                        className="h-8 px-3 rounded-md border border-[#2a3347] text-[13px] text-[#8b9ab5] hover:text-[#e8edf5] hover:bg-white/[0.05] transition-colors disabled:opacity-50"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        onClick={confirmTeamImport}
+                        disabled={teamImporting || !teamImportRows.filter(r => r.name).length}
+                        className="h-8 px-4 rounded-md bg-[#2563eb] text-white text-[13px] font-semibold hover:bg-[#1d4ed8] transition-colors disabled:opacity-50"
+                      >
+                        {teamImporting ? "Importing…" : `Import ${teamImportRows.filter(r => r.name).length} member${teamImportRows.filter(r => r.name).length !== 1 ? "s" : ""}`}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {teamImportResult && teamImportResult.errors.length > 0 && (
+                <div className="px-5 py-3 border-b border-[#2a3347] bg-red-500/5">
+                  <p className="text-[12px] font-semibold text-red-400 mb-1">Some rows failed:</p>
+                  {teamImportResult.errors.map((e, i) => (
+                    <p key={i} className="text-[12px] text-red-400/80">{e}</p>
+                  ))}
+                </div>
+              )}
+
               {teamLoading && (
                 <div className="px-5 py-4 text-[13px] text-[#8b9ab5]">Loading…</div>
               )}
 
-              {!teamLoading && teamMembers.length === 0 && (
-                <div className="px-5 py-8 text-center text-[13px] text-[#4f617a]">No team members yet.</div>
+              {!teamLoading && teamMembers.length === 0 && !teamImportRows && (
+                <div className="px-5 py-6 text-center space-y-2">
+                  <p className="text-[13px] text-[#4f617a]">No team members yet.</p>
+                  <button onClick={downloadTeamTemplate} className="text-[12px] text-[#60a5fa] hover:text-[#93c5fd] transition-colors">
+                    Download CSV template
+                  </button>
+                </div>
               )}
 
               {!teamLoading && teamMembers.length > 0 && (
@@ -626,15 +859,27 @@ export default function SettingsPage() {
                   <h2 className="text-[14px] font-semibold text-[#e8edf5]">Projects</h2>
                   <p className="text-[12px] text-[#8b9ab5] mt-0.5">Projects available when generating submittal cover sheets.</p>
                 </div>
-                {!showProjectForm && (
-                  <button
-                    onClick={openAddProject}
-                    className="h-8 px-3 rounded-md bg-[#2563eb] text-white text-[13px] font-medium hover:bg-[#1d4ed8] transition-colors flex items-center gap-1.5 flex-shrink-0"
-                  >
-                    <PlusIcon /> Add project
-                  </button>
+                {!showProjectForm && !projectImportRows && (
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    <button
+                      onClick={() => projectCsvInputRef.current?.click()}
+                      className="h-8 px-3 rounded-md border border-[#2a3347] text-[13px] text-[#c8d3e6] hover:bg-white/[0.05] transition-colors flex items-center gap-1.5"
+                    >
+                      <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+                      </svg>
+                      Import CSV
+                    </button>
+                    <button
+                      onClick={openAddProject}
+                      className="h-8 px-3 rounded-md bg-[#2563eb] text-white text-[13px] font-medium hover:bg-[#1d4ed8] transition-colors flex items-center gap-1.5"
+                    >
+                      <PlusIcon /> Add project
+                    </button>
+                  </div>
                 )}
               </div>
+              <input ref={projectCsvInputRef} type="file" accept=".csv,text/csv" onChange={handleProjectCsvChange} className="hidden" />
 
               {showProjectForm && (
                 <div className="px-5 py-4 border-b border-[#2a3347] bg-[#0d1117]/50">
@@ -718,12 +963,96 @@ export default function SettingsPage() {
                 </div>
               )}
 
+              {projectImportRows && (
+                <div className="border-b border-[#2a3347] bg-[#0d1117]/50">
+                  <div className="px-5 py-3 flex items-center justify-between">
+                    <div className="text-[13px] font-semibold text-[#e8edf5]">
+                      Preview — {projectImportRows.length} row{projectImportRows.length !== 1 ? "s" : ""}
+                      {projectImportRows.filter(r => !r.name).length > 0 && (
+                        <span className="ml-2 text-[12px] font-normal text-amber-400">
+                          ({projectImportRows.filter(r => !r.name).length} missing name — will be skipped)
+                        </span>
+                      )}
+                    </div>
+                    <button
+                      onClick={downloadProjectTemplate}
+                      className="text-[11px] text-[#60a5fa] hover:text-[#93c5fd] transition-colors"
+                    >
+                      Download template
+                    </button>
+                  </div>
+                  <div className="overflow-x-auto max-h-60 overflow-y-auto">
+                    <table className="w-full">
+                      <thead className="sticky top-0 bg-[#0d1117]">
+                        <tr className="border-b border-[#2a3347]">
+                          <th className="text-left px-5 py-2 text-[11px] font-semibold text-[#4f617a] uppercase tracking-wider">Name</th>
+                          <th className="text-left px-3 py-2 text-[11px] font-semibold text-[#4f617a] uppercase tracking-wider">No.</th>
+                          <th className="text-left px-3 py-2 text-[11px] font-semibold text-[#4f617a] uppercase tracking-wider">Location</th>
+                          <th className="text-left px-3 py-2 text-[11px] font-semibold text-[#4f617a] uppercase tracking-wider">GC</th>
+                          <th className="text-left px-3 py-2 text-[11px] font-semibold text-[#4f617a] uppercase tracking-wider">Architect</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {projectImportRows.map((r, i) => (
+                          <tr key={i} className={`border-b border-[#2a3347]/50 ${!r.name ? "bg-red-500/5" : ""}`}>
+                            <td className="px-5 py-2 text-[13px]">
+                              {r.name
+                                ? <span className="text-[#e8edf5]">{r.name}</span>
+                                : <span className="text-red-400 italic">missing</span>}
+                            </td>
+                            <td className="px-3 py-2 text-[13px] text-[#8b9ab5]">{r.number || <span className="text-[#4f617a]">—</span>}</td>
+                            <td className="px-3 py-2 text-[13px] text-[#8b9ab5]">{r.location || <span className="text-[#4f617a]">—</span>}</td>
+                            <td className="px-3 py-2 text-[13px] text-[#8b9ab5]">{r.gc_name || <span className="text-[#4f617a]">—</span>}</td>
+                            <td className="px-3 py-2 text-[13px] text-[#8b9ab5]">{r.architect || <span className="text-[#4f617a]">—</span>}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <div className="px-5 py-3 flex items-center justify-between border-t border-[#2a3347]">
+                    <span className="text-[12px] text-[#8b9ab5]">
+                      {projectImportRows.filter(r => r.name).length} of {projectImportRows.length} rows will be imported
+                    </span>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={cancelProjectImport}
+                        disabled={projectImporting}
+                        className="h-8 px-3 rounded-md border border-[#2a3347] text-[13px] text-[#8b9ab5] hover:text-[#e8edf5] hover:bg-white/[0.05] transition-colors disabled:opacity-50"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        onClick={confirmProjectImport}
+                        disabled={projectImporting || !projectImportRows.filter(r => r.name).length}
+                        className="h-8 px-4 rounded-md bg-[#2563eb] text-white text-[13px] font-semibold hover:bg-[#1d4ed8] transition-colors disabled:opacity-50"
+                      >
+                        {projectImporting ? "Importing…" : `Import ${projectImportRows.filter(r => r.name).length} project${projectImportRows.filter(r => r.name).length !== 1 ? "s" : ""}`}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {projectImportResult && projectImportResult.errors.length > 0 && (
+                <div className="px-5 py-3 border-b border-[#2a3347] bg-red-500/5">
+                  <p className="text-[12px] font-semibold text-red-400 mb-1">Some rows failed:</p>
+                  {projectImportResult.errors.map((e, i) => (
+                    <p key={i} className="text-[12px] text-red-400/80">{e}</p>
+                  ))}
+                </div>
+              )}
+
               {projectsLoading && (
                 <div className="px-5 py-4 text-[13px] text-[#8b9ab5]">Loading…</div>
               )}
 
-              {!projectsLoading && projects.length === 0 && (
-                <div className="px-5 py-8 text-center text-[13px] text-[#4f617a]">No projects yet.</div>
+              {!projectsLoading && projects.length === 0 && !projectImportRows && (
+                <div className="px-5 py-6 text-center space-y-2">
+                  <p className="text-[13px] text-[#4f617a]">No projects yet.</p>
+                  <button onClick={downloadProjectTemplate} className="text-[12px] text-[#60a5fa] hover:text-[#93c5fd] transition-colors">
+                    Download CSV template
+                  </button>
+                </div>
               )}
 
               {!projectsLoading && projects.length > 0 && (
