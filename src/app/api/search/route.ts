@@ -1,44 +1,151 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
+import Anthropic from "@anthropic-ai/sdk"
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type Row = Record<string, any>
+
+const SELECT = "id, file_name, storage_path, mime_type, file_size, created_at, csi_division, division_name, csi_section, section_name"
+
+interface AiExpansion {
+  terms: string[]
+  divisions: string[]
+  sections: string[]
+  summary: string
+}
+
+async function aiExpandQuery(query: string): Promise<AiExpansion> {
+  if (!process.env.ANTHROPIC_API_KEY) return { terms: [query], divisions: [], sections: [], summary: "" }
+
+  try {
+    const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
+    const response  = await anthropic.messages.create({
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 300,
+      messages: [{
+        role: "user",
+        content: `You are a construction document expert helping search a submittal library.
+
+User query: "${query}"
+
+Return ONLY a JSON object with no extra text:
+{
+  "terms": ["term1", "term2"],
+  "divisions": ["09", "07"],
+  "sections": ["09 22 16"],
+  "summary": "one short phrase describing what you searched for"
+}
+
+Rules:
+- terms: 1-4 search terms capturing intent, synonyms, and related construction terminology
+- divisions: CSI MasterFormat division numbers (2-digit strings) clearly related to the query (0-3 max)
+- sections: specific CSI section codes only if the query strongly implies one (0-3 max)
+- summary: e.g. "roofing membranes and waterproofing" or "HVAC ductwork"`,
+      }],
+    })
+
+    const raw   = response.content[0].type === "text" ? response.content[0].text : ""
+    const match = raw.match(/\{[\s\S]*\}/)
+    if (!match) return { terms: [query], divisions: [], sections: [], summary: "" }
+    const parsed = JSON.parse(match[0])
+    return {
+      terms:     Array.isArray(parsed.terms)     ? parsed.terms     : [query],
+      divisions: Array.isArray(parsed.divisions) ? parsed.divisions : [],
+      sections:  Array.isArray(parsed.sections)  ? parsed.sections  : [],
+      summary:   typeof parsed.summary === "string" ? parsed.summary : "",
+    }
+  } catch {
+    return { terms: [query], divisions: [], sections: [], summary: "" }
+  }
+}
 
 // GET /api/search?q=concrete
 export async function GET(req: NextRequest) {
   const q = req.nextUrl.searchParams.get("q")?.trim()
-  if (!q) {
-    return NextResponse.json({ files: [] })
-  }
+  if (!q) return NextResponse.json({ files: [] })
 
   const supabase = await createClient()
 
-  const { data, error } = await supabase
-    .from("submittals")
-    .select("id, file_name, storage_path, mime_type, file_size, created_at, csi_division, division_name, csi_section, section_name")
-    .eq("status", "active")
-    .textSearch("search_vector", q, { type: "websearch" })
-    .order("created_at", { ascending: false })
-    .limit(50)
+  // AI expansion first (Haiku ~200ms), then all DB queries in parallel
+  const ai = await aiExpandQuery(q)
 
-  if (error) {
-    console.error("Search failed:", error)
-    return NextResponse.json({ error: "Search failed" }, { status: 500 })
+  // Build one async fn per query so Promise.all can run them together
+  const queryFns: (() => Promise<Row[]>)[] = []
+
+  // 1. Case-insensitive filename match on original query
+  queryFns.push(async () => {
+    const { data } = await supabase.from("submittals").select(SELECT)
+      .eq("status", "active").ilike("file_name", `%${q}%`)
+      .order("created_at", { ascending: false }).limit(30)
+    return data ?? []
+  })
+
+  // 2. Full-text search (search_vector is already case-insensitive)
+  queryFns.push(async () => {
+    const clean = q.replace(/[^a-zA-Z0-9\s]/g, " ")
+    const { data, error } = await supabase.from("submittals").select(SELECT)
+      .eq("status", "active")
+      .textSearch("search_vector", clean, { type: "websearch" })
+      .order("created_at", { ascending: false }).limit(30)
+    return error ? [] : (data ?? [])
+  })
+
+  // 3. AI-expanded terms — ilike on each additional term
+  for (const term of ai.terms) {
+    if (term.toLowerCase() !== q.toLowerCase()) {
+      const t = term
+      queryFns.push(async () => {
+        const { data } = await supabase.from("submittals").select(SELECT)
+          .eq("status", "active").ilike("file_name", `%${t}%`)
+          .order("created_at", { ascending: false }).limit(20)
+        return data ?? []
+      })
+    }
   }
 
-  const rows = data ?? []
+  // 4. AI-identified CSI sections
+  if (ai.sections.length > 0) {
+    queryFns.push(async () => {
+      const { data } = await supabase.from("submittals").select(SELECT)
+        .eq("status", "active").in("csi_section", ai.sections)
+        .order("created_at", { ascending: false }).limit(30)
+      return data ?? []
+    })
+  }
 
-  const paths = rows.map(r => r.storage_path).filter(Boolean) as string[]
+  // 5. AI-identified CSI divisions
+  if (ai.divisions.length > 0) {
+    queryFns.push(async () => {
+      const { data } = await supabase.from("submittals").select(SELECT)
+        .eq("status", "active").in("csi_division", ai.divisions)
+        .order("created_at", { ascending: false }).limit(30)
+      return data ?? []
+    })
+  }
+
+  const resultArrays = await Promise.all(queryFns.map(fn => fn()))
+
+  // Merge and deduplicate
+  const seen    = new Set<string>()
+  const allRows: Row[] = []
+  for (const rows of resultArrays) {
+    for (const row of rows) {
+      if (!seen.has(row.id)) { seen.add(row.id); allRows.push(row) }
+    }
+  }
+
+  // Generate signed URLs
+  const paths      = allRows.map(r => r.storage_path).filter(Boolean) as string[]
   const signedUrls: Record<string, string> = {}
-
   if (paths.length > 0) {
     const { data: urlData } = await supabase.storage
-      .from("submittals")
-      .createSignedUrls(paths, 604800)
-
+      .from("submittals").createSignedUrls(paths, 604800)
     for (const u of urlData ?? []) {
       if (u.path && u.signedUrl) signedUrls[u.path] = u.signedUrl
     }
   }
 
-  const files = rows.map(r => ({
+  const files = allRows.slice(0, 50).map(r => ({
     id:            r.id,
     file_name:     r.file_name,
     file_url:      r.storage_path ? (signedUrls[r.storage_path] ?? "") : "",
@@ -51,5 +158,5 @@ export async function GET(req: NextRequest) {
     section_name:  r.section_name,
   }))
 
-  return NextResponse.json({ files })
+  return NextResponse.json({ files, aiSummary: ai.summary || null })
 }

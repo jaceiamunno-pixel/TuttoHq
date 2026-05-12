@@ -549,6 +549,7 @@ export default function Home() {
   const [searchResults, setSearchResults] = useState<SubmittalFile[] | null>(null)
   const [searching, setSearching]         = useState(false)
   const [searchError, setSearchError]     = useState<string | null>(null)
+  const [searchAiSummary, setSearchAiSummary] = useState<string | null>(null)
 
   // Upload modal
   const [showUpload, setShowUpload]         = useState(false)
@@ -860,11 +861,13 @@ export default function Home() {
     if (!q) { clearSearch(); return }
     setSearching(true)
     setSearchError(null)
+    setSearchAiSummary(null)
     try {
       const res  = await fetch(`/api/search?q=${encodeURIComponent(q)}`)
       const data = await res.json()
       if (!res.ok) throw new Error(data.error ?? "Search failed")
       setSearchResults(data.files)
+      setSearchAiSummary(data.aiSummary ?? null)
     } catch (e) {
       setSearchError(e instanceof Error ? e.message : "Search failed")
       setSearchResults(null)
@@ -877,6 +880,7 @@ export default function Home() {
     setQuery("")
     setSearchResults(null)
     setSearchError(null)
+    setSearchAiSummary(null)
     inputRef.current?.focus()
   }
 
@@ -1326,7 +1330,14 @@ export default function Home() {
         <div className="flex-shrink-0 border-t border-[#2a3347] mx-3 mt-0.5 mb-1.5" />
 
         {/* Section label + upload button */}
-        <div className="flex-shrink-0 flex items-center justify-between px-4 pb-1">
+        <div className="flex-shrink-0 px-4 pb-1">
+          {isSearchMode && searchAiSummary && !searching && (
+            <p className="text-[11px] text-[#2563eb] mb-1 flex items-center gap-1">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm1 14.93V17a1 1 0 0 1-2 0v-.07A8 8 0 0 1 4.07 9H5a1 1 0 0 1 0 2 6 6 0 0 0 6 6zm-1-6.93A2 2 0 1 1 14 12a2 2 0 0 1-2-1.93z"/></svg>
+              AI: {searchAiSummary}
+            </p>
+          )}
+        <div className="flex items-center justify-between">
           <span className="text-[10px] font-bold text-[#4f617a] uppercase tracking-widest">
             {isSearchMode
               ? (searching ? "Searching…" : `${searchResults?.length ?? 0} results`)
@@ -1367,6 +1378,7 @@ export default function Home() {
               </div>
             )}
           </div>
+        </div>
         </div>
 
         {/* Scrollable tree */}
