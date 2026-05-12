@@ -46,6 +46,10 @@ interface SubmittalRecord {
   uploaded_by: string
   created_at: string
   project_id: string | null
+  sender_email: string | null
+  received_at: string | null
+  manually_overridden: boolean | null
+  overridden_by: string | null
 }
 
 type BatchStatus = "pending" | "classifying" | "ready" | "error" | "uploading" | "done" | "upload-error"
@@ -1657,17 +1661,31 @@ export default function Home() {
                   <tr key={s.id} className="border-b border-[#2a3347]/40 hover:bg-white/[0.02] transition-colors group">
                     <td className="px-4 py-2.5 text-[#4f617a] tabular-nums text-[12px]">{logSubmittals.length - i}</td>
                     <td className="px-4 py-2.5 max-w-0">
-                      <p className="text-[#c8d3e6] font-medium truncate" title={s.file_name}>{s.file_name}</p>
-                      {s.ai_confidence != null && s.ai_confidence < 70 && (
-                        <span className="text-[10px] text-amber-400">⚠ Low confidence</span>
-                      )}
+                      <div className="flex items-center gap-1.5">
+                        <p className="text-[#c8d3e6] font-medium truncate" title={s.file_name}>{s.file_name}</p>
+                        {s.sender_email && (
+                          <span title={`Received from ${s.sender_email}`} className="flex-shrink-0 text-[#4f617a] hover:text-[#8b9ab5] transition-colors">
+                            <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                            </svg>
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2 mt-0.5">
+                        {s.ai_confidence != null && s.ai_confidence < 70 && (
+                          <span className="text-[10px] text-amber-400">⚠ Low confidence</span>
+                        )}
+                        {s.manually_overridden && (
+                          <span className="text-[10px] text-[#60a5fa]">✎ Overridden</span>
+                        )}
+                      </div>
                     </td>
                     <td className="px-4 py-2.5 text-[#8b9ab5] text-[12px] whitespace-nowrap">
                       {s.csi_division && <span className="font-mono text-[#4f617a] mr-1">{s.csi_division}</span>}
                       {s.division_name}
                     </td>
                     <td className="px-4 py-2.5 text-[#8b9ab5] text-[12px]">{s.section_name ?? s.csi_section ?? "—"}</td>
-                    <td className="px-4 py-2.5 text-[#4f617a] text-[12px] whitespace-nowrap">{fmtDate(s.created_at)}</td>
+                    <td className="px-4 py-2.5 text-[#4f617a] text-[12px] whitespace-nowrap">{fmtDate(s.received_at ?? s.created_at)}</td>
                     <td className="px-4 py-2.5"><StatusBadge status={s.review_status ?? "Received"} /></td>
                     <td className="px-4 py-2.5">
                       <div className="flex items-center gap-1">

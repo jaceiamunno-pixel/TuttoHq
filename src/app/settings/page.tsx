@@ -879,11 +879,21 @@ export default function SettingsPage() {
                     </li>
                     <li className="flex gap-3">
                       <span className="flex-shrink-0 w-5 h-5 rounded-full bg-[#2563eb]/20 text-[#60a5fa] text-[11px] font-semibold flex items-center justify-center">3</span>
-                      <span>Once connected, TuttoHQ will automatically detect emails with PDF attachments and add them to your submittal library.</span>
+                      <span>
+                        In Google Cloud Console, create a Pub/Sub topic and a push subscription. Set the push endpoint to:
+                        <code className="block mt-1.5 px-2.5 py-1.5 rounded bg-[#0d1117] border border-[#2a3347] text-[11px] text-[#c8d3e6] font-mono break-all">
+                          {"{NEXT_PUBLIC_APP_URL}"}/api/gmail-intake?token={"{GMAIL_WEBHOOK_SECRET}"}
+                        </code>
+                        Set <code className="text-[#c8d3e6]">GMAIL_WEBHOOK_SECRET</code> and <code className="text-[#c8d3e6]">GOOGLE_PUBSUB_TOPIC</code> as environment variables in your deployment.
+                      </span>
                     </li>
                     <li className="flex gap-3">
                       <span className="flex-shrink-0 w-5 h-5 rounded-full bg-[#2563eb]/20 text-[#60a5fa] text-[11px] font-semibold flex items-center justify-center">4</span>
-                      <span>Push notifications expire every 7 days. TuttoHQ auto-renews them — you can also manually renew from the connection details above.</span>
+                      <span>Once configured, any email with a PDF or Word attachment sent to the connected Gmail account will be automatically classified and added to the Submittal log.</span>
+                    </li>
+                    <li className="flex gap-3">
+                      <span className="flex-shrink-0 w-5 h-5 rounded-full bg-[#2563eb]/20 text-[#60a5fa] text-[11px] font-semibold flex items-center justify-center">5</span>
+                      <span>Push notification subscriptions expire every 7 days. TuttoHQ auto-renews them on each incoming notification — you can also manually renew from the connection details above.</span>
                     </li>
                   </ol>
                 </div>
