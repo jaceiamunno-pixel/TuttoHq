@@ -113,15 +113,9 @@ export async function GET(req: NextRequest) {
     })
   }
 
-  // 5. AI-identified CSI divisions
-  if (ai.divisions.length > 0) {
-    queryFns.push(async () => {
-      const { data } = await supabase.from("submittals").select(SELECT)
-        .eq("status", "active").in("csi_division", ai.divisions)
-        .order("created_at", { ascending: false }).limit(30)
-      return data ?? []
-    })
-  }
+  // Division-level queries are intentionally omitted — too coarse, returns
+  // unrelated files from the same division (e.g. searching "acoustical ceiling"
+  // would pull all of Division 09 including unrelated metal framing).
 
   const resultArrays = await Promise.all(queryFns.map(fn => fn()))
 
