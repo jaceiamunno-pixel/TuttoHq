@@ -56,6 +56,7 @@ interface Project { id: string; name: string; number: string | null; location: s
 interface TeamMember { id: string; name: string; title: string | null; email: string | null }
 interface RFI { id: string; rfi_number: string; subject: string; description: string | null; submitted_by: string | null; assigned_to: string | null; date_issued: string | null; due_date: string | null; status: string; response: string | null; project_id: string | null; created_at: string; uploaded_by: string }
 interface PunchItem { id: string; item_number: string; description: string; location: string | null; assigned_to: string | null; due_date: string | null; priority: string; status: string; notes: string | null; project_id: string | null; created_at: string; completed_at: string | null; uploaded_by: string }
+interface DailyReport { id: string; report_date: string; project_id: string | null; prepared_by: string | null; weather_conditions: string | null; temperature: string | null; manpower_count: number | null; work_performed: string | null; equipment: string | null; materials_delivered: string | null; visitors: string | null; issues_delays: string | null; safety_notes: string | null; created_at: string; uploaded_by: string }
 type FileModalStep = "project" | "coversheet" | "form"
 interface OpenFileCtx { file: SubmittalFile; divNum: string; divName: string; secCode: string; secName: string }
 interface CoverFormData { projectName: string; projectNumber: string; projectLocation: string; gcName: string; architect: string; specSectionNo: string; specSectionTitle: string; description: string; dateSubmitted: string; submittalNo: string; reviewedBy: string; certifiedBy: string; notes: string }
@@ -578,7 +579,7 @@ export default function Home() {
   const [generatingCover, setGeneratingCover] = useState(false)
 
   // Module navigation
-  const [activeModule, setActiveModule] = useState<"submittals" | "rfis" | "punch">("submittals")
+  const [activeModule, setActiveModule] = useState<"submittals" | "rfis" | "punch" | "daily">("submittals")
 
   // RFI log
   const [rfis, setRfis]                               = useState<RFI[]>([])
@@ -613,6 +614,27 @@ export default function Home() {
   const [punchEditStatus, setPunchEditStatus]     = useState("")
   const [punchEditNotes, setPunchEditNotes]       = useState("")
   const [punchEditSaving, setPunchEditSaving]     = useState(false)
+
+  // Daily reports
+  const [dailyReports, setDailyReports]               = useState<DailyReport[]>([])
+  const [dailyLoading, setDailyLoading]               = useState(false)
+  const [showNewDaily, setShowNewDaily]               = useState(false)
+  const [viewDaily, setViewDaily]                     = useState<DailyReport | null>(null)
+  const [dailyDate, setDailyDate]                     = useState(() => new Date().toISOString().slice(0, 10))
+  const [dailyProjectId, setDailyProjectId]           = useState("")
+  const [dailyPreparedBy, setDailyPreparedBy]         = useState("")
+  const [dailyWeather, setDailyWeather]               = useState("")
+  const [dailyTemp, setDailyTemp]                     = useState("")
+  const [dailyManpower, setDailyManpower]             = useState("")
+  const [dailyWorkPerformed, setDailyWorkPerformed]   = useState("")
+  const [dailyEquipment, setDailyEquipment]           = useState("")
+  const [dailyMaterials, setDailyMaterials]           = useState("")
+  const [dailyVisitors, setDailyVisitors]             = useState("")
+  const [dailyIssues, setDailyIssues]                 = useState("")
+  const [dailySafety, setDailySafety]                 = useState("")
+  const [dailySaving, setDailySaving]                 = useState(false)
+  const [dailyEditing, setDailyEditing]               = useState(false)
+  const [dailyEditSaving, setDailyEditSaving]         = useState(false)
 
   const inputRef = useRef<HTMLInputElement>(null)
 
@@ -862,6 +884,18 @@ export default function Home() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { if (activeModule === "punch") loadPunch() }, [activeModule])
 
+  function loadDaily() {
+    setDailyLoading(true)
+    fetch("/api/daily-reports")
+      .then(r => r.json())
+      .then(d => setDailyReports(d.reports ?? []))
+      .catch(() => setDailyReports([]))
+      .finally(() => setDailyLoading(false))
+  }
+
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { if (activeModule === "daily") loadDaily() }, [activeModule])
+
   function openEditModal(s: SubmittalRecord) {
     setEditSubmittal(s)
     setEditStatus(s.review_status ?? "Received")
@@ -907,6 +941,54 @@ export default function Home() {
         loadRfis()
       }
     } finally { setRfiSaving(false) }
+  }
+
+  function openDailyForEdit(r: DailyReport) {
+    setViewDaily(r)
+    setDailyDate(r.report_date)
+    setDailyProjectId(r.project_id ?? "")
+    setDailyPreparedBy(r.prepared_by ?? "")
+    setDailyWeather(r.weather_conditions ?? "")
+    setDailyTemp(r.temperature ?? "")
+    setDailyManpower(r.manpower_count != null ? String(r.manpower_count) : "")
+    setDailyWorkPerformed(r.work_performed ?? "")
+    setDailyEquipment(r.equipment ?? "")
+    setDailyMaterials(r.materials_delivered ?? "")
+    setDailyVisitors(r.visitors ?? "")
+    setDailyIssues(r.issues_delays ?? "")
+    setDailySafety(r.safety_notes ?? "")
+    setDailyEditing(true)
+  }
+
+  async function createDaily(e: React.FormEvent) {
+    e.preventDefault()
+    setDailySaving(true)
+    try {
+      const res = await fetch("/api/daily-reports", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ report_date: dailyDate, project_id: dailyProjectId || null, prepared_by: dailyPreparedBy || null, weather_conditions: dailyWeather || null, temperature: dailyTemp || null, manpower_count: dailyManpower || null, work_performed: dailyWorkPerformed || null, equipment: dailyEquipment || null, materials_delivered: dailyMaterials || null, visitors: dailyVisitors || null, issues_delays: dailyIssues || null, safety_notes: dailySafety || null }),
+      })
+      if (res.ok) {
+        setShowNewDaily(false)
+        setDailyDate(new Date().toISOString().slice(0, 10)); setDailyProjectId(""); setDailyPreparedBy(""); setDailyWeather(""); setDailyTemp(""); setDailyManpower(""); setDailyWorkPerformed(""); setDailyEquipment(""); setDailyMaterials(""); setDailyVisitors(""); setDailyIssues(""); setDailySafety("")
+        loadDaily()
+      }
+    } finally { setDailySaving(false) }
+  }
+
+  async function saveDaily(e: React.FormEvent) {
+    e.preventDefault()
+    if (!viewDaily) return
+    setDailyEditSaving(true)
+    try {
+      const res = await fetch(`/api/daily-reports/${viewDaily.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ report_date: dailyDate, project_id: dailyProjectId || null, prepared_by: dailyPreparedBy || null, weather_conditions: dailyWeather || null, temperature: dailyTemp || null, manpower_count: dailyManpower ? parseInt(dailyManpower) : null, work_performed: dailyWorkPerformed || null, equipment: dailyEquipment || null, materials_delivered: dailyMaterials || null, visitors: dailyVisitors || null, issues_delays: dailyIssues || null, safety_notes: dailySafety || null }),
+      })
+      if (res.ok) { setViewDaily(null); setDailyEditing(false); loadDaily() }
+    } finally { setDailyEditSaving(false) }
   }
 
   async function createPunch(e: React.FormEvent) {
@@ -1358,6 +1440,10 @@ export default function Home() {
             className={`px-3 py-2.5 text-[13px] font-medium border-b-2 transition-colors whitespace-nowrap ${activeModule === "punch" ? "border-[#2563eb] text-[#e8edf5]" : "border-transparent text-[#4f617a] hover:text-[#8b9ab5]"}`}>
             Punch List
           </button>
+          <button onClick={() => setActiveModule("daily")}
+            className={`px-3 py-2.5 text-[13px] font-medium border-b-2 transition-colors whitespace-nowrap ${activeModule === "daily" ? "border-[#2563eb] text-[#e8edf5]" : "border-transparent text-[#4f617a] hover:text-[#8b9ab5]"}`}>
+            Daily Reports
+          </button>
         </div>
 
         {/* Submittal action bar */}
@@ -1418,6 +1504,16 @@ export default function Home() {
             </div>
             <button onClick={() => setShowNewPunch(true)} className="h-8 px-4 rounded-md bg-[#2563eb] text-white text-[13px] font-semibold hover:bg-[#1d4ed8] transition-colors flex items-center gap-1.5">
               <PlusIcon /> New Item
+            </button>
+          </div>
+        )}
+
+        {/* Daily reports action bar */}
+        {activeModule === "daily" && (
+          <div className="flex-shrink-0 border-b border-[#2a3347] bg-[#161b27] flex items-center justify-between px-4 py-2.5">
+            <p className="text-[13px] font-semibold text-[#e8edf5]">Daily Reports <span className="text-[#4f617a] font-normal ml-1">({dailyReports.length})</span></p>
+            <button onClick={() => setShowNewDaily(true)} className="h-8 px-4 rounded-md bg-[#2563eb] text-white text-[13px] font-semibold hover:bg-[#1d4ed8] transition-colors flex items-center gap-1.5">
+              <PlusIcon /> New Report
             </button>
           </div>
         )}
@@ -1633,8 +1729,227 @@ export default function Home() {
               </table>
             )
           )}
+          {/* Daily reports */}
+          {activeModule === "daily" && (
+            dailyLoading ? (
+              <div className="flex items-center justify-center h-40 gap-2 text-[13px] text-[#4f617a]">
+                <SpinnerIcon className="h-4 w-4" /> Loading…
+              </div>
+            ) : dailyReports.length === 0 ? (
+              <div className="flex flex-col items-center justify-center h-full py-24 text-center">
+                <div className="w-14 h-14 rounded-2xl bg-[#2563eb]/10 border border-[#2563eb]/20 flex items-center justify-center mb-4">
+                  <svg className="w-7 h-7 text-[#3b82f6]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                  </svg>
+                </div>
+                <p className="text-[15px] font-bold text-[#c8d3e6]">No daily reports yet</p>
+                <p className="text-[13px] text-[#4f617a] mt-1.5">Log daily site activity, weather, and manpower.</p>
+                <button onClick={() => setShowNewDaily(true)} className="mt-5 h-9 px-5 rounded-lg bg-[#2563eb] text-white text-[13px] font-semibold hover:bg-[#1d4ed8] transition-colors inline-flex items-center gap-2">
+                  <PlusIcon /> New Report
+                </button>
+              </div>
+            ) : (
+              <table className="w-full text-[13px] border-collapse">
+                <thead className="sticky top-0 bg-[#161b27] z-10">
+                  <tr className="border-b border-[#2a3347]">
+                    <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#4f617a] uppercase tracking-widest w-10">#</th>
+                    <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#4f617a] uppercase tracking-widest w-28">Date</th>
+                    <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#4f617a] uppercase tracking-widest">Work Performed</th>
+                    <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#4f617a] uppercase tracking-widest w-28">Prepared By</th>
+                    <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#4f617a] uppercase tracking-widest w-28">Weather</th>
+                    <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#4f617a] uppercase tracking-widest w-20">Manpower</th>
+                    <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#4f617a] uppercase tracking-widest w-20">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {dailyReports.map((r, i) => (
+                    <tr key={r.id} className="border-b border-[#2a3347]/40 hover:bg-white/[0.02] transition-colors cursor-pointer" onClick={() => { setViewDaily(r); setDailyEditing(false) }}>
+                      <td className="px-4 py-2.5 text-[#4f617a] tabular-nums text-[12px]">{dailyReports.length - i}</td>
+                      <td className="px-4 py-2.5 text-[#c8d3e6] font-medium text-[12px] whitespace-nowrap">{fmtDateOnly(r.report_date)}</td>
+                      <td className="px-4 py-2.5 max-w-0">
+                        <p className="text-[#8b9ab5] text-[12px] truncate">{r.work_performed ?? <span className="text-[#4f617a] italic">No description</span>}</p>
+                      </td>
+                      <td className="px-4 py-2.5 text-[#8b9ab5] text-[12px]">{r.prepared_by ?? "—"}</td>
+                      <td className="px-4 py-2.5 text-[#8b9ab5] text-[12px]">{r.weather_conditions ?? "—"}{r.temperature ? ` · ${r.temperature}` : ""}</td>
+                      <td className="px-4 py-2.5 text-[#8b9ab5] text-[12px] text-center">{r.manpower_count ?? "—"}</td>
+                      <td className="px-4 py-2.5">
+                        <button onClick={e => { e.stopPropagation(); openDailyForEdit(r) }}
+                          className="text-[11px] text-[#8b9ab5] hover:text-[#e8edf5] px-2 py-1 rounded hover:bg-white/[0.05] transition-colors">
+                          Edit
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )
+          )}
         </div>
       </div>
+
+      {/* ── New / Edit Daily Report modal ────────────────────────────────── */}
+      {(showNewDaily || (viewDaily && dailyEditing)) && (() => {
+        const isEdit = !!(viewDaily && dailyEditing)
+        const onClose = () => { setShowNewDaily(false); setViewDaily(null); setDailyEditing(false) }
+        const tareaClass = "w-full px-3 py-2 rounded-md border border-[#2a3347] text-[13px] text-[#e8edf5] bg-[#0d1117] focus:outline-none focus:ring-1 focus:ring-[#2563eb]/40 resize-none placeholder:text-[#4f617a]"
+        return (
+          <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center"
+            onClick={e => { if (e.target === e.currentTarget) onClose() }}>
+            <div className="bg-[#1c2333] rounded-xl border border-[#2a3347] shadow-2xl w-[680px] max-h-[90vh] flex flex-col">
+              <div className="flex items-center justify-between px-6 pt-5 pb-4 border-b border-[#2a3347] flex-shrink-0">
+                <h2 className="text-[15px] font-bold text-[#e8edf5]">{isEdit ? "Edit Daily Report" : "New Daily Report"}</h2>
+                <button onClick={onClose} className="text-[#4f617a] hover:text-[#8b9ab5] transition-colors"><XIcon className="h-4 w-4" /></button>
+              </div>
+              <form onSubmit={isEdit ? saveDaily : createDaily} className="flex flex-col flex-1 min-h-0">
+                <div className="px-6 py-4 space-y-4 overflow-y-auto flex-1 min-h-0">
+
+                  {/* Row 1: Date, Project, Prepared By */}
+                  <div className="flex gap-3">
+                    <div className="w-36 flex-shrink-0">
+                      <label className={labelCls}>Date <span className="text-red-400">*</span></label>
+                      <input type="date" required value={dailyDate} onChange={e => setDailyDate(e.target.value)} className={inputCls} />
+                    </div>
+                    <div className="flex-1">
+                      <label className={labelCls}>Project</label>
+                      <select value={dailyProjectId} onChange={e => setDailyProjectId(e.target.value)}
+                        className="w-full h-9 px-3 rounded-md border border-[#2a3347] text-[13px] text-[#e8edf5] bg-[#0d1117] focus:outline-none focus:ring-1 focus:ring-[#2563eb]/40">
+                        <option value="">None</option>
+                        {appProjects.map(p => <option key={p.id} value={p.id}>{p.name}{p.number ? ` — ${p.number}` : ""}</option>)}
+                      </select>
+                    </div>
+                    <div className="flex-1">
+                      <label className={labelCls}>Prepared By</label>
+                      <select value={dailyPreparedBy} onChange={e => setDailyPreparedBy(e.target.value)}
+                        className="w-full h-9 px-3 rounded-md border border-[#2a3347] text-[13px] text-[#e8edf5] bg-[#0d1117] focus:outline-none focus:ring-1 focus:ring-[#2563eb]/40">
+                        <option value="">Select…</option>
+                        {teamMembers.map(m => <option key={m.id} value={m.name}>{m.name}</option>)}
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Row 2: Weather, Temp, Manpower */}
+                  <div className="flex gap-3">
+                    <div className="flex-1">
+                      <label className={labelCls}>Weather</label>
+                      <select value={dailyWeather} onChange={e => setDailyWeather(e.target.value)}
+                        className="w-full h-9 px-3 rounded-md border border-[#2a3347] text-[13px] text-[#e8edf5] bg-[#0d1117] focus:outline-none focus:ring-1 focus:ring-[#2563eb]/40">
+                        <option value="">Select…</option>
+                        {["Clear", "Partly Cloudy", "Cloudy", "Rain", "Heavy Rain", "Snow", "Fog", "Wind"].map(w => <option key={w} value={w}>{w}</option>)}
+                      </select>
+                    </div>
+                    <div className="w-28 flex-shrink-0">
+                      <label className={labelCls}>Temperature</label>
+                      <input type="text" value={dailyTemp} onChange={e => setDailyTemp(e.target.value)} placeholder="e.g. 72°F" className={inputCls} />
+                    </div>
+                    <div className="w-28 flex-shrink-0">
+                      <label className={labelCls}>Manpower</label>
+                      <input type="number" min={0} value={dailyManpower} onChange={e => setDailyManpower(e.target.value)} placeholder="# workers" className={inputCls} />
+                    </div>
+                  </div>
+
+                  {/* Work Performed */}
+                  <div>
+                    <label className={labelCls}>Work Performed</label>
+                    <textarea rows={3} value={dailyWorkPerformed} onChange={e => setDailyWorkPerformed(e.target.value)}
+                      placeholder="Describe the work completed on site today…" className={tareaClass} />
+                  </div>
+
+                  {/* Equipment & Materials side by side */}
+                  <div className="flex gap-3">
+                    <div className="flex-1">
+                      <label className={labelCls}>Equipment on Site</label>
+                      <textarea rows={2} value={dailyEquipment} onChange={e => setDailyEquipment(e.target.value)}
+                        placeholder="List equipment used…" className={tareaClass} />
+                    </div>
+                    <div className="flex-1">
+                      <label className={labelCls}>Materials Delivered</label>
+                      <textarea rows={2} value={dailyMaterials} onChange={e => setDailyMaterials(e.target.value)}
+                        placeholder="List deliveries received…" className={tareaClass} />
+                    </div>
+                  </div>
+
+                  {/* Visitors & Issues side by side */}
+                  <div className="flex gap-3">
+                    <div className="flex-1">
+                      <label className={labelCls}>Visitors / Inspections</label>
+                      <textarea rows={2} value={dailyVisitors} onChange={e => setDailyVisitors(e.target.value)}
+                        placeholder="Inspectors, owner reps, visitors…" className={tareaClass} />
+                    </div>
+                    <div className="flex-1">
+                      <label className={labelCls}>Issues / Delays</label>
+                      <textarea rows={2} value={dailyIssues} onChange={e => setDailyIssues(e.target.value)}
+                        placeholder="Any delays, problems, or concerns…" className={tareaClass} />
+                    </div>
+                  </div>
+
+                  {/* Safety Notes */}
+                  <div>
+                    <label className={labelCls}>Safety Notes</label>
+                    <textarea rows={2} value={dailySafety} onChange={e => setDailySafety(e.target.value)}
+                      placeholder="Safety observations, incidents, toolbox talks…" className={tareaClass} />
+                  </div>
+                </div>
+                <div className="flex justify-end gap-2 px-6 py-4 border-t border-[#2a3347] flex-shrink-0">
+                  <button type="button" onClick={onClose}
+                    className="h-8 px-4 rounded-md border border-[#2a3347] text-[13px] text-[#8b9ab5] hover:bg-white/[0.05] transition-colors">
+                    Cancel
+                  </button>
+                  <button type="submit" disabled={isEdit ? dailyEditSaving : dailySaving}
+                    className="h-8 px-4 rounded-md bg-[#2563eb] text-white text-[13px] font-semibold hover:bg-[#1d4ed8] transition-colors disabled:opacity-50 flex items-center gap-2">
+                    {(isEdit ? dailyEditSaving : dailySaving) && <SpinnerIcon className="h-3 w-3" />}
+                    {isEdit ? (dailyEditSaving ? "Saving…" : "Save Changes") : (dailySaving ? "Creating…" : "Create Report")}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )
+      })()}
+
+      {/* ── View Daily Report modal ───────────────────────────────────────── */}
+      {viewDaily && !dailyEditing && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center"
+          onClick={e => { if (e.target === e.currentTarget) setViewDaily(null) }}>
+          <div className="bg-[#1c2333] rounded-xl border border-[#2a3347] shadow-2xl w-[620px] max-h-[85vh] flex flex-col">
+            <div className="flex items-center justify-between px-6 pt-5 pb-4 border-b border-[#2a3347] flex-shrink-0">
+              <div>
+                <p className="text-[11px] text-[#4f617a] uppercase tracking-widest font-bold">Daily Report</p>
+                <h2 className="text-[16px] font-bold text-[#e8edf5] mt-0.5">{fmtDateOnly(viewDaily.report_date)}</h2>
+              </div>
+              <div className="flex items-center gap-2">
+                <button onClick={() => openDailyForEdit(viewDaily)}
+                  className="h-7 px-3 rounded-md border border-[#2a3347] text-[12px] text-[#8b9ab5] hover:bg-white/[0.05] transition-colors">
+                  Edit
+                </button>
+                <button onClick={() => setViewDaily(null)} className="text-[#4f617a] hover:text-[#8b9ab5] transition-colors">
+                  <XIcon className="h-4 w-4" />
+                </button>
+              </div>
+            </div>
+            <div className="px-6 py-4 space-y-4 overflow-y-auto flex-1 min-h-0">
+              {/* Meta row */}
+              <div className="flex flex-wrap gap-4 text-[12px]">
+                {viewDaily.prepared_by && <span><span className="text-[#4f617a]">Prepared by: </span><span className="text-[#c8d3e6]">{viewDaily.prepared_by}</span></span>}
+                {viewDaily.weather_conditions && <span><span className="text-[#4f617a]">Weather: </span><span className="text-[#c8d3e6]">{viewDaily.weather_conditions}{viewDaily.temperature ? ` · ${viewDaily.temperature}` : ""}</span></span>}
+                {viewDaily.manpower_count != null && <span><span className="text-[#4f617a]">Manpower: </span><span className="text-[#c8d3e6]">{viewDaily.manpower_count} workers</span></span>}
+              </div>
+              {[
+                { label: "Work Performed", value: viewDaily.work_performed },
+                { label: "Equipment on Site", value: viewDaily.equipment },
+                { label: "Materials Delivered", value: viewDaily.materials_delivered },
+                { label: "Visitors / Inspections", value: viewDaily.visitors },
+                { label: "Issues / Delays", value: viewDaily.issues_delays },
+                { label: "Safety Notes", value: viewDaily.safety_notes },
+              ].filter(f => f.value).map(f => (
+                <div key={f.label} className="rounded-md bg-[#1a2235] border border-[#2a3347] px-4 py-3">
+                  <p className="text-[10px] font-bold text-[#4f617a] uppercase tracking-widest mb-1.5">{f.label}</p>
+                  <p className="text-[13px] text-[#c8d3e6] whitespace-pre-wrap">{f.value}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── New Punch Item modal ─────────────────────────────────────────── */}
       {showNewPunch && (
