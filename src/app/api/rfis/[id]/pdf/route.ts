@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
-import { PDFBuilder, C } from "@/lib/pdf-builder"
+import { PDFBuilder } from "@/lib/pdf-builder"
 
 export async function POST(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const supabase = await createClient()
@@ -38,7 +38,7 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
   }
 
   b.sectionHeader("RFI DETAILS")
-  b.twoCol("RFI Number", rfi.rfi_number ?? "—", 25, "Status", rfi.status ?? "Open", 75)
+  b.twoColStatus("RFI Number", rfi.rfi_number ?? "—", 25, "Status", rfi.status ?? "Open", 75)
   b.twoCol("Date Issued", rfi.date_issued ? new Date(rfi.date_issued).toLocaleDateString("en-US") : "—", 50,
            "Due Date",   rfi.due_date    ? new Date(rfi.due_date).toLocaleDateString("en-US")    : "—", 50)
   b.twoCol("Schedule Impact", rfi.schedule_impact ?? "TBD", 50, "Cost Impact", rfi.cost_impact ?? "TBD", 50)
@@ -51,13 +51,8 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
 
   if (rfi.file_name) {
     b.sectionHeader("ATTACHED FILE")
-    b.page.drawText(rfi.file_name, { x: b.M + 14, y: b.y - 14, size: 9, font: b.reg, color: C.dark })
-    b.y -= b.rowH
-    b.gap(4)
+    b.oneCol("File Name", rfi.file_name)
   }
-
-  if (rfi.submitted_by)
-    b.page.drawText(rfi.submitted_by, { x: b.M, y: Math.max(b.y - 6, 110), size: 9, font: b.bold, color: C.dark })
 
   b.signatureLines("Prepared By / Date", "Reviewed By / Date")
 

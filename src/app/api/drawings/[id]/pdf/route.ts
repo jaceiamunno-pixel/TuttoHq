@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
-import { PDFBuilder, C } from "@/lib/pdf-builder"
+import { PDFBuilder } from "@/lib/pdf-builder"
 
 export async function POST(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const supabase = await createClient()
@@ -43,49 +43,28 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
 
   b.sectionHeader("DRAWING INFORMATION")
   b.twoCol("Drawing Number", dwg.drawing_number ?? "—", 35, "Sheet Title", dwg.sheet_title ?? "—", 65)
-  b.twoCol("Discipline", dwg.discipline ?? "—", 40, "Status", dwg.status ?? "—", 60)
-  b.twoCol("Revision", dwg.revision ?? "0", 25, "Revision Date", dwg.revision_date ? new Date(dwg.revision_date).toLocaleDateString("en-US") : "—", 75)
-  if (dwg.scale) b.oneCol("Scale", dwg.scale)
+  b.twoCol("Discipline", dwg.discipline ?? "—", 40, "Scale", dwg.scale ?? "—", 60)
+  b.twoColStatus("Revision", dwg.revision ?? "0", 25, "Status", dwg.status ?? "—", 75)
+  b.twoCol("Revision Date", dwg.revision_date ? new Date(dwg.revision_date).toLocaleDateString("en-US") : "—", 50, " ", " ", 50)
   if (dwg.notes) {
     b.gap()
     b.textBlock("NOTES", dwg.notes)
   }
 
-  // Revision history table
   if (history && history.length > 1) {
     b.gap()
     b.sectionHeader("REVISION HISTORY")
-    const colW = [50, 95, 110, 200, 77]
-    const headers = ["Rev", "Date", "Status", "Sheet Title", "Note"]
-    const tableRowH = 20
-    const { rgb } = await import("pdf-lib")
-
-    // Header row
-    b.page.drawRectangle({ x: b.M, y: b.y - tableRowH, width: b.CW, height: tableRowH, color: rgb(0.94, 0.95, 0.97) })
-    let cx = b.M
-    headers.forEach((h, i) => {
-      b.page.drawText(h.toUpperCase(), { x: cx + 5, y: b.y - 14, size: 6.5, font: b.bold, color: C.label })
-      cx += colW[i]
-    })
-    b.page.drawLine({ start: { x: b.M, y: b.y - tableRowH }, end: { x: b.M + b.CW, y: b.y - tableRowH }, thickness: 0.5, color: C.border })
-    b.y -= tableRowH
-
-    for (const row of (history ?? []).slice(0, 9)) {
+    const colW = [48, 90, 110, 216, 88]
+    b.tableHeader(["Rev", "Date", "Status", "Sheet Title", "Note"], colW)
+    for (const row of history.slice(0, 10)) {
       const note = row.is_current ? "Current" : row.superseded_at ? new Date(row.superseded_at).toLocaleDateString("en-US") : "—"
-      const vals = [
+      b.tableRow([
         row.revision ?? "0",
         row.revision_date ? new Date(row.revision_date).toLocaleDateString("en-US") : "—",
         row.status ?? "—",
-        (row.sheet_title ?? "—").slice(0, 32),
+        (row.sheet_title ?? "—").slice(0, 34),
         note,
-      ]
-      cx = b.M
-      vals.forEach((v, i) => {
-        b.page.drawText(v, { x: cx + 5, y: b.y - 14, size: 8, font: row.is_current ? b.bold : b.reg, color: row.is_current ? C.navy : C.dark })
-        cx += colW[i]
-      })
-      b.page.drawLine({ start: { x: b.M, y: b.y - tableRowH }, end: { x: b.M + b.CW, y: b.y - tableRowH }, thickness: 0.5, color: C.border })
-      b.y -= tableRowH
+      ], colW, !!row.is_current)
     }
     b.gap(6)
   }

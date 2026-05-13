@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
-import { PDFBuilder, C } from "@/lib/pdf-builder"
+import { PDFBuilder } from "@/lib/pdf-builder"
 
 function formatCurrency(n: number | null): string {
   if (n == null) return "—"
@@ -43,8 +43,8 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
   }
 
   b.sectionHeader("CHANGE ORDER DETAILS")
-  b.twoCol("CO Number", co.co_number ?? "—", 25, "Date", co.date ? new Date(co.date).toLocaleDateString("en-US") : "—", 75)
-  b.twoCol("Status", co.status ?? "Draft", 50, "Assigned To", co.assigned_to ?? "—", 50)
+  b.twoColStatus("CO Number", co.co_number ?? "—", 25, "Status", co.status ?? "Draft", 75)
+  b.twoCol("Date", co.date ? new Date(co.date).toLocaleDateString("en-US") : "—", 50, "Assigned To", co.assigned_to ?? "—", 50)
   b.twoCol("Schedule Impact", co.schedule_impact ?? "TBD", 50,
            "Days Impact", co.schedule_impact_days != null ? String(co.schedule_impact_days) : "—", 50)
   if (co.submitted_by) b.oneCol("Submitted By", co.submitted_by)
@@ -58,9 +58,7 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
 
   if (co.file_name) {
     b.sectionHeader("ATTACHED FILE")
-    b.page.drawText(co.file_name, { x: b.M + 14, y: b.y - 14, size: 9, font: b.reg, color: C.dark })
-    b.y -= b.rowH
-    b.gap(4)
+    b.oneCol("File Name", co.file_name)
   }
 
   b.signatureLines("Submitted By / Date", "Owner / Architect Approval / Date")
