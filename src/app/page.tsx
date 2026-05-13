@@ -19,7 +19,7 @@ interface SubmittalFile {
   section_name?: string
 }
 
-interface Section  { code: string; name: string }
+interface Section  { code: string; name: string; file_count?: number }
 interface Division { num: string; name: string; sections: Section[]; file_count: number }
 
 type UploadStep = "file" | "classifying" | "suggested" | "manual" | "naming"
@@ -1609,10 +1609,8 @@ export default function Home() {
                               <span className="flex-1 text-[12px] text-[#8b9ab5] truncate">
                                 <span className="font-mono text-[#4f617a] mr-1.5">{sec.code}</span>{sec.name}
                               </span>
-                              {!secLoading && sectionFiles[sec.code] !== undefined && (
-                                <span className="text-[10px] text-[#4f617a] flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
-                                  {files.length}
-                                </span>
+                              {(sec.file_count ?? 0) > 0 && (
+                                <span className="text-[10px] text-[#4f617a] flex-shrink-0 tabular-nums bg-[#2563eb]/10 px-1.5 py-0.5 rounded">{sec.file_count}</span>
                               )}
                             </button>
 

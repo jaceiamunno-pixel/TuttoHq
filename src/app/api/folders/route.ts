@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 
-export interface SectionNode { code: string; name: string }
+export interface SectionNode { code: string; name: string; file_count?: number }
 export interface DivisionNode { num: string; name: string; sections: SectionNode[]; file_count: number }
 
 const CSI_DIVISIONS = [
@@ -293,30 +293,38 @@ export async function GET() {
     return NextResponse.json({ error: "Failed to load divisions" }, { status: 500 })
   }
 
-  // Count files per division and collect any DB sections not in the static list
-  const dbSectionsByDiv = new Map<string, SectionNode[]>()
-  const countsByDiv     = new Map<string, number>()
+  // Count files per division and per section, collect any DB sections not in static list
+  const dbSectionsByDiv  = new Map<string, Map<string, { name: string; count: number }>>()
+  const countsByDiv      = new Map<string, number>()
+  const countsBySec      = new Map<string, number>()
 
   for (const row of data ?? []) {
     if (!row.csi_division) continue
     const divNum = row.csi_division.trim().padStart(2, "0")
     countsByDiv.set(divNum, (countsByDiv.get(divNum) ?? 0) + 1)
     if (!row.csi_section) continue
-    if (!dbSectionsByDiv.has(divNum)) dbSectionsByDiv.set(divNum, [])
-    const sections = dbSectionsByDiv.get(divNum)!
-    if (!sections.find(s => s.code === row.csi_section)) {
-      sections.push({ code: row.csi_section, name: row.section_name ?? row.csi_section })
+    countsBySec.set(row.csi_section, (countsBySec.get(row.csi_section) ?? 0) + 1)
+    if (!dbSectionsByDiv.has(divNum)) dbSectionsByDiv.set(divNum, new Map())
+    const secMap = dbSectionsByDiv.get(divNum)!
+    if (!secMap.has(row.csi_section)) {
+      secMap.set(row.csi_section, { name: row.section_name ?? row.csi_section, count: 0 })
     }
   }
 
   const divisions: DivisionNode[] = CSI_DIVISIONS.map(d => {
     const staticSections = CSI_STATIC_SECTIONS[d.num] ?? []
-    const dbSections     = dbSectionsByDiv.get(d.num) ?? []
+    const dbSecMap       = dbSectionsByDiv.get(d.num) ?? new Map()
 
     // Merge: start with static list, append any DB sections not already present
     const staticCodes = new Set(staticSections.map(s => s.code))
-    const extra       = dbSections.filter(s => !staticCodes.has(s.code))
-    const sections    = [...staticSections, ...extra]
+    const extra = [...dbSecMap.entries()]
+      .filter(([code]) => !staticCodes.has(code))
+      .map(([code, { name }]) => ({ code, name, file_count: countsBySec.get(code) ?? 0 }))
+
+    const sections: SectionNode[] = [
+      ...staticSections.map(s => ({ ...s, file_count: countsBySec.get(s.code) ?? 0 })),
+      ...extra,
+    ]
 
     return {
       num:        d.num,
