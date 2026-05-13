@@ -532,7 +532,7 @@ export default function SettingsPage() {
         <div className="flex items-center justify-between mb-8">
           <div>
             <h1 className="text-[22px] font-bold text-[#e8edf5] tracking-tight">Settings</h1>
-            <p className="text-[13px] text-[#8b9ab5] mt-0.5">THP Construction</p>
+            <p className="text-[13px] text-[#8b9ab5] mt-0.5">TuttoHQ</p>
           </div>
           <Link href="/" className="text-[13px] text-[#8b9ab5] hover:text-[#e8edf5] transition-colors">
             ← Back to library

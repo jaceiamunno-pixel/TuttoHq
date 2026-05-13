@@ -1501,9 +1501,9 @@ export default function Home() {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
               </svg>
             </div>
-            <span className="text-[14px] font-bold text-[#e8edf5] tracking-tight truncate">Submittal Library</span>
+            <span className="text-[14px] font-bold text-[#e8edf5] tracking-tight truncate">TuttoHQ</span>
           </div>
-          <p className="text-[11px] text-[#4f617a] px-2 pb-1">THP Construction</p>
+          <p className="text-[11px] text-[#4f617a] px-2 pb-1">Construction Documents</p>
         </div>
 
         {/* Search */}
