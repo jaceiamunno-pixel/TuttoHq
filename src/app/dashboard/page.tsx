@@ -1805,38 +1805,19 @@ export default function Home() {
 
         {/* Submittal action bar */}
         {activeModule === "submittals" && (
-        <div className="flex-shrink-0 border-b border-[#2a3347] bg-[#161b27] flex items-center justify-between px-4 py-2 gap-3">
-          <div className="relative flex-1 max-w-xs">
-            <select
-              value={activeProjectId ?? ""}
-              onChange={e => setActiveProjectId(e.target.value || null)}
-              className="w-full h-8 pl-3 pr-8 rounded-md border border-[#2a3347] bg-[#1e2535] text-[13px] text-[#c8d3e6] appearance-none cursor-pointer hover:border-[#3a4a63] transition-colors focus:outline-none focus:border-[#2563eb]"
-            >
-              <option value="">All Submittals</option>
-              {appProjects.map(p => (
-                <option key={p.id} value={p.id}>
-                  {p.name}{p.number ? ` — ${p.number}` : ""}
-                </option>
-              ))}
-            </select>
-            <span className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-[#4f617a]">
-              <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M2 4l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
-            </span>
-          </div>
-          <div className="flex items-center gap-2 flex-shrink-0">
-            <button
-              onClick={() => { setShowBatch(true); setBatchPhase("select"); setBatchItems([]) }}
-              className="h-8 px-3 rounded-md border border-[#2a3347] text-[12px] text-[#8b9ab5] hover:bg-white/[0.05] transition-colors flex items-center gap-1.5"
-            >
-              <LayersIcon /> Batch
-            </button>
-            <button
-              onClick={() => setShowUpload(true)}
-              className="h-8 px-4 rounded-md bg-[#2563eb] text-white text-[13px] font-semibold hover:bg-[#1d4ed8] transition-colors flex items-center gap-1.5"
-            >
-              <PlusIcon /> Upload
-            </button>
-          </div>
+        <div className="flex-shrink-0 border-b border-[#2a3347] bg-[#161b27] flex items-center justify-end px-4 py-2 gap-2">
+          <button
+            onClick={() => { setShowBatch(true); setBatchPhase("select"); setBatchItems([]) }}
+            className="h-8 px-3 rounded-md border border-[#2a3347] text-[12px] text-[#8b9ab5] hover:bg-white/[0.05] transition-colors flex items-center gap-1.5"
+          >
+            <LayersIcon /> Batch
+          </button>
+          <button
+            onClick={() => setShowUpload(true)}
+            className="h-8 px-4 rounded-md bg-[#2563eb] text-white text-[13px] font-semibold hover:bg-[#1d4ed8] transition-colors flex items-center gap-1.5"
+          >
+            <PlusIcon /> Upload
+          </button>
         </div>
         )}
 
