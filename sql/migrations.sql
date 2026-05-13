@@ -32,3 +32,8 @@ CREATE TABLE IF NOT EXISTS change_orders (
   updated_at           TIMESTAMPTZ DEFAULT now(),
   uploaded_by          UUID REFERENCES auth.users(id)
 );
+
+-- ─── PDF path columns for punch, daily reports, drawings ─────────────────────
+ALTER TABLE punch_items   ADD COLUMN IF NOT EXISTS generated_pdf_path TEXT;
+ALTER TABLE daily_reports ADD COLUMN IF NOT EXISTS generated_pdf_path TEXT;
+ALTER TABLE drawings      ADD COLUMN IF NOT EXISTS generated_pdf_path TEXT;

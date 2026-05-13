@@ -77,9 +77,9 @@ interface ChangeOrder {
   generated_pdf_path: string | null; approved_at: string | null;
   created_at: string; uploaded_by: string;
 }
-interface PunchItem { id: string; item_number: string; description: string; location: string | null; assigned_to: string | null; due_date: string | null; priority: string; status: string; notes: string | null; project_id: string | null; created_at: string; completed_at: string | null; uploaded_by: string }
-interface DailyReport { id: string; report_date: string; project_id: string | null; prepared_by: string | null; weather_conditions: string | null; temperature: string | null; manpower_count: number | null; work_performed: string | null; equipment: string | null; materials_delivered: string | null; visitors: string | null; issues_delays: string | null; safety_notes: string | null; created_at: string; uploaded_by: string }
-interface DrawingRecord { id: string; drawing_number: string; sheet_title: string; discipline: string | null; revision: string; revision_date: string | null; status: string; scale: string | null; notes: string | null; project_id: string | null; is_current: boolean; superseded_at: string | null; created_at: string; uploaded_by: string }
+interface PunchItem { id: string; item_number: string; description: string; location: string | null; assigned_to: string | null; due_date: string | null; priority: string; status: string; notes: string | null; project_id: string | null; created_at: string; completed_at: string | null; uploaded_by: string; generated_pdf_path?: string | null }
+interface DailyReport { id: string; report_date: string; project_id: string | null; prepared_by: string | null; weather_conditions: string | null; temperature: string | null; manpower_count: number | null; work_performed: string | null; equipment: string | null; materials_delivered: string | null; visitors: string | null; issues_delays: string | null; safety_notes: string | null; created_at: string; uploaded_by: string; generated_pdf_path?: string | null }
+interface DrawingRecord { id: string; drawing_number: string; sheet_title: string; discipline: string | null; revision: string; revision_date: string | null; status: string; scale: string | null; notes: string | null; project_id: string | null; is_current: boolean; superseded_at: string | null; created_at: string; uploaded_by: string; generated_pdf_path?: string | null }
 type FileModalStep = "project" | "coversheet" | "form"
 interface OpenFileCtx { file: SubmittalFile; divNum: string; divName: string; secCode: string; secName: string }
 interface CoverFormData { projectName: string; projectNumber: string; projectLocation: string; gcName: string; architect: string; specSectionNo: string; specSectionTitle: string; description: string; dateSubmitted: string; submittalNo: string; reviewedBy: string; certifiedBy: string; notes: string }
@@ -671,6 +671,9 @@ export default function Home() {
   const [coRespondSaving, setCoRespondSaving]         = useState(false)
   const [coResponseStatus, setCoResponseStatus]       = useState("")
   const [coGeneratingPdf, setCoGeneratingPdf]         = useState(false)
+  const [punchGeneratingPdf, setPunchGeneratingPdf]   = useState(false)
+  const [dailyGeneratingPdf, setDailyGeneratingPdf]   = useState(false)
+  const [drawingGeneratingPdf, setDrawingGeneratingPdf] = useState(false)
 
   // Punch list
   const [punchItems, setPunchItems]               = useState<PunchItem[]>([])
@@ -1188,6 +1191,33 @@ export default function Home() {
         loadChangeOrders()
       }
     } finally { setCoGeneratingPdf(false) }
+  }
+
+  async function generatePunchPdf(itemId: string) {
+    setPunchGeneratingPdf(true)
+    try {
+      const res = await fetch(`/api/punch/${itemId}/pdf`, { method: "POST" })
+      const data = await res.json()
+      if (res.ok && data.url) { window.open(data.url, "_blank"); loadPunch() }
+    } finally { setPunchGeneratingPdf(false) }
+  }
+
+  async function generateDailyPdf(reportId: string) {
+    setDailyGeneratingPdf(true)
+    try {
+      const res = await fetch(`/api/daily-reports/${reportId}/pdf`, { method: "POST" })
+      const data = await res.json()
+      if (res.ok && data.url) { window.open(data.url, "_blank"); loadDaily() }
+    } finally { setDailyGeneratingPdf(false) }
+  }
+
+  async function generateDrawingPdf(drawingId: string) {
+    setDrawingGeneratingPdf(true)
+    try {
+      const res = await fetch(`/api/drawings/${drawingId}/pdf`, { method: "POST" })
+      const data = await res.json()
+      if (res.ok && data.url) { window.open(data.url, "_blank"); loadDrawings() }
+    } finally { setDrawingGeneratingPdf(false) }
   }
 
   async function saveCoStatus() {
@@ -2149,6 +2179,8 @@ export default function Home() {
                             className="text-[11px] text-[#8b9ab5] hover:text-[#e8edf5] px-2 py-1 rounded hover:bg-white/[0.05] transition-colors">
                             Edit
                           </button>
+                          <button onClick={() => generatePunchPdf(p.id)} disabled={punchGeneratingPdf}
+                            className="text-[11px] text-[#60a5fa] hover:text-[#93c5fd] px-2 py-1 rounded hover:bg-white/[0.05] transition-colors disabled:opacity-50">PDF</button>
                         </td>
                       </tr>
                     )
@@ -2205,6 +2237,8 @@ export default function Home() {
                           className="text-[11px] text-[#8b9ab5] hover:text-[#e8edf5] px-2 py-1 rounded hover:bg-white/[0.05] transition-colors">
                           Edit
                         </button>
+                        <button onClick={e => { e.stopPropagation(); generateDailyPdf(r.id) }} disabled={dailyGeneratingPdf}
+                          className="text-[11px] text-[#60a5fa] hover:text-[#93c5fd] px-2 py-1 rounded hover:bg-white/[0.05] transition-colors disabled:opacity-50">PDF</button>
                       </td>
                     </tr>
                   ))}
@@ -2274,6 +2308,8 @@ export default function Home() {
                                 className="text-[11px] text-[#60a5fa] hover:text-[#93c5fd] px-2 py-1 rounded hover:bg-white/[0.05] transition-colors whitespace-nowrap">
                                 + Rev
                               </button>
+                              <button onClick={() => generateDrawingPdf(d.id)} disabled={drawingGeneratingPdf}
+                                className="text-[11px] text-[#60a5fa] hover:text-[#93c5fd] px-2 py-1 rounded hover:bg-white/[0.05] transition-colors disabled:opacity-50">PDF</button>
                             </div>
                           </td>
                         </tr>
@@ -2433,6 +2469,10 @@ export default function Home() {
                 <button onClick={() => openDailyForEdit(viewDaily)}
                   className="h-7 px-3 rounded-md border border-[#2a3347] text-[12px] text-[#8b9ab5] hover:bg-white/[0.05] transition-colors">
                   Edit
+                </button>
+                <button onClick={() => generateDailyPdf(viewDaily.id)} disabled={dailyGeneratingPdf}
+                  className="h-7 px-3 rounded-md border border-[#2a3347] text-[12px] text-[#60a5fa] hover:bg-white/[0.05] transition-colors disabled:opacity-50 flex items-center gap-1.5">
+                  {dailyGeneratingPdf ? <><SpinnerIcon className="h-3 w-3" />Generating…</> : "PDF"}
                 </button>
                 <button onClick={() => setViewDaily(null)} className="text-[#4f617a] hover:text-[#8b9ab5] transition-colors">
                   <XIcon className="h-4 w-4" />
@@ -2680,7 +2720,12 @@ export default function Home() {
                 </div>
               </div>
             </div>
-            <div className="flex justify-end gap-2 px-6 py-4 border-t border-[#2a3347]">
+            <div className="flex justify-between px-6 py-4 border-t border-[#2a3347]">
+              <button onClick={() => generatePunchPdf(viewPunch.id)} disabled={punchGeneratingPdf}
+                className="h-8 px-4 rounded-md border border-[#2a3347] text-[13px] text-[#8b9ab5] hover:bg-white/[0.05] transition-colors disabled:opacity-50 flex items-center gap-2">
+                {punchGeneratingPdf ? <><SpinnerIcon className="h-3 w-3" /> Generating…</> : "Generate PDF"}
+              </button>
+              <div className="flex gap-2">
               <button onClick={() => setViewPunch(null)}
                 className="h-8 px-4 rounded-md border border-[#2a3347] text-[13px] text-[#8b9ab5] hover:bg-white/[0.05] transition-colors">
                 Close
@@ -2690,6 +2735,7 @@ export default function Home() {
                 {punchEditSaving && <SpinnerIcon className="h-3 w-3" />}
                 {punchEditSaving ? "Saving…" : "Save"}
               </button>
+              </div>
             </div>
           </div>
         </div>
