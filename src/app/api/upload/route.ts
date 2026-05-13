@@ -20,6 +20,7 @@ export async function POST(req: NextRequest) {
   const dimensions    = (formData.get("dimensions")     as string | null)?.trim() || null
   const aiConfidence  = formData.get("ai_confidence")   ? parseInt(formData.get("ai_confidence") as string) : null
   const aiReasoning   = (formData.get("ai_reasoning")  as string | null)?.trim() || null
+  const projectId     = (formData.get("project_id")    as string | null)?.trim() || null
   const reviewStatus  = (aiConfidence !== null && aiConfidence < 70) ? "Needs Review" : "Received"
 
   if (!file || !divisionNum || !divisionName) {
@@ -69,6 +70,7 @@ export async function POST(req: NextRequest) {
     review_status:  reviewStatus,
     ai_confidence:  aiConfidence,
     ai_reasoning:   aiReasoning,
+    project_id:     projectId,
     status:         "active",
     uploaded_by:    user.id,
   })

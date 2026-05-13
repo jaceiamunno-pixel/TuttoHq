@@ -1167,15 +1167,16 @@ export default function Home() {
     if (!window.confirm(`Delete "${s.file_name}"? This cannot be undone.`)) return
     const res = await fetch(`/api/submittals/${s.id}`, { method: "DELETE" })
     if (res.ok) {
+      // Optimistically remove from all local caches
       setLogSubmittals(prev => prev.filter(x => x.id !== s.id))
       setSectionFiles(prev => {
         const next = { ...prev }
-        for (const code of Object.keys(next)) {
-          next[code] = next[code].filter(f => f.id !== s.id)
-        }
+        // Clear the section cache entirely so next toggle re-fetches fresh from DB
+        if (s.csi_section) delete next[s.csi_section]
         return next
       })
       loadTree()
+      loadSubmittals()
     }
   }
 
@@ -1513,9 +1514,10 @@ export default function Home() {
         fd.append("division_name", item.divName)
         fd.append("section_code",  item.secCode)
         fd.append("section_name",  item.secName)
-        if (item.nameMatl) fd.append("material_name", item.nameMatl)
-        if (item.nameMfr)  fd.append("manufacturer",  item.nameMfr)
-        if (item.nameDims) fd.append("dimensions",     item.nameDims)
+        if (item.nameMatl)   fd.append("material_name", item.nameMatl)
+        if (item.nameMfr)    fd.append("manufacturer",  item.nameMfr)
+        if (item.nameDims)   fd.append("dimensions",    item.nameDims)
+        if (globalProjectId) fd.append("project_id",   globalProjectId)
         const res = await fetch("/api/upload", { method: "POST", body: fd })
         updateBatchItem(item.id, { status: res.ok ? "done" : "upload-error", errorMsg: res.ok ? undefined : "Upload failed" })
       } catch {
@@ -1546,8 +1548,9 @@ export default function Home() {
     fd.append("material_name", nameMatl)
     fd.append("manufacturer",  nameMfr)
     fd.append("dimensions",    nameDims)
-    if (aiResult?.confidence != null) fd.append("ai_confidence", String(aiResult.confidence))
-    if (aiResult?.reasoning)          fd.append("ai_reasoning",  aiResult.reasoning)
+    if (globalProjectId)                 fd.append("project_id",   globalProjectId)
+    if (aiResult?.confidence != null)    fd.append("ai_confidence", String(aiResult.confidence))
+    if (aiResult?.reasoning)             fd.append("ai_reasoning",  aiResult.reasoning)
 
     try {
       const res  = await fetch("/api/upload", { method: "POST", body: fd })
