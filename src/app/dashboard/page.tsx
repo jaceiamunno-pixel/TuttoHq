@@ -1805,19 +1805,22 @@ export default function Home() {
 
         {/* Submittal action bar */}
         {activeModule === "submittals" && (
-        <div className="flex-shrink-0 border-b border-[#2a3347] bg-[#161b27] flex items-center justify-end px-4 py-2 gap-2">
-          <button
-            onClick={() => { setShowBatch(true); setBatchPhase("select"); setBatchItems([]) }}
-            className="h-8 px-3 rounded-md border border-[#2a3347] text-[12px] text-[#8b9ab5] hover:bg-white/[0.05] transition-colors flex items-center gap-1.5"
-          >
-            <LayersIcon /> Batch
-          </button>
-          <button
-            onClick={() => setShowUpload(true)}
-            className="h-8 px-4 rounded-md bg-[#2563eb] text-white text-[13px] font-semibold hover:bg-[#1d4ed8] transition-colors flex items-center gap-1.5"
-          >
-            <PlusIcon /> Upload
-          </button>
+        <div className="flex-shrink-0 border-b border-[#2a3347] bg-[#161b27] flex items-center justify-between px-4 py-2.5">
+          <p className="text-[13px] font-semibold text-[#e8edf5]">Submittal Log <span className="text-[#4f617a] font-normal ml-1">({logSubmittals.length})</span></p>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => { setShowBatch(true); setBatchPhase("select"); setBatchItems([]) }}
+              className="h-8 px-3 rounded-md border border-[#2a3347] text-[12px] text-[#8b9ab5] hover:bg-white/[0.05] transition-colors flex items-center gap-1.5"
+            >
+              <LayersIcon /> Batch
+            </button>
+            <button
+              onClick={() => setShowUpload(true)}
+              className="h-8 px-4 rounded-md bg-[#2563eb] text-white text-[13px] font-semibold hover:bg-[#1d4ed8] transition-colors flex items-center gap-1.5"
+            >
+              <PlusIcon /> Upload
+            </button>
+          </div>
         </div>
         )}
 
