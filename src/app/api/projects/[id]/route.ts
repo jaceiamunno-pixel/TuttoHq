@@ -48,6 +48,19 @@ export async function DELETE(
 
   const { id } = await params
   const admin = createAdminClient()
+
+  // Delete child records first to avoid FK constraint violations
+  await Promise.all([
+    admin.from("submittals").delete().eq("project_id", id),
+    admin.from("rfis").delete().eq("project_id", id),
+    admin.from("change_orders").delete().eq("project_id", id),
+    admin.from("punch_items").delete().eq("project_id", id),
+    admin.from("drawing_log").delete().eq("project_id", id),
+    admin.from("daily_reports").delete().eq("project_id", id),
+    admin.from("closeout_items").delete().eq("project_id", id),
+    admin.from("team_members").delete().eq("project_id", id),
+  ])
+
   const { error } = await admin.from("projects").delete().eq("id", id)
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
