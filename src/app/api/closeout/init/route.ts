@@ -1,41 +1,22 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 
-const DEFAULT_ITEMS = [
-  // ── Documents ────────────────────────────────────────────────────────────────
-  { category: "documents", item_type: "om_manual",   title: "O&M Manual — HVAC System",                sort_order: 10 },
-  { category: "documents", item_type: "om_manual",   title: "O&M Manual — Plumbing System",            sort_order: 11 },
-  { category: "documents", item_type: "om_manual",   title: "O&M Manual — Electrical System",          sort_order: 12 },
-  { category: "documents", item_type: "om_manual",   title: "O&M Manual — Fire Suppression System",    sort_order: 13 },
-  { category: "documents", item_type: "om_manual",   title: "O&M Manual — Roofing System",             sort_order: 14 },
-  { category: "documents", item_type: "warranty",    title: "Warranty — Contractor (1-Year General)",  sort_order: 20 },
-  { category: "documents", item_type: "warranty",    title: "Warranty — Roofing (Manufacturer)",       sort_order: 21 },
-  { category: "documents", item_type: "warranty",    title: "Warranty — HVAC Equipment",               sort_order: 22 },
-  { category: "documents", item_type: "warranty",    title: "Warranty — Glazing & Windows",            sort_order: 23 },
-  { category: "documents", item_type: "attic_stock", title: "Attic Stock Confirmation",                sort_order: 30 },
+// Universal items that apply to every project regardless of submittals
+const UNIVERSAL_ITEMS = [
   // ── Inspections ───────────────────────────────────────────────────────────────
-  { category: "inspections", item_type: "inspection", title: "Certificate of Occupancy",               sort_order: 40 },
-  { category: "inspections", item_type: "inspection", title: "Final Building Inspection",              sort_order: 41 },
-  { category: "inspections", item_type: "inspection", title: "Final Electrical Inspection",            sort_order: 42 },
-  { category: "inspections", item_type: "inspection", title: "Final Plumbing Inspection",              sort_order: 43 },
-  { category: "inspections", item_type: "inspection", title: "Final Mechanical Inspection",            sort_order: 44 },
-  { category: "inspections", item_type: "inspection", title: "Final Fire Inspection",                  sort_order: 45 },
+  { category: "inspections", item_type: "inspection", title: "Certificate of Occupancy",        sort_order: 200 },
+  { category: "inspections", item_type: "inspection", title: "Final Building Inspection",       sort_order: 201 },
+  { category: "inspections", item_type: "inspection", title: "Final Electrical Inspection",     sort_order: 202 },
+  { category: "inspections", item_type: "inspection", title: "Final Plumbing Inspection",       sort_order: 203 },
+  { category: "inspections", item_type: "inspection", title: "Final Mechanical Inspection",     sort_order: 204 },
+  { category: "inspections", item_type: "inspection", title: "Final Fire Inspection",           sort_order: 205 },
   // ── Financial ────────────────────────────────────────────────────────────────
-  { category: "financial", item_type: "lien_waiver",  title: "Lien Waiver — General Contractor",      sort_order: 50 },
-  { category: "financial", item_type: "lien_waiver",  title: "Lien Waiver — Structural Sub",          sort_order: 51 },
-  { category: "financial", item_type: "lien_waiver",  title: "Lien Waiver — Mechanical Sub",          sort_order: 52 },
-  { category: "financial", item_type: "lien_waiver",  title: "Lien Waiver — Electrical Sub",          sort_order: 53 },
-  { category: "financial", item_type: "lien_waiver",  title: "Lien Waiver — Plumbing Sub",            sort_order: 54 },
-  { category: "financial", item_type: "payment",      title: "Final Payment Application",             sort_order: 55 },
-  // ── Training ─────────────────────────────────────────────────────────────────
-  { category: "training", item_type: "training",      title: "Owner Training — HVAC System",          sort_order: 60 },
-  { category: "training", item_type: "training",      title: "Owner Training — Security & Access Control", sort_order: 61 },
-  { category: "training", item_type: "training",      title: "Owner Training — Building Systems Overview", sort_order: 62 },
-  { category: "training", item_type: "training",      title: "Owner Training — Fire Safety Systems",  sort_order: 63 },
+  { category: "financial",   item_type: "lien_waiver", title: "Lien Waiver — General Contractor", sort_order: 300 },
+  { category: "financial",   item_type: "payment",     title: "Final Payment Application",        sort_order: 310 },
   // ── Handover ─────────────────────────────────────────────────────────────────
-  { category: "handover", item_type: "keys",          title: "Keys, Access Cards & Credentials",      sort_order: 70 },
-  { category: "handover", item_type: "spare_parts",   title: "Spare Parts & Maintenance Materials",   sort_order: 71 },
-  { category: "handover", item_type: "emergency",     title: "Emergency Contact Sheet",               sort_order: 72 },
+  { category: "handover",    item_type: "keys",        title: "Keys, Access Cards & Credentials",    sort_order: 400 },
+  { category: "handover",    item_type: "spare_parts", title: "Spare Parts & Maintenance Materials", sort_order: 401 },
+  { category: "handover",    item_type: "emergency",   title: "Emergency Contact Sheet",             sort_order: 402 },
 ]
 
 export async function POST(req: NextRequest) {
@@ -54,14 +35,39 @@ export async function POST(req: NextRequest) {
 
   if ((count ?? 0) > 0) return NextResponse.json({ ok: true, skipped: true })
 
-  const rows = DEFAULT_ITEMS.map(item => ({
-    ...item,
-    project_id,
-    status: "incomplete",
-    uploaded_by: user.id,
-  }))
+  // Fetch all active submittals for this project
+  const { data: submittals } = await supabase
+    .from("submittals")
+    .select("id, file_name, csi_section")
+    .eq("project_id", project_id)
+    .eq("status", "active")
+    .order("csi_section")
+
+  const rows: object[] = []
+
+  // For each submittal generate O&M, Warranty, and Attic Stock items
+  // Strip file extension for cleaner titles
+  let sortIdx = 0
+  for (const sub of submittals ?? []) {
+    const label = sub.file_name?.replace(/\.[^.]+$/, "") ?? sub.csi_section ?? "Unknown"
+    const base = {
+      project_id,
+      status: "incomplete",
+      uploaded_by: user.id,
+      linked_record_id: sub.id,
+      linked_record_type: "submittal",
+    }
+    rows.push({ ...base, category: "documents", item_type: "om_manual",   title: `O&M Manual — ${label}`,   sort_order: sortIdx++ })
+    rows.push({ ...base, category: "documents", item_type: "warranty",    title: `Warranty — ${label}`,     sort_order: sortIdx++ })
+    rows.push({ ...base, category: "documents", item_type: "attic_stock", title: `Attic Stock — ${label}`,  sort_order: sortIdx++ })
+  }
+
+  // Add universal items
+  for (const item of UNIVERSAL_ITEMS) {
+    rows.push({ ...item, project_id, status: "incomplete", uploaded_by: user.id })
+  }
 
   const { error } = await supabase.from("closeout_items").insert(rows)
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  return NextResponse.json({ ok: true })
+  return NextResponse.json({ ok: true, generated: rows.length, from_submittals: (submittals ?? []).length })
 }
