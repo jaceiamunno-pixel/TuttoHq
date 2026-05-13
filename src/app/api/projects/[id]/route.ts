@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
+import { createAdminClient } from "@/lib/supabase/admin"
 
 export async function PATCH(
   req: NextRequest,
@@ -41,18 +42,14 @@ export async function DELETE(
   _req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  const { id } = await params
   const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
-  const { error } = await supabase
-    .from("projects")
-    .delete()
-    .eq("id", id)
+  const { id } = await params
+  const admin = createAdminClient()
+  const { error } = await admin.from("projects").delete().eq("id", id)
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
-  if (error) {
-    console.error("Failed to delete project:", error)
-    return NextResponse.json({ error: "Failed to delete project" }, { status: 500 })
-  }
-
-  return NextResponse.json({ success: true })
+  return NextResponse.json({ ok: true })
 }
