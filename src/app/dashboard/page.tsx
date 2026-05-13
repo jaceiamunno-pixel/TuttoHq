@@ -905,15 +905,23 @@ export default function Home() {
     setGeneratingCover(true)
     try {
       const res = await fetch("/api/generate-cover", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ submittalId: openFileCtx.file.id, ...coverForm }) })
-      if (!res.ok) throw new Error("Failed")
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}))
+        throw new Error(errJson.error ?? `Server error ${res.status}`)
+      }
       const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
       const a = document.createElement("a")
-      a.href = URL.createObjectURL(blob)
+      a.href = url
       a.download = openFileCtx.file.file_name.replace(/\.[^.]+$/, "") + "_transmittal.pdf"
+      document.body.appendChild(a)
       a.click()
-      URL.revokeObjectURL(a.href)
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
       closeFileModal()
-    } catch { } finally { setGeneratingCover(false) }
+    } catch (err) {
+      alert("Failed to generate transmittal: " + (err instanceof Error ? err.message : "Unknown error"))
+    } finally { setGeneratingCover(false) }
   }
 
   function toggleDivision(num: string) {

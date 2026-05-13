@@ -72,23 +72,27 @@ export async function POST(req: NextRequest) {
   coverPages.forEach(p => mergedDoc.addPage(p))
 
   if (submittalId) {
-    const { data: submittalRow } = await supabase
-      .from("submittals")
-      .select("storage_path, mime_type")
-      .eq("id", submittalId)
-      .maybeSingle()
-
-    if (submittalRow?.storage_path && submittalRow.mime_type === "application/pdf") {
-      const { data: submittalBlob } = await supabase.storage
+    try {
+      const { data: submittalRow } = await supabase
         .from("submittals")
-        .download(submittalRow.storage_path)
+        .select("storage_path, mime_type")
+        .eq("id", submittalId)
+        .maybeSingle()
 
-      if (submittalBlob) {
-        const submittalPdfBytes = await submittalBlob.arrayBuffer()
-        const submittalDoc = await PDFDocument.load(submittalPdfBytes)
-        const submittalPages = await mergedDoc.copyPages(submittalDoc, submittalDoc.getPageIndices())
-        submittalPages.forEach(p => mergedDoc.addPage(p))
+      if (submittalRow?.storage_path && submittalRow.mime_type === "application/pdf") {
+        const { data: submittalBlob } = await supabase.storage
+          .from("submittals")
+          .download(submittalRow.storage_path)
+
+        if (submittalBlob) {
+          const submittalPdfBytes = await submittalBlob.arrayBuffer()
+          const submittalDoc = await PDFDocument.load(submittalPdfBytes)
+          const submittalPages = await mergedDoc.copyPages(submittalDoc, submittalDoc.getPageIndices())
+          submittalPages.forEach(p => mergedDoc.addPage(p))
+        }
       }
+    } catch {
+      // If merging fails, return cover sheet only
     }
   }
 
