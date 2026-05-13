@@ -9,22 +9,36 @@ export async function GET(req: NextRequest) {
   const projectId = req.nextUrl.searchParams.get("project_id")
   if (!projectId) return NextResponse.json({ error: "project_id required" }, { status: 400 })
 
-  const [itemsRes, punchRes, submittalsRes, rfisRes, cosRes, drawingsRes] = await Promise.all([
+  const [
+    itemsRes, punchRes, subsRes, rfisRes, cosRes, drawingsRes,
+    allSubsRes, allRFIsRes, allCOsRes, allDrawingsRes, teamRes,
+  ] = await Promise.all([
     supabase.from("closeout_items").select("*").eq("project_id", projectId).order("sort_order").order("created_at"),
-    supabase.from("punch_items").select("*").eq("project_id", projectId).neq("status", "Completed").order("item_number"),
-    supabase.from("submittals").select("*").eq("project_id", projectId).eq("status", "active").not("review_status", "eq", "Approved").order("created_at"),
-    supabase.from("rfis").select("*").eq("project_id", projectId).not("status", "eq", "Closed").order("rfi_number"),
-    supabase.from("change_orders").select("*").eq("project_id", projectId).not("status", "in", '("Approved","Void")').order("co_number"),
-    supabase.from("drawing_log").select("*").eq("project_id", projectId).eq("is_current", true).not("status", "eq", "As-Built").order("drawing_number"),
+    supabase.from("punch_items").select("*").eq("project_id", projectId).order("item_number"),
+    supabase.from("submittals").select("id,file_name,csi_section,csi_division,division_name,section_name,review_status,created_at").eq("project_id", projectId).eq("status", "active").order("csi_section"),
+    supabase.from("rfis").select("id,rfi_number,subject,status,created_at").eq("project_id", projectId).order("rfi_number"),
+    supabase.from("change_orders").select("id,co_number,proposal,status,pricing_sum").eq("project_id", projectId).order("co_number"),
+    supabase.from("drawing_log").select("id,drawing_number,sheet_title,discipline,status,revision").eq("project_id", projectId).eq("is_current", true).order("drawing_number"),
+    // pending aliases for backward compat
+    supabase.from("submittals").select("id,file_name,review_status").eq("project_id", projectId).eq("status", "active").not("review_status", "eq", "Approved"),
+    supabase.from("rfis").select("id,rfi_number,subject,status").eq("project_id", projectId).not("status", "eq", "Closed"),
+    supabase.from("change_orders").select("id,co_number,proposal,status").eq("project_id", projectId).not("status", "in", '("Approved","Void")'),
+    supabase.from("drawing_log").select("id,drawing_number,sheet_title,status").eq("project_id", projectId).eq("is_current", true).not("status", "eq", "As-Built"),
+    supabase.from("team_members").select("id,name,title").order("name"),
   ])
 
   return NextResponse.json({
-    items:                itemsRes.data   ?? [],
-    pending_punch:        punchRes.data   ?? [],
-    pending_submittals:   submittalsRes.data ?? [],
-    pending_rfis:         rfisRes.data    ?? [],
-    pending_cos:          cosRes.data     ?? [],
-    pending_drawings:     drawingsRes.data ?? [],
+    items:              itemsRes.data    ?? [],
+    all_punch:          punchRes.data    ?? [],
+    all_submittals:     subsRes.data     ?? [],
+    all_rfis:           rfisRes.data     ?? [],
+    all_cos:            cosRes.data      ?? [],
+    all_drawings:       drawingsRes.data ?? [],
+    pending_submittals: allSubsRes.data  ?? [],
+    pending_rfis:       allRFIsRes.data  ?? [],
+    pending_cos:        allCOsRes.data   ?? [],
+    pending_drawings:   allDrawingsRes.data ?? [],
+    team_members:       teamRes.data     ?? [],
   })
 }
 
