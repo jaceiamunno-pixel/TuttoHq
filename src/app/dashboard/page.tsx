@@ -1,4 +1,4 @@
-"use client"
+﻿"use client"
 
 import { useState, useEffect, useRef } from "react"
 import Link from "next/link"
@@ -77,9 +77,9 @@ interface ChangeOrder {
   generated_pdf_path: string | null; approved_at: string | null;
   created_at: string; uploaded_by: string;
 }
-interface PunchItem { id: string; item_number: string; description: string; location: string | null; assigned_to: string | null; due_date: string | null; priority: string; status: string; notes: string | null; project_id: string | null; created_at: string; completed_at: string | null; uploaded_by: string; generated_pdf_path?: string | null }
-interface DailyReport { id: string; report_date: string; project_id: string | null; prepared_by: string | null; weather_conditions: string | null; temperature: string | null; manpower_count: number | null; work_performed: string | null; equipment: string | null; materials_delivered: string | null; visitors: string | null; issues_delays: string | null; safety_notes: string | null; created_at: string; uploaded_by: string; generated_pdf_path?: string | null }
-interface DrawingRecord { id: string; drawing_number: string; sheet_title: string; discipline: string | null; revision: string; revision_date: string | null; status: string; scale: string | null; notes: string | null; project_id: string | null; is_current: boolean; superseded_at: string | null; created_at: string; uploaded_by: string; generated_pdf_path?: string | null }
+interface PunchItem { id: string; item_number: string; description: string; location: string | null; assigned_to: string | null; due_date: string | null; priority: string; status: string; notes: string | null; project_id: string | null; created_at: string; completed_at: string | null; uploaded_by: string; generated_pdf_path?: string | null; file_name?: string | null; file_path?: string | null }
+interface DailyReport { id: string; report_date: string; project_id: string | null; prepared_by: string | null; weather_conditions: string | null; temperature: string | null; manpower_count: number | null; work_performed: string | null; equipment: string | null; materials_delivered: string | null; visitors: string | null; issues_delays: string | null; safety_notes: string | null; created_at: string; uploaded_by: string; generated_pdf_path?: string | null; file_name?: string | null; file_path?: string | null }
+interface DrawingRecord { id: string; drawing_number: string; sheet_title: string; discipline: string | null; revision: string; revision_date: string | null; status: string; scale: string | null; notes: string | null; project_id: string | null; is_current: boolean; superseded_at: string | null; created_at: string; uploaded_by: string; generated_pdf_path?: string | null; file_name?: string | null; file_path?: string | null }
 type FileModalStep = "project" | "coversheet" | "form"
 interface OpenFileCtx { file: SubmittalFile; divNum: string; divName: string; secCode: string; secName: string }
 interface CoverFormData { projectName: string; projectNumber: string; projectLocation: string; gcName: string; architect: string; specSectionNo: string; specSectionTitle: string; description: string; dateSubmitted: string; submittalNo: string; reviewedBy: string; certifiedBy: string; notes: string }
@@ -690,6 +690,7 @@ export default function Home() {
   const [punchPriority, setPunchPriority]         = useState("Medium")
   const [punchProjectId, setPunchProjectId]       = useState("")
   const [punchNotes, setPunchNotes]               = useState("")
+  const punchFileRef  = useRef<HTMLInputElement>(null)
   const [punchSaving, setPunchSaving]             = useState(false)
   const [punchEditStatus, setPunchEditStatus]     = useState("")
   const [punchEditNotes, setPunchEditNotes]       = useState("")
@@ -712,6 +713,7 @@ export default function Home() {
   const [dailyVisitors, setDailyVisitors]             = useState("")
   const [dailyIssues, setDailyIssues]                 = useState("")
   const [dailySafety, setDailySafety]                 = useState("")
+  const dailyFileRef  = useRef<HTMLInputElement>(null)
   const [dailySaving, setDailySaving]                 = useState(false)
   const [dailyEditing, setDailyEditing]               = useState(false)
   const [dailyEditSaving, setDailyEditSaving]         = useState(false)
@@ -731,6 +733,7 @@ export default function Home() {
   const [dwgScale, setDwgScale]                       = useState("")
   const [dwgNotes, setDwgNotes]                       = useState("")
   const [dwgProjectId, setDwgProjectId]               = useState("")
+  const dwgFileRef    = useRef<HTMLInputElement>(null)
   const [dwgSaving, setDwgSaving]                     = useState(false)
 
   const inputRef = useRef<HTMLInputElement>(null)
@@ -1047,11 +1050,11 @@ export default function Home() {
     e.preventDefault()
     setDwgSaving(true)
     try {
-      const res = await fetch("/api/drawings", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ drawing_number: dwgNumber, sheet_title: dwgTitle, discipline: dwgDiscipline || null, revision: dwgRevision, revision_date: dwgRevDate || null, status: dwgStatus, scale: dwgScale || null, notes: dwgNotes || null, project_id: dwgProjectId || null }),
-      })
+      const dwgFd = new FormData()
+      const dwgFields: Record<string, string> = { drawing_number: dwgNumber, sheet_title: dwgTitle, discipline: dwgDiscipline, revision: dwgRevision, revision_date: dwgRevDate, status: dwgStatus, scale: dwgScale, notes: dwgNotes, project_id: dwgProjectId }
+      Object.entries(dwgFields).forEach(([k, v]) => { if (v) dwgFd.append(k, v) })
+      if (dwgFileRef.current?.files?.[0]) dwgFd.append("file", dwgFileRef.current.files[0])
+      const res = await fetch("/api/drawings", { method: "POST", body: dwgFd })
       if (res.ok) {
         setShowNewDrawing(false); setAddRevisionFor(null); resetDwgForm(); loadDrawings()
         // Collapse revision history so updated row is visible
@@ -1281,11 +1284,11 @@ export default function Home() {
     e.preventDefault()
     setDailySaving(true)
     try {
-      const res = await fetch("/api/daily-reports", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ report_date: dailyDate, project_id: dailyProjectId || null, prepared_by: dailyPreparedBy || null, weather_conditions: dailyWeather || null, temperature: dailyTemp || null, manpower_count: dailyManpower || null, work_performed: dailyWorkPerformed || null, equipment: dailyEquipment || null, materials_delivered: dailyMaterials || null, visitors: dailyVisitors || null, issues_delays: dailyIssues || null, safety_notes: dailySafety || null }),
-      })
+      const dailyFd = new FormData()
+      const dailyFields: Record<string, string> = { report_date: dailyDate, project_id: dailyProjectId, prepared_by: dailyPreparedBy, weather_conditions: dailyWeather, temperature: dailyTemp, manpower_count: dailyManpower, work_performed: dailyWorkPerformed, equipment: dailyEquipment, materials_delivered: dailyMaterials, visitors: dailyVisitors, issues_delays: dailyIssues, safety_notes: dailySafety }
+      Object.entries(dailyFields).forEach(([k, v]) => { if (v) dailyFd.append(k, v) })
+      if (dailyFileRef.current?.files?.[0]) dailyFd.append("file", dailyFileRef.current.files[0])
+      const res = await fetch("/api/daily-reports", { method: "POST", body: dailyFd })
       if (res.ok) {
         setShowNewDaily(false)
         setDailyDate(new Date().toISOString().slice(0, 10)); setDailyProjectId(""); setDailyPreparedBy(""); setDailyWeather(""); setDailyTemp(""); setDailyManpower(""); setDailyWorkPerformed(""); setDailyEquipment(""); setDailyMaterials(""); setDailyVisitors(""); setDailyIssues(""); setDailySafety("")
@@ -1312,11 +1315,11 @@ export default function Home() {
     e.preventDefault()
     setPunchSaving(true)
     try {
-      const res = await fetch("/api/punch", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ description: punchDesc, location: punchLocation || null, assigned_to: punchAssignedTo || null, due_date: punchDueDate || null, priority: punchPriority, project_id: punchProjectId || null, notes: punchNotes || null }),
-      })
+      const punchFd = new FormData()
+      const punchFields: Record<string, string> = { description: punchDesc, location: punchLocation, assigned_to: punchAssignedTo, due_date: punchDueDate, priority: punchPriority, project_id: punchProjectId, notes: punchNotes }
+      Object.entries(punchFields).forEach(([k, v]) => { if (v) punchFd.append(k, v) })
+      if (punchFileRef.current?.files?.[0]) punchFd.append("file", punchFileRef.current.files[0])
+      const res = await fetch("/api/punch", { method: "POST", body: punchFd })
       if (res.ok) {
         setShowNewPunch(false)
         setPunchDesc(""); setPunchLocation(""); setPunchAssignedTo(""); setPunchDueDate(""); setPunchPriority("Medium"); setPunchProjectId(""); setPunchNotes("")
@@ -2479,6 +2482,12 @@ export default function Home() {
                     <textarea rows={2} value={dailySafety} onChange={e => setDailySafety(e.target.value)}
                       placeholder="Safety observations, incidents, toolbox talks…" className={tareaClass} />
                   </div>
+                  {!isEdit && (
+                    <div>
+                      <label className={labelCls}>Attachment <span className="text-[#4f617a] font-normal">(optional)</span></label>
+                      <input ref={dailyFileRef} type="file" className="w-full text-[12px] text-[#8b9ab5] file:mr-3 file:py-1 file:px-3 file:rounded file:border file:border-[#2a3347] file:bg-[#1e2535] file:text-[#8b9ab5] file:text-[11px] file:cursor-pointer hover:file:bg-white/[0.05]" />
+                    </div>
+                  )}
                 </div>
                 <div className="flex justify-end gap-2 px-6 py-4 border-t border-[#2a3347] flex-shrink-0">
                   <button type="button" onClick={onClose}
@@ -2545,6 +2554,12 @@ export default function Home() {
                   <p className="text-[13px] text-[#c8d3e6] whitespace-pre-wrap">{f.value}</p>
                 </div>
               ))}
+              {viewDaily.file_name && (
+                <div className="flex items-center gap-2 text-[12px] text-[#8b9ab5] px-1">
+                  <svg className="h-3.5 w-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" /></svg>
+                  <span>{viewDaily.file_name}</span>
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -2627,6 +2642,10 @@ export default function Home() {
                     placeholder="Revision notes, changes from previous…"
                     className="w-full px-3 py-2 rounded-md border border-[#2a3347] text-[13px] text-[#e8edf5] bg-[#0d1117] focus:outline-none focus:ring-1 focus:ring-[#2563eb]/40 resize-none placeholder:text-[#4f617a]" />
                 </div>
+                <div>
+                  <label className={labelCls}>Attachment <span className="text-[#4f617a] font-normal">(optional)</span></label>
+                  <input ref={dwgFileRef} type="file" className="w-full text-[12px] text-[#8b9ab5] file:mr-3 file:py-1 file:px-3 file:rounded file:border file:border-[#2a3347] file:bg-[#1e2535] file:text-[#8b9ab5] file:text-[11px] file:cursor-pointer hover:file:bg-white/[0.05]" />
+                </div>
               </div>
               <div className="flex justify-end gap-2 px-6 py-4 border-t border-[#2a3347]">
                 <button type="button" onClick={() => { setShowNewDrawing(false); setAddRevisionFor(null) }}
@@ -2704,6 +2723,10 @@ export default function Home() {
                     placeholder="Additional context, spec references, etc."
                     className="w-full px-3 py-2 rounded-md border border-[#2a3347] text-[13px] text-[#e8edf5] bg-[#0d1117] focus:outline-none focus:ring-1 focus:ring-[#2563eb]/40 resize-none placeholder:text-[#4f617a]" />
                 </div>
+                <div>
+                  <label className={labelCls}>Attachment <span className="text-[#4f617a] font-normal">(optional)</span></label>
+                  <input ref={punchFileRef} type="file" className="w-full text-[12px] text-[#8b9ab5] file:mr-3 file:py-1 file:px-3 file:rounded file:border file:border-[#2a3347] file:bg-[#1e2535] file:text-[#8b9ab5] file:text-[11px] file:cursor-pointer hover:file:bg-white/[0.05]" />
+                </div>
               </div>
               <div className="flex justify-end gap-2 px-6 py-4 border-t border-[#2a3347]">
                 <button type="button" onClick={() => setShowNewPunch(false)}
@@ -2746,6 +2769,12 @@ export default function Home() {
                 <div className="rounded-md bg-[#2a3347]/50 px-3 py-2">
                   <p className="text-[11px] font-bold text-[#4f617a] uppercase tracking-widest mb-1">Notes</p>
                   <p className="text-[13px] text-[#c8d3e6]">{viewPunch.notes}</p>
+                </div>
+              )}
+              {viewPunch.file_name && (
+                <div className="flex items-center gap-2 text-[12px] text-[#8b9ab5]">
+                  <svg className="h-3.5 w-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" /></svg>
+                  <span>{viewPunch.file_name}</span>
                 </div>
               )}
               <div className="border-t border-[#2a3347] pt-4 space-y-3">
@@ -4001,3 +4030,5 @@ export default function Home() {
     </div>
   )
 }
+
+
