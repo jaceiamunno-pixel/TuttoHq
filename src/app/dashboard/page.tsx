@@ -54,7 +54,7 @@ interface SubmittalRecord {
 
 type BatchStatus = "pending" | "classifying" | "ready" | "error" | "uploading" | "done" | "upload-error"
 type BatchPhase  = "select" | "classifying" | "review" | "uploading" | "done"
-interface BatchItem { id: string; file: File; status: BatchStatus; divNum: string; divName: string; secCode: string; secName: string; nameMatl: string; nameMfr: string; nameDims: string; expanded: boolean; errorMsg?: string }
+interface BatchItem { id: string; file: File; status: BatchStatus; divNum: string; divName: string; secCode: string; secName: string; nameMatl: string; nameMfr: string; nameDims: string; customName: string; expanded: boolean; errorMsg?: string }
 
 interface Project { id: string; name: string; number: string | null; location: string | null; gc_name: string | null; architect: string | null }
 interface TeamMember { id: string; name: string; title: string | null; email: string | null }
@@ -1490,7 +1490,7 @@ export default function Home() {
     setBatchItems(valid.map((file, i) => ({
       id: `${Date.now()}-${i}`, file, status: "pending",
       divNum: "", divName: "", secCode: "", secName: "",
-      nameMatl: "", nameMfr: "", nameDims: "", expanded: false,
+      nameMatl: "", nameMfr: "", nameDims: "", customName: file.name.replace(/\.[^.]+$/, ""), expanded: false,
     })))
   }
 
@@ -1507,11 +1507,16 @@ export default function Home() {
         const res  = await fetch("/api/classify", { method: "POST", body: fd })
         const data = await res.json()
         if (res.ok && data.division_num && data.section_code) {
+          const nameMatl = data.material_name ?? ""
+          const nameMfr  = data.manufacturer  ?? ""
+          const nameDims = data.dimensions     ?? ""
+          const composed = [nameMatl, nameMfr, nameDims].filter(Boolean).join(" — ")
           updateBatchItem(item.id, {
             status: "ready",
             divNum: data.division_num, divName: data.division_name,
             secCode: data.section_code, secName: data.section_name,
-            nameMatl: data.material_name ?? "", nameMfr: data.manufacturer ?? "", nameDims: data.dimensions ?? "",
+            nameMatl, nameMfr, nameDims,
+            customName: composed || item.file.name.replace(/\.[^.]+$/, ""),
           })
         } else {
           updateBatchItem(item.id, { status: "error", errorMsg: "Could not classify — assign manually" })
@@ -1541,10 +1546,11 @@ export default function Home() {
         fd.append("division_name", item.divName)
         fd.append("section_code",  item.secCode)
         fd.append("section_name",  item.secName)
-        if (item.nameMatl)   fd.append("material_name", item.nameMatl)
-        if (item.nameMfr)    fd.append("manufacturer",  item.nameMfr)
-        if (item.nameDims)   fd.append("dimensions",    item.nameDims)
-        if (globalProjectId) fd.append("project_id",   globalProjectId)
+        if (item.nameMatl)    fd.append("material_name", item.nameMatl)
+        if (item.nameMfr)     fd.append("manufacturer",  item.nameMfr)
+        if (item.nameDims)    fd.append("dimensions",    item.nameDims)
+        if (item.customName)  fd.append("display_name",  item.customName)
+        if (globalProjectId)  fd.append("project_id",   globalProjectId)
         const res = await fetch("/api/upload", { method: "POST", body: fd })
         updateBatchItem(item.id, { status: res.ok ? "done" : "upload-error", errorMsg: res.ok ? undefined : "Upload failed" })
       } catch {
@@ -4440,7 +4446,21 @@ export default function Home() {
                       <div key={item.id} className="bg-[#161b27] rounded-lg overflow-hidden mb-1">
                         {/* Main row */}
                         <div className="grid gap-2 items-center px-2 py-1.5" style={{ gridTemplateColumns: "1fr 155px 195px 20px 20px 20px" }}>
-                          <span className="text-[12px] text-[#c8d3e6] truncate min-w-0" title={item.file.name}>{item.file.name}</span>
+                          <div className="min-w-0 flex flex-col gap-0.5">
+                            {isEditable ? (
+                              <input
+                                type="text"
+                                value={item.customName}
+                                onChange={e => updateBatchItem(item.id, { customName: e.target.value })}
+                                placeholder={item.file.name.replace(/\.[^.]+$/, "")}
+                                title={`Original file: ${item.file.name}`}
+                                className="h-6 px-1.5 rounded border border-[#2a3347] text-[11px] text-[#e8edf5] bg-[#0d1117] focus:outline-none focus:ring-1 focus:ring-[#2563eb]/40 w-full placeholder:text-[#4f617a]"
+                              />
+                            ) : (
+                              <span className="text-[12px] text-[#c8d3e6] truncate" title={item.file.name}>{item.customName || item.file.name}</span>
+                            )}
+                            <span className="text-[10px] text-[#4f617a] truncate" title={item.file.name}>{item.file.name}</span>
+                          </div>
 
                           <select value={item.divNum} disabled={!isEditable}
                             onChange={e => {

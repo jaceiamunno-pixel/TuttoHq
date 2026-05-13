@@ -21,6 +21,7 @@ export async function POST(req: NextRequest) {
   const aiConfidence  = formData.get("ai_confidence")   ? parseInt(formData.get("ai_confidence") as string) : null
   const aiReasoning   = (formData.get("ai_reasoning")  as string | null)?.trim() || null
   const projectId     = (formData.get("project_id")    as string | null)?.trim() || null
+  const customName    = (formData.get("display_name")  as string | null)?.trim() || null
   const reviewStatus  = (aiConfidence !== null && aiConfidence < 70) ? "Needs Review" : "Received"
 
   if (!file || !divisionNum || !divisionName) {
@@ -30,9 +31,9 @@ export async function POST(req: NextRequest) {
     )
   }
 
-  // Build display name from structured fields, fall back to original filename
-  const nameParts  = [materialName, manufacturer, dimensions].filter(Boolean)
-  const displayName = nameParts.length > 0 ? nameParts.join(" — ") : file.name
+  // Use explicit custom name if provided, otherwise build from structured fields, fall back to filename
+  const nameParts   = [materialName, manufacturer, dimensions].filter(Boolean)
+  const displayName = customName ?? (nameParts.length > 0 ? nameParts.join(" — ") : file.name)
 
   // Build a clean storage path: division/section/timestamp_filename
   const safeName    = file.name.replace(/[^a-zA-Z0-9._-]/g, "_")
