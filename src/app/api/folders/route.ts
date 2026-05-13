@@ -111,6 +111,7 @@ const CSI_STATIC_SECTIONS: Record<string, SectionNode[]> = {
     { code: "08 90 00", name: "Louvers and Vents" },
   ],
   "09": [
+    { code: "09 20 00", name: "Plaster & Gypsum Board" },
     { code: "09 21 00", name: "Gypsum Board Assemblies" },
     { code: "09 22 16", name: "Non-Structural Metal Framing" },
     { code: "09 23 00", name: "Gypsum Plastering" },
