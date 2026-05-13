@@ -30,13 +30,11 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
   const { id } = await params
-  const { data, error } = await supabase
+  const { error } = await supabase
     .from("submittals")
     .update({ status: "deleted" })
     .eq("id", id)
-    .select("id")
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  if (!data || data.length === 0) return NextResponse.json({ error: "Not found or not permitted" }, { status: 404 })
 
   return NextResponse.json({ ok: true })
 }
