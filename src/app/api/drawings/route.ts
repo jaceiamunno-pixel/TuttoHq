@@ -1,18 +1,19 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 
-export async function GET(_req: NextRequest) {
+export async function GET(req: NextRequest) {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
+  const pid = req.nextUrl.searchParams.get("project_id")
   // Return all records (current + superseded) so client can show revision history
-  const { data, error } = await supabase
-    .from("drawing_log")
-    .select("*")
+  let q = supabase.from("drawing_log").select("*")
     .order("drawing_number", { ascending: true })
     .order("created_at", { ascending: false })
+  if (pid) q = q.eq("project_id", pid)
 
+  const { data, error } = await q
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   return NextResponse.json({ drawings: data ?? [] })
 }

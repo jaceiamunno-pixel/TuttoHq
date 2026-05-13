@@ -624,6 +624,9 @@ export default function Home() {
 
   // Module navigation
   const [activeModule, setActiveModule] = useState<"submittals" | "rfis" | "changeorders" | "punch" | "daily" | "drawings">("submittals")
+  const [globalProjectId, setGlobalProjectId] = useState<string>("")
+  // Sync submittal project filter with global project selection
+  useEffect(() => { setActiveProjectId(globalProjectId || null) }, [globalProjectId])
 
   // RFI log
   const [rfis, setRfis]                               = useState<RFI[]>([])
@@ -957,9 +960,10 @@ export default function Home() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { loadSubmittals(activeProjectId) }, [activeProjectId])
 
-  function loadRfis() {
+  function loadRfis(pid = globalProjectId) {
     setRfisLoading(true)
-    fetch("/api/rfis")
+    const qs = pid ? `?project_id=${encodeURIComponent(pid)}` : ""
+    fetch(`/api/rfis${qs}`)
       .then(r => r.json())
       .then(d => setRfis(d.rfis ?? []))
       .catch(() => setRfis([]))
@@ -967,11 +971,12 @@ export default function Home() {
   }
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { if (activeModule === "rfis") loadRfis() }, [activeModule])
+  useEffect(() => { if (activeModule === "rfis") loadRfis() }, [activeModule, globalProjectId])
 
-  function loadChangeOrders() {
+  function loadChangeOrders(pid = globalProjectId) {
     setCoLoading(true)
-    fetch("/api/change-orders")
+    const qs = pid ? `?project_id=${encodeURIComponent(pid)}` : ""
+    fetch(`/api/change-orders${qs}`)
       .then(r => r.json())
       .then(d => setChangeOrders(d.changeOrders ?? []))
       .catch(() => setChangeOrders([]))
@@ -979,11 +984,12 @@ export default function Home() {
   }
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { if (activeModule === "changeorders") loadChangeOrders() }, [activeModule])
+  useEffect(() => { if (activeModule === "changeorders") loadChangeOrders() }, [activeModule, globalProjectId])
 
-  function loadPunch() {
+  function loadPunch(pid = globalProjectId) {
     setPunchLoading(true)
-    fetch("/api/punch")
+    const qs = pid ? `?project_id=${encodeURIComponent(pid)}` : ""
+    fetch(`/api/punch${qs}`)
       .then(r => r.json())
       .then(d => setPunchItems(d.items ?? []))
       .catch(() => setPunchItems([]))
@@ -991,11 +997,12 @@ export default function Home() {
   }
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { if (activeModule === "punch") loadPunch() }, [activeModule])
+  useEffect(() => { if (activeModule === "punch") loadPunch() }, [activeModule, globalProjectId])
 
-  function loadDaily() {
+  function loadDaily(pid = globalProjectId) {
     setDailyLoading(true)
-    fetch("/api/daily-reports")
+    const qs = pid ? `?project_id=${encodeURIComponent(pid)}` : ""
+    fetch(`/api/daily-reports${qs}`)
       .then(r => r.json())
       .then(d => setDailyReports(d.reports ?? []))
       .catch(() => setDailyReports([]))
@@ -1003,11 +1010,12 @@ export default function Home() {
   }
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { if (activeModule === "daily") loadDaily() }, [activeModule])
+  useEffect(() => { if (activeModule === "daily") loadDaily() }, [activeModule, globalProjectId])
 
-  function loadDrawings() {
+  function loadDrawings(pid = globalProjectId) {
     setDrawingsLoading(true)
-    fetch("/api/drawings")
+    const qs = pid ? `?project_id=${encodeURIComponent(pid)}` : ""
+    fetch(`/api/drawings${qs}`)
       .then(r => r.json())
       .then(d => setDrawings(d.drawings ?? []))
       .catch(() => setDrawings([]))
@@ -1015,7 +1023,7 @@ export default function Home() {
   }
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { if (activeModule === "drawings") loadDrawings() }, [activeModule])
+  useEffect(() => { if (activeModule === "drawings") loadDrawings() }, [activeModule, globalProjectId])
 
   function openAddRevision(d: DrawingRecord) {
     setAddRevisionFor(d)
@@ -1179,6 +1187,26 @@ export default function Home() {
     await fetch(`/api/change-orders/${coId}`, { method: "DELETE" })
     setViewCo(null)
     loadChangeOrders()
+  }
+
+  async function deletePunchItem(itemId: string) {
+    if (!confirm("Delete this punch item? This cannot be undone.")) return
+    await fetch(`/api/punch/${itemId}`, { method: "DELETE" })
+    setViewPunch(null)
+    loadPunch()
+  }
+
+  async function deleteDaily(reportId: string) {
+    if (!confirm("Delete this daily report? This cannot be undone.")) return
+    await fetch(`/api/daily-reports/${reportId}`, { method: "DELETE" })
+    setViewDaily(null)
+    loadDaily()
+  }
+
+  async function deleteDrawing(drawingId: string) {
+    if (!confirm("Delete this drawing and all its revisions? This cannot be undone.")) return
+    await fetch(`/api/drawings/${drawingId}`, { method: "DELETE" })
+    loadDrawings()
   }
 
   async function generateCoPdf(coId: string) {
@@ -1749,6 +1777,30 @@ export default function Home() {
             className={`px-3 py-2.5 text-[13px] font-medium border-b-2 transition-colors whitespace-nowrap ${activeModule === "drawings" ? "border-[#2563eb] text-[#e8edf5]" : "border-transparent text-[#4f617a] hover:text-[#8b9ab5]"}`}>
             Drawing Log
           </button>
+          {/* Global project filter — right side */}
+          {appProjects.length > 0 && (
+            <div className="ml-auto flex items-center gap-2 py-1.5 flex-shrink-0">
+              <span className="text-[11px] text-[#4f617a] whitespace-nowrap">Project:</span>
+              <div className="relative">
+                <select
+                  value={globalProjectId}
+                  onChange={e => setGlobalProjectId(e.target.value)}
+                  className="h-7 pl-3 pr-7 rounded-md border border-[#2a3347] bg-[#1e2535] text-[12px] text-[#c8d3e6] appearance-none cursor-pointer hover:border-[#3a4a63] transition-colors focus:outline-none focus:border-[#2563eb]"
+                >
+                  <option value="">All Projects</option>
+                  {appProjects.map(p => (
+                    <option key={p.id} value={p.id}>{p.name}{p.number ? ` — ${p.number}` : ""}</option>
+                  ))}
+                </select>
+                <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-[#4f617a]">
+                  <svg width="10" height="10" viewBox="0 0 12 12" fill="none"><path d="M2 4l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                </span>
+              </div>
+              {globalProjectId && (
+                <button onClick={() => setGlobalProjectId("")} className="text-[11px] text-[#4f617a] hover:text-[#8b9ab5] transition-colors px-1" title="Clear filter">✕</button>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Submittal action bar */}
@@ -2181,6 +2233,8 @@ export default function Home() {
                           </button>
                           <button onClick={() => generatePunchPdf(p.id)} disabled={punchGeneratingPdf}
                             className="text-[11px] text-[#60a5fa] hover:text-[#93c5fd] px-2 py-1 rounded hover:bg-white/[0.05] transition-colors disabled:opacity-50">PDF</button>
+                          <button onClick={e => { e.stopPropagation(); deletePunchItem(p.id) }}
+                            className="text-[11px] text-red-400 hover:text-red-300 px-2 py-1 rounded hover:bg-white/[0.05] transition-colors">Del</button>
                         </td>
                       </tr>
                     )
@@ -2239,6 +2293,8 @@ export default function Home() {
                         </button>
                         <button onClick={e => { e.stopPropagation(); generateDailyPdf(r.id) }} disabled={dailyGeneratingPdf}
                           className="text-[11px] text-[#60a5fa] hover:text-[#93c5fd] px-2 py-1 rounded hover:bg-white/[0.05] transition-colors disabled:opacity-50">PDF</button>
+                        <button onClick={e => { e.stopPropagation(); deleteDaily(r.id) }}
+                          className="text-[11px] text-red-400 hover:text-red-300 px-2 py-1 rounded hover:bg-white/[0.05] transition-colors">Del</button>
                       </td>
                     </tr>
                   ))}
@@ -2310,6 +2366,8 @@ export default function Home() {
                               </button>
                               <button onClick={() => generateDrawingPdf(d.id)} disabled={drawingGeneratingPdf}
                                 className="text-[11px] text-[#60a5fa] hover:text-[#93c5fd] px-2 py-1 rounded hover:bg-white/[0.05] transition-colors disabled:opacity-50">PDF</button>
+                              <button onClick={e => { e.stopPropagation(); deleteDrawing(d.id) }}
+                                className="text-[11px] text-red-400 hover:text-red-300 px-2 py-1 rounded hover:bg-white/[0.05] transition-colors">Del</button>
                             </div>
                           </td>
                         </tr>
@@ -2473,6 +2531,10 @@ export default function Home() {
                 <button onClick={() => generateDailyPdf(viewDaily.id)} disabled={dailyGeneratingPdf}
                   className="h-7 px-3 rounded-md border border-[#2a3347] text-[12px] text-[#60a5fa] hover:bg-white/[0.05] transition-colors disabled:opacity-50 flex items-center gap-1.5">
                   {dailyGeneratingPdf ? <><SpinnerIcon className="h-3 w-3" />Generating…</> : "PDF"}
+                </button>
+                <button onClick={() => deleteDaily(viewDaily.id)}
+                  className="h-7 px-3 rounded-md border border-red-900/50 text-[12px] text-red-400 hover:bg-red-900/20 transition-colors">
+                  Delete
                 </button>
                 <button onClick={() => setViewDaily(null)} className="text-[#4f617a] hover:text-[#8b9ab5] transition-colors">
                   <XIcon className="h-4 w-4" />
@@ -2721,20 +2783,26 @@ export default function Home() {
               </div>
             </div>
             <div className="flex justify-between px-6 py-4 border-t border-[#2a3347]">
-              <button onClick={() => generatePunchPdf(viewPunch.id)} disabled={punchGeneratingPdf}
-                className="h-8 px-4 rounded-md border border-[#2a3347] text-[13px] text-[#8b9ab5] hover:bg-white/[0.05] transition-colors disabled:opacity-50 flex items-center gap-2">
-                {punchGeneratingPdf ? <><SpinnerIcon className="h-3 w-3" /> Generating…</> : "Generate PDF"}
-              </button>
               <div className="flex gap-2">
-              <button onClick={() => setViewPunch(null)}
-                className="h-8 px-4 rounded-md border border-[#2a3347] text-[13px] text-[#8b9ab5] hover:bg-white/[0.05] transition-colors">
-                Close
-              </button>
-              <button onClick={updatePunch} disabled={punchEditSaving}
-                className="h-8 px-4 rounded-md bg-[#2563eb] text-white text-[13px] font-semibold hover:bg-[#1d4ed8] transition-colors disabled:opacity-50 flex items-center gap-2">
-                {punchEditSaving && <SpinnerIcon className="h-3 w-3" />}
-                {punchEditSaving ? "Saving…" : "Save"}
-              </button>
+                <button onClick={() => generatePunchPdf(viewPunch.id)} disabled={punchGeneratingPdf}
+                  className="h-8 px-4 rounded-md border border-[#2a3347] text-[13px] text-[#8b9ab5] hover:bg-white/[0.05] transition-colors disabled:opacity-50 flex items-center gap-2">
+                  {punchGeneratingPdf ? <><SpinnerIcon className="h-3 w-3" /> Generating…</> : "Generate PDF"}
+                </button>
+                <button onClick={() => deletePunchItem(viewPunch.id)}
+                  className="h-8 px-4 rounded-md border border-red-900/50 text-[13px] text-red-400 hover:bg-red-900/20 transition-colors">
+                  Delete
+                </button>
+              </div>
+              <div className="flex gap-2">
+                <button onClick={() => setViewPunch(null)}
+                  className="h-8 px-4 rounded-md border border-[#2a3347] text-[13px] text-[#8b9ab5] hover:bg-white/[0.05] transition-colors">
+                  Close
+                </button>
+                <button onClick={updatePunch} disabled={punchEditSaving}
+                  className="h-8 px-4 rounded-md bg-[#2563eb] text-white text-[13px] font-semibold hover:bg-[#1d4ed8] transition-colors disabled:opacity-50 flex items-center gap-2">
+                  {punchEditSaving && <SpinnerIcon className="h-3 w-3" />}
+                  {punchEditSaving ? "Saving…" : "Save"}
+                </button>
               </div>
             </div>
           </div>
