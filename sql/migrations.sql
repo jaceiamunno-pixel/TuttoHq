@@ -73,3 +73,7 @@ CREATE POLICY "Authenticated users can update closeout_items"
 
 CREATE POLICY "Authenticated users can delete closeout_items"
   ON closeout_items FOR DELETE TO authenticated USING (true);
+
+-- ─── Submittals RLS — allow soft-delete (UPDATE status) ──────────────────────
+CREATE POLICY "Authenticated users can update submittals"
+  ON submittals FOR UPDATE TO authenticated USING (true) WITH CHECK (true);
