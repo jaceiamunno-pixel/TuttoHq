@@ -2525,11 +2525,11 @@ export default function Home() {
             const labelColor   = (s: string) => s === "complete" ? "text-emerald-400" : s === "in_progress" ? "text-amber-400" : "text-red-400"
             const statusLabel  = (s: string) => s === "complete" ? "Complete" : s === "in_progress" ? "In Progress" : "Incomplete"
             const CATS = [
-              { key: "documents",   label: "Documents",   icon: "📁", dynamic: closeoutSubmittals.length },
-              { key: "inspections", label: "Inspections", icon: "🔍", dynamic: 0 },
-              { key: "financial",   label: "Financial",   icon: "💰", dynamic: closeoutCOs.length },
-              { key: "training",    label: "Training",    icon: "🎓", dynamic: closeoutRFIs.length },
-              { key: "handover",    label: "Handover",    icon: "🔑", dynamic: closeoutPunch.length + closeoutDrawings.length },
+              { key: "documents",   label: "Documents",   dynamic: closeoutSubmittals.length },
+              { key: "inspections", label: "Inspections", dynamic: 0 },
+              { key: "financial",   label: "Financial",   dynamic: closeoutCOs.length },
+              { key: "training",    label: "Training",    dynamic: closeoutRFIs.length },
+              { key: "handover",    label: "Handover",    dynamic: closeoutPunch.length + closeoutDrawings.length },
             ]
             return (
               <>
@@ -2591,7 +2591,6 @@ export default function Home() {
                         return (
                           <div key={cat.key} className="bg-[#161b27] rounded-xl border border-[#2a3347] p-4">
                             <div className="flex items-center gap-1.5 mb-3">
-                              <span className="text-base leading-none">{cat.icon}</span>
                               <span className="text-[11px] font-bold text-[#8b9ab5] uppercase tracking-wide">{cat.label}</span>
                             </div>
                             <div className="text-[30px] font-extrabold leading-none mb-1.5" style={{ color }}>{pct}%</div>
@@ -2615,7 +2614,6 @@ export default function Home() {
                           {/* Section header */}
                           <div className="flex items-center justify-between px-4 py-3 border-b border-[#2a3347]">
                             <div className="flex items-center gap-2">
-                              <span className="text-base leading-none">{cat.icon}</span>
                               <span className="text-[13px] font-bold text-[#e8edf5]">{cat.label}</span>
                               <span className="text-[11px] text-[#4f617a]">{items.filter(i => i.status === "complete").length}/{items.length} complete</span>
                             </div>
