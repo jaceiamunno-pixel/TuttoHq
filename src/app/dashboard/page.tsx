@@ -80,6 +80,7 @@ interface ChangeOrder {
 interface PunchItem { id: string; item_number: string; description: string; location: string | null; assigned_to: string | null; due_date: string | null; priority: string; status: string; notes: string | null; project_id: string | null; created_at: string; completed_at: string | null; uploaded_by: string; generated_pdf_path?: string | null; file_name?: string | null; file_path?: string | null }
 interface DailyReport { id: string; report_date: string; project_id: string | null; prepared_by: string | null; weather_conditions: string | null; temperature: string | null; manpower_count: number | null; work_performed: string | null; equipment: string | null; materials_delivered: string | null; visitors: string | null; issues_delays: string | null; safety_notes: string | null; created_at: string; uploaded_by: string; generated_pdf_path?: string | null; file_name?: string | null; file_path?: string | null }
 interface DrawingRecord { id: string; drawing_number: string; sheet_title: string; discipline: string | null; revision: string; revision_date: string | null; status: string; scale: string | null; notes: string | null; project_id: string | null; is_current: boolean; superseded_at: string | null; created_at: string; uploaded_by: string; generated_pdf_path?: string | null; file_name?: string | null; file_path?: string | null }
+interface CloseoutItem { id: string; project_id: string; category: string; item_type: string; title: string; status: string; assigned_to: string | null; due_date: string | null; file_url: string | null; file_name: string | null; notes: string | null; sort_order: number; linked_record_id: string | null; linked_record_type: string | null; completed_at: string | null; created_at: string }
 type FileModalStep = "project" | "coversheet" | "form"
 interface OpenFileCtx { file: SubmittalFile; divNum: string; divName: string; secCode: string; secName: string }
 interface CoverFormData { projectName: string; projectNumber: string; projectLocation: string; gcName: string; architect: string; specSectionNo: string; specSectionTitle: string; description: string; dateSubmitted: string; submittalNo: string; reviewedBy: string; certifiedBy: string; notes: string }
@@ -623,7 +624,7 @@ export default function Home() {
   const [generatingCover, setGeneratingCover] = useState(false)
 
   // Module navigation
-  const [activeModule, setActiveModule] = useState<"submittals" | "rfis" | "changeorders" | "punch" | "daily" | "drawings">("submittals")
+  const [activeModule, setActiveModule] = useState<"submittals" | "rfis" | "changeorders" | "punch" | "daily" | "drawings" | "closeout">("submittals")
   const [globalProjectId, setGlobalProjectId] = useState<string>("")
   // Sync submittal project filter with global project selection
   useEffect(() => { setActiveProjectId(globalProjectId || null) }, [globalProjectId])
@@ -735,6 +736,29 @@ export default function Home() {
   const [dwgProjectId, setDwgProjectId]               = useState("")
   const dwgFileRef    = useRef<HTMLInputElement>(null)
   const [dwgSaving, setDwgSaving]                     = useState(false)
+
+  // Closeout
+  const [closeoutItems, setCloseoutItems]         = useState<CloseoutItem[]>([])
+  const [closeoutPunch, setCloseoutPunch]         = useState<PunchItem[]>([])
+  const [closeoutSubmittals, setCloseoutSubmittals] = useState<SubmittalRecord[]>([])
+  const [closeoutRFIs, setCloseoutRFIs]           = useState<RFI[]>([])
+  const [closeoutCOs, setCloseoutCOs]             = useState<ChangeOrder[]>([])
+  const [closeoutDrawings, setCloseoutDrawings]   = useState<DrawingRecord[]>([])
+  const [closeoutLoading, setCloseoutLoading]     = useState(false)
+  const [closeoutIniting, setCloseoutIniting]     = useState(false)
+  const [closeoutGenerating, setCloseoutGenerating] = useState(false)
+  const [closeoutEditId, setCloseoutEditId]       = useState<string | null>(null)
+  const [closeoutEditTitle, setCloseoutEditTitle] = useState("")
+  const [closeoutEditAssigned, setCloseoutEditAssigned] = useState("")
+  const [closeoutEditDue, setCloseoutEditDue]     = useState("")
+  const [closeoutEditNotes, setCloseoutEditNotes] = useState("")
+  const [showNewCloseout, setShowNewCloseout]     = useState(false)
+  const [newCloseoutCategory, setNewCloseoutCategory] = useState("documents")
+  const [newCloseoutTitle, setNewCloseoutTitle]   = useState("")
+  const [newCloseoutAssigned, setNewCloseoutAssigned] = useState("")
+  const [newCloseoutDue, setNewCloseoutDue]       = useState("")
+  const closeoutFileRef = useRef<HTMLInputElement>(null)
+  const [closeoutUploadingId, setCloseoutUploadingId] = useState<string | null>(null)
 
   const inputRef = useRef<HTMLInputElement>(null)
 
@@ -1027,6 +1051,73 @@ export default function Home() {
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { if (activeModule === "drawings") loadDrawings() }, [activeModule, globalProjectId])
+
+  function loadCloseout() {
+    if (!globalProjectId) { setCloseoutItems([]); setCloseoutPunch([]); setCloseoutSubmittals([]); setCloseoutRFIs([]); setCloseoutCOs([]); setCloseoutDrawings([]); return }
+    setCloseoutLoading(true)
+    fetch(`/api/closeout?project_id=${encodeURIComponent(globalProjectId)}`)
+      .then(r => r.json())
+      .then(d => {
+        setCloseoutItems(d.items ?? [])
+        setCloseoutPunch(d.pending_punch ?? [])
+        setCloseoutSubmittals(d.pending_submittals ?? [])
+        setCloseoutRFIs(d.pending_rfis ?? [])
+        setCloseoutCOs(d.pending_cos ?? [])
+        setCloseoutDrawings(d.pending_drawings ?? [])
+      })
+      .catch(() => {})
+      .finally(() => setCloseoutLoading(false))
+  }
+
+  async function updateCloseoutItem(id: string, updates: Record<string, unknown>) {
+    await fetch(`/api/closeout/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(updates) })
+    loadCloseout()
+  }
+
+  async function deleteCloseoutItem(id: string) {
+    await fetch(`/api/closeout/${id}`, { method: "DELETE" })
+    loadCloseout()
+  }
+
+  async function addCloseoutItem() {
+    if (!newCloseoutTitle.trim() || !globalProjectId) return
+    const maxOrder = closeoutItems.filter(i => i.category === newCloseoutCategory).reduce((m, i) => Math.max(m, i.sort_order), 0)
+    await fetch("/api/closeout", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        project_id: globalProjectId,
+        category: newCloseoutCategory,
+        item_type: "custom",
+        title: newCloseoutTitle.trim(),
+        assigned_to: newCloseoutAssigned || null,
+        due_date: newCloseoutDue || null,
+        sort_order: maxOrder + 10,
+      }),
+    })
+    setShowNewCloseout(false)
+    setNewCloseoutTitle("")
+    setNewCloseoutAssigned("")
+    setNewCloseoutDue("")
+    loadCloseout()
+  }
+
+  async function uploadCloseoutFile(itemId: string, file: File) {
+    setCloseoutUploadingId(itemId)
+    const fd = new FormData()
+    fd.append("file", file)
+    fd.append("item_id", itemId)
+    const res = await fetch("/api/closeout/upload", { method: "POST", body: fd })
+    const d = await res.json()
+    if (d.file_url) {
+      await fetch(`/api/closeout/${itemId}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ file_url: d.file_url, file_name: d.file_name }) })
+      loadCloseout()
+    }
+    setCloseoutUploadingId(null)
+  }
+
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { if (activeModule === "closeout") loadCloseout() }, [activeModule, globalProjectId])
 
   function openAddRevision(d: DrawingRecord) {
     setAddRevisionFor(d)
@@ -1780,6 +1871,14 @@ export default function Home() {
             className={`px-3 py-2.5 text-[13px] font-medium border-b-2 transition-colors whitespace-nowrap ${activeModule === "drawings" ? "border-[#2563eb] text-[#e8edf5]" : "border-transparent text-[#4f617a] hover:text-[#8b9ab5]"}`}>
             Drawing Log
           </button>
+          <button onClick={() => setActiveModule("closeout")}
+            className={`px-3 py-2.5 text-[13px] font-medium border-b-2 transition-colors whitespace-nowrap flex items-center gap-1.5 ${activeModule === "closeout" ? "border-[#2563eb] text-[#e8edf5]" : "border-transparent text-[#4f617a] hover:text-[#8b9ab5]"}`}>
+            Closeout
+            {globalProjectId && closeoutItems.length > 0 && (() => {
+              const pct = Math.round(closeoutItems.filter(i => i.status === "complete").length / closeoutItems.length * 100)
+              return <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${pct === 100 ? "bg-emerald-500/20 text-emerald-400" : pct >= 50 ? "bg-amber-500/20 text-amber-400" : "bg-red-500/20 text-red-400"}`}>{pct}%</span>
+            })()}
+          </button>
           {/* Global project filter — right side */}
           {appProjects.length > 0 && (
             <div className="ml-auto flex items-center gap-2 py-1.5 flex-shrink-0">
@@ -1879,6 +1978,46 @@ export default function Home() {
             <button onClick={() => { setShowNewDrawing(true); setAddRevisionFor(null); resetDwgForm() }} className="h-8 px-4 rounded-md bg-[#2563eb] text-white text-[13px] font-semibold hover:bg-[#1d4ed8] transition-colors flex items-center gap-1.5">
               <PlusIcon /> Add Drawing
             </button>
+          </div>
+        )}
+
+        {/* Closeout action bar */}
+        {activeModule === "closeout" && (
+          <div className="flex-shrink-0 border-b border-[#2a3347] bg-[#161b27] flex items-center justify-between px-4 py-2.5">
+            <div className="flex items-center gap-3">
+              <p className="text-[13px] font-semibold text-[#e8edf5]">Project Closeout</p>
+              {globalProjectId && closeoutItems.length > 0 && (() => {
+                const total   = closeoutItems.length + closeoutPunch.length + closeoutSubmittals.length + closeoutRFIs.length + closeoutCOs.length + closeoutDrawings.length
+                const complete = closeoutItems.filter(i => i.status === "complete").length
+                const pct = total > 0 ? Math.round((complete / total) * 100) : 0
+                return <span className="text-[11px] text-[#4f617a]">{pct}% complete</span>
+              })()}
+            </div>
+            <div className="flex items-center gap-2">
+              {globalProjectId && closeoutItems.length > 0 && (
+                <button
+                  onClick={() => setShowNewCloseout(true)}
+                  className="h-8 px-3 rounded-md border border-[#2a3347] text-[#8b9ab5] text-[12px] font-semibold hover:border-[#3a4a63] hover:text-[#e8edf5] transition-colors flex items-center gap-1.5"
+                >
+                  <PlusIcon /> Add Item
+                </button>
+              )}
+              {globalProjectId && closeoutItems.length > 0 && (
+                <button
+                  disabled={closeoutGenerating}
+                  onClick={async () => {
+                    setCloseoutGenerating(true)
+                    const res = await fetch("/api/closeout/pdf", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ project_id: globalProjectId }) })
+                    const d = await res.json()
+                    if (d.url) window.open(d.url, "_blank")
+                    setCloseoutGenerating(false)
+                  }}
+                  className="h-8 px-4 rounded-md bg-[#2563eb] text-white text-[13px] font-semibold hover:bg-[#1d4ed8] transition-colors flex items-center gap-1.5 disabled:opacity-50"
+                >
+                  {closeoutGenerating ? <><SpinnerIcon className="h-3.5 w-3.5" /> Generating…</> : "Generate Package"}
+                </button>
+              )}
+            </div>
           </div>
         )}
 
@@ -2378,8 +2517,427 @@ export default function Home() {
               </table>
             )
           })()}
+
+          {/* ── Closeout module ───────────────────────────────────────────── */}
+          {activeModule === "closeout" && (() => {
+            const cycleStatus  = (s: string) => s === "incomplete" ? "in_progress" : s === "in_progress" ? "complete" : "incomplete"
+            const dotColor     = (s: string) => s === "complete" ? "#10b981" : s === "in_progress" ? "#f59e0b" : "#ef4444"
+            const labelColor   = (s: string) => s === "complete" ? "text-emerald-400" : s === "in_progress" ? "text-amber-400" : "text-red-400"
+            const statusLabel  = (s: string) => s === "complete" ? "Complete" : s === "in_progress" ? "In Progress" : "Incomplete"
+            const CATS = [
+              { key: "documents",   label: "Documents",   icon: "📁", dynamic: closeoutSubmittals.length },
+              { key: "inspections", label: "Inspections", icon: "🔍", dynamic: 0 },
+              { key: "financial",   label: "Financial",   icon: "💰", dynamic: closeoutCOs.length },
+              { key: "training",    label: "Training",    icon: "🎓", dynamic: closeoutRFIs.length },
+              { key: "handover",    label: "Handover",    icon: "🔑", dynamic: closeoutPunch.length + closeoutDrawings.length },
+            ]
+            return (
+              <>
+                <input ref={closeoutFileRef} type="file" className="hidden"
+                  accept=".pdf,.jpg,.jpeg,.png,.doc,.docx,.xlsx,.xls"
+                  onChange={async e => {
+                    const file = e.target.files?.[0]
+                    if (file && closeoutUploadingId) await uploadCloseoutFile(closeoutUploadingId, file)
+                    if (closeoutFileRef.current) closeoutFileRef.current.value = ""
+                  }}
+                />
+
+                {/* No project selected */}
+                {!globalProjectId ? (
+                  <div className="flex flex-col items-center justify-center h-full py-24 text-center">
+                    <div className="w-14 h-14 rounded-2xl bg-[#2563eb]/10 border border-[#2563eb]/20 flex items-center justify-center mb-4">
+                      <svg className="w-7 h-7 text-[#3b82f6]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" /></svg>
+                    </div>
+                    <p className="text-[15px] font-bold text-[#c8d3e6]">Select a project to view closeout</p>
+                    <p className="text-[13px] text-[#4f617a] mt-1.5">Use the Project filter above to choose a project.</p>
+                  </div>
+                ) : closeoutLoading ? (
+                  <div className="flex items-center justify-center h-40 gap-2 text-[13px] text-[#4f617a]">
+                    <SpinnerIcon className="h-4 w-4" /> Loading closeout data…
+                  </div>
+                ) : closeoutItems.length === 0 ? (
+                  /* Not initialized */
+                  <div className="flex flex-col items-center justify-center h-full py-24 text-center">
+                    <div className="w-14 h-14 rounded-2xl bg-[#2563eb]/10 border border-[#2563eb]/20 flex items-center justify-center mb-4">
+                      <svg className="w-7 h-7 text-[#3b82f6]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" /></svg>
+                    </div>
+                    <p className="text-[15px] font-bold text-[#c8d3e6]">Closeout not started</p>
+                    <p className="text-[13px] text-[#4f617a] mt-1.5 max-w-xs">Initialize the closeout checklist to start tracking documents, inspections, and handover items for this project.</p>
+                    <button
+                      disabled={closeoutIniting}
+                      onClick={async () => {
+                        setCloseoutIniting(true)
+                        await fetch("/api/closeout/init", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ project_id: globalProjectId }) })
+                        loadCloseout()
+                        setCloseoutIniting(false)
+                      }}
+                      className="mt-6 h-9 px-5 rounded-lg bg-[#2563eb] text-white text-[13px] font-semibold hover:bg-[#1d4ed8] transition-colors inline-flex items-center gap-2 disabled:opacity-50"
+                    >
+                      {closeoutIniting ? <><SpinnerIcon className="h-3.5 w-3.5" /> Initializing…</> : "Initialize Closeout Checklist"}
+                    </button>
+                  </div>
+                ) : (
+                  /* Main closeout dashboard */
+                  <div className="p-4 space-y-4">
+
+                    {/* Progress cards */}
+                    <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+                      {CATS.map(cat => {
+                        const items    = closeoutItems.filter(i => i.category === cat.key)
+                        const complete = items.filter(i => i.status === "complete").length
+                        const total    = items.length + cat.dynamic
+                        const pct      = total > 0 ? Math.round((complete / total) * 100) : 100
+                        const color    = pct >= 80 ? "#10b981" : pct >= 50 ? "#f59e0b" : "#ef4444"
+                        return (
+                          <div key={cat.key} className="bg-[#161b27] rounded-xl border border-[#2a3347] p-4">
+                            <div className="flex items-center gap-1.5 mb-3">
+                              <span className="text-base leading-none">{cat.icon}</span>
+                              <span className="text-[11px] font-bold text-[#8b9ab5] uppercase tracking-wide">{cat.label}</span>
+                            </div>
+                            <div className="text-[30px] font-extrabold leading-none mb-1.5" style={{ color }}>{pct}%</div>
+                            <div className="text-[11px] text-[#4f617a] mb-3">{complete} of {total} done</div>
+                            <div className="h-1.5 rounded-full bg-[#2a3347] overflow-hidden">
+                              <div className="h-full rounded-full transition-all duration-500" style={{ width: `${pct}%`, backgroundColor: color }} />
+                            </div>
+                            {cat.dynamic > 0 && (
+                              <div className="mt-2 text-[10px] font-semibold text-amber-400">{cat.dynamic} flagged</div>
+                            )}
+                          </div>
+                        )
+                      })}
+                    </div>
+
+                    {/* Manual checklist sections */}
+                    {CATS.map(cat => {
+                      const items = closeoutItems.filter(i => i.category === cat.key)
+                      return (
+                        <div key={cat.key} className="bg-[#161b27] rounded-xl border border-[#2a3347] overflow-hidden">
+                          {/* Section header */}
+                          <div className="flex items-center justify-between px-4 py-3 border-b border-[#2a3347]">
+                            <div className="flex items-center gap-2">
+                              <span className="text-base leading-none">{cat.icon}</span>
+                              <span className="text-[13px] font-bold text-[#e8edf5]">{cat.label}</span>
+                              <span className="text-[11px] text-[#4f617a]">{items.filter(i => i.status === "complete").length}/{items.length} complete</span>
+                            </div>
+                            <button
+                              onClick={() => { setNewCloseoutCategory(cat.key); setShowNewCloseout(true) }}
+                              className="text-[11px] text-[#4f617a] hover:text-[#8b9ab5] transition-colors flex items-center gap-1"
+                            >
+                              <PlusIcon /> Add
+                            </button>
+                          </div>
+
+                          {/* Item rows */}
+                          {items.length === 0 && (
+                            <div className="px-4 py-3 text-[12px] text-[#4f617a] italic">No items in this category.</div>
+                          )}
+                          {items.map(item => {
+                            const isEditing = closeoutEditId === item.id
+                            return (
+                              <div key={item.id} className="border-b border-[#2a3347]/40 last:border-0">
+                                {/* Main row */}
+                                <div className={`flex items-center gap-3 px-4 py-3 hover:bg-white/[0.02] transition-colors ${isEditing ? "bg-white/[0.02]" : ""}`}>
+                                  {/* Status toggle */}
+                                  <button
+                                    title={`Click to mark ${cycleStatus(item.status)}`}
+                                    onClick={() => updateCloseoutItem(item.id, { status: cycleStatus(item.status) })}
+                                    className="flex-shrink-0 w-5 h-5 rounded-full border-2 transition-all hover:scale-110"
+                                    style={{ borderColor: dotColor(item.status), backgroundColor: item.status === "complete" ? dotColor(item.status) : "transparent" }}
+                                  />
+                                  {/* Title */}
+                                  <span className={`flex-1 text-[13px] font-medium truncate ${item.status === "complete" ? "text-[#4f617a] line-through" : "text-[#c8d3e6]"}`}>
+                                    {item.title}
+                                  </span>
+                                  {/* Status label */}
+                                  <span className={`text-[11px] font-semibold flex-shrink-0 hidden sm:block ${labelColor(item.status)}`}>
+                                    {statusLabel(item.status)}
+                                  </span>
+                                  {/* Assigned */}
+                                  {item.assigned_to && (
+                                    <span className="text-[11px] text-[#4f617a] bg-[#1e2535] px-2 py-0.5 rounded flex-shrink-0 hidden md:block truncate max-w-[120px]">
+                                      {item.assigned_to}
+                                    </span>
+                                  )}
+                                  {/* Due date */}
+                                  {item.due_date && (
+                                    <span className={`text-[11px] flex-shrink-0 hidden md:block ${new Date(item.due_date + "T00:00:00") < new Date() && item.status !== "complete" ? "text-red-400 font-semibold" : "text-[#4f617a]"}`}>
+                                      {new Date(item.due_date + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+                                    </span>
+                                  )}
+                                  {/* File */}
+                                  {item.file_name ? (
+                                    <span className="text-[11px] text-emerald-400 flex-shrink-0 hidden lg:block">📎 {item.file_name.slice(0, 20)}{item.file_name.length > 20 ? "…" : ""}</span>
+                                  ) : (
+                                    <button
+                                      onClick={() => { setCloseoutUploadingId(item.id); closeoutFileRef.current?.click() }}
+                                      disabled={closeoutUploadingId === item.id}
+                                      className="text-[11px] text-[#4f617a] hover:text-[#60a5fa] flex-shrink-0 hidden lg:block disabled:opacity-50"
+                                    >
+                                      {closeoutUploadingId === item.id ? "Uploading…" : "+ Doc"}
+                                    </button>
+                                  )}
+                                  {/* Actions */}
+                                  <div className="flex items-center gap-1 flex-shrink-0">
+                                    <button
+                                      onClick={() => {
+                                        if (isEditing) { setCloseoutEditId(null); return }
+                                        setCloseoutEditId(item.id)
+                                        setCloseoutEditTitle(item.title)
+                                        setCloseoutEditAssigned(item.assigned_to ?? "")
+                                        setCloseoutEditDue(item.due_date ?? "")
+                                        setCloseoutEditNotes(item.notes ?? "")
+                                      }}
+                                      className={`text-[11px] px-2 py-1 rounded hover:bg-white/[0.05] transition-colors ${isEditing ? "text-[#60a5fa]" : "text-[#4f617a] hover:text-[#8b9ab5]"}`}
+                                    >
+                                      {isEditing ? "Close" : "Edit"}
+                                    </button>
+                                    <button
+                                      onClick={() => deleteCloseoutItem(item.id)}
+                                      className="text-[11px] text-[#4f617a] hover:text-red-400 px-2 py-1 rounded hover:bg-white/[0.05] transition-colors"
+                                    >Del</button>
+                                  </div>
+                                </div>
+
+                                {/* Edit panel */}
+                                {isEditing && (
+                                  <div className="px-4 pb-4 pt-2 border-t border-[#2a3347]/40 bg-[#0d1117]/30 space-y-3">
+                                    <div className="grid grid-cols-2 gap-3">
+                                      <div>
+                                        <label className="block text-[11px] font-medium text-[#4f617a] mb-1">Title</label>
+                                        <input value={closeoutEditTitle} onChange={e => setCloseoutEditTitle(e.target.value)}
+                                          className="w-full h-8 px-2 rounded border border-[#2a3347] bg-[#0d1117] text-[12px] text-[#e8edf5] focus:outline-none focus:ring-1 focus:ring-[#2563eb]/40" />
+                                      </div>
+                                      <div>
+                                        <label className="block text-[11px] font-medium text-[#4f617a] mb-1">Status</label>
+                                        <select value={closeoutEditId === item.id ? (item.status) : item.status}
+                                          onChange={e => updateCloseoutItem(item.id, { status: e.target.value })}
+                                          className="w-full h-8 px-2 rounded border border-[#2a3347] bg-[#0d1117] text-[12px] text-[#e8edf5] focus:outline-none focus:ring-1 focus:ring-[#2563eb]/40">
+                                          <option value="incomplete">Incomplete</option>
+                                          <option value="in_progress">In Progress</option>
+                                          <option value="complete">Complete</option>
+                                        </select>
+                                      </div>
+                                      <div>
+                                        <label className="block text-[11px] font-medium text-[#4f617a] mb-1">Assigned To</label>
+                                        <select value={closeoutEditAssigned} onChange={e => setCloseoutEditAssigned(e.target.value)}
+                                          className="w-full h-8 px-2 rounded border border-[#2a3347] bg-[#0d1117] text-[12px] text-[#e8edf5] focus:outline-none focus:ring-1 focus:ring-[#2563eb]/40">
+                                          <option value="">Unassigned</option>
+                                          {teamMembers.map(m => <option key={m.id} value={m.name}>{m.name}</option>)}
+                                        </select>
+                                      </div>
+                                      <div>
+                                        <label className="block text-[11px] font-medium text-[#4f617a] mb-1">Due Date</label>
+                                        <input type="date" value={closeoutEditDue} onChange={e => setCloseoutEditDue(e.target.value)}
+                                          className="w-full h-8 px-2 rounded border border-[#2a3347] bg-[#0d1117] text-[12px] text-[#e8edf5] focus:outline-none focus:ring-1 focus:ring-[#2563eb]/40" />
+                                      </div>
+                                    </div>
+                                    <div>
+                                      <label className="block text-[11px] font-medium text-[#4f617a] mb-1">Notes</label>
+                                      <input value={closeoutEditNotes} onChange={e => setCloseoutEditNotes(e.target.value)}
+                                        placeholder="Add notes…"
+                                        className="w-full h-8 px-2 rounded border border-[#2a3347] bg-[#0d1117] text-[12px] text-[#e8edf5] focus:outline-none focus:ring-1 focus:ring-[#2563eb]/40 placeholder:text-[#4f617a]" />
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                      <button
+                                        onClick={() => {
+                                          if (!item.file_name) { setCloseoutUploadingId(item.id); closeoutFileRef.current?.click() }
+                                        }}
+                                        className="text-[11px] text-[#4f617a] hover:text-[#60a5fa] px-2 py-1 border border-[#2a3347] rounded hover:border-[#3a4a63] transition-colors"
+                                      >
+                                        {item.file_name ? `📎 ${item.file_name.slice(0, 30)}` : "+ Upload Document"}
+                                      </button>
+                                      <div className="flex-1" />
+                                      <button onClick={() => setCloseoutEditId(null)}
+                                        className="text-[12px] text-[#4f617a] hover:text-[#8b9ab5] px-3 py-1.5 rounded transition-colors">Cancel</button>
+                                      <button
+                                        onClick={async () => {
+                                          await updateCloseoutItem(item.id, { title: closeoutEditTitle, assigned_to: closeoutEditAssigned || null, due_date: closeoutEditDue || null, notes: closeoutEditNotes || null })
+                                          setCloseoutEditId(null)
+                                        }}
+                                        className="text-[12px] font-semibold text-white bg-[#2563eb] hover:bg-[#1d4ed8] px-4 py-1.5 rounded transition-colors"
+                                      >Save</button>
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            )
+                          })}
+                        </div>
+                      )
+                    })}
+
+                    {/* Cross-module flagged items */}
+                    {(closeoutSubmittals.length > 0 || closeoutRFIs.length > 0 || closeoutCOs.length > 0 || closeoutDrawings.length > 0 || closeoutPunch.length > 0) && (
+                      <div className="bg-[#161b27] rounded-xl border border-[#2a3347] overflow-hidden">
+                        <div className="px-4 py-3 border-b border-[#2a3347]">
+                          <span className="text-[13px] font-bold text-[#e8edf5]">⚠️ Flagged Items</span>
+                          <span className="ml-2 text-[11px] text-[#4f617a]">Pulled from other modules — must be resolved before closeout</span>
+                        </div>
+
+                        {/* Pending submittals */}
+                        {closeoutSubmittals.length > 0 && (
+                          <div className="border-b border-[#2a3347]/40">
+                            <div className="flex items-center justify-between px-4 py-2 bg-[#0d1117]/20">
+                              <span className="text-[11px] font-bold text-amber-400 uppercase tracking-wider">Submittals Awaiting Approval ({closeoutSubmittals.length})</span>
+                              <button onClick={() => setActiveModule("submittals")} className="text-[11px] text-[#60a5fa] hover:text-[#93c5fd] transition-colors">Go to Submittals →</button>
+                            </div>
+                            {closeoutSubmittals.map(s => (
+                              <div key={s.id} className="flex items-center gap-3 px-4 py-2 border-b border-[#2a3347]/20 last:border-0">
+                                <div className="w-2 h-2 rounded-full bg-amber-400 flex-shrink-0" />
+                                <span className="flex-1 text-[12px] text-[#8b9ab5] truncate">{s.file_name}</span>
+                                <span className="text-[11px] text-amber-400 flex-shrink-0">{s.review_status ?? "Pending"}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+
+                        {/* Open RFIs */}
+                        {closeoutRFIs.length > 0 && (
+                          <div className="border-b border-[#2a3347]/40">
+                            <div className="flex items-center justify-between px-4 py-2 bg-[#0d1117]/20">
+                              <span className="text-[11px] font-bold text-amber-400 uppercase tracking-wider">Open RFIs ({closeoutRFIs.length})</span>
+                              <button onClick={() => setActiveModule("rfis")} className="text-[11px] text-[#60a5fa] hover:text-[#93c5fd] transition-colors">Go to RFIs →</button>
+                            </div>
+                            {closeoutRFIs.map(r => (
+                              <div key={r.id} className="flex items-center gap-3 px-4 py-2 border-b border-[#2a3347]/20 last:border-0">
+                                <div className="w-2 h-2 rounded-full bg-amber-400 flex-shrink-0" />
+                                <span className="text-[12px] text-[#4f617a] font-mono flex-shrink-0">{r.rfi_number}</span>
+                                <span className="flex-1 text-[12px] text-[#8b9ab5] truncate">{r.subject}</span>
+                                <span className="text-[11px] text-amber-400 flex-shrink-0">{r.status}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+
+                        {/* Unsigned change orders */}
+                        {closeoutCOs.length > 0 && (
+                          <div className="border-b border-[#2a3347]/40">
+                            <div className="flex items-center justify-between px-4 py-2 bg-[#0d1117]/20">
+                              <span className="text-[11px] font-bold text-red-400 uppercase tracking-wider">Unsigned Change Orders ({closeoutCOs.length})</span>
+                              <button onClick={() => setActiveModule("changeorders")} className="text-[11px] text-[#60a5fa] hover:text-[#93c5fd] transition-colors">Go to COs →</button>
+                            </div>
+                            {closeoutCOs.map(c => (
+                              <div key={c.id} className="flex items-center gap-3 px-4 py-2 border-b border-[#2a3347]/20 last:border-0">
+                                <div className="w-2 h-2 rounded-full bg-red-400 flex-shrink-0" />
+                                <span className="text-[12px] text-[#4f617a] font-mono flex-shrink-0">CO-{c.co_number}</span>
+                                <span className="flex-1 text-[12px] text-[#8b9ab5] truncate">{c.proposal ?? "—"}</span>
+                                <span className="text-[11px] text-red-400 flex-shrink-0">{c.status}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+
+                        {/* Missing as-built drawings */}
+                        {closeoutDrawings.length > 0 && (
+                          <div className="border-b border-[#2a3347]/40">
+                            <div className="flex items-center justify-between px-4 py-2 bg-[#0d1117]/20">
+                              <span className="text-[11px] font-bold text-amber-400 uppercase tracking-wider">Drawings Missing As-Built Status ({closeoutDrawings.length})</span>
+                              <button onClick={() => setActiveModule("drawings")} className="text-[11px] text-[#60a5fa] hover:text-[#93c5fd] transition-colors">Go to Drawings →</button>
+                            </div>
+                            {closeoutDrawings.map(d => (
+                              <div key={d.id} className="flex items-center gap-3 px-4 py-2 border-b border-[#2a3347]/20 last:border-0">
+                                <div className="w-2 h-2 rounded-full bg-amber-400 flex-shrink-0" />
+                                <span className="text-[12px] text-[#4f617a] font-mono flex-shrink-0">{d.drawing_number}</span>
+                                <span className="flex-1 text-[12px] text-[#8b9ab5] truncate">{d.sheet_title}</span>
+                                <span className="text-[11px] text-amber-400 flex-shrink-0">{d.status}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+
+                        {/* Open punch items */}
+                        {closeoutPunch.length > 0 && (
+                          <div>
+                            <div className="flex items-center justify-between px-4 py-2 bg-[#0d1117]/20">
+                              <span className="text-[11px] font-bold text-red-400 uppercase tracking-wider">Open Punch Items ({closeoutPunch.length})</span>
+                              <button onClick={() => setActiveModule("punch")} className="text-[11px] text-[#60a5fa] hover:text-[#93c5fd] transition-colors">Go to Punch List →</button>
+                            </div>
+                            {closeoutPunch.map(p => (
+                              <div key={p.id} className="flex items-center gap-3 px-4 py-2 border-b border-[#2a3347]/20 last:border-0">
+                                <div className="w-2 h-2 rounded-full bg-red-400 flex-shrink-0" />
+                                <span className="text-[12px] text-[#4f617a] font-mono flex-shrink-0">#{p.item_number}</span>
+                                <span className="flex-1 text-[12px] text-[#8b9ab5] truncate">{p.description}</span>
+                                <span className={`text-[11px] flex-shrink-0 ${p.priority === "High" ? "text-red-400" : p.priority === "Medium" ? "text-amber-400" : "text-[#4f617a]"}`}>{p.priority}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* All clear */}
+                    {closeoutSubmittals.length === 0 && closeoutRFIs.length === 0 && closeoutCOs.length === 0 && closeoutDrawings.length === 0 && closeoutPunch.length === 0 && closeoutItems.every(i => i.status === "complete") && (
+                      <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-6 text-center">
+                        <div className="text-2xl mb-2">✅</div>
+                        <p className="text-[15px] font-bold text-emerald-400">Project is ready for closeout</p>
+                        <p className="text-[13px] text-[#4f617a] mt-1">All checklist items complete and no flagged items from other modules.</p>
+                        <button
+                          disabled={closeoutGenerating}
+                          onClick={async () => {
+                            setCloseoutGenerating(true)
+                            const res = await fetch("/api/closeout/pdf", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ project_id: globalProjectId }) })
+                            const d = await res.json()
+                            if (d.url) window.open(d.url, "_blank")
+                            setCloseoutGenerating(false)
+                          }}
+                          className="mt-4 h-9 px-5 rounded-lg bg-emerald-600 text-white text-[13px] font-semibold hover:bg-emerald-700 transition-colors inline-flex items-center gap-2 disabled:opacity-50"
+                        >
+                          {closeoutGenerating ? <><SpinnerIcon className="h-3.5 w-3.5" /> Generating…</> : "Generate Final Closeout Package"}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </>
+            )
+          })()}
         </div>
       </div>
+
+      {/* ── Add Closeout Item modal ───────────────────────────────────────── */}
+      {showNewCloseout && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center" onClick={e => { if (e.target === e.currentTarget) setShowNewCloseout(false) }}>
+          <div className="bg-[#1c2333] rounded-xl border border-[#2a3347] shadow-2xl w-[480px] p-6">
+            <div className="flex items-center justify-between mb-5">
+              <h2 className="text-[15px] font-bold text-[#e8edf5]">Add Closeout Item</h2>
+              <button onClick={() => setShowNewCloseout(false)} className="text-[#4f617a] hover:text-[#8b9ab5] transition-colors"><XIcon className="h-4 w-4" /></button>
+            </div>
+            <div className="space-y-3">
+              <div>
+                <label className={labelCls}>Category</label>
+                <select value={newCloseoutCategory} onChange={e => setNewCloseoutCategory(e.target.value)} className={inputCls}>
+                  <option value="documents">Documents</option>
+                  <option value="inspections">Inspections</option>
+                  <option value="financial">Financial</option>
+                  <option value="training">Training</option>
+                  <option value="handover">Handover</option>
+                </select>
+              </div>
+              <div>
+                <label className={labelCls}>Title <span className="text-red-400">*</span></label>
+                <input value={newCloseoutTitle} onChange={e => setNewCloseoutTitle(e.target.value)} placeholder="e.g. O&M Manual — Elevator" className={inputCls} autoFocus />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className={labelCls}>Assign To</label>
+                  <select value={newCloseoutAssigned} onChange={e => setNewCloseoutAssigned(e.target.value)} className={inputCls}>
+                    <option value="">Unassigned</option>
+                    {teamMembers.map(m => <option key={m.id} value={m.name}>{m.name}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className={labelCls}>Due Date</label>
+                  <input type="date" value={newCloseoutDue} onChange={e => setNewCloseoutDue(e.target.value)} className={inputCls} />
+                </div>
+              </div>
+              <div className="flex justify-end gap-2 pt-2">
+                <button onClick={() => setShowNewCloseout(false)} className="h-9 px-4 rounded-md text-[13px] text-[#4f617a] hover:text-[#8b9ab5] transition-colors">Cancel</button>
+                <button onClick={addCloseoutItem} disabled={!newCloseoutTitle.trim()} className="h-9 px-5 rounded-md bg-[#2563eb] text-white text-[13px] font-semibold hover:bg-[#1d4ed8] transition-colors disabled:opacity-50">Add Item</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── New / Edit Daily Report modal ────────────────────────────────── */}
       {(showNewDaily || (viewDaily && dailyEditing)) && (() => {
