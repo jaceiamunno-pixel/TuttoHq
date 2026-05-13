@@ -17,18 +17,20 @@ There are no tests. TypeScript is the primary correctness check — always run `
 - **Next.js 15** App Router, TypeScript, Tailwind CSS v4
 - **Supabase** — database (Postgres + RLS), auth (cookie-based SSR), storage (`submittals` bucket for all user files, `company-assets` for logos)
 - **Anthropic SDK** — Claude Haiku for AI classification (`/api/classify`) and search expansion (`/api/search`)
-- **pdf-lib** — server-side PDF generation (cover sheets, RFI PDFs, CO PDFs)
+- **pdf-lib** — server-side PDF generation via shared `src/lib/pdf-builder.ts` (`PDFBuilder` class). Used for submittals, RFIs, COs, punch items, daily reports, drawing transmittals.
 - **Google APIs** — Gmail watch + Pub/Sub for automated email intake; Drive for legacy file import
 
 ## Architecture
 
 ### Single-page app
-The entire UI lives in `src/app/page.tsx` (~3700 lines). It is a single `"use client"` component with all state, all modules, and all modals inline. There are no sub-components or separate route pages for the main app.
+The entire app UI lives in `src/app/dashboard/page.tsx` (~3950 lines). It is a single `"use client"` component with all state, all modules, and all modals inline. There are no sub-components or separate route pages for the main app.
+
+`src/app/page.tsx` is a **marketing landing page** (Framer Motion, Lucide icons) — not the app.
 
 Modules toggled by `activeModule` state: `submittals | rfis | changeorders | punch | daily | drawings`
 
 ### API routes (`src/app/api/`)
-All data mutations go through Next.js API routes that use the **server-side Supabase client** (`@/lib/supabase/server`) so auth cookies are read server-side. The client (`@/lib/supabase/client`) is only used in `page.tsx` for auth state.
+All data mutations go through Next.js API routes that use the **server-side Supabase client** (`@/lib/supabase/server`) so auth cookies are read server-side. The client (`@/lib/supabase/client`) is only used in `dashboard/page.tsx` for auth state.
 
 Key route groups:
 | Route | Purpose |
@@ -39,6 +41,9 @@ Key route groups:
 | `/api/generate-cover` | POST — generates submittal cover sheet PDF, uploads to storage |
 | `/api/rfis/[id]/pdf` | POST — generates RFI PDF, saves to `rfis/{id}/rfi_{number}.pdf` in storage |
 | `/api/change-orders/[id]/pdf` | POST — generates CO PDF, saves to `change-orders/{id}/co_{number}.pdf` |
+| `/api/punch/[id]/pdf` | POST — generates punch item PDF |
+| `/api/daily-reports/[id]/pdf` | POST — generates daily field report PDF |
+| `/api/drawings/[id]/pdf` | POST — generates drawing transmittal PDF (reads from `drawing_log` table) |
 | `/api/gmail/webhook` | POST — receives Google Pub/Sub push notifications, triggers Gmail intake |
 | `/api/gmail-intake` | POST — processes Gmail history, downloads attachments, auto-classifies and inserts submittals |
 
@@ -52,7 +57,7 @@ All PDF routes follow the same pattern: fetch record + project + company logo �
 
 ### Supabase client usage
 - `src/lib/supabase/server.ts` — use in all API routes (reads auth cookies)
-- `src/lib/supabase/client.ts` — use only in `page.tsx` (browser-side, for `getUser()`)
+- `src/lib/supabase/client.ts` — use only in `dashboard/page.tsx` (browser-side, for `getUser()`)
 - Gmail webhook uses `createClient(url, SERVICE_ROLE_KEY)` directly to bypass RLS (Google calls this endpoint, no user session)
 
 ### RLS pattern
@@ -72,7 +77,7 @@ See `.env.local.example`. Required vars:
 
 ## Database Tables
 
-Core tables: `submittals`, `rfis`, `change_orders`, `punch_items`, `daily_reports`, `drawings`, `projects`, `team_members`, `company_settings`, `gmail_connections`
+Core tables: `submittals`, `rfis`, `change_orders`, `punch_items`, `daily_reports`, `drawing_log` (not `drawings`), `projects`, `team_members`, `company_settings`, `gmail_connections`
 
 `submittals` soft-delete: `status = 'deleted'` (never hard-deleted). Active records have `status = 'active'`.
 

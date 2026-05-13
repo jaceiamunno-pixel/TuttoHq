@@ -30,15 +30,20 @@ export async function middleware(request: NextRequest) {
 
   const path = request.nextUrl.pathname
 
-  if (!user && path !== "/login") {
+  // Public paths accessible without auth
+  const PUBLIC_PATHS = ["/", "/signup", "/login"]
+  const isPublic = PUBLIC_PATHS.includes(path) || path.startsWith("/api/auth")
+
+  if (!user && !isPublic) {
     const url = request.nextUrl.clone()
     url.pathname = "/login"
     return NextResponse.redirect(url)
   }
 
-  if (user && path === "/login") {
+  // Authenticated users get sent to /dashboard from auth/landing pages
+  if (user && (path === "/login" || path === "/")) {
     const url = request.nextUrl.clone()
-    url.pathname = "/"
+    url.pathname = "/dashboard"
     return NextResponse.redirect(url)
   }
 

@@ -5,8 +5,24 @@ import "./globals.css"
 const inter = Inter({ subsets: ["latin"] })
 
 export const metadata: Metadata = {
-  title: "Submittal Library — THP Construction",
-  description: "Search and access project submittal documents organized by CSI MasterFormat",
+  title: "TuttoHQ — Construction Submittal & Document Management Software | Procore Alternative",
+  description: "Manage submittals, RFIs, change orders, punch lists, and daily reports in one platform. AI-powered, Gmail-integrated, and 75% cheaper than Procore. Free 14-day trial.",
+  keywords: "construction submittal management software, submittal tracking software, RFI tracking construction, change order management software, Procore alternative, construction document management",
+  metadataBase: new URL("https://tuttohq.com"),
+  alternates: { canonical: "https://tuttohq.com" },
+  robots: { index: true, follow: true },
+  openGraph: {
+    title: "TuttoHQ — Construction Document Management Made Simple",
+    description: "The affordable alternative to Procore for general contractors. Auto-ingest submittals from Gmail, track RFIs and change orders, generate branded PDFs. $199/month unlimited users.",
+    url: "https://tuttohq.com",
+    siteName: "TuttoHQ",
+    type: "website",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "TuttoHQ — Construction Document Management Made Simple",
+    description: "The affordable alternative to Procore for general contractors. $199/month, unlimited users, set up in under 10 minutes.",
+  },
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

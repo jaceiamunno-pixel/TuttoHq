@@ -37,7 +37,7 @@ export default function LoginPage() {
       setError(error.message)
       setLoading(false)
     } else {
-      router.push("/")
+      router.push("/dashboard")
       router.refresh()
     }
   }
@@ -52,7 +52,7 @@ export default function LoginPage() {
       setError(error.message)
       setLoading(false)
     } else {
-      router.push("/")
+      router.push("/dashboard")
       router.refresh()
     }
   }
