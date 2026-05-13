@@ -16,11 +16,11 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
 
   const { id } = await params
 
-  const { data: dwg, error } = await supabase.from("drawings").select("*").eq("id", id).single()
+  const { data: dwg, error } = await supabase.from("drawing_log").select("*").eq("id", id).single()
   if (error || !dwg) return NextResponse.json({ error: "Drawing not found" }, { status: 404 })
 
   // Fetch revision history for this drawing number
-  const { data: history } = await supabase.from("drawings")
+  const { data: history } = await supabase.from("drawing_log")
     .select("*").eq("drawing_number", dwg.drawing_number)
     .order("created_at", { ascending: false })
 
@@ -182,7 +182,7 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
   const safeDwg = dwg.drawing_number?.replace(/[^a-zA-Z0-9._-]/g, "_") ?? id
   const pdfPath = `drawings/${id}/drawing_${safeDwg}_rev${dwg.revision ?? "0"}.pdf`
   await supabase.storage.from("submittals").upload(pdfPath, Buffer.from(pdfBytes), { contentType: "application/pdf", upsert: true })
-  await supabase.from("drawings").update({ generated_pdf_path: pdfPath }).eq("id", id)
+  await supabase.from("drawing_log").update({ generated_pdf_path: pdfPath }).eq("id", id)
   const { data: signed } = await supabase.storage.from("submittals").createSignedUrl(pdfPath, 604800)
   return NextResponse.json({ ok: true, url: signed?.signedUrl ?? null })
 }

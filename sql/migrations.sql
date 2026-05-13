@@ -36,4 +36,4 @@ CREATE TABLE IF NOT EXISTS change_orders (
 -- ─── PDF path columns for punch, daily reports, drawings ─────────────────────
 ALTER TABLE punch_items   ADD COLUMN IF NOT EXISTS generated_pdf_path TEXT;
 ALTER TABLE daily_reports ADD COLUMN IF NOT EXISTS generated_pdf_path TEXT;
-ALTER TABLE drawings      ADD COLUMN IF NOT EXISTS generated_pdf_path TEXT;
+ALTER TABLE drawing_log   ADD COLUMN IF NOT EXISTS generated_pdf_path TEXT;
