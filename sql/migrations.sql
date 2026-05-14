@@ -138,5 +138,31 @@ ALTER TABLE submittals
   ADD COLUMN IF NOT EXISTS send_to_contact        TEXT,
   ADD COLUMN IF NOT EXISTS send_to_email          TEXT,
   ADD COLUMN IF NOT EXISTS send_to_phone          TEXT,
+  ADD COLUMN IF NOT EXISTS send_to_address        TEXT,
   ADD COLUMN IF NOT EXISTS transmitted_by         TEXT,
   ADD COLUMN IF NOT EXISTS transmitted_by_company TEXT;
+
+-- ─── Construction Managers ────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS construction_managers (
+  id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  company_name TEXT NOT NULL,
+  contact_name TEXT,
+  phone        TEXT,
+  email        TEXT,
+  address      TEXT,
+  notes        TEXT,
+  created_at   TIMESTAMPTZ DEFAULT now(),
+  uploaded_by  UUID REFERENCES auth.users(id)
+);
+ALTER TABLE construction_managers ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "auth full construction_managers" ON construction_managers FOR ALL TO authenticated USING (true) WITH CHECK (true);
+
+CREATE TABLE IF NOT EXISTS project_cms (
+  id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  cm_id      UUID NOT NULL REFERENCES construction_managers(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ DEFAULT now(),
+  UNIQUE(project_id, cm_id)
+);
+ALTER TABLE project_cms ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "auth full project_cms" ON project_cms FOR ALL TO authenticated USING (true) WITH CHECK (true);

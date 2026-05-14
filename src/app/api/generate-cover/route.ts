@@ -31,6 +31,7 @@ export async function POST(req: NextRequest) {
     sendToContact,
     sendToEmail,
     sendToPhone,
+    sendToAddress,
     transmittedBy,
     transmittedByCompany,
   } = body
@@ -74,6 +75,8 @@ export async function POST(req: NextRequest) {
       b.twoCol("Contact", sendToContact ?? "—", 50, "Email", sendToEmail ?? "—", 50)
     if (sendToPhone)
       b.oneCol("Phone", sendToPhone)
+    if (sendToAddress)
+      b.oneCol("Address", sendToAddress)
     b.gap()
   }
 
@@ -146,6 +149,7 @@ export async function POST(req: NextRequest) {
         send_to_contact:        sendToContact || null,
         send_to_email:          sendToEmail   || null,
         send_to_phone:          sendToPhone   || null,
+        send_to_address:        sendToAddress || null,
         transmitted_by:         transmittedBy || null,
         transmitted_by_company: transmittedByCompany || null,
       }

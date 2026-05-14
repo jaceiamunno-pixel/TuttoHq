@@ -4,7 +4,12 @@ import { useState, useEffect, useRef } from "react"
 import Link from "next/link"
 import Papa from "papaparse"
 
-type Tab = "company" | "team" | "projects" | "subcontractors" | "suppliers" | "gmail"
+type Tab = "company" | "team" | "projects" | "subcontractors" | "suppliers" | "cms" | "gmail"
+
+interface ConstructionManager {
+  id: string; company_name: string; contact_name: string | null
+  phone: string | null; email: string | null; address: string | null; notes: string | null; created_at: string
+}
 
 interface Subcontractor {
   id: string; company_name: string; trade: string | null; contact_name: string | null
@@ -124,10 +129,21 @@ export default function SettingsPage() {
   const [savingSuppl, setSavingSuppl]       = useState(false)
   const [supplMessage, setSupplMessage]     = useState<{ text: string; ok: boolean } | null>(null)
 
+  const [cms, setCms]                       = useState<ConstructionManager[]>([])
+  const [cmsLoading, setCmsLoading]         = useState(false)
+  const [cmsLoaded, setCmsLoaded]           = useState(false)
+  const [showCmForm, setShowCmForm]         = useState(false)
+  const [editingCm, setEditingCm]           = useState<ConstructionManager | null>(null)
+  const [cmForm, setCmForm]                 = useState({ company_name: "", contact_name: "", phone: "", email: "", address: "", notes: "" })
+  const [savingCm, setSavingCm]             = useState(false)
+  const [cmMessage, setCmMessage]           = useState<{ text: string; ok: boolean } | null>(null)
+
   const [projectSubIds, setProjectSubIds]   = useState<string[]>([])
   const [projectSupIds, setProjectSupIds]   = useState<string[]>([])
+  const [projectCmIds, setProjectCmIds]     = useState<string[]>([])
   const [quickAddSubOpen, setQuickAddSubOpen]   = useState(false)
   const [quickAddSupplOpen, setQuickAddSupplOpen] = useState(false)
+  const [quickAddCmOpen, setQuickAddCmOpen] = useState(false)
   const [quickAddName, setQuickAddName]     = useState("")
   const [quickAddField, setQuickAddField]   = useState("")
 
@@ -179,6 +195,7 @@ export default function SettingsPage() {
     if (activeTab === "projects" && !projectsLoaded) loadProjects()
     if (activeTab === "subcontractors" && !subsLoaded) loadSubs()
     if (activeTab === "suppliers" && !supplLoaded) loadSuppliers()
+    if (activeTab === "cms" && !cmsLoaded) loadCms()
     if (activeTab === "gmail" && !gmailLoaded) loadGmailConnection()
   }, [activeTab])
 
@@ -378,16 +395,18 @@ export default function SettingsPage() {
   function openEditProject(p: Project) {
     setEditingProject(p)
     setProjectForm({ name: p.name, number: p.number ?? "", location: p.location ?? "", gc_name: p.gc_name ?? "", architect: p.architect ?? "" })
-    setProjectSubIds([])
-    setProjectSupIds([])
+    setProjectSubIds([]); setProjectSupIds([]); setProjectCmIds([])
     if (!subsLoaded) loadSubs()
     if (!supplLoaded) loadSuppliers()
+    if (!cmsLoaded) loadCms()
     Promise.all([
       fetch(`/api/projects/${p.id}/subcontractors`).then(r => r.json()),
       fetch(`/api/projects/${p.id}/suppliers`).then(r => r.json()),
-    ]).then(([subs, supps]) => {
+      fetch(`/api/projects/${p.id}/cms`).then(r => r.json()),
+    ]).then(([subs, supps, pcms]) => {
       setProjectSubIds((subs ?? []).map((s: { id: string }) => s.id))
       setProjectSupIds((supps ?? []).map((s: { id: string }) => s.id))
+      setProjectCmIds((pcms ?? []).map((c: { id: string }) => c.id))
     }).catch(() => {})
     setShowProjectForm(true)
   }
@@ -396,8 +415,7 @@ export default function SettingsPage() {
     setShowProjectForm(false)
     setEditingProject(null)
     setProjectForm({ name: "", number: "", location: "", gc_name: "", architect: "" })
-    setProjectSubIds([])
-    setProjectSupIds([])
+    setProjectSubIds([]); setProjectSupIds([]); setProjectCmIds([])
   }
 
   async function saveProject(e: React.FormEvent) {
@@ -424,6 +442,7 @@ export default function SettingsPage() {
       await Promise.all([
         fetch(`/api/projects/${projectId}/subcontractors`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ids: projectSubIds }) }),
         fetch(`/api/projects/${projectId}/suppliers`,      { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ids: projectSupIds }) }),
+        fetch(`/api/projects/${projectId}/cms`,            { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ids: projectCmIds }) }),
       ])
       if (editingProject) {
         setProjects(prev => prev.map(p => p.id === editingProject.id ? data.project : p))
@@ -567,6 +586,50 @@ export default function SettingsPage() {
     setProjectImportResult(null)
   }
 
+  function loadCms() {
+    setCmsLoading(true)
+    fetch("/api/construction-managers").then(r => r.json()).then(d => { setCms(d ?? []); setCmsLoaded(true) }).catch(() => {}).finally(() => setCmsLoading(false))
+  }
+  function flashCm(text: string, ok = true) { setCmMessage({ text, ok }); setTimeout(() => setCmMessage(null), 3000) }
+  function openAddCm() { setEditingCm(null); setCmForm({ company_name: "", contact_name: "", phone: "", email: "", address: "", notes: "" }); setShowCmForm(true) }
+  function openEditCm(c: ConstructionManager) { setEditingCm(c); setCmForm({ company_name: c.company_name, contact_name: c.contact_name ?? "", phone: c.phone ?? "", email: c.email ?? "", address: c.address ?? "", notes: c.notes ?? "" }); setShowCmForm(true) }
+  function cancelCmForm() { setShowCmForm(false); setEditingCm(null) }
+
+  async function saveCm(e: React.FormEvent) {
+    e.preventDefault()
+    if (!cmForm.company_name.trim()) return
+    setSavingCm(true)
+    try {
+      const url = editingCm ? `/api/construction-managers/${editingCm.id}` : "/api/construction-managers"
+      const method = editingCm ? "PATCH" : "POST"
+      const res = await fetch(url, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(cmForm) })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error ?? "Save failed")
+      if (editingCm) { setCms(prev => prev.map(c => c.id === editingCm.id ? data : c)); flashCm("CM updated") }
+      else { setCms(prev => [...prev, data]); flashCm("CM added") }
+      cancelCmForm()
+    } catch { flashCm("Save failed", false) } finally { setSavingCm(false) }
+  }
+
+  async function deleteCm(c: ConstructionManager) {
+    if (!window.confirm(`Delete ${c.company_name}?`)) return
+    const res = await fetch(`/api/construction-managers/${c.id}`, { method: "DELETE" })
+    if (res.ok) { setCms(prev => prev.filter(x => x.id !== c.id)); flashCm("Deleted") }
+    else flashCm("Delete failed", false)
+  }
+
+  async function quickAddCm() {
+    if (!quickAddName.trim()) return
+    const res = await fetch("/api/construction-managers", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ company_name: quickAddName.trim(), contact_name: quickAddField.trim() || null }) })
+    const data = await res.json()
+    if (res.ok) {
+      setCms(prev => [...prev, data])
+      setCmsLoaded(true)
+      setProjectCmIds(prev => [...prev, data.id])
+    }
+    setQuickAddCmOpen(false); setQuickAddName(""); setQuickAddField("")
+  }
+
   function loadSubs() {
     setSubsLoading(true)
     fetch("/api/subcontractors").then(r => r.json()).then(d => { setSubcontractors(d ?? []); setSubsLoaded(true) }).catch(() => {}).finally(() => setSubsLoading(false))
@@ -665,6 +728,7 @@ export default function SettingsPage() {
     { key: "projects",       label: "Projects" },
     { key: "subcontractors", label: "Subcontractors" },
     { key: "suppliers",      label: "Suppliers" },
+    { key: "cms",            label: "CMs" },
     { key: "gmail",          label: "Gmail" },
   ]
 
@@ -1140,6 +1204,33 @@ export default function SettingsPage() {
                       </div>
                     </div>
 
+                    {/* Construction Managers on this project */}
+                    <div>
+                      <div className="flex items-center justify-between mb-1.5">
+                        <label className={labelCls}>Construction Managers on this project</label>
+                        <button type="button" onClick={() => { setQuickAddCmOpen(true); setQuickAddName(""); setQuickAddField("") }} className="text-[11px] text-[#7B9BB5] hover:text-[#6A8AA4] transition-colors">+ Add new</button>
+                      </div>
+                      {quickAddCmOpen && (
+                        <div className="flex gap-2 mb-2">
+                          <input autoFocus placeholder="Company name *" value={quickAddName} onChange={e => setQuickAddName(e.target.value)} className="flex-1 h-8 px-2.5 rounded border border-[#E2E8F0] text-[12px] text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40" />
+                          <input placeholder="Contact name (optional)" value={quickAddField} onChange={e => setQuickAddField(e.target.value)} className="flex-1 h-8 px-2.5 rounded border border-[#E2E8F0] text-[12px] text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40" />
+                          <button type="button" onClick={quickAddCm} disabled={!quickAddName.trim()} className="h-8 px-3 rounded bg-[#7B9BB5] text-white text-[12px] font-medium hover:bg-[#6A8AA4] transition-colors disabled:opacity-50">Add</button>
+                          <button type="button" onClick={() => setQuickAddCmOpen(false)} className="h-8 px-2 rounded border border-[#E2E8F0] text-[12px] text-[#64748B]">✕</button>
+                        </div>
+                      )}
+                      <div className="min-h-[36px] border border-[#E2E8F0] rounded-md p-2 flex flex-wrap gap-1.5 bg-white">
+                        {projectCmIds.map(id => {
+                          const c = cms.find(x => x.id === id)
+                          if (!c) return null
+                          return <span key={id} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700 text-[11px] font-medium">{c.company_name}{c.contact_name ? ` — ${c.contact_name}` : ""}<button type="button" onClick={() => setProjectCmIds(prev => prev.filter(x => x !== id))} className="ml-0.5 text-indigo-400/60 hover:text-indigo-700">✕</button></span>
+                        })}
+                        <select className="h-6 text-[11px] text-[#64748B] bg-transparent border-none focus:outline-none cursor-pointer" value="" onChange={e => { if (e.target.value && !projectCmIds.includes(e.target.value)) setProjectCmIds(prev => [...prev, e.target.value]) }}>
+                          <option value="">+ Select CM…</option>
+                          {cms.filter(c => !projectCmIds.includes(c.id)).map(c => <option key={c.id} value={c.id}>{c.company_name}{c.contact_name ? ` — ${c.contact_name}` : ""}</option>)}
+                        </select>
+                      </div>
+                    </div>
+
                     <div className="flex justify-end gap-2 pt-1">
                       <button
                         type="button"
@@ -1436,6 +1527,75 @@ export default function SettingsPage() {
                           <td className="px-4 py-2.5 text-right opacity-0 group-hover:opacity-100 transition-opacity">
                             <button onClick={() => openEditSuppl(s)} className="p-1 rounded text-[#64748B] hover:text-[#0F172A] hover:bg-[#F4F5F7]/[0.08] transition-colors mr-1"><PencilIcon /></button>
                             <button onClick={() => deleteSuppl(s)} className="p-1 rounded text-[#64748B] hover:text-red-400 hover:bg-[#F4F5F7]/[0.08] transition-colors"><XIcon /></button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {activeTab === "cms" && (
+          <div className="space-y-4">
+            {cmMessage && <div className={`px-4 py-2.5 rounded-lg text-[13px] ${cmMessage.ok ? "bg-green-50 text-green-700 border border-green-200" : "bg-red-50 text-red-700 border border-red-200"}`}>{cmMessage.text}</div>}
+            <div className="bg-white rounded-xl border border-[#E2E8F0] overflow-hidden">
+              <div className="flex items-center justify-between px-5 py-4 border-b border-[#E2E8F0]">
+                <div>
+                  <h2 className="text-[14px] font-semibold text-[#0F172A]">Construction Managers</h2>
+                  <p className="text-[12px] text-[#64748B] mt-0.5">Global list of CMs reusable across all projects.</p>
+                </div>
+                {!showCmForm && <button onClick={openAddCm} className="h-8 px-3 rounded-md bg-[#7B9BB5] text-white text-[13px] font-medium hover:bg-[#6A8AA4] transition-colors flex items-center gap-1.5"><PlusIcon /> Add CM</button>}
+              </div>
+
+              {showCmForm && (
+                <div className="px-5 py-4 border-b border-[#E2E8F0] bg-[#F4F5F7]/50">
+                  <p className="text-[13px] font-semibold text-[#0F172A] mb-3">{editingCm ? "Edit CM" : "New CM"}</p>
+                  <form onSubmit={saveCm} className="space-y-3">
+                    <div className="grid grid-cols-2 gap-3">
+                      <div><label className={labelCls}>Company Name <span className="text-red-400">*</span></label><input value={cmForm.company_name} onChange={e => setCmForm(p => ({ ...p, company_name: e.target.value }))} required autoFocus placeholder="e.g. Turner Construction" className={inputCls} /></div>
+                      <div><label className={labelCls}>Contact Name</label><input value={cmForm.contact_name} onChange={e => setCmForm(p => ({ ...p, contact_name: e.target.value }))} placeholder="Jane Smith" className={inputCls} /></div>
+                    </div>
+                    <div className="grid grid-cols-3 gap-3">
+                      <div><label className={labelCls}>Phone</label><input value={cmForm.phone} onChange={e => setCmForm(p => ({ ...p, phone: e.target.value }))} placeholder="555-000-1234" className={inputCls} /></div>
+                      <div><label className={labelCls}>Email</label><input value={cmForm.email} onChange={e => setCmForm(p => ({ ...p, email: e.target.value }))} placeholder="contact@cm.com" className={inputCls} /></div>
+                      <div><label className={labelCls}>Notes</label><input value={cmForm.notes} onChange={e => setCmForm(p => ({ ...p, notes: e.target.value }))} placeholder="Any notes…" className={inputCls} /></div>
+                    </div>
+                    <div><label className={labelCls}>Address</label><input value={cmForm.address} onChange={e => setCmForm(p => ({ ...p, address: e.target.value }))} placeholder="123 Main St, City, State 00000" className={inputCls} /></div>
+                    <div className="flex justify-end gap-2 pt-1">
+                      <button type="button" onClick={cancelCmForm} className="h-8 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#64748B] hover:text-[#0F172A] transition-colors">Cancel</button>
+                      <button type="submit" disabled={savingCm || !cmForm.company_name.trim()} className="h-8 px-4 rounded-md bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors disabled:opacity-50">{savingCm ? "Saving…" : editingCm ? "Save changes" : "Add CM"}</button>
+                    </div>
+                  </form>
+                </div>
+              )}
+
+              {cmsLoading && <div className="px-5 py-4 text-[13px] text-[#64748B]">Loading…</div>}
+              {!cmsLoading && cms.length === 0 && !showCmForm && (
+                <div className="px-5 py-8 text-center"><p className="text-[13px] text-[#64748B]">No construction managers yet.</p></div>
+              )}
+              {!cmsLoading && cms.length > 0 && (
+                <div className="overflow-x-auto">
+                  <table className="w-full">
+                    <thead className="sticky top-0 bg-[#F8F9FA]">
+                      <tr className="border-b border-[#E2E8F0]">
+                        {["Company Name","Contact","Phone","Email","Address","Notes",""].map(h => <th key={h} className="text-left px-4 py-2.5 text-[11px] font-semibold text-[#64748B] uppercase tracking-wider whitespace-nowrap">{h}</th>)}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {cms.map((c, i) => (
+                        <tr key={c.id} className={`${i < cms.length - 1 ? "border-b border-[#E2E8F0]" : ""} hover:bg-[#F8F9FA] transition-colors group`}>
+                          <td className="px-4 py-2.5 text-[13px] font-medium text-[#0F172A]">{c.company_name}</td>
+                          <td className="px-4 py-2.5 text-[12px] text-[#64748B]">{c.contact_name ?? "—"}</td>
+                          <td className="px-4 py-2.5 text-[12px] text-[#64748B]">{c.phone ?? "—"}</td>
+                          <td className="px-4 py-2.5 text-[12px] text-[#64748B]">{c.email ?? "—"}</td>
+                          <td className="px-4 py-2.5 text-[12px] text-[#64748B] max-w-[160px] truncate">{c.address ?? "—"}</td>
+                          <td className="px-4 py-2.5 text-[12px] text-[#64748B]">{c.notes ?? "—"}</td>
+                          <td className="px-4 py-2.5 text-right opacity-0 group-hover:opacity-100 transition-opacity">
+                            <button onClick={() => openEditCm(c)} className="p-1 rounded text-[#64748B] hover:text-[#0F172A] hover:bg-[#F4F5F7]/[0.08] transition-colors mr-1"><PencilIcon /></button>
+                            <button onClick={() => deleteCm(c)} className="p-1 rounded text-[#64748B] hover:text-red-400 hover:bg-[#F4F5F7]/[0.08] transition-colors"><XIcon /></button>
                           </td>
                         </tr>
                       ))}
