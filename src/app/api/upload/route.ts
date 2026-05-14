@@ -56,7 +56,7 @@ export async function POST(req: NextRequest) {
   }
 
   // Insert DB row
-  const { error: dbError } = await supabase.from("submittals").insert({
+  const { data: inserted, error: dbError } = await supabase.from("submittals").insert({
     file_name:     displayName,
     storage_path:  storagePath,
     mime_type:     file.type || null,
@@ -74,7 +74,7 @@ export async function POST(req: NextRequest) {
     project_id:     projectId,
     status:         "active",
     uploaded_by:    user.id,
-  })
+  }).select("id, file_name, mime_type, file_size, created_at, csi_division, division_name, csi_section, section_name").single()
 
   if (dbError) {
     console.error("DB insert failed:", dbError)
@@ -83,5 +83,5 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Failed to save file record" }, { status: 500 })
   }
 
-  return NextResponse.json({ ok: true })
+  return NextResponse.json({ ok: true, record: inserted })
 }

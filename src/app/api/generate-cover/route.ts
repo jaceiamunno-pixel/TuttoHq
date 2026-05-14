@@ -12,6 +12,7 @@ export async function POST(req: NextRequest) {
   const {
     submittalId,
     projectId,
+    existingId,
     projectName,
     projectNumber,
     projectLocation,
@@ -103,7 +104,7 @@ export async function POST(req: NextRequest) {
   const filename = submittalId ? "submittal_transmittal.pdf" : "cover_sheet.pdf"
 
   // Save merged PDF to project submittal log if a project was selected
-  if (projectId && submittalId) {
+  if (projectId) {
     try {
       const safeName = (description ?? "submittal").replace(/[^a-zA-Z0-9._-]/g, "_")
       const storagePath = `project-submittals/${projectId}/${Date.now()}_${safeName}_transmittal.pdf`
@@ -113,26 +114,40 @@ export async function POST(req: NextRequest) {
         upsert: false,
       })
 
-      const { data: orig } = await supabase.from("submittals")
-        .select("csi_division, division_name, csi_section, section_name, material_name, manufacturer, dimensions")
-        .eq("id", submittalId).maybeSingle()
+      const targetId = existingId || null
 
-      await supabase.from("submittals").insert({
-        file_name:     description?.trim() || safeName,
-        storage_path:  storagePath,
-        mime_type:     "application/pdf",
-        csi_division:  orig?.csi_division  ?? null,
-        division_name: orig?.division_name ?? null,
-        csi_section:   orig?.csi_section   ?? null,
-        section_name:  orig?.section_name  ?? null,
-        material_name: orig?.material_name ?? null,
-        manufacturer:  orig?.manufacturer  ?? null,
-        dimensions:    orig?.dimensions    ?? null,
-        project_id:    projectId,
-        status:        "active",
-        review_status: "Received",
-        uploaded_by:   user.id,
-      })
+      if (targetId) {
+        // UPDATE the existing record (e.g. after direct upload or editing a cover sheet)
+        await supabase.from("submittals").update({
+          file_name:    description?.trim() || safeName,
+          storage_path: storagePath,
+          mime_type:    "application/pdf",
+          project_id:   projectId,
+          review_status: "Received",
+        }).eq("id", targetId)
+      } else if (submittalId) {
+        // INSERT a new project record linked from a library item
+        const { data: orig } = await supabase.from("submittals")
+          .select("csi_division, division_name, csi_section, section_name, material_name, manufacturer, dimensions")
+          .eq("id", submittalId).maybeSingle()
+
+        await supabase.from("submittals").insert({
+          file_name:     description?.trim() || safeName,
+          storage_path:  storagePath,
+          mime_type:     "application/pdf",
+          csi_division:  orig?.csi_division  ?? null,
+          division_name: orig?.division_name ?? null,
+          csi_section:   orig?.csi_section   ?? null,
+          section_name:  orig?.section_name  ?? null,
+          material_name: orig?.material_name ?? null,
+          manufacturer:  orig?.manufacturer  ?? null,
+          dimensions:    orig?.dimensions    ?? null,
+          project_id:    projectId,
+          status:        "active",
+          review_status: "Received",
+          uploaded_by:   user.id,
+        })
+      }
     } catch {
       // Non-fatal: PDF still downloads even if DB save fails
     }

@@ -621,6 +621,7 @@ export default function Home() {
   const [fileModalStep, setFileModalStep] = useState<FileModalStep>("project")
   const [modalProjectId, setModalProjectId] = useState("")
   const [coverForm, setCoverForm]         = useState<CoverFormData | null>(null)
+  const [coverEditId, setCoverEditId]     = useState<string | null>(null)
   const [generatingCover, setGeneratingCover] = useState(false)
 
   // Module navigation
@@ -866,7 +867,29 @@ export default function Home() {
     setCoverForm(null)
   }
 
-  function closeFileModal() { setOpenFileCtx(null); setModalProjectId(""); setCoverForm(null) }
+  function closeFileModal() { setOpenFileCtx(null); setModalProjectId(""); setCoverForm(null); setCoverEditId(null) }
+
+  function openEditCoverSheet(s: SubmittalRecord) {
+    const proj = appProjects.find(p => p.id === s.project_id)
+    const today = new Date().toLocaleDateString("en-US", { month: "2-digit", day: "2-digit", year: "numeric" })
+    setOpenFileCtx({
+      file: { id: s.id, file_name: s.file_name, file_url: "", mime_type: s.mime_type, file_size: s.file_size, created_at: s.created_at },
+      divNum: s.csi_division ?? "", divName: s.division_name ?? "",
+      secCode: s.csi_section ?? "", secName: s.section_name ?? "",
+    })
+    setModalProjectId(s.project_id ?? "")
+    setCoverEditId(s.id)
+    setCoverForm({
+      projectName: proj?.name ?? "", projectNumber: proj?.number ?? "",
+      projectLocation: proj?.location ?? "", gcName: proj?.gc_name ?? "",
+      architect: proj?.architect ?? "", specSectionNo: s.csi_section ?? "",
+      specSectionTitle: s.section_name ?? "",
+      description: s.file_name.replace(/\.[^.]+$/, ""),
+      dateSubmitted: today, submittalNo: "1",
+      reviewedBy: "", certifiedBy: "", notes: "",
+    })
+    setFileModalStep("form")
+  }
 
   function openFileDirectly() {
     if (!openFileCtx) return
@@ -909,7 +932,7 @@ export default function Home() {
     if (!coverForm || !openFileCtx) return
     setGeneratingCover(true)
     try {
-      const res = await fetch("/api/generate-cover", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ submittalId: openFileCtx.file.id, projectId: modalProjectId || null, ...coverForm }) })
+      const res = await fetch("/api/generate-cover", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ submittalId: openFileCtx.file.id, projectId: modalProjectId || null, existingId: coverEditId || null, ...coverForm }) })
       if (!res.ok) {
         const errJson = await res.json().catch(() => ({}))
         throw new Error(errJson.error ?? `Server error ${res.status}`)
@@ -923,8 +946,9 @@ export default function Home() {
       a.click()
       document.body.removeChild(a)
       URL.revokeObjectURL(url)
+      const pid = modalProjectId
       closeFileModal()
-      if (modalProjectId) loadSubmittals(modalProjectId)
+      if (pid) loadSubmittals(pid)
     } catch (err) {
       alert("Failed to generate transmittal: " + (err instanceof Error ? err.message : "Unknown error"))
     } finally { setGeneratingCover(false) }
@@ -1609,8 +1633,21 @@ export default function Home() {
       setSectionFiles(prev => { const n = { ...prev }; delete n[uploadSec]; return n })
       refetchSection(uploadSec)
       loadTree()
-      loadSubmittals()
       closeModal()
+
+      // If uploaded directly to a project, immediately prompt for cover sheet
+      if (globalProjectId && data.record) {
+        const rec = data.record
+        const proj = appProjects.find(p => p.id === globalProjectId)
+        const today = new Date().toLocaleDateString("en-US", { month: "2-digit", day: "2-digit", year: "numeric" })
+        setOpenFileCtx({ file: { id: rec.id, file_name: rec.file_name, file_url: "", mime_type: rec.mime_type, file_size: rec.file_size, created_at: rec.created_at }, divNum: rec.csi_division ?? uploadDiv, divName: rec.division_name ?? uploadDivName, secCode: rec.csi_section ?? uploadSec, secName: rec.section_name ?? uploadSecName })
+        setModalProjectId(globalProjectId)
+        setCoverEditId(rec.id)
+        setCoverForm({ projectName: proj?.name ?? "", projectNumber: proj?.number ?? "", projectLocation: proj?.location ?? "", gcName: proj?.gc_name ?? "", architect: proj?.architect ?? "", specSectionNo: rec.csi_section ?? uploadSec, specSectionTitle: rec.section_name ?? uploadSecName, description: rec.file_name.replace(/\.[^.]+$/, ""), dateSubmitted: today, submittalNo: "1", reviewedBy: "", certifiedBy: "", notes: "" })
+        setFileModalStep("form")
+      } else {
+        loadSubmittals()
+      }
     } catch (err) {
       setUploadError(err instanceof Error ? err.message : "Upload failed")
     } finally {
@@ -2132,21 +2169,24 @@ export default function Home() {
                     <td className="px-4 py-2.5">
                       <div className="flex items-center gap-1">
                         <button
-                          onClick={() => handleFileOpen(
-                            { id: s.id, file_name: s.file_name, file_url: "", mime_type: s.mime_type, file_size: s.file_size, created_at: s.created_at },
-                            s.csi_division ?? "", s.division_name ?? "", s.csi_section ?? "", s.section_name ?? "",
-                            s.project_id
-                          )}
+                          onClick={() => window.open(`/api/download/${s.id}`, "_blank")}
                           className="text-[11px] text-[#8b9ab5] hover:text-[#e8edf5] px-2 py-1 rounded hover:bg-white/[0.05] transition-colors"
                         >Open</button>
                         <button
                           onClick={() => openEditModal(s)}
                           className="text-[11px] text-[#8b9ab5] hover:text-[#e8edf5] px-2 py-1 rounded hover:bg-white/[0.05] transition-colors"
                         >Edit</button>
-                        <button
-                          onClick={() => openTransmittal(s)}
-                          className="text-[11px] text-[#60a5fa] hover:text-[#93c5fd] px-2 py-1 rounded hover:bg-white/[0.05] transition-colors"
-                        >Transmittal</button>
+                        {s.project_id ? (
+                          <button
+                            onClick={() => openEditCoverSheet(s)}
+                            className="text-[11px] text-[#60a5fa] hover:text-[#93c5fd] px-2 py-1 rounded hover:bg-white/[0.05] transition-colors"
+                          >Cover Sheet</button>
+                        ) : (
+                          <button
+                            onClick={() => openTransmittal(s)}
+                            className="text-[11px] text-[#60a5fa] hover:text-[#93c5fd] px-2 py-1 rounded hover:bg-white/[0.05] transition-colors"
+                          >Transmittal</button>
+                        )}
                         <button
                           onClick={() => deleteSubmittal(s)}
                           className="text-[11px] text-[#4f617a] hover:text-red-400 px-2 py-1 rounded hover:bg-white/[0.05] transition-colors"
