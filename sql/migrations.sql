@@ -1,3 +1,56 @@
+-- ─── Subcontractors & Suppliers ──────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS subcontractors (
+  id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  company_name   TEXT NOT NULL,
+  trade          TEXT,
+  contact_name   TEXT,
+  phone          TEXT,
+  email          TEXT,
+  license_number TEXT,
+  notes          TEXT,
+  created_at     TIMESTAMPTZ DEFAULT now(),
+  uploaded_by    UUID REFERENCES auth.users(id)
+);
+ALTER TABLE subcontractors ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "auth full subcontractors" ON subcontractors FOR ALL TO authenticated USING (true) WITH CHECK (true);
+
+CREATE TABLE IF NOT EXISTS suppliers (
+  id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  company_name TEXT NOT NULL,
+  specialty    TEXT,
+  contact_name TEXT,
+  phone        TEXT,
+  email        TEXT,
+  website      TEXT,
+  notes        TEXT,
+  created_at   TIMESTAMPTZ DEFAULT now(),
+  uploaded_by  UUID REFERENCES auth.users(id)
+);
+ALTER TABLE suppliers ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "auth full suppliers" ON suppliers FOR ALL TO authenticated USING (true) WITH CHECK (true);
+
+CREATE TABLE IF NOT EXISTS project_subcontractors (
+  id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  project_id       UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  subcontractor_id UUID NOT NULL REFERENCES subcontractors(id) ON DELETE CASCADE,
+  created_at       TIMESTAMPTZ DEFAULT now(),
+  UNIQUE(project_id, subcontractor_id)
+);
+ALTER TABLE project_subcontractors ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "auth full project_subcontractors" ON project_subcontractors FOR ALL TO authenticated USING (true) WITH CHECK (true);
+
+CREATE TABLE IF NOT EXISTS project_suppliers (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  project_id  UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  supplier_id UUID NOT NULL REFERENCES suppliers(id) ON DELETE CASCADE,
+  created_at  TIMESTAMPTZ DEFAULT now(),
+  UNIQUE(project_id, supplier_id)
+);
+ALTER TABLE project_suppliers ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "auth full project_suppliers" ON project_suppliers FOR ALL TO authenticated USING (true) WITH CHECK (true);
+
+ALTER TABLE closeout_items ADD COLUMN IF NOT EXISTS folder_name TEXT;
+
 -- ─── RFI table updates ────────────────────────────────────────────────────────
 ALTER TABLE rfis
   ADD COLUMN IF NOT EXISTS received_from         TEXT,

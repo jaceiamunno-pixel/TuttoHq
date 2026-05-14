@@ -53,6 +53,42 @@ export async function POST(req: NextRequest) {
   // O&M Manuals, Start-Up Reports, Commissioning Reports are added manually via + Add.
   // Training items are added manually via + Add.
 
+  // ── SUBCONTRACTOR FOLDERS — one per project subcontractor ─────────────────
+  const { data: projSubs } = await supabase
+    .from("project_subcontractors")
+    .select("subcontractors(id, company_name)")
+    .eq("project_id", project_id)
+
+  let subIdx = 800
+  for (const row of projSubs ?? []) {
+    const sub = (Array.isArray(row.subcontractors) ? row.subcontractors[0] : row.subcontractors) as { id: string; company_name: string } | null
+    if (!sub) continue
+    const folder = sub.company_name
+    rows.push({ ...base, category: "subcontractors", item_type: "workmanship_warranty",   title: "Workmanship Warranty",       folder_name: folder, sort_order: subIdx++ })
+    rows.push({ ...base, category: "subcontractors", item_type: "lien_waiver_conditional",  title: "Conditional Lien Waiver",    folder_name: folder, sort_order: subIdx++ })
+    rows.push({ ...base, category: "subcontractors", item_type: "lien_waiver_unconditional", title: "Unconditional Lien Waiver",  folder_name: folder, sort_order: subIdx++ })
+    rows.push({ ...base, category: "subcontractors", item_type: "final_pay_app",            title: "Final Pay Application",      folder_name: folder, sort_order: subIdx++ })
+    rows.push({ ...base, category: "subcontractors", item_type: "insurance_cert",           title: "Insurance Certificate",      folder_name: folder, sort_order: subIdx++ })
+    rows.push({ ...base, category: "subcontractors", item_type: "contact_sheet",            title: "Subcontractor Contact Sheet", folder_name: folder, sort_order: subIdx++ })
+  }
+
+  // ── SUPPLIER FOLDERS — one per project supplier ───────────────────────────
+  const { data: projSuppliers } = await supabase
+    .from("project_suppliers")
+    .select("suppliers(id, company_name)")
+    .eq("project_id", project_id)
+
+  let supplIdx = 900
+  for (const row of projSuppliers ?? []) {
+    const suppl = (Array.isArray(row.suppliers) ? row.suppliers[0] : row.suppliers) as { id: string; company_name: string } | null
+    if (!suppl) continue
+    const folder = suppl.company_name
+    rows.push({ ...base, category: "suppliers", item_type: "material_warranty",   title: "Material Warranty",       folder_name: folder, sort_order: supplIdx++ })
+    rows.push({ ...base, category: "suppliers", item_type: "om_manual",           title: "O&M Manual",              folder_name: folder, sort_order: supplIdx++ })
+    rows.push({ ...base, category: "suppliers", item_type: "product_data_sheets", title: "Product Data Sheets",     folder_name: folder, sort_order: supplIdx++ })
+    rows.push({ ...base, category: "suppliers", item_type: "contact_sheet",       title: "Supplier Contact Sheet",  folder_name: folder, sort_order: supplIdx++ })
+  }
+
   const { error } = await supabase.from("closeout_items").insert(rows)
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   return NextResponse.json({ ok: true, generated: rows.length })

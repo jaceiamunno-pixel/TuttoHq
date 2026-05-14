@@ -4,7 +4,16 @@ import { useState, useEffect, useRef } from "react"
 import Link from "next/link"
 import Papa from "papaparse"
 
-type Tab = "company" | "team" | "projects" | "gmail"
+type Tab = "company" | "team" | "projects" | "subcontractors" | "suppliers" | "gmail"
+
+interface Subcontractor {
+  id: string; company_name: string; trade: string | null; contact_name: string | null
+  phone: string | null; email: string | null; license_number: string | null; notes: string | null; created_at: string
+}
+interface Supplier {
+  id: string; company_name: string; specialty: string | null; contact_name: string | null
+  phone: string | null; email: string | null; website: string | null; notes: string | null; created_at: string
+}
 
 interface GmailConnection {
   connected: boolean
@@ -97,6 +106,31 @@ export default function SettingsPage() {
   const [savingProject, setSavingProject] = useState(false)
   const [projectMessage, setProjectMessage] = useState<{ text: string; ok: boolean } | null>(null)
 
+  const [subcontractors, setSubcontractors] = useState<Subcontractor[]>([])
+  const [subsLoading, setSubsLoading]       = useState(false)
+  const [subsLoaded, setSubsLoaded]         = useState(false)
+  const [showSubForm, setShowSubForm]       = useState(false)
+  const [editingSub, setEditingSub]         = useState<Subcontractor | null>(null)
+  const [subForm, setSubForm]               = useState({ company_name: "", trade: "", contact_name: "", phone: "", email: "", license_number: "", notes: "" })
+  const [savingSub, setSavingSub]           = useState(false)
+  const [subMessage, setSubMessage]         = useState<{ text: string; ok: boolean } | null>(null)
+
+  const [suppliers, setSuppliers]           = useState<Supplier[]>([])
+  const [supplLoading, setSupplLoading]     = useState(false)
+  const [supplLoaded, setSupplLoaded]       = useState(false)
+  const [showSupplForm, setShowSupplForm]   = useState(false)
+  const [editingSuppl, setEditingSuppl]     = useState<Supplier | null>(null)
+  const [supplForm, setSupplForm]           = useState({ company_name: "", specialty: "", contact_name: "", phone: "", email: "", website: "", notes: "" })
+  const [savingSuppl, setSavingSuppl]       = useState(false)
+  const [supplMessage, setSupplMessage]     = useState<{ text: string; ok: boolean } | null>(null)
+
+  const [projectSubIds, setProjectSubIds]   = useState<string[]>([])
+  const [projectSupIds, setProjectSupIds]   = useState<string[]>([])
+  const [quickAddSubOpen, setQuickAddSubOpen]   = useState(false)
+  const [quickAddSupplOpen, setQuickAddSupplOpen] = useState(false)
+  const [quickAddName, setQuickAddName]     = useState("")
+  const [quickAddField, setQuickAddField]   = useState("")
+
   const [gmailConn, setGmailConn]         = useState<GmailConnection | null>(null)
   const [gmailLoading, setGmailLoading]   = useState(false)
   const [gmailLoaded, setGmailLoaded]     = useState(false)
@@ -141,15 +175,11 @@ export default function SettingsPage() {
   }, [])
 
   useEffect(() => {
-    if (activeTab === "team" && !teamLoaded) {
-      loadTeam()
-    }
-    if (activeTab === "projects" && !projectsLoaded) {
-      loadProjects()
-    }
-    if (activeTab === "gmail" && !gmailLoaded) {
-      loadGmailConnection()
-    }
+    if (activeTab === "team" && !teamLoaded) loadTeam()
+    if (activeTab === "projects" && !projectsLoaded) loadProjects()
+    if (activeTab === "subcontractors" && !subsLoaded) loadSubs()
+    if (activeTab === "suppliers" && !supplLoaded) loadSuppliers()
+    if (activeTab === "gmail" && !gmailLoaded) loadGmailConnection()
   }, [activeTab])
 
   function loadTeam() {
@@ -338,12 +368,27 @@ export default function SettingsPage() {
   function openAddProject() {
     setEditingProject(null)
     setProjectForm({ name: "", number: "", location: "", gc_name: "", architect: "" })
+    setProjectSubIds([])
+    setProjectSupIds([])
+    if (!subsLoaded) loadSubs()
+    if (!supplLoaded) loadSuppliers()
     setShowProjectForm(true)
   }
 
   function openEditProject(p: Project) {
     setEditingProject(p)
     setProjectForm({ name: p.name, number: p.number ?? "", location: p.location ?? "", gc_name: p.gc_name ?? "", architect: p.architect ?? "" })
+    setProjectSubIds([])
+    setProjectSupIds([])
+    if (!subsLoaded) loadSubs()
+    if (!supplLoaded) loadSuppliers()
+    Promise.all([
+      fetch(`/api/projects/${p.id}/subcontractors`).then(r => r.json()),
+      fetch(`/api/projects/${p.id}/suppliers`).then(r => r.json()),
+    ]).then(([subs, supps]) => {
+      setProjectSubIds((subs ?? []).map((s: { id: string }) => s.id))
+      setProjectSupIds((supps ?? []).map((s: { id: string }) => s.id))
+    }).catch(() => {})
     setShowProjectForm(true)
   }
 
@@ -351,6 +396,8 @@ export default function SettingsPage() {
     setShowProjectForm(false)
     setEditingProject(null)
     setProjectForm({ name: "", number: "", location: "", gc_name: "", architect: "" })
+    setProjectSubIds([])
+    setProjectSupIds([])
   }
 
   async function saveProject(e: React.FormEvent) {
@@ -373,6 +420,11 @@ export default function SettingsPage() {
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error ?? "Save failed")
+      const projectId = data.project.id
+      await Promise.all([
+        fetch(`/api/projects/${projectId}/subcontractors`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ids: projectSubIds }) }),
+        fetch(`/api/projects/${projectId}/suppliers`,      { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ids: projectSupIds }) }),
+      ])
       if (editingProject) {
         setProjects(prev => prev.map(p => p.id === editingProject.id ? data.project : p))
         flashProject("Project updated")
@@ -515,14 +567,105 @@ export default function SettingsPage() {
     setProjectImportResult(null)
   }
 
+  function loadSubs() {
+    setSubsLoading(true)
+    fetch("/api/subcontractors").then(r => r.json()).then(d => { setSubcontractors(d ?? []); setSubsLoaded(true) }).catch(() => {}).finally(() => setSubsLoading(false))
+  }
+  function loadSuppliers() {
+    setSupplLoading(true)
+    fetch("/api/suppliers").then(r => r.json()).then(d => { setSuppliers(d ?? []); setSupplLoaded(true) }).catch(() => {}).finally(() => setSupplLoading(false))
+  }
+  function flashSub(text: string, ok = true) { setSubMessage({ text, ok }); setTimeout(() => setSubMessage(null), 3000) }
+  function flashSuppl(text: string, ok = true) { setSupplMessage({ text, ok }); setTimeout(() => setSupplMessage(null), 3000) }
+
+  function openAddSub() { setEditingSub(null); setSubForm({ company_name: "", trade: "", contact_name: "", phone: "", email: "", license_number: "", notes: "" }); setShowSubForm(true) }
+  function openEditSub(s: Subcontractor) { setEditingSub(s); setSubForm({ company_name: s.company_name, trade: s.trade ?? "", contact_name: s.contact_name ?? "", phone: s.phone ?? "", email: s.email ?? "", license_number: s.license_number ?? "", notes: s.notes ?? "" }); setShowSubForm(true) }
+  function cancelSubForm() { setShowSubForm(false); setEditingSub(null) }
+
+  async function saveSub(e: React.FormEvent) {
+    e.preventDefault()
+    if (!subForm.company_name.trim()) return
+    setSavingSub(true)
+    try {
+      const url = editingSub ? `/api/subcontractors/${editingSub.id}` : "/api/subcontractors"
+      const method = editingSub ? "PATCH" : "POST"
+      const res = await fetch(url, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(subForm) })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error ?? "Save failed")
+      if (editingSub) { setSubcontractors(prev => prev.map(s => s.id === editingSub.id ? data : s)); flashSub("Subcontractor updated") }
+      else { setSubcontractors(prev => [...prev, data]); flashSub("Subcontractor added") }
+      cancelSubForm()
+    } catch { flashSub("Save failed", false) } finally { setSavingSub(false) }
+  }
+
+  async function deleteSub(s: Subcontractor) {
+    if (!window.confirm(`Delete ${s.company_name}?`)) return
+    const res = await fetch(`/api/subcontractors/${s.id}`, { method: "DELETE" })
+    if (res.ok) { setSubcontractors(prev => prev.filter(x => x.id !== s.id)); flashSub("Deleted") }
+    else flashSub("Delete failed", false)
+  }
+
+  function openAddSuppl() { setEditingSuppl(null); setSupplForm({ company_name: "", specialty: "", contact_name: "", phone: "", email: "", website: "", notes: "" }); setShowSupplForm(true) }
+  function openEditSuppl(s: Supplier) { setEditingSuppl(s); setSupplForm({ company_name: s.company_name, specialty: s.specialty ?? "", contact_name: s.contact_name ?? "", phone: s.phone ?? "", email: s.email ?? "", website: s.website ?? "", notes: s.notes ?? "" }); setShowSupplForm(true) }
+  function cancelSupplForm() { setShowSupplForm(false); setEditingSuppl(null) }
+
+  async function saveSuppl(e: React.FormEvent) {
+    e.preventDefault()
+    if (!supplForm.company_name.trim()) return
+    setSavingSuppl(true)
+    try {
+      const url = editingSuppl ? `/api/suppliers/${editingSuppl.id}` : "/api/suppliers"
+      const method = editingSuppl ? "PATCH" : "POST"
+      const res = await fetch(url, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(supplForm) })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error ?? "Save failed")
+      if (editingSuppl) { setSuppliers(prev => prev.map(s => s.id === editingSuppl.id ? data : s)); flashSuppl("Supplier updated") }
+      else { setSuppliers(prev => [...prev, data]); flashSuppl("Supplier added") }
+      cancelSupplForm()
+    } catch { flashSuppl("Save failed", false) } finally { setSavingSuppl(false) }
+  }
+
+  async function deleteSuppl(s: Supplier) {
+    if (!window.confirm(`Delete ${s.company_name}?`)) return
+    const res = await fetch(`/api/suppliers/${s.id}`, { method: "DELETE" })
+    if (res.ok) { setSuppliers(prev => prev.filter(x => x.id !== s.id)); flashSuppl("Deleted") }
+    else flashSuppl("Delete failed", false)
+  }
+
+  async function quickAddSub() {
+    if (!quickAddName.trim()) return
+    const res = await fetch("/api/subcontractors", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ company_name: quickAddName.trim(), trade: quickAddField.trim() || null }) })
+    const data = await res.json()
+    if (res.ok) {
+      setSubcontractors(prev => [...prev, data])
+      setSubsLoaded(true)
+      setProjectSubIds(prev => [...prev, data.id])
+    }
+    setQuickAddSubOpen(false); setQuickAddName(""); setQuickAddField("")
+  }
+
+  async function quickAddSuppl() {
+    if (!quickAddName.trim()) return
+    const res = await fetch("/api/suppliers", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ company_name: quickAddName.trim(), specialty: quickAddField.trim() || null }) })
+    const data = await res.json()
+    if (res.ok) {
+      setSuppliers(prev => [...prev, data])
+      setSupplLoaded(true)
+      setProjectSupIds(prev => [...prev, data.id])
+    }
+    setQuickAddSupplOpen(false); setQuickAddName(""); setQuickAddField("")
+  }
+
   const inputCls = "w-full h-9 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40 focus:border-[#7B9BB5]/50 placeholder:text-[#64748B] transition-all"
   const labelCls = "block text-[12px] font-medium text-[#64748B] mb-1"
 
   const tabs: { key: Tab; label: string }[] = [
-    { key: "company",  label: "Company" },
-    { key: "team",     label: "Team" },
-    { key: "projects", label: "Projects" },
-    { key: "gmail",    label: "Gmail" },
+    { key: "company",        label: "Company" },
+    { key: "team",           label: "Team" },
+    { key: "projects",       label: "Projects" },
+    { key: "subcontractors", label: "Subcontractors" },
+    { key: "suppliers",      label: "Suppliers" },
+    { key: "gmail",          label: "Gmail" },
   ]
 
   return (
@@ -943,6 +1086,60 @@ export default function SettingsPage() {
                         />
                       </div>
                     </div>
+                    {/* Subcontractors on this project */}
+                    <div>
+                      <div className="flex items-center justify-between mb-1.5">
+                        <label className={labelCls}>Subcontractors on this project</label>
+                        <button type="button" onClick={() => { setQuickAddSubOpen(true); setQuickAddName(""); setQuickAddField("") }} className="text-[11px] text-[#7B9BB5] hover:text-[#6A8AA4] transition-colors">+ Add new</button>
+                      </div>
+                      {quickAddSubOpen && (
+                        <div className="flex gap-2 mb-2">
+                          <input autoFocus placeholder="Company name *" value={quickAddName} onChange={e => setQuickAddName(e.target.value)} className="flex-1 h-8 px-2.5 rounded border border-[#E2E8F0] text-[12px] text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40" />
+                          <input placeholder="Trade (optional)" value={quickAddField} onChange={e => setQuickAddField(e.target.value)} className="flex-1 h-8 px-2.5 rounded border border-[#E2E8F0] text-[12px] text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40" />
+                          <button type="button" onClick={quickAddSub} disabled={!quickAddName.trim()} className="h-8 px-3 rounded bg-[#7B9BB5] text-white text-[12px] font-medium hover:bg-[#6A8AA4] transition-colors disabled:opacity-50">Add</button>
+                          <button type="button" onClick={() => setQuickAddSubOpen(false)} className="h-8 px-2 rounded border border-[#E2E8F0] text-[12px] text-[#64748B]">✕</button>
+                        </div>
+                      )}
+                      <div className="min-h-[36px] border border-[#E2E8F0] rounded-md p-2 flex flex-wrap gap-1.5 bg-white">
+                        {projectSubIds.map(id => {
+                          const s = subcontractors.find(x => x.id === id)
+                          if (!s) return null
+                          return <span key={id} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-[#7B9BB5]/10 text-[#7B9BB5] text-[11px] font-medium">{s.company_name}{s.trade ? ` — ${s.trade}` : ""}<button type="button" onClick={() => setProjectSubIds(prev => prev.filter(x => x !== id))} className="ml-0.5 text-[#7B9BB5]/60 hover:text-[#7B9BB5]">✕</button></span>
+                        })}
+                        <select className="h-6 text-[11px] text-[#64748B] bg-transparent border-none focus:outline-none cursor-pointer" value="" onChange={e => { if (e.target.value && !projectSubIds.includes(e.target.value)) setProjectSubIds(prev => [...prev, e.target.value]) }}>
+                          <option value="">+ Select subcontractor…</option>
+                          {subcontractors.filter(s => !projectSubIds.includes(s.id)).map(s => <option key={s.id} value={s.id}>{s.company_name}{s.trade ? ` — ${s.trade}` : ""}</option>)}
+                        </select>
+                      </div>
+                    </div>
+
+                    {/* Suppliers on this project */}
+                    <div>
+                      <div className="flex items-center justify-between mb-1.5">
+                        <label className={labelCls}>Suppliers on this project</label>
+                        <button type="button" onClick={() => { setQuickAddSupplOpen(true); setQuickAddName(""); setQuickAddField("") }} className="text-[11px] text-[#7B9BB5] hover:text-[#6A8AA4] transition-colors">+ Add new</button>
+                      </div>
+                      {quickAddSupplOpen && (
+                        <div className="flex gap-2 mb-2">
+                          <input autoFocus placeholder="Company name *" value={quickAddName} onChange={e => setQuickAddName(e.target.value)} className="flex-1 h-8 px-2.5 rounded border border-[#E2E8F0] text-[12px] text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40" />
+                          <input placeholder="Material/Specialty (optional)" value={quickAddField} onChange={e => setQuickAddField(e.target.value)} className="flex-1 h-8 px-2.5 rounded border border-[#E2E8F0] text-[12px] text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40" />
+                          <button type="button" onClick={quickAddSuppl} disabled={!quickAddName.trim()} className="h-8 px-3 rounded bg-[#7B9BB5] text-white text-[12px] font-medium hover:bg-[#6A8AA4] transition-colors disabled:opacity-50">Add</button>
+                          <button type="button" onClick={() => setQuickAddSupplOpen(false)} className="h-8 px-2 rounded border border-[#E2E8F0] text-[12px] text-[#64748B]">✕</button>
+                        </div>
+                      )}
+                      <div className="min-h-[36px] border border-[#E2E8F0] rounded-md p-2 flex flex-wrap gap-1.5 bg-white">
+                        {projectSupIds.map(id => {
+                          const s = suppliers.find(x => x.id === id)
+                          if (!s) return null
+                          return <span key={id} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 text-[11px] font-medium">{s.company_name}{s.specialty ? ` — ${s.specialty}` : ""}<button type="button" onClick={() => setProjectSupIds(prev => prev.filter(x => x !== id))} className="ml-0.5 text-amber-500/60 hover:text-amber-700">✕</button></span>
+                        })}
+                        <select className="h-6 text-[11px] text-[#64748B] bg-transparent border-none focus:outline-none cursor-pointer" value="" onChange={e => { if (e.target.value && !projectSupIds.includes(e.target.value)) setProjectSupIds(prev => [...prev, e.target.value]) }}>
+                          <option value="">+ Select supplier…</option>
+                          {suppliers.filter(s => !projectSupIds.includes(s.id)).map(s => <option key={s.id} value={s.id}>{s.company_name}{s.specialty ? ` — ${s.specialty}` : ""}</option>)}
+                        </select>
+                      </div>
+                    </div>
+
                     <div className="flex justify-end gap-2 pt-1">
                       <button
                         type="button"
@@ -1103,6 +1300,150 @@ export default function SettingsPage() {
                 {projectMessage.text}
               </div>
             )}
+          </div>
+        )}
+
+        {activeTab === "subcontractors" && (
+          <div className="space-y-4">
+            {subMessage && <div className={`px-4 py-2.5 rounded-lg text-[13px] ${subMessage.ok ? "bg-green-50 text-green-700 border border-green-200" : "bg-red-50 text-red-700 border border-red-200"}`}>{subMessage.text}</div>}
+            <div className="bg-white rounded-xl border border-[#E2E8F0] overflow-hidden">
+              <div className="flex items-center justify-between px-5 py-4 border-b border-[#E2E8F0]">
+                <div>
+                  <h2 className="text-[14px] font-semibold text-[#0F172A]">Subcontractors</h2>
+                  <p className="text-[12px] text-[#64748B] mt-0.5">Global list of subcontractors reusable across all projects.</p>
+                </div>
+                {!showSubForm && <button onClick={openAddSub} className="h-8 px-3 rounded-md bg-[#7B9BB5] text-white text-[13px] font-medium hover:bg-[#6A8AA4] transition-colors flex items-center gap-1.5"><PlusIcon /> Add subcontractor</button>}
+              </div>
+
+              {showSubForm && (
+                <div className="px-5 py-4 border-b border-[#E2E8F0] bg-[#F4F5F7]/50">
+                  <p className="text-[13px] font-semibold text-[#0F172A] mb-3">{editingSub ? "Edit subcontractor" : "New subcontractor"}</p>
+                  <form onSubmit={saveSub} className="space-y-3">
+                    <div className="grid grid-cols-2 gap-3">
+                      <div><label className={labelCls}>Company Name <span className="text-red-400">*</span></label><input value={subForm.company_name} onChange={e => setSubForm(p => ({ ...p, company_name: e.target.value }))} required autoFocus placeholder="e.g. ABC Electrical" className={inputCls} /></div>
+                      <div><label className={labelCls}>Trade / Specialty</label><input value={subForm.trade} onChange={e => setSubForm(p => ({ ...p, trade: e.target.value }))} placeholder="e.g. Electrical" className={inputCls} /></div>
+                    </div>
+                    <div className="grid grid-cols-3 gap-3">
+                      <div><label className={labelCls}>Contact Name</label><input value={subForm.contact_name} onChange={e => setSubForm(p => ({ ...p, contact_name: e.target.value }))} placeholder="John Smith" className={inputCls} /></div>
+                      <div><label className={labelCls}>Phone</label><input value={subForm.phone} onChange={e => setSubForm(p => ({ ...p, phone: e.target.value }))} placeholder="555-000-1234" className={inputCls} /></div>
+                      <div><label className={labelCls}>Email</label><input value={subForm.email} onChange={e => setSubForm(p => ({ ...p, email: e.target.value }))} placeholder="contact@company.com" className={inputCls} /></div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div><label className={labelCls}>License Number</label><input value={subForm.license_number} onChange={e => setSubForm(p => ({ ...p, license_number: e.target.value }))} placeholder="LIC-123456" className={inputCls} /></div>
+                      <div><label className={labelCls}>Notes</label><input value={subForm.notes} onChange={e => setSubForm(p => ({ ...p, notes: e.target.value }))} placeholder="Any notes…" className={inputCls} /></div>
+                    </div>
+                    <div className="flex justify-end gap-2 pt-1">
+                      <button type="button" onClick={cancelSubForm} className="h-8 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#64748B] hover:text-[#0F172A] transition-colors">Cancel</button>
+                      <button type="submit" disabled={savingSub || !subForm.company_name.trim()} className="h-8 px-4 rounded-md bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors disabled:opacity-50">{savingSub ? "Saving…" : editingSub ? "Save changes" : "Add subcontractor"}</button>
+                    </div>
+                  </form>
+                </div>
+              )}
+
+              {subsLoading && <div className="px-5 py-4 text-[13px] text-[#64748B]">Loading…</div>}
+              {!subsLoading && subcontractors.length === 0 && !showSubForm && (
+                <div className="px-5 py-8 text-center"><p className="text-[13px] text-[#64748B]">No subcontractors yet.</p></div>
+              )}
+              {!subsLoading && subcontractors.length > 0 && (
+                <div className="overflow-x-auto">
+                  <table className="w-full">
+                    <thead className="sticky top-0 bg-[#F8F9FA]">
+                      <tr className="border-b border-[#E2E8F0]">
+                        {["Company Name","Trade","Contact","Phone","Email","License",""].map(h => <th key={h} className="text-left px-4 py-2.5 text-[11px] font-semibold text-[#64748B] uppercase tracking-wider whitespace-nowrap">{h}</th>)}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {subcontractors.map((s, i) => (
+                        <tr key={s.id} className={`${i < subcontractors.length - 1 ? "border-b border-[#E2E8F0]" : ""} hover:bg-[#F8F9FA] transition-colors group`}>
+                          <td className="px-4 py-2.5 text-[13px] font-medium text-[#0F172A]">{s.company_name}</td>
+                          <td className="px-4 py-2.5 text-[12px] text-[#64748B]">{s.trade ?? "—"}</td>
+                          <td className="px-4 py-2.5 text-[12px] text-[#64748B]">{s.contact_name ?? "—"}</td>
+                          <td className="px-4 py-2.5 text-[12px] text-[#64748B]">{s.phone ?? "—"}</td>
+                          <td className="px-4 py-2.5 text-[12px] text-[#64748B]">{s.email ?? "—"}</td>
+                          <td className="px-4 py-2.5 text-[12px] text-[#64748B]">{s.license_number ?? "—"}</td>
+                          <td className="px-4 py-2.5 text-right opacity-0 group-hover:opacity-100 transition-opacity">
+                            <button onClick={() => openEditSub(s)} className="p-1 rounded text-[#64748B] hover:text-[#0F172A] hover:bg-[#F4F5F7]/[0.08] transition-colors mr-1"><PencilIcon /></button>
+                            <button onClick={() => deleteSub(s)} className="p-1 rounded text-[#64748B] hover:text-red-400 hover:bg-[#F4F5F7]/[0.08] transition-colors"><XIcon /></button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {activeTab === "suppliers" && (
+          <div className="space-y-4">
+            {supplMessage && <div className={`px-4 py-2.5 rounded-lg text-[13px] ${supplMessage.ok ? "bg-green-50 text-green-700 border border-green-200" : "bg-red-50 text-red-700 border border-red-200"}`}>{supplMessage.text}</div>}
+            <div className="bg-white rounded-xl border border-[#E2E8F0] overflow-hidden">
+              <div className="flex items-center justify-between px-5 py-4 border-b border-[#E2E8F0]">
+                <div>
+                  <h2 className="text-[14px] font-semibold text-[#0F172A]">Suppliers</h2>
+                  <p className="text-[12px] text-[#64748B] mt-0.5">Global list of material suppliers reusable across all projects.</p>
+                </div>
+                {!showSupplForm && <button onClick={openAddSuppl} className="h-8 px-3 rounded-md bg-[#7B9BB5] text-white text-[13px] font-medium hover:bg-[#6A8AA4] transition-colors flex items-center gap-1.5"><PlusIcon /> Add supplier</button>}
+              </div>
+
+              {showSupplForm && (
+                <div className="px-5 py-4 border-b border-[#E2E8F0] bg-[#F4F5F7]/50">
+                  <p className="text-[13px] font-semibold text-[#0F172A] mb-3">{editingSuppl ? "Edit supplier" : "New supplier"}</p>
+                  <form onSubmit={saveSuppl} className="space-y-3">
+                    <div className="grid grid-cols-2 gap-3">
+                      <div><label className={labelCls}>Company Name <span className="text-red-400">*</span></label><input value={supplForm.company_name} onChange={e => setSupplForm(p => ({ ...p, company_name: e.target.value }))} required autoFocus placeholder="e.g. XYZ Lumber Supply" className={inputCls} /></div>
+                      <div><label className={labelCls}>Material / Specialty</label><input value={supplForm.specialty} onChange={e => setSupplForm(p => ({ ...p, specialty: e.target.value }))} placeholder="e.g. Structural Steel" className={inputCls} /></div>
+                    </div>
+                    <div className="grid grid-cols-3 gap-3">
+                      <div><label className={labelCls}>Contact Name</label><input value={supplForm.contact_name} onChange={e => setSupplForm(p => ({ ...p, contact_name: e.target.value }))} placeholder="Jane Doe" className={inputCls} /></div>
+                      <div><label className={labelCls}>Phone</label><input value={supplForm.phone} onChange={e => setSupplForm(p => ({ ...p, phone: e.target.value }))} placeholder="555-000-1234" className={inputCls} /></div>
+                      <div><label className={labelCls}>Email</label><input value={supplForm.email} onChange={e => setSupplForm(p => ({ ...p, email: e.target.value }))} placeholder="contact@supplier.com" className={inputCls} /></div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div><label className={labelCls}>Website</label><input value={supplForm.website} onChange={e => setSupplForm(p => ({ ...p, website: e.target.value }))} placeholder="https://supplier.com" className={inputCls} /></div>
+                      <div><label className={labelCls}>Notes</label><input value={supplForm.notes} onChange={e => setSupplForm(p => ({ ...p, notes: e.target.value }))} placeholder="Any notes…" className={inputCls} /></div>
+                    </div>
+                    <div className="flex justify-end gap-2 pt-1">
+                      <button type="button" onClick={cancelSupplForm} className="h-8 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#64748B] hover:text-[#0F172A] transition-colors">Cancel</button>
+                      <button type="submit" disabled={savingSuppl || !supplForm.company_name.trim()} className="h-8 px-4 rounded-md bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors disabled:opacity-50">{savingSuppl ? "Saving…" : editingSuppl ? "Save changes" : "Add supplier"}</button>
+                    </div>
+                  </form>
+                </div>
+              )}
+
+              {supplLoading && <div className="px-5 py-4 text-[13px] text-[#64748B]">Loading…</div>}
+              {!supplLoading && suppliers.length === 0 && !showSupplForm && (
+                <div className="px-5 py-8 text-center"><p className="text-[13px] text-[#64748B]">No suppliers yet.</p></div>
+              )}
+              {!supplLoading && suppliers.length > 0 && (
+                <div className="overflow-x-auto">
+                  <table className="w-full">
+                    <thead className="sticky top-0 bg-[#F8F9FA]">
+                      <tr className="border-b border-[#E2E8F0]">
+                        {["Company Name","Material/Specialty","Contact","Phone","Email","Website",""].map(h => <th key={h} className="text-left px-4 py-2.5 text-[11px] font-semibold text-[#64748B] uppercase tracking-wider whitespace-nowrap">{h}</th>)}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {suppliers.map((s, i) => (
+                        <tr key={s.id} className={`${i < suppliers.length - 1 ? "border-b border-[#E2E8F0]" : ""} hover:bg-[#F8F9FA] transition-colors group`}>
+                          <td className="px-4 py-2.5 text-[13px] font-medium text-[#0F172A]">{s.company_name}</td>
+                          <td className="px-4 py-2.5 text-[12px] text-[#64748B]">{s.specialty ?? "—"}</td>
+                          <td className="px-4 py-2.5 text-[12px] text-[#64748B]">{s.contact_name ?? "—"}</td>
+                          <td className="px-4 py-2.5 text-[12px] text-[#64748B]">{s.phone ?? "—"}</td>
+                          <td className="px-4 py-2.5 text-[12px] text-[#64748B]">{s.email ?? "—"}</td>
+                          <td className="px-4 py-2.5 text-[12px] text-[#64748B]">{s.website ? <a href={s.website} target="_blank" rel="noopener noreferrer" className="text-[#7B9BB5] hover:underline">{s.website.replace(/^https?:\/\//, "")}</a> : "—"}</td>
+                          <td className="px-4 py-2.5 text-right opacity-0 group-hover:opacity-100 transition-opacity">
+                            <button onClick={() => openEditSuppl(s)} className="p-1 rounded text-[#64748B] hover:text-[#0F172A] hover:bg-[#F4F5F7]/[0.08] transition-colors mr-1"><PencilIcon /></button>
+                            <button onClick={() => deleteSuppl(s)} className="p-1 rounded text-[#64748B] hover:text-red-400 hover:bg-[#F4F5F7]/[0.08] transition-colors"><XIcon /></button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
           </div>
         )}
 

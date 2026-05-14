@@ -80,7 +80,7 @@ interface ChangeOrder {
 interface PunchItem { id: string; item_number: string; description: string; location: string | null; assigned_to: string | null; due_date: string | null; priority: string; status: string; notes: string | null; project_id: string | null; created_at: string; completed_at: string | null; uploaded_by: string; generated_pdf_path?: string | null; file_name?: string | null; file_path?: string | null }
 interface DailyReport { id: string; report_date: string; project_id: string | null; prepared_by: string | null; weather_conditions: string | null; temperature: string | null; manpower_count: number | null; work_performed: string | null; equipment: string | null; materials_delivered: string | null; visitors: string | null; issues_delays: string | null; safety_notes: string | null; created_at: string; uploaded_by: string; generated_pdf_path?: string | null; file_name?: string | null; file_path?: string | null }
 interface DrawingRecord { id: string; drawing_number: string; sheet_title: string; discipline: string | null; revision: string; revision_date: string | null; status: string; scale: string | null; notes: string | null; project_id: string | null; is_current: boolean; superseded_at: string | null; created_at: string; uploaded_by: string; generated_pdf_path?: string | null; file_name?: string | null; file_path?: string | null }
-interface CloseoutItem { id: string; project_id: string; category: string; item_type: string; title: string; status: string; assigned_to: string | null; due_date: string | null; file_url: string | null; file_name: string | null; notes: string | null; sort_order: number; linked_record_id: string | null; linked_record_type: string | null; completed_at: string | null; created_at: string }
+interface CloseoutItem { id: string; project_id: string; category: string; item_type: string; title: string; status: string; assigned_to: string | null; due_date: string | null; file_url: string | null; file_name: string | null; notes: string | null; sort_order: number; folder_name: string | null; linked_record_id: string | null; linked_record_type: string | null; completed_at: string | null; created_at: string }
 type FileModalStep = "project" | "coversheet" | "form"
 interface OpenFileCtx { file: SubmittalFile; divNum: string; divName: string; secCode: string; secName: string }
 interface CoverFormData { projectName: string; projectNumber: string; projectLocation: string; gcName: string; architect: string; specSectionNo: string; specSectionTitle: string; description: string; dateSubmitted: string; submittalNo: string; reviewedBy: string; certifiedBy: string; notes: string }
@@ -771,6 +771,10 @@ export default function Home() {
   const [newCloseoutTitle, setNewCloseoutTitle]   = useState("")
   const [newCloseoutAssigned, setNewCloseoutAssigned] = useState("")
   const [newCloseoutDue, setNewCloseoutDue]       = useState("")
+  const [newCloseoutFolder, setNewCloseoutFolder] = useState("")
+  const [showAddFolder, setShowAddFolder]         = useState(false)
+  const [newFolderName, setNewFolderName]         = useState("")
+  const [newFolderType, setNewFolderType]         = useState<"subcontractors"|"suppliers">("subcontractors")
   const closeoutFileRef = useRef<HTMLInputElement>(null)
   const [closeoutUploadingId, setCloseoutUploadingId] = useState<string | null>(null)
 
@@ -1142,15 +1146,45 @@ export default function Home() {
     loadCloseout()
   }
 
+  async function addCloseoutFolder() {
+    if (!newFolderName.trim() || !globalProjectId) return
+    const folderItems = newFolderType === "subcontractors"
+      ? [
+          { title: "Workmanship Warranty",       item_type: "workmanship_warranty" },
+          { title: "Conditional Lien Waiver",    item_type: "lien_waiver_conditional" },
+          { title: "Unconditional Lien Waiver",  item_type: "lien_waiver_unconditional" },
+          { title: "Final Pay Application",      item_type: "final_pay_app" },
+          { title: "Insurance Certificate",      item_type: "insurance_cert" },
+          { title: "Subcontractor Contact Sheet", item_type: "contact_sheet" },
+        ]
+      : [
+          { title: "Material Warranty",    item_type: "material_warranty" },
+          { title: "O&M Manual",           item_type: "om_manual" },
+          { title: "Product Data Sheets",  item_type: "product_data_sheets" },
+          { title: "Supplier Contact Sheet", item_type: "contact_sheet" },
+        ]
+    const maxOrder = closeoutItems.filter(i => i.category === newFolderType).reduce((m, i) => Math.max(m, i.sort_order), 0)
+    let idx = maxOrder + 1
+    for (const item of folderItems) {
+      await fetch("/api/closeout", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ project_id: globalProjectId, category: newFolderType, item_type: item.item_type, title: item.title, folder_name: newFolderName.trim(), sort_order: idx++, status: "incomplete" }),
+      })
+    }
+    setShowAddFolder(false); setNewFolderName(""); setNewFolderType("subcontractors")
+    loadCloseout()
+  }
+
   async function addCloseoutItem() {
     if (!newCloseoutTitle.trim() || !globalProjectId) return
-    const maxOrder = closeoutItems.filter(i => i.category === newCloseoutCategory).reduce((m, i) => Math.max(m, i.sort_order), 0)
+    const maxOrder = closeoutItems.filter(i => i.category === newCloseoutCategory && (!newCloseoutFolder || i.folder_name === newCloseoutFolder)).reduce((m, i) => Math.max(m, i.sort_order), 0)
     await fetch("/api/closeout", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         project_id: globalProjectId,
         category: newCloseoutCategory,
+        folder_name: newCloseoutFolder || null,
         item_type: "custom",
         title: newCloseoutTitle.trim(),
         assigned_to: newCloseoutAssigned || null,
@@ -1162,6 +1196,7 @@ export default function Home() {
     setNewCloseoutTitle("")
     setNewCloseoutAssigned("")
     setNewCloseoutDue("")
+    setNewCloseoutFolder("")
     loadCloseout()
   }
 
@@ -2085,6 +2120,14 @@ export default function Home() {
               )}
               {globalProjectId && closeoutItems.length > 0 && (
                 <button
+                  onClick={() => setShowAddFolder(true)}
+                  className="h-8 px-3 rounded-md border border-[#E2E8F0] text-[#64748B] text-[12px] font-semibold hover:border-[#E2E8F0] hover:text-[#0F172A] transition-colors flex items-center gap-1.5"
+                >
+                  <PlusIcon /> Add Folder
+                </button>
+              )}
+              {globalProjectId && closeoutItems.length > 0 && (
+                <button
                   disabled={closeoutGenerating}
                   onClick={async () => {
                     setCloseoutGenerating(true)
@@ -2631,13 +2674,17 @@ export default function Home() {
             const docStoredDone  = docStoredItems.filter(i => i.status === "complete").length
             const docTotal = docStoredItems.length + closeoutAllSubmittals.length + closeoutAllRFIs.length + closeoutAllCOs.length + closeoutAllDrawings.length
             const docDone  = docStoredDone + approvedSubs + resolvedRFIs + approvedCOs + asBuiltDwgs
+            const subItems  = closeoutItems.filter(i => i.category === "subcontractors")
+            const supplItems = closeoutItems.filter(i => i.category === "suppliers")
             const CATS = [
-              { key: "documents",   label: "Documents",   total: docTotal, done: docDone },
-              { key: "inspections", label: "Inspections", total: closeoutItems.filter(i=>i.category==="inspections").length, done: closeoutItems.filter(i=>i.category==="inspections"&&i.status==="complete").length },
-              { key: "financial",   label: "Financial",   total: closeoutItems.filter(i=>i.category==="financial").length,   done: closeoutItems.filter(i=>i.category==="financial"&&i.status==="complete").length },
-              { key: "training",    label: "Training",    total: closeoutItems.filter(i=>i.category==="training").length,    done: closeoutItems.filter(i=>i.category==="training"&&i.status==="complete").length },
-              { key: "handover",    label: "Handover",    total: closeoutItems.filter(i=>i.category==="handover").length,    done: closeoutItems.filter(i=>i.category==="handover"&&i.status==="complete").length },
-              { key: "warranties",  label: "Warranties",  total: closeoutItems.filter(i=>i.category==="warranties").length,  done: closeoutItems.filter(i=>i.category==="warranties"&&i.status==="complete").length },
+              { key: "documents",      label: "Documents",      total: docTotal, done: docDone },
+              { key: "inspections",    label: "Inspections",    total: closeoutItems.filter(i=>i.category==="inspections").length,    done: closeoutItems.filter(i=>i.category==="inspections"&&i.status==="complete").length },
+              { key: "financial",      label: "Financial",      total: closeoutItems.filter(i=>i.category==="financial").length,      done: closeoutItems.filter(i=>i.category==="financial"&&i.status==="complete").length },
+              { key: "warranties",     label: "Warranties",     total: closeoutItems.filter(i=>i.category==="warranties").length,     done: closeoutItems.filter(i=>i.category==="warranties"&&i.status==="complete").length },
+              { key: "handover",       label: "Handover",       total: closeoutItems.filter(i=>i.category==="handover").length,       done: closeoutItems.filter(i=>i.category==="handover"&&i.status==="complete").length },
+              { key: "subcontractors", label: "Subcontractors", total: subItems.length,  done: subItems.filter(i=>i.status==="complete").length },
+              { key: "suppliers",      label: "Suppliers",      total: supplItems.length, done: supplItems.filter(i=>i.status==="complete").length },
+              { key: "training",       label: "Training",       total: closeoutItems.filter(i=>i.category==="training").length,       done: closeoutItems.filter(i=>i.category==="training"&&i.status==="complete").length },
             ]
             return (
               <>
@@ -2877,7 +2924,7 @@ export default function Home() {
                     })()}
 
                     {/* ── STANDARD CHECKLIST CATEGORIES (Inspections, Financial, Training, Handover, Warranties) ── */}
-                    {CATS.filter(c => c.key !== "documents").map(cat => {
+                    {CATS.filter(c => c.key !== "documents" && c.key !== "subcontractors" && c.key !== "suppliers").map(cat => {
                       const items = closeoutItems.filter(i => i.category === cat.key)
                       return (
                         <div key={cat.key} className="bg-white rounded-xl border border-[#E2E8F0] overflow-hidden">
@@ -2976,6 +3023,226 @@ export default function Home() {
                       )
                     })}
 
+                    {/* ── SUBCONTRACTOR FOLDERS ─────────────────────────────── */}
+                    {subItems.length > 0 && (() => {
+                      const folders = [...new Set(subItems.map(i => i.folder_name).filter(Boolean))] as string[]
+                      const unfolderedItems = subItems.filter(i => !i.folder_name)
+                      return (
+                        <div className="bg-white rounded-xl border border-[#E2E8F0] overflow-hidden">
+                          <div className="flex items-center justify-between px-4 py-3 border-b border-[#E2E8F0]">
+                            <div className="flex items-center gap-2">
+                              <span className="text-[13px] font-bold text-[#0F172A]">Subcontractors</span>
+                              <span className="text-[11px] text-[#64748B]">{subItems.filter(i=>i.status==="complete").length}/{subItems.length} complete</span>
+                            </div>
+                            <button onClick={() => { setNewFolderType("subcontractors"); setShowAddFolder(true) }} className="text-[11px] text-[#64748B] hover:text-[#0F172A] transition-colors flex items-center gap-1"><PlusIcon /> Add Folder</button>
+                          </div>
+                          {folders.map(folder => {
+                            const folderItems = subItems.filter(i => i.folder_name === folder)
+                            const folderDone = folderItems.filter(i => i.status === "complete").length
+                            return (
+                              <div key={folder} className="border-b border-[#E2E8F0]/40 last:border-0">
+                                <div className="flex items-center justify-between px-4 py-2 bg-[#F8F9FA]">
+                                  <div className="flex items-center gap-2">
+                                    <svg className="w-3.5 h-3.5 text-[#64748B] flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" /></svg>
+                                    <span className="text-[12px] font-bold text-[#0F172A]">{folder}</span>
+                                  </div>
+                                  <span className="text-[10px] text-[#64748B]">{folderDone}/{folderItems.length}</span>
+                                </div>
+                                {folderItems.map(item => {
+                                  const isEditing = closeoutEditId === item.id
+                                  return (
+                                    <div key={item.id} className="border-b border-[#E2E8F0]/20 last:border-0">
+                                      <div className={`flex items-center gap-3 px-4 pl-10 py-2.5 hover:bg-[#0F172A]/[0.02] transition-colors ${isEditing ? "bg-[#0F172A]/[0.02]" : ""}`}>
+                                        <button title={`Click to mark ${cycleStatus(item.status)}`} onClick={() => updateCloseoutItem(item.id, { status: cycleStatus(item.status) })}
+                                          className="flex-shrink-0 w-4 h-4 rounded-full border-2 transition-all hover:scale-110"
+                                          style={{ borderColor: dotColor(item.status), backgroundColor: item.status === "complete" ? dotColor(item.status) : "transparent" }} />
+                                        <span className={`flex-1 text-[12px] font-medium truncate ${item.status === "complete" ? "text-[#64748B] line-through" : "text-[#0F172A]"}`}>{item.title}</span>
+                                        <span className={`text-[11px] font-semibold flex-shrink-0 hidden sm:block ${labelColor(item.status)}`}>{statusLabel(item.status)}</span>
+                                        {item.file_name ? (
+                                          <span className="text-[11px] text-emerald-400 flex-shrink-0 hidden lg:block">attached</span>
+                                        ) : (
+                                          <button onClick={() => { setCloseoutUploadingId(item.id); closeoutFileRef.current?.click() }} disabled={closeoutUploadingId === item.id}
+                                            className="text-[11px] text-[#64748B] hover:text-[#7B9BB5] flex-shrink-0 hidden lg:block disabled:opacity-50">
+                                            {closeoutUploadingId === item.id ? "Uploading…" : "+ Doc"}
+                                          </button>
+                                        )}
+                                        <div className="flex items-center gap-1 flex-shrink-0">
+                                          <button onClick={() => { if (isEditing) { setCloseoutEditId(null); return } setCloseoutEditId(item.id); setCloseoutEditTitle(item.title); setCloseoutEditAssigned(item.assigned_to ?? ""); setCloseoutEditDue(item.due_date ?? ""); setCloseoutEditNotes(item.notes ?? "") }}
+                                            className={`text-[11px] px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors ${isEditing ? "text-[#7B9BB5]" : "text-[#64748B]"}`}>
+                                            {isEditing ? "Close" : "Edit"}
+                                          </button>
+                                          <button onClick={() => deleteCloseoutItem(item.id)} className="text-[11px] text-[#64748B] hover:text-red-400 px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors">Del</button>
+                                        </div>
+                                      </div>
+                                      {isEditing && (
+                                        <div className="px-4 pl-10 pb-4 pt-2 border-t border-[#E2E8F0]/40 bg-white/30 space-y-3">
+                                          <div className="grid grid-cols-2 gap-3">
+                                            <div><label className="block text-[11px] font-medium text-[#64748B] mb-1">Title</label>
+                                              <input value={closeoutEditTitle} onChange={e => setCloseoutEditTitle(e.target.value)} className="w-full h-8 px-2 rounded border border-[#E2E8F0] bg-white text-[12px] text-[#0F172A] focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40" /></div>
+                                            <div><label className="block text-[11px] font-medium text-[#64748B] mb-1">Status</label>
+                                              <select value={item.status} onChange={e => updateCloseoutItem(item.id, { status: e.target.value })} className="w-full h-8 px-2 rounded border border-[#E2E8F0] bg-white text-[12px] text-[#0F172A] focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40">
+                                                <option value="incomplete">Incomplete</option><option value="in_progress">In Progress</option><option value="complete">Complete</option>
+                                              </select></div>
+                                            <div><label className="block text-[11px] font-medium text-[#64748B] mb-1">Notes</label>
+                                              <input value={closeoutEditNotes} onChange={e => setCloseoutEditNotes(e.target.value)} className="w-full h-8 px-2 rounded border border-[#E2E8F0] bg-white text-[12px] text-[#0F172A] focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40" /></div>
+                                            <div><label className="block text-[11px] font-medium text-[#64748B] mb-1">Due Date</label>
+                                              <input type="date" value={closeoutEditDue} onChange={e => setCloseoutEditDue(e.target.value)} className="w-full h-8 px-2 rounded border border-[#E2E8F0] bg-white text-[12px] text-[#0F172A] focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40" /></div>
+                                          </div>
+                                          <div className="flex items-center gap-2">
+                                            <button onClick={() => { setCloseoutUploadingId(item.id); closeoutFileRef.current?.click() }} className="text-[11px] text-[#64748B] hover:text-[#7B9BB5] px-2 py-1 border border-[#E2E8F0] rounded transition-colors">
+                                              {item.file_name ? `attached: ${item.file_name.slice(0,25)}` : "+ Upload Document"}
+                                            </button>
+                                            <div className="flex-1" />
+                                            <button onClick={() => setCloseoutEditId(null)} className="text-[12px] text-[#64748B] px-3 py-1.5 rounded">Cancel</button>
+                                            <button onClick={async () => { await updateCloseoutItem(item.id, { title: closeoutEditTitle, due_date: closeoutEditDue || null, notes: closeoutEditNotes || null }); setCloseoutEditId(null) }}
+                                              className="text-[12px] font-semibold text-white bg-[#7B9BB5] hover:bg-[#6A8AA4] px-4 py-1.5 rounded">Save</button>
+                                          </div>
+                                        </div>
+                                      )}
+                                    </div>
+                                  )
+                                })}
+                                <div className="px-4 pl-10 py-1.5">
+                                  <button onClick={() => { setNewCloseoutCategory("subcontractors"); setNewCloseoutFolder(folder); setShowNewCloseout(true) }}
+                                    className="text-[11px] text-[#64748B] hover:text-[#7B9BB5] transition-colors flex items-center gap-1">
+                                    <PlusIcon /> Add item to {folder}
+                                  </button>
+                                </div>
+                              </div>
+                            )
+                          })}
+                          {unfolderedItems.map(item => {
+                            const isEditing = closeoutEditId === item.id
+                            return (
+                              <div key={item.id} className="border-b border-[#E2E8F0]/40 last:border-0">
+                                <div className={`flex items-center gap-3 px-4 py-3 hover:bg-[#0F172A]/[0.02] transition-colors ${isEditing ? "bg-[#0F172A]/[0.02]" : ""}`}>
+                                  <button onClick={() => updateCloseoutItem(item.id, { status: cycleStatus(item.status) })}
+                                    className="flex-shrink-0 w-5 h-5 rounded-full border-2 transition-all hover:scale-110"
+                                    style={{ borderColor: dotColor(item.status), backgroundColor: item.status === "complete" ? dotColor(item.status) : "transparent" }} />
+                                  <span className={`flex-1 text-[13px] font-medium truncate ${item.status === "complete" ? "text-[#64748B] line-through" : "text-[#0F172A]"}`}>{item.title}</span>
+                                  <span className={`text-[11px] font-semibold flex-shrink-0 hidden sm:block ${labelColor(item.status)}`}>{statusLabel(item.status)}</span>
+                                  <button onClick={() => deleteCloseoutItem(item.id)} className="text-[11px] text-[#64748B] hover:text-red-400 px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors">Del</button>
+                                </div>
+                              </div>
+                            )
+                          })}
+                          {folders.length === 0 && unfolderedItems.length === 0 && (
+                            <div className="px-4 py-3 text-[12px] text-[#64748B] italic">No subcontractor folders. Use + Add Folder to create one.</div>
+                          )}
+                        </div>
+                      )
+                    })()}
+
+                    {/* ── SUPPLIER FOLDERS ──────────────────────────────────── */}
+                    {supplItems.length > 0 && (() => {
+                      const folders = [...new Set(supplItems.map(i => i.folder_name).filter(Boolean))] as string[]
+                      const unfolderedItems = supplItems.filter(i => !i.folder_name)
+                      return (
+                        <div className="bg-white rounded-xl border border-[#E2E8F0] overflow-hidden">
+                          <div className="flex items-center justify-between px-4 py-3 border-b border-[#E2E8F0]">
+                            <div className="flex items-center gap-2">
+                              <span className="text-[13px] font-bold text-[#0F172A]">Suppliers</span>
+                              <span className="text-[11px] text-[#64748B]">{supplItems.filter(i=>i.status==="complete").length}/{supplItems.length} complete</span>
+                            </div>
+                            <button onClick={() => { setNewFolderType("suppliers"); setShowAddFolder(true) }} className="text-[11px] text-[#64748B] hover:text-[#0F172A] transition-colors flex items-center gap-1"><PlusIcon /> Add Folder</button>
+                          </div>
+                          {folders.map(folder => {
+                            const folderItems = supplItems.filter(i => i.folder_name === folder)
+                            const folderDone = folderItems.filter(i => i.status === "complete").length
+                            return (
+                              <div key={folder} className="border-b border-[#E2E8F0]/40 last:border-0">
+                                <div className="flex items-center justify-between px-4 py-2 bg-[#F8F9FA]">
+                                  <div className="flex items-center gap-2">
+                                    <svg className="w-3.5 h-3.5 text-[#64748B] flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" /></svg>
+                                    <span className="text-[12px] font-bold text-[#0F172A]">{folder}</span>
+                                  </div>
+                                  <span className="text-[10px] text-[#64748B]">{folderDone}/{folderItems.length}</span>
+                                </div>
+                                {folderItems.map(item => {
+                                  const isEditing = closeoutEditId === item.id
+                                  return (
+                                    <div key={item.id} className="border-b border-[#E2E8F0]/20 last:border-0">
+                                      <div className={`flex items-center gap-3 px-4 pl-10 py-2.5 hover:bg-[#0F172A]/[0.02] transition-colors ${isEditing ? "bg-[#0F172A]/[0.02]" : ""}`}>
+                                        <button title={`Click to mark ${cycleStatus(item.status)}`} onClick={() => updateCloseoutItem(item.id, { status: cycleStatus(item.status) })}
+                                          className="flex-shrink-0 w-4 h-4 rounded-full border-2 transition-all hover:scale-110"
+                                          style={{ borderColor: dotColor(item.status), backgroundColor: item.status === "complete" ? dotColor(item.status) : "transparent" }} />
+                                        <span className={`flex-1 text-[12px] font-medium truncate ${item.status === "complete" ? "text-[#64748B] line-through" : "text-[#0F172A]"}`}>{item.title}</span>
+                                        <span className={`text-[11px] font-semibold flex-shrink-0 hidden sm:block ${labelColor(item.status)}`}>{statusLabel(item.status)}</span>
+                                        {item.file_name ? (
+                                          <span className="text-[11px] text-emerald-400 flex-shrink-0 hidden lg:block">attached</span>
+                                        ) : (
+                                          <button onClick={() => { setCloseoutUploadingId(item.id); closeoutFileRef.current?.click() }} disabled={closeoutUploadingId === item.id}
+                                            className="text-[11px] text-[#64748B] hover:text-[#7B9BB5] flex-shrink-0 hidden lg:block disabled:opacity-50">
+                                            {closeoutUploadingId === item.id ? "Uploading…" : "+ Doc"}
+                                          </button>
+                                        )}
+                                        <div className="flex items-center gap-1 flex-shrink-0">
+                                          <button onClick={() => { if (isEditing) { setCloseoutEditId(null); return } setCloseoutEditId(item.id); setCloseoutEditTitle(item.title); setCloseoutEditAssigned(item.assigned_to ?? ""); setCloseoutEditDue(item.due_date ?? ""); setCloseoutEditNotes(item.notes ?? "") }}
+                                            className={`text-[11px] px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors ${isEditing ? "text-[#7B9BB5]" : "text-[#64748B]"}`}>
+                                            {isEditing ? "Close" : "Edit"}
+                                          </button>
+                                          <button onClick={() => deleteCloseoutItem(item.id)} className="text-[11px] text-[#64748B] hover:text-red-400 px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors">Del</button>
+                                        </div>
+                                      </div>
+                                      {isEditing && (
+                                        <div className="px-4 pl-10 pb-4 pt-2 border-t border-[#E2E8F0]/40 bg-white/30 space-y-3">
+                                          <div className="grid grid-cols-2 gap-3">
+                                            <div><label className="block text-[11px] font-medium text-[#64748B] mb-1">Title</label>
+                                              <input value={closeoutEditTitle} onChange={e => setCloseoutEditTitle(e.target.value)} className="w-full h-8 px-2 rounded border border-[#E2E8F0] bg-white text-[12px] text-[#0F172A] focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40" /></div>
+                                            <div><label className="block text-[11px] font-medium text-[#64748B] mb-1">Status</label>
+                                              <select value={item.status} onChange={e => updateCloseoutItem(item.id, { status: e.target.value })} className="w-full h-8 px-2 rounded border border-[#E2E8F0] bg-white text-[12px] text-[#0F172A] focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40">
+                                                <option value="incomplete">Incomplete</option><option value="in_progress">In Progress</option><option value="complete">Complete</option>
+                                              </select></div>
+                                            <div><label className="block text-[11px] font-medium text-[#64748B] mb-1">Notes</label>
+                                              <input value={closeoutEditNotes} onChange={e => setCloseoutEditNotes(e.target.value)} className="w-full h-8 px-2 rounded border border-[#E2E8F0] bg-white text-[12px] text-[#0F172A] focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40" /></div>
+                                            <div><label className="block text-[11px] font-medium text-[#64748B] mb-1">Due Date</label>
+                                              <input type="date" value={closeoutEditDue} onChange={e => setCloseoutEditDue(e.target.value)} className="w-full h-8 px-2 rounded border border-[#E2E8F0] bg-white text-[12px] text-[#0F172A] focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40" /></div>
+                                          </div>
+                                          <div className="flex items-center gap-2">
+                                            <button onClick={() => { setCloseoutUploadingId(item.id); closeoutFileRef.current?.click() }} className="text-[11px] text-[#64748B] hover:text-[#7B9BB5] px-2 py-1 border border-[#E2E8F0] rounded transition-colors">
+                                              {item.file_name ? `attached: ${item.file_name.slice(0,25)}` : "+ Upload Document"}
+                                            </button>
+                                            <div className="flex-1" />
+                                            <button onClick={() => setCloseoutEditId(null)} className="text-[12px] text-[#64748B] px-3 py-1.5 rounded">Cancel</button>
+                                            <button onClick={async () => { await updateCloseoutItem(item.id, { title: closeoutEditTitle, due_date: closeoutEditDue || null, notes: closeoutEditNotes || null }); setCloseoutEditId(null) }}
+                                              className="text-[12px] font-semibold text-white bg-[#7B9BB5] hover:bg-[#6A8AA4] px-4 py-1.5 rounded">Save</button>
+                                          </div>
+                                        </div>
+                                      )}
+                                    </div>
+                                  )
+                                })}
+                                <div className="px-4 pl-10 py-1.5">
+                                  <button onClick={() => { setNewCloseoutCategory("suppliers"); setNewCloseoutFolder(folder); setShowNewCloseout(true) }}
+                                    className="text-[11px] text-[#64748B] hover:text-[#7B9BB5] transition-colors flex items-center gap-1">
+                                    <PlusIcon /> Add item to {folder}
+                                  </button>
+                                </div>
+                              </div>
+                            )
+                          })}
+                          {unfolderedItems.map(item => {
+                            const isEditing = closeoutEditId === item.id
+                            return (
+                              <div key={item.id} className="border-b border-[#E2E8F0]/40 last:border-0">
+                                <div className={`flex items-center gap-3 px-4 py-3 hover:bg-[#0F172A]/[0.02] transition-colors ${isEditing ? "bg-[#0F172A]/[0.02]" : ""}`}>
+                                  <button onClick={() => updateCloseoutItem(item.id, { status: cycleStatus(item.status) })}
+                                    className="flex-shrink-0 w-5 h-5 rounded-full border-2 transition-all hover:scale-110"
+                                    style={{ borderColor: dotColor(item.status), backgroundColor: item.status === "complete" ? dotColor(item.status) : "transparent" }} />
+                                  <span className={`flex-1 text-[13px] font-medium truncate ${item.status === "complete" ? "text-[#64748B] line-through" : "text-[#0F172A]"}`}>{item.title}</span>
+                                  <span className={`text-[11px] font-semibold flex-shrink-0 hidden sm:block ${labelColor(item.status)}`}>{statusLabel(item.status)}</span>
+                                  <button onClick={() => deleteCloseoutItem(item.id)} className="text-[11px] text-[#64748B] hover:text-red-400 px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors">Del</button>
+                                </div>
+                              </div>
+                            )
+                          })}
+                          {folders.length === 0 && unfolderedItems.length === 0 && (
+                            <div className="px-4 py-3 text-[12px] text-[#64748B] italic">No supplier folders. Use + Add Folder to create one.</div>
+                          )}
+                        </div>
+                      )
+                    })()}
+
                     {/* All clear */}
                     {openPunchCount === 0 && closeoutSubmittals.length === 0 && closeoutRFIs.length === 0 && closeoutCOs.length === 0 && closeoutDrawings.length === 0 && closeoutItems.every(i => i.status === "complete") && (
                       <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-6 text-center">
@@ -3007,15 +3274,29 @@ export default function Home() {
             <div className="space-y-3">
               <div>
                 <label className={labelCls}>Category</label>
-                <select value={newCloseoutCategory} onChange={e => setNewCloseoutCategory(e.target.value)} className={inputCls}>
+                <select value={newCloseoutCategory} onChange={e => { setNewCloseoutCategory(e.target.value); setNewCloseoutFolder("") }} className={inputCls}>
                   <option value="documents">Documents</option>
                   <option value="inspections">Inspections</option>
                   <option value="financial">Financial</option>
                   <option value="training">Training</option>
                   <option value="handover">Handover</option>
                   <option value="warranties">Warranties</option>
+                  <option value="subcontractors">Subcontractors</option>
+                  <option value="suppliers">Suppliers</option>
                 </select>
               </div>
+              {(newCloseoutCategory === "subcontractors" || newCloseoutCategory === "suppliers") && (() => {
+                const folderOptions = [...new Set(closeoutItems.filter(i => i.category === newCloseoutCategory && i.folder_name).map(i => i.folder_name))] as string[]
+                return (
+                  <div>
+                    <label className={labelCls}>Folder (Company)</label>
+                    <select value={newCloseoutFolder} onChange={e => setNewCloseoutFolder(e.target.value)} className={inputCls}>
+                      <option value="">No folder</option>
+                      {folderOptions.map(f => <option key={f} value={f}>{f}</option>)}
+                    </select>
+                  </div>
+                )
+              })()}
               <div>
                 <label className={labelCls}>Title <span className="text-red-400">*</span></label>
                 <input value={newCloseoutTitle} onChange={e => setNewCloseoutTitle(e.target.value)} placeholder="e.g. O&M Manual — Elevator" className={inputCls} autoFocus />
@@ -3034,8 +3315,38 @@ export default function Home() {
                 </div>
               </div>
               <div className="flex justify-end gap-2 pt-2">
-                <button onClick={() => setShowNewCloseout(false)} className="h-9 px-4 rounded-md text-[13px] text-[#64748B] hover:text-[#64748B] transition-colors">Cancel</button>
+                <button onClick={() => { setShowNewCloseout(false); setNewCloseoutFolder("") }} className="h-9 px-4 rounded-md text-[13px] text-[#64748B] hover:text-[#64748B] transition-colors">Cancel</button>
                 <button onClick={addCloseoutItem} disabled={!newCloseoutTitle.trim()} className="h-9 px-5 rounded-md bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors disabled:opacity-50">Add Item</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Add Closeout Folder modal ────────────────────────────────────── */}
+      {showAddFolder && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center" onClick={e => { if (e.target === e.currentTarget) setShowAddFolder(false) }}>
+          <div className="bg-white rounded-xl border border-[#E2E8F0] shadow-2xl w-[420px] p-6">
+            <div className="flex items-center justify-between mb-5">
+              <h2 className="text-[15px] font-bold text-[#0F172A]">Add Folder</h2>
+              <button onClick={() => setShowAddFolder(false)} className="text-[#64748B] hover:text-[#64748B] transition-colors"><XIcon className="h-4 w-4" /></button>
+            </div>
+            <div className="space-y-3">
+              <div>
+                <label className={labelCls}>Type</label>
+                <select value={newFolderType} onChange={e => setNewFolderType(e.target.value as "subcontractors"|"suppliers")} className={inputCls}>
+                  <option value="subcontractors">Subcontractor</option>
+                  <option value="suppliers">Supplier</option>
+                </select>
+              </div>
+              <div>
+                <label className={labelCls}>Company Name <span className="text-red-400">*</span></label>
+                <input value={newFolderName} onChange={e => setNewFolderName(e.target.value)} placeholder="e.g. ABC Electrical" className={inputCls} autoFocus />
+              </div>
+              <p className="text-[11px] text-[#64748B]">Default line items will be created automatically for this folder.</p>
+              <div className="flex justify-end gap-2 pt-2">
+                <button onClick={() => { setShowAddFolder(false); setNewFolderName("") }} className="h-9 px-4 rounded-md text-[13px] text-[#64748B] hover:text-[#64748B] transition-colors">Cancel</button>
+                <button onClick={addCloseoutFolder} disabled={!newFolderName.trim()} className="h-9 px-5 rounded-md bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors disabled:opacity-50">Create Folder</button>
               </div>
             </div>
           </div>
