@@ -2125,9 +2125,9 @@ export default function Home() {
               </button>
             </div>
           ) : (
-            <div className="mx-4 my-4 rounded-xl border border-[#2E3A52] overflow-clip bg-[#141929]">
+            <div className="mx-4 my-4 rounded-xl border border-[#2E3A52] overflow-clip bg-[#1E2535]">
             <table className="w-full text-[13px] border-collapse">
-              <thead className="sticky top-0 bg-[#0A0F1E] z-10">
+              <thead className="sticky top-0 bg-[#141929] z-10">
                 <tr className="border-b border-[#2E3A52]">
                   <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-10">#</th>
                   <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest">Title</th>
@@ -2225,9 +2225,9 @@ export default function Home() {
                 </button>
               </div>
             ) : (
-              <div className="mx-4 my-4 rounded-xl border border-[#2E3A52] overflow-clip bg-[#141929]">
+              <div className="mx-4 my-4 rounded-xl border border-[#2E3A52] overflow-clip bg-[#1E2535]">
             <table className="w-full text-[13px] border-collapse">
-                <thead className="sticky top-0 bg-[#0A0F1E] z-10">
+                <thead className="sticky top-0 bg-[#141929] z-10">
                   <tr className="border-b border-[#2E3A52]">
                     <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-24">RFI #</th>
                     <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest">Subject</th>
@@ -2327,9 +2327,9 @@ export default function Home() {
                     </button>
                   </div>
                 ) : (
-                  <div className="mx-4 my-4 rounded-xl border border-[#2E3A52] overflow-clip bg-[#141929]">
+                  <div className="mx-4 my-4 rounded-xl border border-[#2E3A52] overflow-clip bg-[#1E2535]">
             <table className="w-full text-[13px] border-collapse">
-                    <thead className="sticky top-0 bg-[#0A0F1E] z-10">
+                    <thead className="sticky top-0 bg-[#141929] z-10">
                       <tr className="border-b border-[#2E3A52]">
                         <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-20">CO #</th>
                         <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-32">Project</th>
@@ -2409,9 +2409,9 @@ export default function Home() {
                 </button>
               </div>
             ) : (
-              <div className="mx-4 my-4 rounded-xl border border-[#2E3A52] overflow-clip bg-[#141929]">
+              <div className="mx-4 my-4 rounded-xl border border-[#2E3A52] overflow-clip bg-[#1E2535]">
             <table className="w-full text-[13px] border-collapse">
-                <thead className="sticky top-0 bg-[#0A0F1E] z-10">
+                <thead className="sticky top-0 bg-[#141929] z-10">
                   <tr className="border-b border-[#2E3A52]">
                     <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-10">#</th>
                     <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-20">Item</th>
@@ -2482,9 +2482,9 @@ export default function Home() {
                 </button>
               </div>
             ) : (
-              <div className="mx-4 my-4 rounded-xl border border-[#2E3A52] overflow-clip bg-[#141929]">
+              <div className="mx-4 my-4 rounded-xl border border-[#2E3A52] overflow-clip bg-[#1E2535]">
             <table className="w-full text-[13px] border-collapse">
-                <thead className="sticky top-0 bg-[#0A0F1E] z-10">
+                <thead className="sticky top-0 bg-[#141929] z-10">
                   <tr className="border-b border-[#2E3A52]">
                     <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-10">#</th>
                     <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-28">Date</th>
@@ -2545,9 +2545,9 @@ export default function Home() {
                 </button>
               </div>
             ) : (
-              <div className="mx-4 my-4 rounded-xl border border-[#2E3A52] overflow-clip bg-[#141929]">
+              <div className="mx-4 my-4 rounded-xl border border-[#2E3A52] overflow-clip bg-[#1E2535]">
             <table className="w-full text-[13px] border-collapse">
-                <thead className="sticky top-0 bg-[#0A0F1E] z-10">
+                <thead className="sticky top-0 bg-[#141929] z-10">
                   <tr className="border-b border-[#2E3A52]">
                     <th className="w-8" />
                     <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-28">Drawing No.</th>
