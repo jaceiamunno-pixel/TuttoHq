@@ -391,62 +391,62 @@ function SpinnerIcon({ className = "h-3 w-3" }: { className?: string }) {
 }
 
 const STATUS_STYLES: Record<string, string> = {
-  "Received":               "bg-[#7B9BB5]/15 text-[#7B9BB5]",
+  "Received":               "bg-blue-100 text-blue-700",
   "Under Review":           "bg-amber-100 text-amber-700",
   "Approved":               "bg-green-100 text-green-700",
-  "Approved with Comments": "bg-[#7B9BB5]/15 text-[#7B9BB5]",
+  "Approved with Comments": "bg-blue-100 text-blue-700",
   "Rejected":               "bg-red-100 text-red-700",
   "Revise and Resubmit":    "bg-amber-100 text-amber-700",
   "Needs Review":           "bg-amber-100 text-amber-700",
 }
 function StatusBadge({ status }: { status: string }) {
-  const cls = STATUS_STYLES[status] ?? "bg-[#F4DFD0] text-[#64748B]"
+  const cls = STATUS_STYLES[status] ?? "bg-gray-100 text-gray-500"
   return <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-semibold ${cls}`}>{status}</span>
 }
 
 const RFI_STATUS_STYLES: Record<string, string> = {
-  "Open":         "bg-[#7B9BB5]/15 text-[#7B9BB5]",
+  "Open":         "bg-blue-100 text-blue-700",
   "Under Review": "bg-amber-100 text-amber-700",
-  "Answered":     "bg-[#7B9BB5]/15 text-[#7B9BB5]",
+  "Answered":     "bg-blue-100 text-blue-700",
   "Closed":       "bg-green-100 text-green-700",
-  "Void":         "bg-[#F4DFD0] text-[#64748B]",
+  "Void":         "bg-gray-100 text-gray-500",
 }
 function RfiStatusBadge({ status }: { status: string }) {
-  const cls = RFI_STATUS_STYLES[status] ?? "bg-[#F4DFD0] text-[#64748B]"
+  const cls = RFI_STATUS_STYLES[status] ?? "bg-gray-100 text-gray-500"
   return <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-semibold ${cls}`}>{status}</span>
 }
 
 const PUNCH_STATUS_STYLES: Record<string, string> = {
-  "Open":        "bg-[#7B9BB5]/15 text-[#7B9BB5]",
+  "Open":        "bg-blue-100 text-blue-700",
   "In Progress": "bg-amber-100 text-amber-700",
   "Completed":   "bg-green-100 text-green-700",
-  "Void":        "bg-[#F4DFD0] text-[#64748B]",
+  "Void":        "bg-gray-100 text-gray-500",
 }
 const PUNCH_PRIORITY_STYLES: Record<string, string> = {
-  "Low":      "bg-[#F4DFD0] text-[#64748B]",
-  "Medium":   "bg-[#7B9BB5]/15 text-[#7B9BB5]",
+  "Low":      "bg-gray-100 text-gray-500",
+  "Medium":   "bg-blue-100 text-blue-700",
   "High":     "bg-amber-100 text-amber-700",
   "Critical": "bg-red-100 text-red-700",
 }
 function PunchStatusBadge({ status }: { status: string }) {
-  const cls = PUNCH_STATUS_STYLES[status] ?? "bg-[#F4DFD0] text-[#64748B]"
+  const cls = PUNCH_STATUS_STYLES[status] ?? "bg-gray-100 text-gray-500"
   return <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-semibold ${cls}`}>{status}</span>
 }
 function PunchPriorityBadge({ priority }: { priority: string }) {
-  const cls = PUNCH_PRIORITY_STYLES[priority] ?? "bg-[#F4DFD0] text-[#64748B]"
+  const cls = PUNCH_PRIORITY_STYLES[priority] ?? "bg-gray-100 text-gray-500"
   return <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-semibold ${cls}`}>{priority}</span>
 }
 
 const DRAWING_STATUS_STYLES: Record<string, string> = {
   "Issued for Construction": "bg-green-100 text-green-700",
-  "Issued for Bid":          "bg-[#7B9BB5]/15 text-[#7B9BB5]",
+  "Issued for Bid":          "bg-blue-100 text-blue-700",
   "Issued for Review":       "bg-amber-100 text-amber-700",
-  "Record Drawings":         "bg-[#7B9BB5]/15 text-[#7B9BB5]",
-  "Superseded":              "bg-[#F4DFD0] text-[#64748B]",
+  "Record Drawings":         "bg-blue-100 text-blue-700",
+  "Superseded":              "bg-gray-100 text-gray-500",
   "Void":                    "bg-red-100 text-red-700",
 }
 function DrawingStatusBadge({ status }: { status: string }) {
-  const cls = DRAWING_STATUS_STYLES[status] ?? "bg-[#F4DFD0] text-[#64748B]"
+  const cls = DRAWING_STATUS_STYLES[status] ?? "bg-gray-100 text-gray-500"
   return <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-semibold ${cls}`}>{status}</span>
 }
 
@@ -501,16 +501,16 @@ function Combobox({ value, onChange, options, placeholder, autoFocus }: {
         onChange={e => { onChange(e.target.value); setOpen(true) }}
         onFocus={() => setOpen(true)}
         onKeyDown={e => { if (e.key === "Escape") setOpen(false) }}
-        className="w-full h-9 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-[#FDF0E8] focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40 focus:border-[#7B9BB5]/50 placeholder:text-[#64748B] transition-all"
+        className="w-full h-9 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40 focus:border-[#7B9BB5]/50 placeholder:text-[#64748B] transition-all"
       />
       {open && filtered.length > 0 && (
-        <div className="absolute z-20 top-full left-0 right-0 mt-1 bg-[#F9E8DA] border border-[#E2E8F0] rounded-md shadow-xl max-h-44 overflow-y-auto">
+        <div className="absolute z-20 top-full left-0 right-0 mt-1 bg-white border border-[#E2E8F0] rounded-md shadow-xl max-h-44 overflow-y-auto">
           {filtered.map(opt => (
             <button
               key={opt}
               type="button"
               onMouseDown={e => { e.preventDefault(); onChange(opt); setOpen(false) }}
-              className="w-full text-left px-3 py-1.5 text-[13px] text-[#0F172A] hover:bg-[#FDF0E8]/[0.07] transition-colors"
+              className="w-full text-left px-3 py-1.5 text-[13px] text-[#0F172A] hover:bg-white/[0.07] transition-colors"
             >
               {opt}
             </button>
@@ -1663,31 +1663,31 @@ export default function Home() {
 
   const isSearchMode = searchResults !== null || searching
 
-  const inputCls = "w-full h-9 px-3 rounded-md border border-[#E2E8F0] text-[14px] text-[#0F172A] bg-[#FDF0E8] focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40 focus:border-[#7B9BB5]/50 placeholder:text-[#64748B] transition-all"
+  const inputCls = "w-full h-9 px-3 rounded-md border border-[#E2E8F0] text-[14px] text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40 focus:border-[#7B9BB5]/50 placeholder:text-[#64748B] transition-all"
   const labelCls = "block text-[11px] font-semibold text-[#64748B] uppercase tracking-[0.08em] mb-1.5"
 
   return (
-    <div className="flex min-h-screen bg-[#FDF0E8]">
+    <div className="flex min-h-screen bg-[#F4F5F7]">
 
       {/* ── Sidebar ───────────────────────────────────────────────────────── */}
       {sidebarOpen && (
         <div className="fixed inset-0 z-30" onClick={() => { setSidebarOpen(false); sessionStorage.setItem("sidebarOpen", "false") }} />
       )}
-      <aside className={`fixed left-0 top-0 h-screen z-40 bg-[#F9E8DA] border-r border-[#E2E8F0] flex flex-col overflow-hidden transition-[width] duration-200 ease-in-out ${sidebarOpen ? "w-80" : "w-12"}`}>
+      <aside className={`fixed left-0 top-0 h-screen z-40 bg-[#0A1628] border-r border-white/10 flex flex-col overflow-hidden transition-[width] duration-200 ease-in-out ${sidebarOpen ? "w-80" : "w-12"}`}>
 
         {/* Rail header — always visible */}
-        <div className="flex-shrink-0 flex items-center justify-between h-12 px-3 border-b border-[#E2E8F0]">
+        <div className="flex-shrink-0 flex items-center justify-between h-12 px-3 border-b border-white/10">
           <div className="flex items-center gap-2.5 min-w-0">
             <div className="w-6 h-6 rounded-md bg-[#7B9BB5]/10 border border-[#7B9BB5]/30 flex items-center justify-center flex-shrink-0">
               <svg className="w-3.5 h-3.5 text-[#7B9BB5]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
               </svg>
             </div>
-            {sidebarOpen && <span className="text-[14px] font-bold text-[#0F172A] tracking-tight truncate">TuttoHQ</span>}
+            {sidebarOpen && <span className="text-[14px] font-bold text-[#F8FAFC] tracking-tight truncate">TuttoHQ</span>}
           </div>
           <button
             onClick={() => { const next = !sidebarOpen; setSidebarOpen(next); sessionStorage.setItem("sidebarOpen", String(next)) }}
-            className="w-5 h-5 flex items-center justify-center text-[#64748B] hover:text-[#64748B] transition-colors flex-shrink-0 rounded hover:bg-[#0F172A]/[0.04]"
+            className="w-5 h-5 flex items-center justify-center text-[#94A3B8] hover:text-[#94A3B8] transition-colors flex-shrink-0 rounded hover:bg-white/[0.08]"
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={sidebarOpen ? "M15 19l-7-7 7-7" : "M9 5l7 7-7 7"} />
@@ -1696,13 +1696,13 @@ export default function Home() {
         </div>
 
         {/* Expanded sidebar body */}
-        {sidebarOpen && <><p className="text-[11px] text-[#64748B] px-5 pt-2 pb-1">Construction Documents</p>
+        {sidebarOpen && <><p className="text-[11px] text-[#94A3B8] px-5 pt-2 pb-1">Construction Documents</p>
 
         {/* Search */}
         <div className="flex-shrink-0 px-3 pb-2">
           <form onSubmit={handleSearch}>
             <div className="relative">
-              <div className="absolute inset-y-0 left-0 flex items-center pl-2.5 pointer-events-none text-[#64748B]">
+              <div className="absolute inset-y-0 left-0 flex items-center pl-2.5 pointer-events-none text-[#94A3B8]">
                 <SearchIcon />
               </div>
               <input
@@ -1712,13 +1712,13 @@ export default function Home() {
                 onChange={e => setQuery(e.target.value)}
                 onKeyDown={e => e.key === "Escape" && clearSearch()}
                 placeholder="Search submittals…"
-                className="w-full h-8 pl-8 pr-6 rounded-md text-[13px] bg-[#FDF0E8] border border-[#E2E8F0] text-[#0F172A] placeholder-[#64748B] focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40 focus:border-[#7B9BB5]/50 transition-all"
+                className="w-full h-8 pl-8 pr-6 rounded-md text-[13px] bg-white/[0.08] border border-white/20 text-[#F8FAFC] placeholder-[#94A3B8] focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40 focus:border-[#7B9BB5]/50 transition-all"
               />
               {query && (
                 <button
                   type="button"
                   onClick={clearSearch}
-                  className="absolute inset-y-0 right-0 flex items-center pr-2 text-[#64748B] hover:text-[#64748B] transition-colors"
+                  className="absolute inset-y-0 right-0 flex items-center pr-2 text-[#94A3B8] hover:text-[#94A3B8] transition-colors"
                 >
                   <XIcon />
                 </button>
@@ -1727,7 +1727,7 @@ export default function Home() {
           </form>
         </div>
 
-        <div className="flex-shrink-0 border-t border-[#E2E8F0] mx-3 mt-0.5 mb-1.5" />
+        <div className="flex-shrink-0 border-t border-white/10 mx-3 mt-0.5 mb-1.5" />
 
         {/* Section label + upload button */}
         <div className="flex-shrink-0 px-4 pb-1">
@@ -1738,7 +1738,7 @@ export default function Home() {
             </p>
           )}
         <div className="flex items-center justify-between">
-          <span className="text-[10px] font-bold text-[#64748B] uppercase tracking-widest">
+          <span className="text-[10px] font-bold text-[#94A3B8] uppercase tracking-widest">
             {isSearchMode
               ? (searching ? "Searching…" : `${searchResults?.length ?? 0} results`)
               : "Divisions"}
@@ -1747,7 +1747,7 @@ export default function Home() {
             {isSearchMode && !searching && (
               <button
                 onClick={clearSearch}
-                className="text-[11px] text-[#64748B] hover:text-[#0F172A] transition-colors"
+                className="text-[11px] text-[#94A3B8] hover:text-[#F8FAFC] transition-colors"
               >
                 Clear
               </button>
@@ -1757,21 +1757,21 @@ export default function Home() {
                 <button
                   onClick={() => setShowManage(true)}
                   title="Manage divisions"
-                  className="text-[#64748B] hover:text-[#64748B] transition-colors"
+                  className="text-[#94A3B8] hover:text-[#94A3B8] transition-colors"
                 >
                   <SlidersIcon />
                 </button>
                 <button
                   onClick={() => { setShowBatch(true); setBatchPhase("select"); setBatchItems([]) }}
                   title="Batch upload"
-                  className="text-[#64748B] hover:text-[#64748B] transition-colors"
+                  className="text-[#94A3B8] hover:text-[#94A3B8] transition-colors"
                 >
                   <LayersIcon />
                 </button>
                 <button
                   onClick={() => setShowUpload(true)}
                   title="Upload submittal"
-                  className="text-[#64748B] hover:text-[#64748B] transition-colors"
+                  className="text-[#94A3B8] hover:text-[#94A3B8] transition-colors"
                 >
                   <PlusIcon />
                 </button>
@@ -1785,7 +1785,7 @@ export default function Home() {
         <div className="flex-1 overflow-y-auto px-2 pb-2 min-h-0">
 
           {treeLoading && !isSearchMode && (
-            <div className="flex items-center gap-2 px-3 py-2 text-[13px] text-[#64748B]">
+            <div className="flex items-center gap-2 px-3 py-2 text-[13px] text-[#94A3B8]">
               <SpinnerIcon /> Loading…
             </div>
           )}
@@ -1795,7 +1795,7 @@ export default function Home() {
           )}
 
           {searching && (
-            <div className="flex items-center gap-2 px-3 py-2 text-[13px] text-[#64748B]">
+            <div className="flex items-center gap-2 px-3 py-2 text-[13px] text-[#94A3B8]">
               <SpinnerIcon /> Searching…
             </div>
           )}
@@ -1805,7 +1805,7 @@ export default function Home() {
             <>
               {searchError && <p className="px-3 py-1 text-[12px] text-red-400">{searchError}</p>}
               {searchResults?.length === 0 && (
-                <p className="px-3 py-2 text-[13px] text-[#64748B]">No results for &ldquo;{query}&rdquo;</p>
+                <p className="px-3 py-2 text-[13px] text-[#94A3B8]">No results for &ldquo;{query}&rdquo;</p>
               )}
               {searchResults?.map(file => (
                 <SidebarFileRow
@@ -1825,21 +1825,21 @@ export default function Home() {
               <div key={div.num}>
                 <button
                   onClick={() => toggleDivision(div.num)}
-                  className="w-full flex items-center gap-1.5 h-8 px-2 rounded-md hover:bg-[#0F172A]/[0.04] transition-colors text-left group"
+                  className="w-full flex items-center gap-1.5 h-8 px-2 rounded-md hover:bg-white/[0.08] transition-colors text-left group"
                 >
                   <span className="w-4 flex items-center justify-center flex-shrink-0">
                     <ToggleIcon open={isOpen} />
                   </span>
-                  <span className="text-[11px] font-mono text-[#64748B] w-5 text-right flex-shrink-0">{div.num}</span>
-                  <span className="flex-1 text-[13px] font-semibold text-[#0F172A] truncate">{div.name}</span>
+                  <span className="text-[11px] font-mono text-[#94A3B8] w-5 text-right flex-shrink-0">{div.num}</span>
+                  <span className="flex-1 text-[13px] font-semibold text-[#F8FAFC] truncate">{div.name}</span>
                   {div.file_count > 0 && (
-                    <span className="text-[10px] text-[#64748B] flex-shrink-0 tabular-nums bg-[#7B9BB5]/10 px-1.5 py-0.5 rounded">{div.file_count}</span>
+                    <span className="text-[10px] text-[#94A3B8] flex-shrink-0 tabular-nums bg-white/[0.12] px-1.5 py-0.5 rounded">{div.file_count}</span>
                   )}
                 </button>
 
                 <div className={`grid transition-all duration-150 ${isOpen ? "grid-rows-[1fr]" : "grid-rows-[0fr]"}`}>
                   <div className="overflow-hidden">
-                    <div className="ml-[20px] border-l border-[#E2E8F0] pl-1">
+                    <div className="ml-[20px] border-l border-white/10 pl-1">
                       {div.sections.map(sec => {
                         const secOpen    = openSections.has(sec.code)
                         const secLoading = loadingSections.has(sec.code)
@@ -1848,7 +1848,7 @@ export default function Home() {
                           <div key={sec.code}>
                             <button
                               onClick={() => toggleSection(sec.code)}
-                              className="w-full flex items-center gap-1.5 h-7 px-1.5 rounded-md hover:bg-[#0F172A]/[0.04] transition-colors text-left group"
+                              className="w-full flex items-center gap-1.5 h-7 px-1.5 rounded-md hover:bg-white/[0.08] transition-colors text-left group"
                             >
                               <span className="w-3.5 flex items-center justify-center flex-shrink-0">
                                 {secLoading
@@ -1856,24 +1856,24 @@ export default function Home() {
                                   : <ToggleIcon open={secOpen} />
                                 }
                               </span>
-                              <span className="flex-1 text-[12px] text-[#64748B] truncate">
-                                <span className="font-mono text-[#64748B] mr-1.5">{sec.code}</span>{sec.name}
+                              <span className="flex-1 text-[12px] text-[#94A3B8] truncate">
+                                <span className="font-mono text-[#94A3B8] mr-1.5">{sec.code}</span>{sec.name}
                               </span>
                               {(sec.file_count ?? 0) > 0 && (
-                                <span className="text-[10px] text-[#64748B] flex-shrink-0 tabular-nums bg-[#7B9BB5]/10 px-1.5 py-0.5 rounded">{sec.file_count}</span>
+                                <span className="text-[10px] text-[#94A3B8] flex-shrink-0 tabular-nums bg-white/[0.12] px-1.5 py-0.5 rounded">{sec.file_count}</span>
                               )}
                             </button>
 
                             <div className={`grid transition-all duration-150 ${secOpen ? "grid-rows-[1fr]" : "grid-rows-[0fr]"}`}>
                               <div className="overflow-hidden">
-                                <div className="ml-[14px] border-l border-[#E2E8F0] pl-1">
+                                <div className="ml-[14px] border-l border-white/10 pl-1">
                                   {secLoading && (
-                                    <div className="flex items-center gap-1.5 h-7 px-2 text-[12px] text-[#64748B]">
+                                    <div className="flex items-center gap-1.5 h-7 px-2 text-[12px] text-[#94A3B8]">
                                       <SpinnerIcon className="h-2.5 w-2.5" /> Loading…
                                     </div>
                                   )}
                                   {!secLoading && sectionFiles[sec.code] !== undefined && files.length === 0 && (
-                                    <p className="px-2 h-7 flex items-center text-[12px] text-[#64748B]">Empty</p>
+                                    <p className="px-2 h-7 flex items-center text-[12px] text-[#94A3B8]">Empty</p>
                                   )}
                                   {!secLoading && files.map(file => (
                                     <SidebarFileRow
@@ -1908,11 +1908,11 @@ export default function Home() {
         </div>
 
         {/* Settings + sign out */}
-        <div className="flex-shrink-0 border-t border-[#E2E8F0]">
+        <div className="flex-shrink-0 border-t border-white/10">
           <div className="px-2 pt-1.5">
             <Link
               href="/settings"
-              className="flex items-center gap-2 h-8 px-2 rounded-md text-[12px] text-[#64748B] hover:bg-[#0F172A]/[0.04] hover:text-[#0F172A] transition-colors"
+              className="flex items-center gap-2 h-8 px-2 rounded-md text-[12px] text-[#94A3B8] hover:bg-white/[0.08] hover:text-[#F8FAFC] transition-colors"
             >
               <svg className="h-3.5 w-3.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
@@ -1922,10 +1922,10 @@ export default function Home() {
             </Link>
           </div>
           <div className="flex items-center justify-between px-3 py-2.5">
-            <span className="text-[11px] text-[#64748B] truncate min-w-0">{userEmail}</span>
+            <span className="text-[11px] text-[#94A3B8] truncate min-w-0">{userEmail}</span>
             <button
               onClick={signOut}
-              className="text-[11px] text-[#64748B] hover:text-[#0F172A] transition-colors flex-shrink-0 ml-2"
+              className="text-[11px] text-[#94A3B8] hover:text-[#F8FAFC] transition-colors flex-shrink-0 ml-2"
             >
               Sign out
             </button>
@@ -1939,19 +1939,19 @@ export default function Home() {
 
         {/* Logo bar */}
         {logoUrl && (
-          <div className="flex-shrink-0 border-b border-[#E2E8F0] flex items-center justify-end px-6 py-2 bg-[#F9E8DA]">
+          <div className="flex-shrink-0 flex items-center justify-end px-6 py-2 bg-[#0A1628]">
             <img src={logoUrl} alt="Company logo" className="h-7 max-w-[160px] object-contain" />
           </div>
         )}
 
         {/* Module navigation */}
-        <div className="flex-shrink-0 border-b border-[#6A8AA4] bg-[#7B9BB5] flex items-center px-4 gap-0.5">
+        <div className="flex-shrink-0 border-b border-white/[0.12] bg-[#0A1628] flex items-center px-4 gap-0.5">
           {(["submittals","rfis","changeorders","punch","daily","drawings","closeout"] as const).map(mod => {
             const labels: Record<string, string> = { submittals: "Submittals", rfis: "RFIs", changeorders: "Change Orders", punch: "Punch List", daily: "Daily Reports", drawings: "Drawing Log", closeout: "Closeout" }
             const isActive = activeModule === mod
             return (
               <button key={mod} onClick={() => setActiveModule(mod)}
-                className={`px-3 py-3 text-[13px] font-medium border-b-2 transition-colors whitespace-nowrap ${isActive ? "border-white text-white font-semibold" : "border-transparent text-white/70 hover:text-white"}`}>
+                className={`px-3 py-3 text-[13px] font-medium border-b-2 transition-colors whitespace-nowrap ${isActive ? "border-white text-white font-semibold" : "border-transparent text-[#94A3B8] hover:text-white"}`}>
                 {labels[mod]}
                 {mod === "closeout" && globalProjectId && closeoutItems.length > 0 && (() => {
                   const pct = Math.round(closeoutItems.filter(i => i.status === "complete").length / closeoutItems.length * 100)
@@ -1968,7 +1968,7 @@ export default function Home() {
                 <select
                   value={globalProjectId}
                   onChange={e => setGlobalProjectId(e.target.value)}
-                  className="h-7 pl-3 pr-7 rounded-md border border-white/30 bg-[#FDF0E8]/20 text-[12px] text-white appearance-none cursor-pointer hover:bg-[#FDF0E8]/30 transition-colors focus:outline-none focus:border-white backdrop-blur-sm"
+                  className="h-7 pl-3 pr-7 rounded-md border border-white/30 bg-[#1E3A5F] text-[12px] text-white appearance-none cursor-pointer hover:bg-[#1E3A5F]/80 transition-colors focus:outline-none focus:border-white backdrop-blur-sm"
                 >
                   <option value="">All Projects</option>
                   {appProjects.map(p => (
@@ -1988,7 +1988,7 @@ export default function Home() {
 
         {/* Submittal action bar */}
         {activeModule === "submittals" && (
-        <div className="flex-shrink-0 border-b border-[#E2E8F0] bg-[#F9E8DA] flex items-center justify-between px-4 py-2.5">
+        <div className="flex-shrink-0 border-b border-[#E2E8F0] bg-white flex items-center justify-between px-4 py-2.5">
           <p className="text-[13px] font-semibold text-[#0F172A]">Submittal Log <span className="text-[#64748B] font-normal ml-1">({logSubmittals.length})</span></p>
           <div className="flex items-center gap-2">
             <button
@@ -2009,7 +2009,7 @@ export default function Home() {
 
         {/* RFI action bar */}
         {activeModule === "rfis" && (
-          <div className="flex-shrink-0 border-b border-[#E2E8F0] bg-[#F9E8DA] flex items-center justify-between px-4 py-2.5">
+          <div className="flex-shrink-0 border-b border-[#E2E8F0] bg-white flex items-center justify-between px-4 py-2.5">
             <p className="text-[13px] font-semibold text-[#0F172A]">RFI Log <span className="text-[#64748B] font-normal ml-1">({rfis.length})</span></p>
             <button onClick={() => setShowNewRfi(true)} className="h-8 px-4 rounded-md bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors flex items-center gap-1.5">
               <PlusIcon /> New RFI
@@ -2019,7 +2019,7 @@ export default function Home() {
 
         {/* Change Orders action bar */}
         {activeModule === "changeorders" && (
-          <div className="flex-shrink-0 border-b border-[#E2E8F0] bg-[#F9E8DA] flex items-center justify-between px-4 py-2.5">
+          <div className="flex-shrink-0 border-b border-[#E2E8F0] bg-white flex items-center justify-between px-4 py-2.5">
             <p className="text-[13px] font-semibold text-[#0F172A]">Change Orders <span className="text-[#64748B] font-normal ml-1">({changeOrders.length})</span></p>
             <button onClick={() => setShowNewCo(true)} className="h-8 px-4 rounded-md bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors flex items-center gap-1.5">
               <PlusIcon /> New CO
@@ -2029,7 +2029,7 @@ export default function Home() {
 
         {/* Punch list action bar */}
         {activeModule === "punch" && (
-          <div className="flex-shrink-0 border-b border-[#E2E8F0] bg-[#F9E8DA] flex items-center justify-between px-4 py-2.5">
+          <div className="flex-shrink-0 border-b border-[#E2E8F0] bg-white flex items-center justify-between px-4 py-2.5">
             <div className="flex items-center gap-3">
               <p className="text-[13px] font-semibold text-[#0F172A]">Punch List <span className="text-[#64748B] font-normal ml-1">({punchItems.filter(p => p.status !== "Void").length} items)</span></p>
               {punchItems.filter(p => p.status === "Open" || p.status === "In Progress").length > 0 && (
@@ -2044,7 +2044,7 @@ export default function Home() {
 
         {/* Daily reports action bar */}
         {activeModule === "daily" && (
-          <div className="flex-shrink-0 border-b border-[#E2E8F0] bg-[#F9E8DA] flex items-center justify-between px-4 py-2.5">
+          <div className="flex-shrink-0 border-b border-[#E2E8F0] bg-white flex items-center justify-between px-4 py-2.5">
             <p className="text-[13px] font-semibold text-[#0F172A]">Daily Reports <span className="text-[#64748B] font-normal ml-1">({dailyReports.length})</span></p>
             <button onClick={() => setShowNewDaily(true)} className="h-8 px-4 rounded-md bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors flex items-center gap-1.5">
               <PlusIcon /> New Report
@@ -2054,7 +2054,7 @@ export default function Home() {
 
         {/* Drawing log action bar */}
         {activeModule === "drawings" && (
-          <div className="flex-shrink-0 border-b border-[#E2E8F0] bg-[#F9E8DA] flex items-center justify-between px-4 py-2.5">
+          <div className="flex-shrink-0 border-b border-[#E2E8F0] bg-white flex items-center justify-between px-4 py-2.5">
             <p className="text-[13px] font-semibold text-[#0F172A]">Drawing Log <span className="text-[#64748B] font-normal ml-1">({drawings.filter(d => d.is_current).length} sheets)</span></p>
             <button onClick={() => { setShowNewDrawing(true); setAddRevisionFor(null); resetDwgForm() }} className="h-8 px-4 rounded-md bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors flex items-center gap-1.5">
               <PlusIcon /> Add Drawing
@@ -2064,7 +2064,7 @@ export default function Home() {
 
         {/* Closeout action bar */}
         {activeModule === "closeout" && (
-          <div className="flex-shrink-0 border-b border-[#E2E8F0] bg-[#F9E8DA] flex items-center justify-between px-4 py-2.5">
+          <div className="flex-shrink-0 border-b border-[#E2E8F0] bg-white flex items-center justify-between px-4 py-2.5">
             <div className="flex items-center gap-3">
               <p className="text-[13px] font-semibold text-[#0F172A]">Project Closeout</p>
               {globalProjectId && closeoutItems.length > 0 && (() => {
@@ -2125,9 +2125,9 @@ export default function Home() {
               </button>
             </div>
           ) : (
-            <div className="mx-4 my-4 rounded-xl border border-[#E2E8F0] overflow-clip bg-[#FDF0E8]">
+            <div className="mx-4 my-4 rounded-xl border border-[#E2E8F0] overflow-clip bg-white">
             <table className="w-full text-[13px] border-collapse">
-              <thead className="sticky top-0 bg-[#F9E8DA] z-10">
+              <thead className="sticky top-0 bg-[#F8F9FA] z-10">
                 <tr className="border-b border-[#E2E8F0]">
                   <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-10">#</th>
                   <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest">Title</th>
@@ -2140,7 +2140,7 @@ export default function Home() {
               </thead>
               <tbody>
                 {logSubmittals.map((s, i) => (
-                  <tr key={s.id} className="border-b border-[#E2E8F0]/60 hover:bg-[#7B9BB5]/[0.04] transition-colors group">
+                  <tr key={s.id} className="border-b border-[#E2E8F0]/60 hover:bg-[#F8F9FA] transition-colors group">
                     <td className="px-4 py-2.5 text-[#64748B] tabular-nums text-[12px]">{logSubmittals.length - i}</td>
                     <td className="px-4 py-2.5 max-w-0">
                       <div className="flex items-center gap-1.5">
@@ -2225,9 +2225,9 @@ export default function Home() {
                 </button>
               </div>
             ) : (
-              <div className="mx-4 my-4 rounded-xl border border-[#E2E8F0] overflow-clip bg-[#FDF0E8]">
+              <div className="mx-4 my-4 rounded-xl border border-[#E2E8F0] overflow-clip bg-white">
             <table className="w-full text-[13px] border-collapse">
-                <thead className="sticky top-0 bg-[#F9E8DA] z-10">
+                <thead className="sticky top-0 bg-[#F8F9FA] z-10">
                   <tr className="border-b border-[#E2E8F0]">
                     <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-24">RFI #</th>
                     <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest">Subject</th>
@@ -2244,7 +2244,7 @@ export default function Home() {
                   {rfis.map(r => {
                     const isOverdue = r.due_date && new Date(r.due_date) < new Date() && r.status !== "Closed" && r.status !== "Answered" && r.status !== "Void"
                     return (
-                      <tr key={r.id} className="border-b border-[#E2E8F0]/60 hover:bg-[#7B9BB5]/[0.04] transition-colors">
+                      <tr key={r.id} className="border-b border-[#E2E8F0]/60 hover:bg-[#F8F9FA] transition-colors">
                         <td className="px-4 py-2.5 text-[12px] font-mono text-[#7B9BB5]">{r.rfi_number}</td>
                         <td className="px-4 py-2.5 max-w-0">
                           <p className="text-[#0F172A] font-medium truncate" title={r.subject}>{r.subject}</p>
@@ -2305,7 +2305,7 @@ export default function Home() {
                         { label: "Pending", value: fmt(sumPending), muted: true },
                         { label: "Open", value: String(open.length), muted: open.length > 0 },
                       ].map(({ label, value, green }) => (
-                        <div key={label} className="flex-1 rounded-lg bg-[#F4DFD0] border border-[#E2E8F0] px-3 py-2">
+                        <div key={label} className="flex-1 rounded-lg bg-[#F4F5F7] border border-[#E2E8F0] px-3 py-2">
                           <p className="text-[10px] font-bold text-[#64748B] uppercase tracking-widest mb-1">{label}</p>
                           <p className={`text-[15px] font-bold tabular-nums ${green ? "text-green-400" : "text-[#0F172A]"}`}>{value}</p>
                         </div>
@@ -2327,9 +2327,9 @@ export default function Home() {
                     </button>
                   </div>
                 ) : (
-                  <div className="mx-4 my-4 rounded-xl border border-[#E2E8F0] overflow-clip bg-[#FDF0E8]">
+                  <div className="mx-4 my-4 rounded-xl border border-[#E2E8F0] overflow-clip bg-white">
             <table className="w-full text-[13px] border-collapse">
-                    <thead className="sticky top-0 bg-[#F9E8DA] z-10">
+                    <thead className="sticky top-0 bg-[#F8F9FA] z-10">
                       <tr className="border-b border-[#E2E8F0]">
                         <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-20">CO #</th>
                         <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-32">Project</th>
@@ -2345,16 +2345,16 @@ export default function Home() {
                       {changeOrders.map(c => {
                         const proj = appProjects.find(p => p.id === c.project_id)
                         const statusColor: Record<string, string> = {
-                          Draft:          "bg-[#F4DFD0] text-[#64748B]",
-                          Submitted:      "bg-[#7B9BB5]/15 text-[#7B9BB5]",
+                          Draft:          "bg-gray-100 text-gray-500",
+                          Submitted:      "bg-blue-100 text-blue-700",
                           "Under Review": "bg-amber-100 text-amber-700",
                           Approved:       "bg-green-100 text-green-700",
                           Rejected:       "bg-red-100 text-red-700",
-                          Void:           "bg-[#F4DFD0] text-[#64748B]",
+                          Void:           "bg-gray-100 text-gray-500",
                         }
-                        const badgeCls = statusColor[c.status] ?? "bg-[#F4DFD0] text-[#64748B]"
+                        const badgeCls = statusColor[c.status] ?? "bg-gray-100 text-gray-500"
                         return (
-                          <tr key={c.id} className="border-b border-[#E2E8F0]/60 hover:bg-[#7B9BB5]/[0.04] transition-colors">
+                          <tr key={c.id} className="border-b border-[#E2E8F0]/60 hover:bg-[#F8F9FA] transition-colors">
                             <td className="px-4 py-2.5 text-[12px] font-mono text-[#7B9BB5]">{c.co_number}</td>
                             <td className="px-4 py-2.5 text-[#64748B] text-[12px] truncate">{proj?.name ?? "—"}</td>
                             <td className="px-4 py-2.5 max-w-0"><p className="text-[#0F172A] truncate">{c.proposal ?? "—"}</p></td>
@@ -2409,9 +2409,9 @@ export default function Home() {
                 </button>
               </div>
             ) : (
-              <div className="mx-4 my-4 rounded-xl border border-[#E2E8F0] overflow-clip bg-[#FDF0E8]">
+              <div className="mx-4 my-4 rounded-xl border border-[#E2E8F0] overflow-clip bg-white">
             <table className="w-full text-[13px] border-collapse">
-                <thead className="sticky top-0 bg-[#F9E8DA] z-10">
+                <thead className="sticky top-0 bg-[#F8F9FA] z-10">
                   <tr className="border-b border-[#E2E8F0]">
                     <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-10">#</th>
                     <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-20">Item</th>
@@ -2429,7 +2429,7 @@ export default function Home() {
                     const isOverdue = p.due_date && new Date(p.due_date) < new Date() && p.status !== "Completed" && p.status !== "Void"
                     const isStruck  = p.status === "Completed" || p.status === "Void"
                     return (
-                      <tr key={p.id} className={`border-b border-[#E2E8F0]/60 hover:bg-[#7B9BB5]/[0.04] transition-colors ${isStruck ? "opacity-50" : ""}`}>
+                      <tr key={p.id} className={`border-b border-[#E2E8F0]/60 hover:bg-[#F8F9FA] transition-colors ${isStruck ? "opacity-50" : ""}`}>
                         <td className="px-4 py-2.5 text-[#64748B] tabular-nums text-[12px]">{punchItems.length - i}</td>
                         <td className="px-4 py-2.5 text-[12px] font-mono text-[#7B9BB5]">{p.item_number}</td>
                         <td className="px-4 py-2.5 max-w-0">
@@ -2482,9 +2482,9 @@ export default function Home() {
                 </button>
               </div>
             ) : (
-              <div className="mx-4 my-4 rounded-xl border border-[#E2E8F0] overflow-clip bg-[#FDF0E8]">
+              <div className="mx-4 my-4 rounded-xl border border-[#E2E8F0] overflow-clip bg-white">
             <table className="w-full text-[13px] border-collapse">
-                <thead className="sticky top-0 bg-[#F9E8DA] z-10">
+                <thead className="sticky top-0 bg-[#F8F9FA] z-10">
                   <tr className="border-b border-[#E2E8F0]">
                     <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-10">#</th>
                     <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-28">Date</th>
@@ -2497,7 +2497,7 @@ export default function Home() {
                 </thead>
                 <tbody>
                   {dailyReports.map((r, i) => (
-                    <tr key={r.id} className="border-b border-[#E2E8F0]/60 hover:bg-[#7B9BB5]/[0.04] transition-colors cursor-pointer" onClick={() => { setViewDaily(r); setDailyEditing(false) }}>
+                    <tr key={r.id} className="border-b border-[#E2E8F0]/60 hover:bg-[#F8F9FA] transition-colors cursor-pointer" onClick={() => { setViewDaily(r); setDailyEditing(false) }}>
                       <td className="px-4 py-2.5 text-[#64748B] tabular-nums text-[12px]">{dailyReports.length - i}</td>
                       <td className="px-4 py-2.5 text-[#0F172A] font-medium text-[12px] whitespace-nowrap">{fmtDateOnly(r.report_date)}</td>
                       <td className="px-4 py-2.5 max-w-0">
@@ -2545,9 +2545,9 @@ export default function Home() {
                 </button>
               </div>
             ) : (
-              <div className="mx-4 my-4 rounded-xl border border-[#E2E8F0] overflow-clip bg-[#FDF0E8]">
+              <div className="mx-4 my-4 rounded-xl border border-[#E2E8F0] overflow-clip bg-white">
             <table className="w-full text-[13px] border-collapse">
-                <thead className="sticky top-0 bg-[#F9E8DA] z-10">
+                <thead className="sticky top-0 bg-[#F8F9FA] z-10">
                   <tr className="border-b border-[#E2E8F0]">
                     <th className="w-8" />
                     <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-28">Drawing No.</th>
@@ -2565,7 +2565,7 @@ export default function Home() {
                     const isExpanded = expandedDrawings.has(d.drawing_number)
                     return (
                       <>
-                        <tr key={d.id} className="border-b border-[#E2E8F0]/60 hover:bg-[#7B9BB5]/[0.04] transition-colors">
+                        <tr key={d.id} className="border-b border-[#E2E8F0]/60 hover:bg-[#F8F9FA] transition-colors">
                           <td className="px-2 py-2.5 text-center">
                             {history.length > 0 && (
                               <button onClick={() => setExpandedDrawings(prev => { const n = new Set(prev); isExpanded ? n.delete(d.drawing_number) : n.add(d.drawing_number); return n })}
@@ -2595,7 +2595,7 @@ export default function Home() {
                         </tr>
                         {/* Revision history rows */}
                         {isExpanded && history.map(h => (
-                          <tr key={h.id} className="border-b border-[#E2E8F0]/20 bg-[#FDF0E8]/40">
+                          <tr key={h.id} className="border-b border-[#E2E8F0]/20 bg-white/40">
                             <td />
                             <td className="px-4 py-1.5 text-[11px] font-mono text-[#64748B]">{h.drawing_number}</td>
                             <td className="px-4 py-1.5 text-[11px] text-[#64748B] truncate max-w-0">{h.sheet_title}</td>
@@ -2703,7 +2703,7 @@ export default function Home() {
                         const pct   = cat.total > 0 ? Math.round((cat.done / cat.total) * 100) : 100
                         const color = pct >= 80 ? "#10b981" : pct >= 50 ? "#f59e0b" : "#ef4444"
                         return (
-                          <div key={cat.key} className="bg-[#F9E8DA] rounded-xl border border-[#E2E8F0] p-3">
+                          <div key={cat.key} className="bg-white rounded-xl border border-[#E2E8F0] p-3">
                             <div className="text-[10px] font-bold text-[#64748B] uppercase tracking-wide mb-2">{cat.label}</div>
                             <div className="text-[26px] font-extrabold leading-none mb-1" style={{ color }}>{pct}%</div>
                             <div className="text-[10px] text-[#64748B] mb-2">{cat.done}/{cat.total}</div>
@@ -2719,7 +2719,7 @@ export default function Home() {
                     {(() => {
                       const storedDocs = closeoutItems.filter(i => i.category === "documents")
                       return (
-                        <div className="bg-[#F9E8DA] rounded-xl border border-[#E2E8F0] overflow-hidden">
+                        <div className="bg-white rounded-xl border border-[#E2E8F0] overflow-hidden">
                           <div className="flex items-center justify-between px-4 py-3 border-b border-[#E2E8F0]">
                             <div className="flex items-center gap-2">
                               <span className="text-[13px] font-bold text-[#0F172A]">Documents</span>
@@ -2731,7 +2731,7 @@ export default function Home() {
                           {/* Submittals sub-section */}
                           {closeoutAllSubmittals.length > 0 && (
                             <div className="border-b border-[#E2E8F0]/40">
-                              <div className="flex items-center justify-between px-4 py-2 bg-[#FDF0E8]/30">
+                              <div className="flex items-center justify-between px-4 py-2 bg-white/30">
                                 <span className="text-[11px] font-bold text-[#64748B] uppercase tracking-wider">Submittals ({approvedSubs}/{closeoutAllSubmittals.length} Approved)</span>
                                 <button onClick={() => setActiveModule("submittals")} className="text-[10px] text-[#7B9BB5] hover:text-[#7B9BB5]">View all →</button>
                               </div>
@@ -2752,7 +2752,7 @@ export default function Home() {
                           {/* RFIs sub-section */}
                           {closeoutAllRFIs.length > 0 && (
                             <div className="border-b border-[#E2E8F0]/40">
-                              <div className="flex items-center justify-between px-4 py-2 bg-[#FDF0E8]/30">
+                              <div className="flex items-center justify-between px-4 py-2 bg-white/30">
                                 <span className="text-[11px] font-bold text-[#64748B] uppercase tracking-wider">RFIs ({resolvedRFIs}/{closeoutAllRFIs.length} Resolved)</span>
                                 <button onClick={() => setActiveModule("rfis")} className="text-[10px] text-[#7B9BB5] hover:text-[#7B9BB5]">View all →</button>
                               </div>
@@ -2773,7 +2773,7 @@ export default function Home() {
                           {/* Change Orders sub-section */}
                           {closeoutAllCOs.length > 0 && (
                             <div className="border-b border-[#E2E8F0]/40">
-                              <div className="flex items-center justify-between px-4 py-2 bg-[#FDF0E8]/30">
+                              <div className="flex items-center justify-between px-4 py-2 bg-white/30">
                                 <span className="text-[11px] font-bold text-[#64748B] uppercase tracking-wider">Change Orders ({approvedCOs}/{closeoutAllCOs.length} Signed)</span>
                                 <button onClick={() => setActiveModule("changeorders")} className="text-[10px] text-[#7B9BB5] hover:text-[#7B9BB5]">View all →</button>
                               </div>
@@ -2794,7 +2794,7 @@ export default function Home() {
                           {/* Drawings sub-section */}
                           {closeoutAllDrawings.length > 0 && (
                             <div className="border-b border-[#E2E8F0]/40">
-                              <div className="flex items-center justify-between px-4 py-2 bg-[#FDF0E8]/30">
+                              <div className="flex items-center justify-between px-4 py-2 bg-white/30">
                                 <span className="text-[11px] font-bold text-[#64748B] uppercase tracking-wider">Drawings — As-Built ({asBuiltDwgs}/{closeoutAllDrawings.length} Confirmed)</span>
                                 <button onClick={() => setActiveModule("drawings")} className="text-[10px] text-[#7B9BB5] hover:text-[#7B9BB5]">View all →</button>
                               </div>
@@ -2822,7 +2822,7 @@ export default function Home() {
                                   <button title={`Click to mark ${cycleStatus(item.status)}`} onClick={() => updateCloseoutItem(item.id, { status: cycleStatus(item.status) })}
                                     className="flex-shrink-0 w-5 h-5 rounded-full border-2 transition-all hover:scale-110"
                                     style={{ borderColor: dotColor(item.status), backgroundColor: item.status === "complete" ? dotColor(item.status) : "transparent" }} />
-                                  {typeLabel && <span className="text-[10px] font-bold text-[#64748B] bg-[#F4DFD0] px-1.5 py-0.5 rounded flex-shrink-0">{typeLabel}</span>}
+                                  {typeLabel && <span className="text-[10px] font-bold text-[#64748B] bg-[#F4F5F7] px-1.5 py-0.5 rounded flex-shrink-0">{typeLabel}</span>}
                                   <span className={`flex-1 text-[13px] font-medium truncate ${item.status === "complete" ? "text-[#64748B] line-through" : "text-[#0F172A]"}`}>{item.title}</span>
                                   <span className={`text-[11px] font-semibold flex-shrink-0 ${labelColor(item.status)}`}>{statusLabel(item.status)}</span>
                                   {item.file_name ? (
@@ -2842,18 +2842,18 @@ export default function Home() {
                                   </div>
                                 </div>
                                 {isEditing && (
-                                  <div className="px-4 pb-4 pt-2 border-t border-[#E2E8F0]/40 bg-[#FDF0E8]/30 space-y-3">
+                                  <div className="px-4 pb-4 pt-2 border-t border-[#E2E8F0]/40 bg-white/30 space-y-3">
                                     <div className="grid grid-cols-2 gap-3">
                                       <div><label className="block text-[11px] font-medium text-[#64748B] mb-1">Title</label>
-                                        <input value={closeoutEditTitle} onChange={e => setCloseoutEditTitle(e.target.value)} className="w-full h-8 px-2 rounded border border-[#E2E8F0] bg-[#FDF0E8] text-[12px] text-[#0F172A] focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40" /></div>
+                                        <input value={closeoutEditTitle} onChange={e => setCloseoutEditTitle(e.target.value)} className="w-full h-8 px-2 rounded border border-[#E2E8F0] bg-white text-[12px] text-[#0F172A] focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40" /></div>
                                       <div><label className="block text-[11px] font-medium text-[#64748B] mb-1">Status</label>
-                                        <select value={item.status} onChange={e => updateCloseoutItem(item.id, { status: e.target.value })} className="w-full h-8 px-2 rounded border border-[#E2E8F0] bg-[#FDF0E8] text-[12px] text-[#0F172A] focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40">
+                                        <select value={item.status} onChange={e => updateCloseoutItem(item.id, { status: e.target.value })} className="w-full h-8 px-2 rounded border border-[#E2E8F0] bg-white text-[12px] text-[#0F172A] focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40">
                                           <option value="incomplete">Incomplete</option><option value="in_progress">In Progress</option><option value="complete">Complete</option>
                                         </select></div>
                                       <div><label className="block text-[11px] font-medium text-[#64748B] mb-1">Due Date</label>
-                                        <input type="date" value={closeoutEditDue} onChange={e => setCloseoutEditDue(e.target.value)} className="w-full h-8 px-2 rounded border border-[#E2E8F0] bg-[#FDF0E8] text-[12px] text-[#0F172A] focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40" /></div>
+                                        <input type="date" value={closeoutEditDue} onChange={e => setCloseoutEditDue(e.target.value)} className="w-full h-8 px-2 rounded border border-[#E2E8F0] bg-white text-[12px] text-[#0F172A] focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40" /></div>
                                       <div><label className="block text-[11px] font-medium text-[#64748B] mb-1">Notes</label>
-                                        <input value={closeoutEditNotes} onChange={e => setCloseoutEditNotes(e.target.value)} className="w-full h-8 px-2 rounded border border-[#E2E8F0] bg-[#FDF0E8] text-[12px] text-[#0F172A] focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40" /></div>
+                                        <input value={closeoutEditNotes} onChange={e => setCloseoutEditNotes(e.target.value)} className="w-full h-8 px-2 rounded border border-[#E2E8F0] bg-white text-[12px] text-[#0F172A] focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40" /></div>
                                     </div>
                                     <div className="flex items-center gap-2">
                                       <button onClick={() => { setCloseoutUploadingId(item.id); closeoutFileRef.current?.click() }} className="text-[11px] text-[#64748B] hover:text-[#7B9BB5] px-2 py-1 border border-[#E2E8F0] rounded hover:border-[#E2E8F0] transition-colors">
@@ -2880,12 +2880,12 @@ export default function Home() {
                     {CATS.filter(c => c.key !== "documents").map(cat => {
                       const items = closeoutItems.filter(i => i.category === cat.key)
                       return (
-                        <div key={cat.key} className="bg-[#F9E8DA] rounded-xl border border-[#E2E8F0] overflow-hidden">
+                        <div key={cat.key} className="bg-white rounded-xl border border-[#E2E8F0] overflow-hidden">
                           <div className="flex items-center justify-between px-4 py-3 border-b border-[#E2E8F0]">
                             <div className="flex items-center gap-2">
                               <span className="text-[13px] font-bold text-[#0F172A]">{cat.label}</span>
                               <span className="text-[11px] text-[#64748B]">{cat.done}/{cat.total} complete</span>
-                              {cat.key === "financial" && closeoutTeam.length > 0 && <span className="text-[10px] text-[#64748B] bg-[#F4DFD0] px-1.5 py-0.5 rounded">{closeoutTeam.length} subs</span>}
+                              {cat.key === "financial" && closeoutTeam.length > 0 && <span className="text-[10px] text-[#64748B] bg-[#F4F5F7] px-1.5 py-0.5 rounded">{closeoutTeam.length} subs</span>}
                             </div>
                             <button onClick={() => { setNewCloseoutCategory(cat.key); setShowNewCloseout(true) }} className="text-[11px] text-white/70 hover:text-white transition-colors flex items-center gap-1"><PlusIcon /> Add</button>
                           </div>
@@ -2943,21 +2943,21 @@ export default function Home() {
                                   </div>
                                 </div>
                                 {isEditing && (
-                                  <div className="px-4 pb-4 pt-2 border-t border-[#E2E8F0]/40 bg-[#FDF0E8]/30 space-y-3">
+                                  <div className="px-4 pb-4 pt-2 border-t border-[#E2E8F0]/40 bg-white/30 space-y-3">
                                     <div className="grid grid-cols-2 gap-3">
                                       <div><label className="block text-[11px] font-medium text-[#64748B] mb-1">Title</label>
-                                        <input value={closeoutEditTitle} onChange={e => setCloseoutEditTitle(e.target.value)} className="w-full h-8 px-2 rounded border border-[#E2E8F0] bg-[#FDF0E8] text-[12px] text-[#0F172A] focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40" /></div>
+                                        <input value={closeoutEditTitle} onChange={e => setCloseoutEditTitle(e.target.value)} className="w-full h-8 px-2 rounded border border-[#E2E8F0] bg-white text-[12px] text-[#0F172A] focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40" /></div>
                                       <div><label className="block text-[11px] font-medium text-[#64748B] mb-1">Status</label>
-                                        <select value={item.status} onChange={e => updateCloseoutItem(item.id, { status: e.target.value })} className="w-full h-8 px-2 rounded border border-[#E2E8F0] bg-[#FDF0E8] text-[12px] text-[#0F172A] focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40">
+                                        <select value={item.status} onChange={e => updateCloseoutItem(item.id, { status: e.target.value })} className="w-full h-8 px-2 rounded border border-[#E2E8F0] bg-white text-[12px] text-[#0F172A] focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40">
                                           <option value="incomplete">Incomplete</option><option value="in_progress">In Progress</option><option value="complete">Complete</option>
                                         </select></div>
                                       <div><label className="block text-[11px] font-medium text-[#64748B] mb-1">{isTraining ? "Trainer Name" : isWarranty ? "Warrantor" : "Assigned To"}</label>
-                                        <input value={closeoutEditAssigned} onChange={e => setCloseoutEditAssigned(e.target.value)} className="w-full h-8 px-2 rounded border border-[#E2E8F0] bg-[#FDF0E8] text-[12px] text-[#0F172A] focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40" /></div>
+                                        <input value={closeoutEditAssigned} onChange={e => setCloseoutEditAssigned(e.target.value)} className="w-full h-8 px-2 rounded border border-[#E2E8F0] bg-white text-[12px] text-[#0F172A] focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40" /></div>
                                       <div><label className="block text-[11px] font-medium text-[#64748B] mb-1">{isTraining ? "Training Date" : isWarranty ? "Expiration Date" : "Due Date"}</label>
-                                        <input type="date" value={closeoutEditDue} onChange={e => setCloseoutEditDue(e.target.value)} className="w-full h-8 px-2 rounded border border-[#E2E8F0] bg-[#FDF0E8] text-[12px] text-[#0F172A] focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40" /></div>
+                                        <input type="date" value={closeoutEditDue} onChange={e => setCloseoutEditDue(e.target.value)} className="w-full h-8 px-2 rounded border border-[#E2E8F0] bg-white text-[12px] text-[#0F172A] focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40" /></div>
                                     </div>
                                     <div><label className="block text-[11px] font-medium text-[#64748B] mb-1">Notes</label>
-                                      <input value={closeoutEditNotes} onChange={e => setCloseoutEditNotes(e.target.value)} placeholder="Add notes…" className="w-full h-8 px-2 rounded border border-[#E2E8F0] bg-[#FDF0E8] text-[12px] text-[#0F172A] focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40 placeholder:text-[#64748B]" /></div>
+                                      <input value={closeoutEditNotes} onChange={e => setCloseoutEditNotes(e.target.value)} placeholder="Add notes…" className="w-full h-8 px-2 rounded border border-[#E2E8F0] bg-white text-[12px] text-[#0F172A] focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40 placeholder:text-[#64748B]" /></div>
                                     <div className="flex items-center gap-2">
                                       <button onClick={() => { setCloseoutUploadingId(item.id); closeoutFileRef.current?.click() }} className="text-[11px] text-[#64748B] hover:text-[#7B9BB5] px-2 py-1 border border-[#E2E8F0] rounded hover:border-[#E2E8F0] transition-colors">
                                         {item.file_name ? `attached: ${item.file_name.slice(0,25)}` : "+ Upload Document"}
@@ -2999,7 +2999,7 @@ export default function Home() {
       {/* ── Add Closeout Item modal ───────────────────────────────────────── */}
       {showNewCloseout && (
         <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center" onClick={e => { if (e.target === e.currentTarget) setShowNewCloseout(false) }}>
-          <div className="bg-[#F9E8DA] rounded-xl border border-[#E2E8F0] shadow-2xl w-[480px] p-6">
+          <div className="bg-white rounded-xl border border-[#E2E8F0] shadow-2xl w-[480px] p-6">
             <div className="flex items-center justify-between mb-5">
               <h2 className="text-[15px] font-bold text-[#0F172A]">Add Closeout Item</h2>
               <button onClick={() => setShowNewCloseout(false)} className="text-[#64748B] hover:text-[#64748B] transition-colors"><XIcon className="h-4 w-4" /></button>
@@ -3046,11 +3046,11 @@ export default function Home() {
       {(showNewDaily || (viewDaily && dailyEditing)) && (() => {
         const isEdit = !!(viewDaily && dailyEditing)
         const onClose = () => { setShowNewDaily(false); setViewDaily(null); setDailyEditing(false) }
-        const tareaClass = "w-full px-3 py-2 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-[#FDF0E8] focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40 resize-none placeholder:text-[#64748B]"
+        const tareaClass = "w-full px-3 py-2 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40 resize-none placeholder:text-[#64748B]"
         return (
           <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center"
             onClick={e => { if (e.target === e.currentTarget) onClose() }}>
-            <div className="bg-[#F9E8DA] rounded-xl border border-[#E2E8F0] shadow-2xl w-[680px] max-h-[90vh] flex flex-col">
+            <div className="bg-white rounded-xl border border-[#E2E8F0] shadow-2xl w-[680px] max-h-[90vh] flex flex-col">
               <div className="flex items-center justify-between px-6 pt-5 pb-4 border-b border-[#E2E8F0] flex-shrink-0">
                 <h2 className="text-[15px] font-bold text-[#0F172A]">{isEdit ? "Edit Daily Report" : "New Daily Report"}</h2>
                 <button onClick={onClose} className="text-[#64748B] hover:text-[#64748B] transition-colors"><XIcon className="h-4 w-4" /></button>
@@ -3067,7 +3067,7 @@ export default function Home() {
                     <div className="flex-1">
                       <label className={labelCls}>Project</label>
                       <select value={dailyProjectId} onChange={e => setDailyProjectId(e.target.value)}
-                        className="w-full h-9 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-[#FDF0E8] focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40">
+                        className="w-full h-9 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40">
                         <option value="">None</option>
                         {appProjects.map(p => <option key={p.id} value={p.id}>{p.name}{p.number ? ` — ${p.number}` : ""}</option>)}
                       </select>
@@ -3075,7 +3075,7 @@ export default function Home() {
                     <div className="flex-1">
                       <label className={labelCls}>Prepared By</label>
                       <select value={dailyPreparedBy} onChange={e => setDailyPreparedBy(e.target.value)}
-                        className="w-full h-9 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-[#FDF0E8] focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40">
+                        className="w-full h-9 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40">
                         <option value="">Select…</option>
                         {teamMembers.map(m => <option key={m.id} value={m.name}>{m.name}</option>)}
                       </select>
@@ -3087,7 +3087,7 @@ export default function Home() {
                     <div className="flex-1">
                       <label className={labelCls}>Weather</label>
                       <select value={dailyWeather} onChange={e => setDailyWeather(e.target.value)}
-                        className="w-full h-9 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-[#FDF0E8] focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40">
+                        className="w-full h-9 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40">
                         <option value="">Select…</option>
                         {["Clear", "Partly Cloudy", "Cloudy", "Rain", "Heavy Rain", "Snow", "Fog", "Wind"].map(w => <option key={w} value={w}>{w}</option>)}
                       </select>
@@ -3146,7 +3146,7 @@ export default function Home() {
                   {!isEdit && (
                     <div>
                       <label className={labelCls}>Attachment <span className="text-[#64748B] font-normal">(optional)</span></label>
-                      <input ref={dailyFileRef} type="file" className="w-full text-[12px] text-[#64748B] file:mr-3 file:py-1 file:px-3 file:rounded file:border file:border-[#E2E8F0] file:bg-[#F4DFD0] file:text-[#64748B] file:text-[11px] file:cursor-pointer hover:file:bg-[#FDF0E8]/[0.05]" />
+                      <input ref={dailyFileRef} type="file" className="w-full text-[12px] text-[#64748B] file:mr-3 file:py-1 file:px-3 file:rounded file:border file:border-[#E2E8F0] file:bg-[#F4F5F7] file:text-[#64748B] file:text-[11px] file:cursor-pointer hover:file:bg-white/[0.05]" />
                     </div>
                   )}
                 </div>
@@ -3171,7 +3171,7 @@ export default function Home() {
       {viewDaily && !dailyEditing && (
         <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center"
           onClick={e => { if (e.target === e.currentTarget) setViewDaily(null) }}>
-          <div className="bg-[#F9E8DA] rounded-xl border border-[#E2E8F0] shadow-2xl w-[620px] max-h-[85vh] flex flex-col">
+          <div className="bg-white rounded-xl border border-[#E2E8F0] shadow-2xl w-[620px] max-h-[85vh] flex flex-col">
             <div className="flex items-center justify-between px-6 pt-5 pb-4 border-b border-[#E2E8F0] flex-shrink-0">
               <div>
                 <p className="text-[11px] text-[#64748B] uppercase tracking-widest font-bold">Daily Report</p>
@@ -3210,7 +3210,7 @@ export default function Home() {
                 { label: "Issues / Delays", value: viewDaily.issues_delays },
                 { label: "Safety Notes", value: viewDaily.safety_notes },
               ].filter(f => f.value).map(f => (
-                <div key={f.label} className="rounded-md bg-[#F9E8DA] border border-[#E2E8F0] px-4 py-3">
+                <div key={f.label} className="rounded-md bg-[#F4F5F7] border border-[#E2E8F0] px-4 py-3">
                   <p className="text-[10px] font-bold text-[#64748B] uppercase tracking-widest mb-1.5">{f.label}</p>
                   <p className="text-[13px] text-[#0F172A] whitespace-pre-wrap">{f.value}</p>
                 </div>
@@ -3230,7 +3230,7 @@ export default function Home() {
       {(showNewDrawing || addRevisionFor) && (
         <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center"
           onClick={e => { if (e.target === e.currentTarget) { setShowNewDrawing(false); setAddRevisionFor(null) } }}>
-          <div className="bg-[#F9E8DA] rounded-xl border border-[#E2E8F0] shadow-2xl w-[560px]">
+          <div className="bg-white rounded-xl border border-[#E2E8F0] shadow-2xl w-[560px]">
             <div className="flex items-center justify-between px-6 pt-5 pb-4 border-b border-[#E2E8F0]">
               <div>
                 <h2 className="text-[15px] font-bold text-[#0F172A]">{addRevisionFor ? "Add Revision" : "Add Drawing"}</h2>
@@ -3264,7 +3264,7 @@ export default function Home() {
                   <div className="flex-1">
                     <label className={labelCls}>Discipline</label>
                     <select value={dwgDiscipline} onChange={e => setDwgDiscipline(e.target.value)}
-                      className="w-full h-9 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-[#FDF0E8] focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40">
+                      className="w-full h-9 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40">
                       <option value="">Select…</option>
                       {["Architectural","Structural","Mechanical","Electrical","Plumbing","Civil","Landscape","Fire Protection","Low Voltage","General"].map(d => <option key={d} value={d}>{d}</option>)}
                     </select>
@@ -3272,7 +3272,7 @@ export default function Home() {
                   <div className="flex-1">
                     <label className={labelCls}>Status</label>
                     <select value={dwgStatus} onChange={e => setDwgStatus(e.target.value)}
-                      className="w-full h-9 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-[#FDF0E8] focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40">
+                      className="w-full h-9 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40">
                       {["Issued for Construction","Issued for Bid","Issued for Review","Record Drawings","Void"].map(s => <option key={s} value={s}>{s}</option>)}
                     </select>
                   </div>
@@ -3291,7 +3291,7 @@ export default function Home() {
                   <div>
                     <label className={labelCls}>Project</label>
                     <select value={dwgProjectId} onChange={e => setDwgProjectId(e.target.value)}
-                      className="w-full h-9 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-[#FDF0E8] focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40">
+                      className="w-full h-9 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40">
                       <option value="">None</option>
                       {appProjects.map(p => <option key={p.id} value={p.id}>{p.name}{p.number ? ` — ${p.number}` : ""}</option>)}
                     </select>
@@ -3301,11 +3301,11 @@ export default function Home() {
                   <label className={labelCls}>Notes</label>
                   <textarea rows={2} value={dwgNotes} onChange={e => setDwgNotes(e.target.value)}
                     placeholder="Revision notes, changes from previous…"
-                    className="w-full px-3 py-2 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-[#FDF0E8] focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40 resize-none placeholder:text-[#64748B]" />
+                    className="w-full px-3 py-2 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40 resize-none placeholder:text-[#64748B]" />
                 </div>
                 <div>
                   <label className={labelCls}>Attachment <span className="text-[#64748B] font-normal">(optional)</span></label>
-                  <input ref={dwgFileRef} type="file" className="w-full text-[12px] text-[#64748B] file:mr-3 file:py-1 file:px-3 file:rounded file:border file:border-[#E2E8F0] file:bg-[#F4DFD0] file:text-[#64748B] file:text-[11px] file:cursor-pointer hover:file:bg-[#FDF0E8]/[0.05]" />
+                  <input ref={dwgFileRef} type="file" className="w-full text-[12px] text-[#64748B] file:mr-3 file:py-1 file:px-3 file:rounded file:border file:border-[#E2E8F0] file:bg-[#F4F5F7] file:text-[#64748B] file:text-[11px] file:cursor-pointer hover:file:bg-white/[0.05]" />
                 </div>
               </div>
               <div className="flex justify-end gap-2 px-6 py-4 border-t border-[#E2E8F0]">
@@ -3328,7 +3328,7 @@ export default function Home() {
       {showNewPunch && (
         <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center"
           onClick={e => { if (e.target === e.currentTarget) setShowNewPunch(false) }}>
-          <div className="bg-[#F9E8DA] rounded-xl border border-[#E2E8F0] shadow-2xl w-[520px]">
+          <div className="bg-white rounded-xl border border-[#E2E8F0] shadow-2xl w-[520px]">
             <div className="flex items-center justify-between px-6 pt-5 pb-4 border-b border-[#E2E8F0]">
               <h2 className="text-[15px] font-bold text-[#0F172A]">New Punch Item</h2>
               <button onClick={() => setShowNewPunch(false)} className="text-[#64748B] hover:text-[#64748B] transition-colors">
@@ -3341,7 +3341,7 @@ export default function Home() {
                   <label className={labelCls}>Description <span className="text-red-400">*</span></label>
                   <textarea required rows={2} value={punchDesc} onChange={e => setPunchDesc(e.target.value)} autoFocus
                     placeholder="Describe the deficiency, item to correct, or work to complete"
-                    className="w-full px-3 py-2 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-[#FDF0E8] focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40 resize-none placeholder:text-[#64748B]" />
+                    className="w-full px-3 py-2 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40 resize-none placeholder:text-[#64748B]" />
                 </div>
                 <div className="flex gap-3">
                   <div className="flex-1">
@@ -3359,7 +3359,7 @@ export default function Home() {
                   <div className="flex-1">
                     <label className={labelCls}>Priority</label>
                     <select value={punchPriority} onChange={e => setPunchPriority(e.target.value)}
-                      className="w-full h-9 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-[#FDF0E8] focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40">
+                      className="w-full h-9 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40">
                       {["Low", "Medium", "High", "Critical"].map(p => <option key={p} value={p}>{p}</option>)}
                     </select>
                   </div>
@@ -3372,7 +3372,7 @@ export default function Home() {
                   <div>
                     <label className={labelCls}>Project</label>
                     <select value={punchProjectId} onChange={e => setPunchProjectId(e.target.value)}
-                      className="w-full h-9 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-[#FDF0E8] focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40">
+                      className="w-full h-9 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40">
                       <option value="">None</option>
                       {appProjects.map(p => <option key={p.id} value={p.id}>{p.name}{p.number ? ` — ${p.number}` : ""}</option>)}
                     </select>
@@ -3382,11 +3382,11 @@ export default function Home() {
                   <label className={labelCls}>Notes</label>
                   <textarea rows={2} value={punchNotes} onChange={e => setPunchNotes(e.target.value)}
                     placeholder="Additional context, spec references, etc."
-                    className="w-full px-3 py-2 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-[#FDF0E8] focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40 resize-none placeholder:text-[#64748B]" />
+                    className="w-full px-3 py-2 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40 resize-none placeholder:text-[#64748B]" />
                 </div>
                 <div>
                   <label className={labelCls}>Attachment <span className="text-[#64748B] font-normal">(optional)</span></label>
-                  <input ref={punchFileRef} type="file" className="w-full text-[12px] text-[#64748B] file:mr-3 file:py-1 file:px-3 file:rounded file:border file:border-[#E2E8F0] file:bg-[#F4DFD0] file:text-[#64748B] file:text-[11px] file:cursor-pointer hover:file:bg-[#FDF0E8]/[0.05]" />
+                  <input ref={punchFileRef} type="file" className="w-full text-[12px] text-[#64748B] file:mr-3 file:py-1 file:px-3 file:rounded file:border file:border-[#E2E8F0] file:bg-[#F4F5F7] file:text-[#64748B] file:text-[11px] file:cursor-pointer hover:file:bg-white/[0.05]" />
                 </div>
               </div>
               <div className="flex justify-end gap-2 px-6 py-4 border-t border-[#E2E8F0]">
@@ -3409,7 +3409,7 @@ export default function Home() {
       {viewPunch && (
         <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center"
           onClick={e => { if (e.target === e.currentTarget) setViewPunch(null) }}>
-          <div className="bg-[#F9E8DA] rounded-xl border border-[#E2E8F0] shadow-2xl w-[500px]">
+          <div className="bg-white rounded-xl border border-[#E2E8F0] shadow-2xl w-[500px]">
             <div className="flex items-center justify-between px-6 pt-5 pb-4 border-b border-[#E2E8F0]">
               <div>
                 <span className="text-[11px] font-mono text-[#7B9BB5]">{viewPunch.item_number}</span>
@@ -3427,7 +3427,7 @@ export default function Home() {
                 <div className="flex items-center gap-1.5"><span className="text-[#64748B]">Priority: </span><PunchPriorityBadge priority={viewPunch.priority} /></div>
               </div>
               {viewPunch.notes && (
-                <div className="rounded-md bg-[#F4DFD0] px-3 py-2">
+                <div className="rounded-md bg-[#F4F5F7] px-3 py-2">
                   <p className="text-[11px] font-bold text-[#64748B] uppercase tracking-widest mb-1">Notes</p>
                   <p className="text-[13px] text-[#0F172A]">{viewPunch.notes}</p>
                 </div>
@@ -3443,12 +3443,12 @@ export default function Home() {
                   <label className={labelCls}>Update Notes</label>
                   <textarea value={punchEditNotes} onChange={e => setPunchEditNotes(e.target.value)} rows={3}
                     placeholder="Add resolution notes, corrective action taken, etc."
-                    className="w-full px-3 py-2 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-[#FDF0E8] focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40 resize-none placeholder:text-[#64748B]" />
+                    className="w-full px-3 py-2 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40 resize-none placeholder:text-[#64748B]" />
                 </div>
                 <div>
                   <label className={labelCls}>Status</label>
                   <select value={punchEditStatus} onChange={e => setPunchEditStatus(e.target.value)}
-                    className="w-full h-9 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-[#FDF0E8] focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40">
+                    className="w-full h-9 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40">
                     {["Open", "In Progress", "Completed", "Void"].map(s => (
                       <option key={s} value={s}>{s}</option>
                     ))}
@@ -3487,7 +3487,7 @@ export default function Home() {
       {showNewRfi && (
         <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4"
           onClick={e => { if (e.target === e.currentTarget) setShowNewRfi(false) }}>
-          <div className="bg-[#F9E8DA] rounded-xl border border-[#E2E8F0] shadow-2xl w-[580px] flex flex-col max-h-[90vh]">
+          <div className="bg-white rounded-xl border border-[#E2E8F0] shadow-2xl w-[580px] flex flex-col max-h-[90vh]">
             <div className="flex items-center justify-between px-6 pt-5 pb-4 border-b border-[#E2E8F0] flex-shrink-0">
               <h2 className="text-[15px] font-bold text-[#0F172A]">New RFI</h2>
               <button onClick={() => setShowNewRfi(false)} className="text-[#64748B] hover:text-[#64748B] transition-colors">
@@ -3500,7 +3500,7 @@ export default function Home() {
                   <div>
                     <label className={labelCls}>Project</label>
                     <select value={rfiProjectId} onChange={e => setRfiProjectId(e.target.value)}
-                      className="w-full h-9 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-[#FDF0E8] focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40">
+                      className="w-full h-9 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40">
                       <option value="">None</option>
                       {appProjects.map(p => <option key={p.id} value={p.id}>{p.name}{p.number ? ` — ${p.number}` : ""}</option>)}
                     </select>
@@ -3515,12 +3515,12 @@ export default function Home() {
                   <label className={labelCls}>Question</label>
                   <textarea value={rfiQuestion} onChange={e => setRfiQuestion(e.target.value)} rows={4}
                     placeholder="Detailed question — reference specs, drawings, field conditions…"
-                    className="w-full px-3 py-2 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-[#FDF0E8] focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40 resize-none placeholder:text-[#64748B]" />
+                    className="w-full px-3 py-2 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40 resize-none placeholder:text-[#64748B]" />
                 </div>
                 <div>
                   <label className={labelCls}>Received From</label>
                   <select value={rfiReceivedFrom} onChange={e => setRfiReceivedFrom(e.target.value)}
-                    className="w-full h-9 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-[#FDF0E8] focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40">
+                    className="w-full h-9 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40">
                     <option value="">Select or type below…</option>
                     {teamMembers.map(m => <option key={m.id} value={m.name}>{m.name}</option>)}
                     <option value="__other__">Other (type name)…</option>
@@ -3546,14 +3546,14 @@ export default function Home() {
                   <div className="flex-1">
                     <label className={labelCls}>Schedule Impact</label>
                     <select value={rfiScheduleImpact} onChange={e => setRfiScheduleImpact(e.target.value)}
-                      className="w-full h-9 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-[#FDF0E8] focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40">
+                      className="w-full h-9 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40">
                       {["Yes","No","TBD"].map(v => <option key={v} value={v}>{v}</option>)}
                     </select>
                   </div>
                   <div className="flex-1">
                     <label className={labelCls}>Cost Impact</label>
                     <select value={rfiCostImpact} onChange={e => setRfiCostImpact(e.target.value)}
-                      className="w-full h-9 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-[#FDF0E8] focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40">
+                      className="w-full h-9 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40">
                       {["Yes","No","TBD"].map(v => <option key={v} value={v}>{v}</option>)}
                     </select>
                   </div>
@@ -3561,7 +3561,7 @@ export default function Home() {
                 <div>
                   <label className={labelCls}>Assigned To</label>
                   <select value={rfiAssignedTo} onChange={e => setRfiAssignedTo(e.target.value)}
-                    className="w-full h-9 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-[#FDF0E8] focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40">
+                    className="w-full h-9 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40">
                     <option value="">Select…</option>
                     {teamMembers.map(m => <option key={m.id} value={m.name}>{m.name}</option>)}
                   </select>
@@ -3601,7 +3601,7 @@ export default function Home() {
       {viewRfi && (
         <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4"
           onClick={e => { if (e.target === e.currentTarget) setViewRfi(null) }}>
-          <div className="bg-[#F9E8DA] rounded-xl border border-[#E2E8F0] shadow-2xl w-[680px] flex flex-col max-h-[90vh]">
+          <div className="bg-white rounded-xl border border-[#E2E8F0] shadow-2xl w-[680px] flex flex-col max-h-[90vh]">
             <div className="flex items-center justify-between px-6 pt-5 pb-4 border-b border-[#E2E8F0] flex-shrink-0">
               <div className="flex items-center gap-3">
                 <span className="text-[12px] font-mono text-[#7B9BB5] flex-shrink-0">{viewRfi.rfi_number}</span>
@@ -3625,7 +3625,7 @@ export default function Home() {
                   { label: "Date Issued",   value: viewRfi.date_issued ? fmtDateOnly(viewRfi.date_issued) : "—" },
                   { label: "Due Date",      value: viewRfi.due_date ? fmtDateOnly(viewRfi.due_date) : "—" },
                 ].map(({ label, value }) => (
-                  <div key={label} className="rounded-md bg-[#F9E8DA] px-3 py-2">
+                  <div key={label} className="rounded-md bg-[#F4F5F7] px-3 py-2">
                     <p className="text-[10px] font-bold text-[#64748B] uppercase tracking-widest mb-0.5">{label}</p>
                     <p className="text-[12px] text-[#0F172A]">{value}</p>
                   </div>
@@ -3633,7 +3633,7 @@ export default function Home() {
               </div>
               {/* Question */}
               {viewRfi.description && (
-                <div className="rounded-md bg-[#F4DFD0] px-3 py-2.5">
+                <div className="rounded-md bg-[#F4F5F7] px-3 py-2.5">
                   <p className="text-[10px] font-bold text-[#64748B] uppercase tracking-widest mb-1.5">Question</p>
                   <p className="text-[13px] text-[#0F172A] whitespace-pre-wrap">{viewRfi.description}</p>
                 </div>
@@ -3656,11 +3656,11 @@ export default function Home() {
                 <p className="text-[11px] font-bold text-[#64748B] uppercase tracking-widest">Response</p>
                 <textarea value={rfiResponse} onChange={e => setRfiResponse(e.target.value)} rows={4}
                   placeholder="Enter response here…"
-                  className="w-full px-3 py-2 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-[#FDF0E8] focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40 resize-none placeholder:text-[#64748B]" />
+                  className="w-full px-3 py-2 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40 resize-none placeholder:text-[#64748B]" />
                 <div>
                   <label className={labelCls}>Status</label>
                   <select value={rfiResponseStatus} onChange={e => setRfiResponseStatus(e.target.value)}
-                    className="w-full h-9 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-[#FDF0E8] focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40">
+                    className="w-full h-9 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40">
                     {["Open","In Review","Answered","Closed","Void"].map(s => <option key={s} value={s}>{s}</option>)}
                   </select>
                 </div>
@@ -3693,7 +3693,7 @@ export default function Home() {
       {showNewCo && (
         <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4"
           onClick={e => { if (e.target === e.currentTarget) setShowNewCo(false) }}>
-          <div className="bg-[#F9E8DA] border border-[#E2E8F0] rounded-xl w-full max-w-2xl flex flex-col max-h-[90vh]">
+          <div className="bg-white border border-[#E2E8F0] rounded-xl w-full max-w-2xl flex flex-col max-h-[90vh]">
             <div className="flex items-center justify-between px-6 py-4 border-b border-[#E2E8F0] flex-shrink-0">
               <h2 className="text-[16px] font-bold text-[#0F172A]">New Change Order</h2>
               <button onClick={() => setShowNewCo(false)} className="text-[#64748B] hover:text-[#0F172A] transition-colors">
@@ -3703,8 +3703,8 @@ export default function Home() {
             <form onSubmit={createCo} className="overflow-y-auto flex-1 px-6 py-4 space-y-4">
               {(() => {
                 const labelCls2 = "block text-[11px] font-semibold text-[#64748B] uppercase tracking-widest mb-1"
-                const inputCls2 = "w-full h-9 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-[#FDF0E8] focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40 placeholder:text-[#64748B]"
-                const selCls2   = "w-full h-9 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-[#FDF0E8] focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40"
+                const inputCls2 = "w-full h-9 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40 placeholder:text-[#64748B]"
+                const selCls2   = "w-full h-9 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40"
                 const coProj = appProjects.find(p => p.id === coProjectId)
                 return (<>
                   <div className="grid grid-cols-2 gap-4">
@@ -3727,13 +3727,13 @@ export default function Home() {
                     <label className={labelCls2}>Proposal <span className="text-red-400">*</span></label>
                     <textarea required value={coProposal} onChange={e => setCoProposal(e.target.value)} rows={4}
                       placeholder="Describe the scope of work for this change order…"
-                      className="w-full px-3 py-2 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-[#FDF0E8] focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40 resize-none placeholder:text-[#64748B]" />
+                      className="w-full px-3 py-2 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40 resize-none placeholder:text-[#64748B]" />
                   </div>
                   <div>
                     <label className={labelCls2}>Qualifications / Exclusions</label>
                     <textarea value={coQualifications} onChange={e => setCoQualifications(e.target.value)} rows={3}
                       placeholder="List any qualifications or exclusions…"
-                      className="w-full px-3 py-2 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-[#FDF0E8] focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40 resize-none placeholder:text-[#64748B]" />
+                      className="w-full px-3 py-2 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40 resize-none placeholder:text-[#64748B]" />
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div>
@@ -3801,7 +3801,7 @@ export default function Home() {
       {viewCo && (
         <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4"
           onClick={e => { if (e.target === e.currentTarget) setViewCo(null) }}>
-          <div className="bg-[#F9E8DA] border border-[#E2E8F0] rounded-xl w-full max-w-2xl flex flex-col max-h-[90vh]">
+          <div className="bg-white border border-[#E2E8F0] rounded-xl w-full max-w-2xl flex flex-col max-h-[90vh]">
             {/* Header */}
             <div className="flex items-start justify-between px-6 py-4 border-b border-[#E2E8F0] flex-shrink-0">
               <div>
@@ -3809,14 +3809,14 @@ export default function Home() {
                   <h2 className="text-[16px] font-bold text-[#0F172A]">{viewCo.co_number}</h2>
                   {(() => {
                     const statusColor: Record<string, string> = {
-                      Draft:          "bg-[#F4DFD0] text-[#64748B]",
-                      Submitted:      "bg-[#7B9BB5]/15 text-[#7B9BB5]",
+                      Draft:          "bg-gray-100 text-gray-500",
+                      Submitted:      "bg-blue-100 text-blue-700",
                       "Under Review": "bg-amber-100 text-amber-700",
                       Approved:       "bg-green-100 text-green-700",
                       Rejected:       "bg-red-100 text-red-700",
-                      Void:           "bg-[#F4DFD0] text-[#64748B]",
+                      Void:           "bg-gray-100 text-gray-500",
                     }
-                    return <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-semibold ${statusColor[viewCo.status] ?? "bg-[#F4DFD0] text-[#64748B]"}`}>{viewCo.status}</span>
+                    return <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-semibold ${statusColor[viewCo.status] ?? "bg-gray-100 text-gray-500"}`}>{viewCo.status}</span>
                   })()}
                 </div>
                 <p className="text-[12px] text-[#64748B] mt-0.5">{viewCo.date ? fmtDateOnly(viewCo.date) : "No date"}</p>
@@ -3832,7 +3832,7 @@ export default function Home() {
                 const proj = appProjects.find(p => p.id === viewCo.project_id)
                 if (!proj) return null
                 return (
-                  <div className="rounded-lg bg-[#F9E8DA] border border-[#E2E8F0] px-4 py-3 grid grid-cols-2 gap-x-6 gap-y-1.5 text-[12px]">
+                  <div className="rounded-lg bg-[#F4F5F7] border border-[#E2E8F0] px-4 py-3 grid grid-cols-2 gap-x-6 gap-y-1.5 text-[12px]">
                     {proj.name    && <div><span className="text-[#64748B]">Project: </span><span className="text-[#0F172A] font-medium">{proj.name}</span></div>}
                     {proj.number  && <div><span className="text-[#64748B]">No.: </span><span className="text-[#0F172A]">{proj.number}</span></div>}
                     {proj.gc_name && <div><span className="text-[#64748B]">GC: </span><span className="text-[#0F172A]">{proj.gc_name}</span></div>}
@@ -3860,7 +3860,7 @@ export default function Home() {
               </div>
 
               {/* Pricing */}
-              <div className="rounded-lg bg-[#F9E8DA] border border-[#E2E8F0] px-4 py-3">
+              <div className="rounded-lg bg-[#F4F5F7] border border-[#E2E8F0] px-4 py-3">
                 <p className="text-[10px] font-bold text-[#64748B] uppercase tracking-widest mb-1">Total Change Order Amount</p>
                 <p className={`text-[22px] font-bold tabular-nums ${viewCo.status === "Approved" ? "text-green-400" : "text-[#0F172A]"}`}>
                   {viewCo.pricing_sum != null
@@ -3906,7 +3906,7 @@ export default function Home() {
                   <div>
                     <label className="block text-[11px] font-semibold text-[#64748B] uppercase tracking-widest mb-1">Status</label>
                     <select value={coResponseStatus} onChange={e => setCoResponseStatus(e.target.value)}
-                      className="w-full h-9 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-[#FDF0E8] focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40">
+                      className="w-full h-9 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40">
                       {["Draft","Submitted","Under Review","Approved","Rejected","Void"].map(s => <option key={s} value={s}>{s}</option>)}
                     </select>
                   </div>
@@ -3914,7 +3914,7 @@ export default function Home() {
                     <label className="block text-[11px] font-semibold text-[#64748B] uppercase tracking-widest mb-1">Assigned To</label>
                     <input type="text" value={coAssignedTo} onChange={e => setCoAssignedTo(e.target.value)}
                       placeholder="Reviewer name"
-                      className="w-full h-9 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-[#FDF0E8] focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40 placeholder:text-[#64748B]" />
+                      className="w-full h-9 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40 placeholder:text-[#64748B]" />
                   </div>
                 </div>
               </div>
@@ -3949,7 +3949,7 @@ export default function Home() {
           className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center"
           onClick={e => { if (e.target === e.currentTarget) closeFileModal() }}
         >
-          <div className="bg-[#F9E8DA] rounded-xl border border-[#E2E8F0] shadow-2xl w-[460px] p-6">
+          <div className="bg-white rounded-xl border border-[#E2E8F0] shadow-2xl w-[460px] p-6">
             <div className="flex items-center justify-between mb-1">
               <h2 className="text-[15px] font-bold text-[#0F172A]">Open Submittal</h2>
               <button onClick={closeFileModal} className="text-[#64748B] hover:text-[#64748B] transition-colors">
@@ -3963,7 +3963,7 @@ export default function Home() {
               <select
                 value={modalProjectId}
                 onChange={e => setModalProjectId(e.target.value)}
-                className="w-full h-9 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-[#FDF0E8] focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40"
+                className="w-full h-9 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40"
               >
                 <option value="">No project / skip</option>
                 {appProjects.map(p => (
@@ -4005,7 +4005,7 @@ export default function Home() {
           className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center"
           onClick={e => { if (e.target === e.currentTarget) closeFileModal() }}
         >
-          <div className="bg-[#F9E8DA] rounded-xl border border-[#E2E8F0] shadow-2xl w-[460px] p-6">
+          <div className="bg-white rounded-xl border border-[#E2E8F0] shadow-2xl w-[460px] p-6">
             <div className="flex items-center justify-between mb-1">
               <h2 className="text-[15px] font-bold text-[#0F172A]">Add Cover Sheet?</h2>
               <button onClick={closeFileModal} className="text-[#64748B] hover:text-[#64748B] transition-colors">
@@ -4047,7 +4047,7 @@ export default function Home() {
           className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center"
           onClick={e => { if (e.target === e.currentTarget) closeFileModal() }}
         >
-          <div className="bg-[#F9E8DA] rounded-xl border border-[#E2E8F0] shadow-2xl w-[680px]">
+          <div className="bg-white rounded-xl border border-[#E2E8F0] shadow-2xl w-[680px]">
             <div className="flex items-center justify-between px-6 pt-5 pb-4 border-b border-[#E2E8F0]">
               <h2 className="text-[15px] font-bold text-[#0F172A]">Submittal Transmittal</h2>
               <button onClick={closeFileModal} className="text-[#64748B] hover:text-[#64748B] transition-colors">
@@ -4115,14 +4115,14 @@ export default function Home() {
                 <div className="flex gap-3">
                   <div className="flex-1">
                     <label className={labelCls}>Reviewed By</label>
-                    <select value={coverForm.reviewedBy} onChange={e => setCoverForm(prev => ({ ...prev!, reviewedBy: e.target.value }))} className="w-full h-9 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-[#FDF0E8] focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40">
+                    <select value={coverForm.reviewedBy} onChange={e => setCoverForm(prev => ({ ...prev!, reviewedBy: e.target.value }))} className="w-full h-9 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40">
                       <option value="">Select…</option>
                       {teamMembers.map(m => <option key={m.id} value={m.name}>{m.name}{m.title ? ` — ${m.title}` : ""}</option>)}
                     </select>
                   </div>
                   <div className="flex-1">
                     <label className={labelCls}>Certified by CQM</label>
-                    <select value={coverForm.certifiedBy} onChange={e => setCoverForm(prev => ({ ...prev!, certifiedBy: e.target.value }))} className="w-full h-9 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-[#FDF0E8] focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40">
+                    <select value={coverForm.certifiedBy} onChange={e => setCoverForm(prev => ({ ...prev!, certifiedBy: e.target.value }))} className="w-full h-9 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40">
                       <option value="">Select…</option>
                       {teamMembers.map(m => <option key={m.id} value={m.name}>{m.name}{m.title ? ` — ${m.title}` : ""}</option>)}
                     </select>
@@ -4136,7 +4136,7 @@ export default function Home() {
                     onChange={e => setCoverForm(prev => ({ ...prev!, notes: e.target.value }))}
                     rows={3}
                     placeholder="Additional notes or instructions…"
-                    className="w-full px-3 py-2 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-[#FDF0E8] focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40 resize-none placeholder:text-[#64748B]"
+                    className="w-full px-3 py-2 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40 resize-none placeholder:text-[#64748B]"
                   />
                 </div>
 
@@ -4170,7 +4170,7 @@ export default function Home() {
           className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center"
           onClick={e => { if (e.target === e.currentTarget) closeModal() }}
         >
-          <div className="bg-[#F9E8DA] rounded-xl border border-[#E2E8F0] shadow-2xl w-[440px] p-6">
+          <div className="bg-white rounded-xl border border-[#E2E8F0] shadow-2xl w-[440px] p-6">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-[15px] font-bold text-[#0F172A]">Upload Submittal</h2>
               <button onClick={closeModal} className="text-[#64748B] hover:text-[#64748B] transition-colors">
@@ -4274,7 +4274,7 @@ export default function Home() {
                         setUploadSecName("")
                       }}
                       required
-                      className="w-full h-9 px-2 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-[#FDF0E8] focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40"
+                      className="w-full h-9 px-2 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40"
                     >
                       <option value="">Select a division…</option>
                       {CSI_DIVISIONS.map(d => (
@@ -4292,7 +4292,7 @@ export default function Home() {
                         setUploadSecName(picked?.name ?? "")
                       }}
                       disabled={!uploadDiv}
-                      className="w-full h-9 px-2 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-[#FDF0E8] focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40 disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="w-full h-9 px-2 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       <option value="">{uploadDiv ? "Select a section…" : "Select a division first"}</option>
                       {(CSI_SECTIONS[uploadDiv] ?? []).map(s => (
@@ -4386,7 +4386,7 @@ export default function Home() {
       {editSubmittal && (
         <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center"
           onClick={e => { if (e.target === e.currentTarget) setEditSubmittal(null) }}>
-          <div className="bg-[#F9E8DA] rounded-xl border border-[#E2E8F0] shadow-2xl w-[460px] p-6">
+          <div className="bg-white rounded-xl border border-[#E2E8F0] shadow-2xl w-[460px] p-6">
             <div className="flex items-center justify-between mb-1">
               <h2 className="text-[15px] font-bold text-[#0F172A]">Edit Submittal</h2>
               <button onClick={() => setEditSubmittal(null)} className="text-[#64748B] hover:text-[#64748B] transition-colors"><XIcon className="h-4 w-4" /></button>
@@ -4397,7 +4397,7 @@ export default function Home() {
               <div>
                 <label className="block text-[12px] font-medium text-[#64748B] mb-1">Status</label>
                 <select value={editStatus} onChange={e => setEditStatus(e.target.value)}
-                  className="w-full h-9 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-[#FDF0E8] focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40">
+                  className="w-full h-9 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40">
                   {["Received","Under Review","Approved","Approved with Comments","Rejected","Revise and Resubmit","Needs Review"].map(s => (
                     <option key={s} value={s}>{s}</option>
                   ))}
@@ -4408,7 +4408,7 @@ export default function Home() {
                 <select value={editDiv} onChange={e => {
                   const d = CSI_DIVISIONS.find(d => d.num === e.target.value)
                   setEditDiv(e.target.value); setEditDivName(d?.name ?? ""); setEditSec(""); setEditSecName("")
-                }} className="w-full h-9 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-[#FDF0E8] focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40">
+                }} className="w-full h-9 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40">
                   <option value="">Select division…</option>
                   {CSI_DIVISIONS.map(d => <option key={d.num} value={d.num}>{d.num} — {d.name}</option>)}
                 </select>
@@ -4418,13 +4418,13 @@ export default function Home() {
                 <select value={editSec} disabled={!editDiv} onChange={e => {
                   const s = (CSI_SECTIONS[editDiv] ?? []).find(s => s.code === e.target.value)
                   setEditSec(e.target.value); setEditSecName(s?.name ?? "")
-                }} className="w-full h-9 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-[#FDF0E8] focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40 disabled:opacity-50">
+                }} className="w-full h-9 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40 disabled:opacity-50">
                   <option value="">{editDiv ? "Select section…" : "Select a division first"}</option>
                   {(CSI_SECTIONS[editDiv] ?? []).map(s => <option key={s.code} value={s.code}>{s.code} — {s.name}</option>)}
                 </select>
               </div>
               {editSubmittal.ai_reasoning && (
-                <div className="rounded-md bg-[#F4DFD0] px-3 py-2">
+                <div className="rounded-md bg-[#F4F5F7] px-3 py-2">
                   <p className="text-[10px] font-bold text-[#64748B] uppercase tracking-widest mb-0.5">AI Reasoning</p>
                   <p className="text-[12px] text-[#64748B] italic">{editSubmittal.ai_reasoning}</p>
                 </div>
@@ -4450,7 +4450,7 @@ export default function Home() {
       {showBatch && (
         <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center"
           onClick={e => { if (e.target === e.currentTarget) closeBatch() }}>
-          <div className="bg-[#F9E8DA] rounded-xl border border-[#E2E8F0] shadow-2xl w-[700px] max-h-[85vh] flex flex-col">
+          <div className="bg-white rounded-xl border border-[#E2E8F0] shadow-2xl w-[700px] max-h-[85vh] flex flex-col">
 
             {/* Header */}
             <div className="flex items-center justify-between px-6 pt-5 pb-4 border-b border-[#E2E8F0] flex-shrink-0">
@@ -4504,7 +4504,7 @@ export default function Home() {
                     const isEditable = batchPhase === "review" || batchPhase === "classifying"
                     const hasName = item.nameMatl || item.nameMfr || item.nameDims
                     return (
-                      <div key={item.id} className="bg-[#F9E8DA] rounded-lg overflow-hidden mb-1">
+                      <div key={item.id} className="bg-[#F4F5F7] rounded-lg overflow-hidden mb-1">
                         {/* Main row */}
                         <div className="grid gap-2 items-center px-2 py-1.5" style={{ gridTemplateColumns: "1fr 155px 195px 20px 20px 20px" }}>
                           <div className="min-w-0 flex flex-col gap-0.5">
@@ -4515,7 +4515,7 @@ export default function Home() {
                                 onChange={e => updateBatchItem(item.id, { customName: e.target.value })}
                                 placeholder={item.file.name.replace(/\.[^.]+$/, "")}
                                 title={`Original file: ${item.file.name}`}
-                                className="h-6 px-1.5 rounded border border-[#E2E8F0] text-[11px] text-[#0F172A] bg-[#FDF0E8] focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40 w-full placeholder:text-[#64748B]"
+                                className="h-6 px-1.5 rounded border border-[#E2E8F0] text-[11px] text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40 w-full placeholder:text-[#64748B]"
                               />
                             ) : (
                               <span className="text-[12px] text-[#0F172A] truncate" title={item.file.name}>{item.customName || item.file.name}</span>
@@ -4528,7 +4528,7 @@ export default function Home() {
                               const d = CSI_DIVISIONS.find(d => d.num === e.target.value)
                               updateBatchItem(item.id, { divNum: e.target.value, divName: d?.name ?? "", secCode: "", secName: "", status: "ready" })
                             }}
-                            className="h-7 px-1.5 rounded-md border border-[#E2E8F0] text-[11px] text-[#0F172A] bg-[#FDF0E8] focus:outline-none disabled:opacity-60 w-full">
+                            className="h-7 px-1.5 rounded-md border border-[#E2E8F0] text-[11px] text-[#0F172A] bg-white focus:outline-none disabled:opacity-60 w-full">
                             <option value="">Division…</option>
                             {CSI_DIVISIONS.map(d => <option key={d.num} value={d.num}>{d.num} — {d.name}</option>)}
                           </select>
@@ -4538,7 +4538,7 @@ export default function Home() {
                               const s = (CSI_SECTIONS[item.divNum] ?? []).find(s => s.code === e.target.value)
                               updateBatchItem(item.id, { secCode: e.target.value, secName: s?.name ?? "", status: "ready" })
                             }}
-                            className="h-7 px-1.5 rounded-md border border-[#E2E8F0] text-[11px] text-[#0F172A] bg-[#FDF0E8] focus:outline-none disabled:opacity-60 w-full">
+                            className="h-7 px-1.5 rounded-md border border-[#E2E8F0] text-[11px] text-[#0F172A] bg-white focus:outline-none disabled:opacity-60 w-full">
                             <option value="">{item.divNum ? "Section…" : "—"}</option>
                             {(CSI_SECTIONS[item.divNum] ?? []).map(s => <option key={s.code} value={s.code}>{s.code} — {s.name}</option>)}
                           </select>
@@ -4611,7 +4611,7 @@ export default function Home() {
                     const done = batchItems.filter(it => it.status === "done").length
                     const errs = batchItems.filter(it => it.status === "upload-error").length
                     return (
-                      <div className="mt-3 rounded-lg border border-[#E2E8F0] bg-[#F9E8DA] px-4 py-3 text-center">
+                      <div className="mt-3 rounded-lg border border-[#E2E8F0] bg-[#F4F5F7] px-4 py-3 text-center">
                         <p className="text-[13px] font-semibold text-[#0F172A]">
                           {done} file{done !== 1 ? "s" : ""} uploaded successfully
                           {errs > 0 && <span className="text-red-400"> · {errs} failed</span>}
@@ -4672,7 +4672,7 @@ export default function Home() {
           className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center"
           onClick={e => { if (e.target === e.currentTarget) setShowManage(false) }}
         >
-          <div className="bg-[#F9E8DA] rounded-xl border border-[#E2E8F0] shadow-2xl w-[360px] p-5">
+          <div className="bg-white rounded-xl border border-[#E2E8F0] shadow-2xl w-[360px] p-5">
             <div className="flex items-center justify-between mb-1">
               <h2 className="text-[15px] font-bold text-[#0F172A]">Manage Divisions</h2>
               <button onClick={() => setShowManage(false)} className="text-[#64748B] hover:text-[#64748B] transition-colors">

@@ -2,9 +2,10 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 
 @theme {
-  --color-bg-base:         #FDF0E8;
-  --color-bg-surface:      #F9E8DA;
-  --color-bg-secondary:    #F4DFD0;
+  --color-bg-base:         #F4F5F7;
+  --color-bg-surface:      #FFFFFF;
+  --color-bg-secondary:    #F8F9FA;
+  --color-bg-nav:          #0A1628;
   --color-border-col:      #E2E8F0;
   --color-accent:          #7B9BB5;
   --color-accent-hover:    #6A8AA4;
@@ -12,14 +13,15 @@
   --color-text-muted:      #64748B;
   --color-status-approved: #16A34A;
   --color-status-pending:  #D97706;
-  --color-status-received: #7B9BB5;
+  --color-status-received: #1D4ED8;
   --color-status-rejected: #DC2626;
 }
 
 :root {
-  --bg-base:           #FDF0E8;
-  --bg-surface:        #F9E8DA;
-  --bg-secondary:      #F4DFD0;
+  --bg-base:           #F4F5F7;
+  --bg-surface:        #FFFFFF;
+  --bg-secondary:      #F8F9FA;
+  --bg-nav:            #0A1628;
   --border:            #E2E8F0;
   --accent:            #7B9BB5;
   --accent-hover:      #6A8AA4;
@@ -27,7 +29,7 @@
   --text-muted:        #64748B;
   --status-approved:   #16A34A;
   --status-pending:    #D97706;
-  --status-received:   #7B9BB5;
+  --status-received:   #1D4ED8;
   --status-rejected:   #DC2626;
 }
 
@@ -36,11 +38,11 @@
 }
 
 html {
-  background-color: #FDF0E8;
+  background-color: #F4F5F7;
   color: #0F172A;
 }
 
 body {
-  background-color: #FDF0E8;
+  background-color: #F4F5F7;
   color: #0F172A;
 }

@@ -515,7 +515,7 @@ export default function SettingsPage() {
     setProjectImportResult(null)
   }
 
-  const inputCls = "w-full h-9 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-[#FDF0E8] focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40 focus:border-[#7B9BB5]/50 placeholder:text-[#64748B] transition-all"
+  const inputCls = "w-full h-9 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40 focus:border-[#7B9BB5]/50 placeholder:text-[#64748B] transition-all"
   const labelCls = "block text-[12px] font-medium text-[#64748B] mb-1"
 
   const tabs: { key: Tab; label: string }[] = [
@@ -526,7 +526,7 @@ export default function SettingsPage() {
   ]
 
   return (
-    <div className="min-h-screen bg-[#FDF0E8]">
+    <div className="min-h-screen bg-[#F4F5F7]">
       <div className="max-w-[720px] mx-auto py-12 px-6">
 
         <div className="flex items-center justify-between mb-8">
@@ -561,13 +561,13 @@ export default function SettingsPage() {
               <div className="text-[13px] text-[#64748B]">Loading…</div>
             ) : (
               <>
-                <div className="bg-[#F9E8DA] rounded-xl border border-[#E2E8F0] p-5">
+                <div className="bg-white rounded-xl border border-[#E2E8F0] p-5">
                   <h2 className="text-[14px] font-semibold text-[#0F172A] mb-0.5">Company Logo</h2>
                   <p className="text-[12px] text-[#64748B] mb-4">
                     Displayed in the app header. PNG, SVG, or JPG recommended.
                   </p>
                   <div className="flex items-center gap-4">
-                    <div className="w-16 h-16 rounded-lg border border-[#E2E8F0] bg-[#FDF0E8] flex items-center justify-center overflow-hidden flex-shrink-0">
+                    <div className="w-16 h-16 rounded-lg border border-[#E2E8F0] bg-white flex items-center justify-center overflow-hidden flex-shrink-0">
                       {logoUrl ? (
                         <img src={logoUrl} alt="Logo" className="w-full h-full object-contain p-1" />
                       ) : (
@@ -580,7 +580,7 @@ export default function SettingsPage() {
                       <button
                         onClick={() => logoInputRef.current?.click()}
                         disabled={uploadingLogo}
-                        className="h-8 px-4 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] hover:bg-[#FDF0E8]/[0.05] transition-colors disabled:opacity-50"
+                        className="h-8 px-4 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] hover:bg-[#F4F5F7]/[0.05] transition-colors disabled:opacity-50"
                       >
                         {uploadingLogo ? "Uploading…" : logoUrl ? "Replace logo" : "Upload logo"}
                       </button>
@@ -590,7 +590,7 @@ export default function SettingsPage() {
                   <input ref={logoInputRef} type="file" accept="image/*" onChange={handleLogoChange} className="hidden" />
                 </div>
 
-                <div className="bg-[#F9E8DA] rounded-xl border border-[#E2E8F0] p-5">
+                <div className="bg-white rounded-xl border border-[#E2E8F0] p-5">
                   <h2 className="text-[14px] font-semibold text-[#0F172A] mb-0.5">Cover Page Template</h2>
                   <p className="text-[12px] text-[#64748B] mb-4">
                     This PDF will be prepended to every submittal when a user opens or downloads it. Must be a PDF file.
@@ -598,7 +598,7 @@ export default function SettingsPage() {
                   <div className="flex items-center gap-3">
                     <div className={`flex-1 h-9 px-3 rounded-md border flex items-center text-[13px] ${
                       hasCoverPage
-                        ? "border-[#E2E8F0] bg-[#FDF0E8] text-[#0F172A]"
+                        ? "border-[#E2E8F0] bg-white text-[#0F172A]"
                         : "border-dashed border-[#E2E8F0] text-[#64748B]"
                     }`}>
                       {hasCoverPage ? "📄 cover.pdf — active" : "No cover page uploaded"}
@@ -606,7 +606,7 @@ export default function SettingsPage() {
                     <button
                       onClick={() => coverInputRef.current?.click()}
                       disabled={uploadingCover}
-                      className="h-9 px-4 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] hover:bg-[#FDF0E8]/[0.05] transition-colors disabled:opacity-50 flex-shrink-0"
+                      className="h-9 px-4 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] hover:bg-[#F4F5F7]/[0.05] transition-colors disabled:opacity-50 flex-shrink-0"
                     >
                       {uploadingCover ? "Uploading…" : hasCoverPage ? "Replace" : "Upload PDF"}
                     </button>
@@ -626,7 +626,7 @@ export default function SettingsPage() {
 
         {activeTab === "team" && (
           <div className="space-y-4">
-            <div className="bg-[#F9E8DA] rounded-xl border border-[#E2E8F0] overflow-hidden">
+            <div className="bg-white rounded-xl border border-[#E2E8F0] overflow-hidden">
               <div className="flex items-center justify-between px-5 py-4 border-b border-[#E2E8F0]">
                 <div>
                   <h2 className="text-[14px] font-semibold text-[#0F172A]">Team Members</h2>
@@ -636,7 +636,7 @@ export default function SettingsPage() {
                   <div className="flex items-center gap-2 flex-shrink-0">
                     <button
                       onClick={() => teamCsvInputRef.current?.click()}
-                      className="h-8 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] hover:bg-[#FDF0E8]/[0.05] transition-colors flex items-center gap-1.5"
+                      className="h-8 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] hover:bg-[#F4F5F7]/[0.05] transition-colors flex items-center gap-1.5"
                     >
                       <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
@@ -655,7 +655,7 @@ export default function SettingsPage() {
               <input ref={teamCsvInputRef} type="file" accept=".csv,text/csv" onChange={handleTeamCsvChange} className="hidden" />
 
               {showTeamForm && (
-                <div className="px-5 py-4 border-b border-[#E2E8F0] bg-[#FDF0E8]/50">
+                <div className="px-5 py-4 border-b border-[#E2E8F0] bg-[#F4F5F7]/50">
                   <p className="text-[13px] font-semibold text-[#0F172A] mb-3">
                     {editingMember ? "Edit member" : "New member"}
                   </p>
@@ -698,7 +698,7 @@ export default function SettingsPage() {
                       <button
                         type="button"
                         onClick={cancelMemberForm}
-                        className="h-8 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#64748B] hover:text-[#0F172A] hover:bg-[#FDF0E8]/[0.05] transition-colors"
+                        className="h-8 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#64748B] hover:text-[#0F172A] hover:bg-[#F4F5F7]/[0.05] transition-colors"
                       >
                         Cancel
                       </button>
@@ -715,7 +715,7 @@ export default function SettingsPage() {
               )}
 
               {teamImportRows && (
-                <div className="border-b border-[#E2E8F0] bg-[#FDF0E8]/50">
+                <div className="border-b border-[#E2E8F0] bg-[#F4F5F7]/50">
                   <div className="px-5 py-3 flex items-center justify-between">
                     <div className="text-[13px] font-semibold text-[#0F172A]">
                       Preview — {teamImportRows.length} row{teamImportRows.length !== 1 ? "s" : ""}
@@ -734,7 +734,7 @@ export default function SettingsPage() {
                   </div>
                   <div className="overflow-x-auto max-h-60 overflow-y-auto">
                     <table className="w-full">
-                      <thead className="sticky top-0 bg-[#FDF0E8]">
+                      <thead className="sticky top-0 bg-[#F8F9FA]">
                         <tr className="border-b border-[#E2E8F0]">
                           <th className="text-left px-5 py-2 text-[11px] font-semibold text-[#64748B] uppercase tracking-wider">Name</th>
                           <th className="text-left px-3 py-2 text-[11px] font-semibold text-[#64748B] uppercase tracking-wider">Title</th>
@@ -764,7 +764,7 @@ export default function SettingsPage() {
                       <button
                         onClick={cancelTeamImport}
                         disabled={teamImporting}
-                        className="h-8 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#64748B] hover:text-[#0F172A] hover:bg-[#FDF0E8]/[0.05] transition-colors disabled:opacity-50"
+                        className="h-8 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#64748B] hover:text-[#0F172A] hover:bg-[#F4F5F7]/[0.05] transition-colors disabled:opacity-50"
                       >
                         Cancel
                       </button>
@@ -814,7 +814,7 @@ export default function SettingsPage() {
                   </thead>
                   <tbody>
                     {teamMembers.map((m, i) => (
-                      <tr key={m.id} className={`${i < teamMembers.length - 1 ? "border-b border-[#E2E8F0]" : ""} hover:bg-[#FDF0E8]/[0.03] transition-colors group`}>
+                      <tr key={m.id} className={`${i < teamMembers.length - 1 ? "border-b border-[#E2E8F0]" : ""} hover:bg-[#F4F5F7]/[0.03] transition-colors group`}>
                         <td className="px-5 py-3 text-[13px] font-medium text-[#0F172A]">{m.name}</td>
                         <td className="px-3 py-3 text-[13px] text-[#64748B]">{m.title ?? <span className="text-[#64748B]">—</span>}</td>
                         <td className="px-3 py-3 text-[13px] text-[#64748B]">{m.email ?? <span className="text-[#64748B]">—</span>}</td>
@@ -822,14 +822,14 @@ export default function SettingsPage() {
                           <div className="flex items-center gap-1.5 justify-end opacity-0 group-hover:opacity-100 transition-opacity">
                             <button
                               onClick={() => openEditMember(m)}
-                              className="p-1 rounded text-[#64748B] hover:text-[#0F172A] hover:bg-[#FDF0E8]/[0.08] transition-colors"
+                              className="p-1 rounded text-[#64748B] hover:text-[#0F172A] hover:bg-[#F4F5F7]/[0.08] transition-colors"
                               title="Edit"
                             >
                               <PencilIcon />
                             </button>
                             <button
                               onClick={() => deleteMember(m)}
-                              className="p-1 rounded text-[#64748B] hover:text-red-400 hover:bg-[#FDF0E8]/[0.08] transition-colors"
+                              className="p-1 rounded text-[#64748B] hover:text-red-400 hover:bg-[#F4F5F7]/[0.08] transition-colors"
                               title="Delete"
                             >
                               <XIcon className="h-3 w-3" />
@@ -853,7 +853,7 @@ export default function SettingsPage() {
 
         {activeTab === "projects" && (
           <div className="space-y-4">
-            <div className="bg-[#F9E8DA] rounded-xl border border-[#E2E8F0] overflow-hidden">
+            <div className="bg-white rounded-xl border border-[#E2E8F0] overflow-hidden">
               <div className="flex items-center justify-between px-5 py-4 border-b border-[#E2E8F0]">
                 <div>
                   <h2 className="text-[14px] font-semibold text-[#0F172A]">Projects</h2>
@@ -863,7 +863,7 @@ export default function SettingsPage() {
                   <div className="flex items-center gap-2 flex-shrink-0">
                     <button
                       onClick={() => projectCsvInputRef.current?.click()}
-                      className="h-8 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] hover:bg-[#FDF0E8]/[0.05] transition-colors flex items-center gap-1.5"
+                      className="h-8 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] hover:bg-[#F4F5F7]/[0.05] transition-colors flex items-center gap-1.5"
                     >
                       <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
@@ -882,7 +882,7 @@ export default function SettingsPage() {
               <input ref={projectCsvInputRef} type="file" accept=".csv,text/csv" onChange={handleProjectCsvChange} className="hidden" />
 
               {showProjectForm && (
-                <div className="px-5 py-4 border-b border-[#E2E8F0] bg-[#FDF0E8]/50">
+                <div className="px-5 py-4 border-b border-[#E2E8F0] bg-[#F4F5F7]/50">
                   <p className="text-[13px] font-semibold text-[#0F172A] mb-3">
                     {editingProject ? "Edit project" : "New project"}
                   </p>
@@ -947,7 +947,7 @@ export default function SettingsPage() {
                       <button
                         type="button"
                         onClick={cancelProjectForm}
-                        className="h-8 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#64748B] hover:text-[#0F172A] hover:bg-[#FDF0E8]/[0.05] transition-colors"
+                        className="h-8 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#64748B] hover:text-[#0F172A] hover:bg-[#F4F5F7]/[0.05] transition-colors"
                       >
                         Cancel
                       </button>
@@ -964,7 +964,7 @@ export default function SettingsPage() {
               )}
 
               {projectImportRows && (
-                <div className="border-b border-[#E2E8F0] bg-[#FDF0E8]/50">
+                <div className="border-b border-[#E2E8F0] bg-[#F4F5F7]/50">
                   <div className="px-5 py-3 flex items-center justify-between">
                     <div className="text-[13px] font-semibold text-[#0F172A]">
                       Preview — {projectImportRows.length} row{projectImportRows.length !== 1 ? "s" : ""}
@@ -983,7 +983,7 @@ export default function SettingsPage() {
                   </div>
                   <div className="overflow-x-auto max-h-60 overflow-y-auto">
                     <table className="w-full">
-                      <thead className="sticky top-0 bg-[#FDF0E8]">
+                      <thead className="sticky top-0 bg-[#F8F9FA]">
                         <tr className="border-b border-[#E2E8F0]">
                           <th className="text-left px-5 py-2 text-[11px] font-semibold text-[#64748B] uppercase tracking-wider">Name</th>
                           <th className="text-left px-3 py-2 text-[11px] font-semibold text-[#64748B] uppercase tracking-wider">No.</th>
@@ -1017,7 +1017,7 @@ export default function SettingsPage() {
                       <button
                         onClick={cancelProjectImport}
                         disabled={projectImporting}
-                        className="h-8 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#64748B] hover:text-[#0F172A] hover:bg-[#FDF0E8]/[0.05] transition-colors disabled:opacity-50"
+                        className="h-8 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#64748B] hover:text-[#0F172A] hover:bg-[#F4F5F7]/[0.05] transition-colors disabled:opacity-50"
                       >
                         Cancel
                       </button>
@@ -1068,7 +1068,7 @@ export default function SettingsPage() {
                   </thead>
                   <tbody>
                     {projects.map((p, i) => (
-                      <tr key={p.id} className={`${i < projects.length - 1 ? "border-b border-[#E2E8F0]" : ""} hover:bg-[#FDF0E8]/[0.03] transition-colors group`}>
+                      <tr key={p.id} className={`${i < projects.length - 1 ? "border-b border-[#E2E8F0]" : ""} hover:bg-[#F4F5F7]/[0.03] transition-colors group`}>
                         <td className="px-5 py-3 text-[13px] font-medium text-[#0F172A]">{p.name}</td>
                         <td className="px-3 py-3 text-[13px] text-[#64748B]">{p.number ?? <span className="text-[#64748B]">—</span>}</td>
                         <td className="px-3 py-3 text-[13px] text-[#64748B]">{p.location ?? <span className="text-[#64748B]">—</span>}</td>
@@ -1077,14 +1077,14 @@ export default function SettingsPage() {
                           <div className="flex items-center gap-1.5 justify-end opacity-0 group-hover:opacity-100 transition-opacity">
                             <button
                               onClick={() => openEditProject(p)}
-                              className="p-1 rounded text-[#64748B] hover:text-[#0F172A] hover:bg-[#FDF0E8]/[0.08] transition-colors"
+                              className="p-1 rounded text-[#64748B] hover:text-[#0F172A] hover:bg-[#F4F5F7]/[0.08] transition-colors"
                               title="Edit"
                             >
                               <PencilIcon />
                             </button>
                             <button
                               onClick={() => deleteProject(p)}
-                              className="p-1 rounded text-[#64748B] hover:text-red-400 hover:bg-[#FDF0E8]/[0.08] transition-colors"
+                              className="p-1 rounded text-[#64748B] hover:text-red-400 hover:bg-[#F4F5F7]/[0.08] transition-colors"
                               title="Delete"
                             >
                               <XIcon className="h-3 w-3" />
@@ -1112,7 +1112,7 @@ export default function SettingsPage() {
               <div className="text-[13px] text-[#64748B]">Loading…</div>
             ) : (
               <>
-                <div className="bg-[#F9E8DA] rounded-xl border border-[#E2E8F0] p-5">
+                <div className="bg-white rounded-xl border border-[#E2E8F0] p-5">
                   <div className="flex items-start justify-between gap-4">
                     <div>
                       <h2 className="text-[14px] font-semibold text-[#0F172A] mb-0.5">Gmail Integration</h2>
@@ -1123,7 +1123,7 @@ export default function SettingsPage() {
                     <div className={`flex-shrink-0 flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium border ${
                       gmailConn?.connected
                         ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400"
-                        : "bg-[#FDF0E8] border-[#E2E8F0] text-[#64748B]"
+                        : "bg-[#F4F5F7] border-[#E2E8F0] text-[#64748B]"
                     }`}>
                       <span className={`w-1.5 h-1.5 rounded-full ${gmailConn?.connected ? "bg-emerald-400" : "bg-[#64748B]"}`} />
                       {gmailConn?.connected ? "Connected" : "Not connected"}
@@ -1132,7 +1132,7 @@ export default function SettingsPage() {
 
                   {gmailConn?.connected ? (
                     <div className="mt-5 space-y-4">
-                      <div className="bg-[#FDF0E8] rounded-lg border border-[#E2E8F0] divide-y divide-[#E2E8F0]">
+                      <div className="bg-[#F4F5F7] rounded-lg border border-[#E2E8F0] divide-y divide-[#E2E8F0]">
                         <div className="flex items-center justify-between px-4 py-3">
                           <span className="text-[12px] text-[#64748B]">Connected account</span>
                           <span className="text-[13px] text-[#0F172A] font-medium">{gmailConn.gmail_address}</span>
@@ -1169,7 +1169,7 @@ export default function SettingsPage() {
                       <div className="flex gap-2">
                         <a
                           href="/api/auth/gmail"
-                          className="h-8 px-4 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] hover:bg-[#FDF0E8]/[0.05] transition-colors inline-flex items-center"
+                          className="h-8 px-4 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] hover:bg-[#F4F5F7]/[0.05] transition-colors inline-flex items-center"
                         >
                           Reconnect
                         </a>
@@ -1197,7 +1197,7 @@ export default function SettingsPage() {
                   )}
                 </div>
 
-                <div className="bg-[#F9E8DA] rounded-xl border border-[#E2E8F0] p-5">
+                <div className="bg-white rounded-xl border border-[#E2E8F0] p-5">
                   <h2 className="text-[14px] font-semibold text-[#0F172A] mb-3">Setup Instructions</h2>
                   <ol className="space-y-3 text-[13px] text-[#64748B]">
                     <li className="flex gap-3">
@@ -1212,7 +1212,7 @@ export default function SettingsPage() {
                       <span className="flex-shrink-0 w-5 h-5 rounded-full bg-[#7B9BB5]/20 text-[#7B9BB5] text-[11px] font-semibold flex items-center justify-center">3</span>
                       <span>
                         In Google Cloud Console, create a Pub/Sub topic and a push subscription. Set the push endpoint to:
-                        <code className="block mt-1.5 px-2.5 py-1.5 rounded bg-[#FDF0E8] border border-[#E2E8F0] text-[11px] text-[#0F172A] font-mono break-all">
+                        <code className="block mt-1.5 px-2.5 py-1.5 rounded bg-[#F4F5F7] border border-[#E2E8F0] text-[11px] text-[#0F172A] font-mono break-all">
                           {process.env.NEXT_PUBLIC_APP_URL}/api/gmail-intake?token=<span className="text-[#64748B]">&lt;GMAIL_WEBHOOK_SECRET&gt;</span>
                         </code>
                         Set <code className="text-[#0F172A]">GMAIL_WEBHOOK_SECRET</code> and <code className="text-[#0F172A]">GOOGLE_PUBSUB_TOPIC</code> as environment variables in your deployment.
