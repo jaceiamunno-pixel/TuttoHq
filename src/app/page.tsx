@@ -1,4 +1,4 @@
-"use client"
+﻿"use client"
 
 import { useState, useRef, useEffect } from "react"
 import Link from "next/link"
@@ -57,7 +57,7 @@ function Navbar() {
     >
       <nav className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
         <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded-lg bg-[#2563eb] flex items-center justify-center flex-shrink-0">
+          <div className="w-8 h-8 rounded-lg bg-[#C9A84C] flex items-center justify-center flex-shrink-0">
             <FileText className="w-4 h-4 text-white" />
           </div>
           <span className="text-[16px] font-bold text-[#f0f4ff] tracking-tight">TuttoHQ</span>
@@ -88,7 +88,7 @@ function Navbar() {
           </Link>
           <Link
             href="/signup"
-            className="text-[13px] font-bold text-white px-4 py-2 rounded-lg bg-[#2563eb] hover:bg-[#1d4ed8] transition-colors shadow-lg shadow-[#2563eb]/30"
+            className="text-[13px] font-bold text-white px-4 py-2 rounded-lg bg-[#C9A84C] hover:bg-[#B8933D] transition-colors shadow-lg shadow-[#C9A84C]/30"
           >
             Start Free Trial
           </Link>
@@ -103,7 +103,7 @@ function Navbar() {
 function DashboardMockup() {
   return (
     <div className="relative w-full max-w-5xl mx-auto mt-16">
-      <div className="absolute inset-x-0 -top-10 h-48 bg-gradient-to-b from-[#2563eb]/15 via-[#2563eb]/8 to-transparent blur-3xl pointer-events-none -z-10" />
+      <div className="absolute inset-x-0 -top-10 h-48 bg-gradient-to-b from-[#C9A84C]/15 via-[#C9A84C]/8 to-transparent blur-3xl pointer-events-none -z-10" />
 
       <motion.div
         initial={{ opacity: 0, y: 48, scale: 0.96 }}
@@ -129,7 +129,7 @@ function DashboardMockup() {
           <div className="hidden sm:flex w-52 bg-[#08101e] border-r border-[#1e2d4a]/60 flex-col py-3 px-2 gap-0.5">
             <div className="px-3 py-2 mb-3">
               <div className="flex items-center gap-2">
-                <div className="w-6 h-6 rounded bg-[#2563eb] flex items-center justify-center flex-shrink-0">
+                <div className="w-6 h-6 rounded bg-[#C9A84C] flex items-center justify-center flex-shrink-0">
                   <FileText className="w-3 h-3 text-white" />
                 </div>
                 <span className="text-[12px] font-bold text-[#e8edf5]">TuttoHQ</span>
@@ -146,7 +146,7 @@ function DashboardMockup() {
               <div
                 key={label}
                 className={`flex items-center gap-2.5 px-3 py-2 rounded-lg ${
-                  active ? "bg-[#2563eb]/15 text-[#60a5fa]" : "text-[#3d506a]"
+                  active ? "bg-[#C9A84C]/15 text-[#C9A84C]" : "text-[#3d506a]"
                 }`}
               >
                 <Icon className="w-3.5 h-3.5 flex-shrink-0" />
@@ -171,7 +171,7 @@ function DashboardMockup() {
               <div className="flex-1 flex items-center gap-2 bg-[#08101e] rounded-lg px-3 py-1.5 border border-[#1e2d4a]/60">
                 <span className="text-[11px] text-[#3d506a]">Search submittals with AI...</span>
               </div>
-              <div className="px-3 py-1.5 rounded-lg bg-[#2563eb] flex-shrink-0">
+              <div className="px-3 py-1.5 rounded-lg bg-[#C9A84C] flex-shrink-0">
                 <span className="text-[10px] font-bold text-white">+ Upload</span>
               </div>
             </div>
@@ -249,7 +249,7 @@ function DashboardMockup() {
                         AI classified · {row.conf}% confidence
                       </div>
                     </div>
-                    <div className="w-24 hidden md:block text-[9px] font-mono text-[#60a5fa]">
+                    <div className="w-24 hidden md:block text-[9px] font-mono text-[#C9A84C]">
                       {row.section}
                     </div>
                     <div
@@ -492,7 +492,7 @@ export default function LandingPage() {
         <section className="relative min-h-screen flex flex-col justify-center pt-16 overflow-hidden">
           {/* Background radials */}
           <div className="absolute inset-0 pointer-events-none select-none">
-            <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[900px] h-[700px] rounded-full bg-[#2563eb]/7 blur-[130px]" />
+            <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[900px] h-[700px] rounded-full bg-[#C9A84C]/7 blur-[130px]" />
             <div className="absolute bottom-0 right-0 w-[500px] h-[500px] rounded-full bg-[#1e3a6e]/15 blur-[100px]" />
           </div>
 
@@ -503,7 +503,7 @@ export default function LandingPage() {
                 initial={{ opacity: 0, y: 16 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.5 }}
-                className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-[#2563eb]/10 border border-[#2563eb]/25 text-[13px] text-[#60a5fa] font-semibold mb-8"
+                className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-[#C9A84C]/10 border border-[#C9A84C]/25 text-[13px] text-[#C9A84C] font-semibold mb-8"
               >
                 <Zap className="w-3.5 h-3.5" />
                 AI-Powered Construction Document Management
@@ -517,7 +517,7 @@ export default function LandingPage() {
                 className="text-4xl sm:text-5xl lg:text-[64px] font-extrabold tracking-tight leading-[1.07] text-[#f0f4ff] mb-6"
               >
                 General Contractors Lose{" "}
-                <span className="text-transparent bg-clip-text bg-gradient-to-r from-[#3b82f6] to-[#93c5fd]">
+                <span className="text-transparent bg-clip-text bg-gradient-to-r from-[#C9A84C] to-[#D4B56A]">
                   6 Hours Per Week
                 </span>{" "}
                 Managing Submittals in Email.{" "}
@@ -547,7 +547,7 @@ export default function LandingPage() {
               >
                 <Link
                   href="/signup"
-                  className="w-full sm:w-auto px-8 py-4 rounded-xl bg-[#2563eb] hover:bg-[#1d4ed8] text-white text-[15px] font-bold transition-all duration-200 shadow-xl shadow-[#2563eb]/25 hover:shadow-[#2563eb]/40 hover:scale-[1.02]"
+                  className="w-full sm:w-auto px-8 py-4 rounded-xl bg-[#C9A84C] hover:bg-[#B8933D] text-white text-[15px] font-bold transition-all duration-200 shadow-xl shadow-[#C9A84C]/25 hover:shadow-[#C9A84C]/40 hover:scale-[1.02]"
                 >
                   Start Your Free 14-Day Trial — No Credit Card Required
                 </Link>
@@ -675,9 +675,9 @@ export default function LandingPage() {
             <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-5 mt-16">
               {FEATURES.map((f, i) => (
                 <FadeUp key={f.title} delay={(i % 6) * 0.06}>
-                  <div className="group rounded-xl border border-[#1e2d4a]/60 bg-[#0c1526] p-6 h-full hover:border-[#2563eb]/40 transition-all duration-300">
-                    <div className="w-10 h-10 rounded-xl bg-[#2563eb]/10 border border-[#2563eb]/20 flex items-center justify-center mb-4 group-hover:bg-[#2563eb]/20 transition-colors">
-                      <f.icon className="w-5 h-5 text-[#60a5fa]" />
+                  <div className="group rounded-xl border border-[#1e2d4a]/60 bg-[#0c1526] p-6 h-full hover:border-[#C9A84C]/40 transition-all duration-300">
+                    <div className="w-10 h-10 rounded-xl bg-[#C9A84C]/10 border border-[#C9A84C]/20 flex items-center justify-center mb-4 group-hover:bg-[#C9A84C]/20 transition-colors">
+                      <f.icon className="w-5 h-5 text-[#C9A84C]" />
                     </div>
                     <h3 className="text-[15px] font-bold text-[#e8edf5] mb-2">{f.title}</h3>
                     <p className="text-[13px] text-[#8b9ab5] leading-relaxed">{f.desc}</p>
@@ -694,7 +694,7 @@ export default function LandingPage() {
             <FadeUp className="text-center mb-16">
               <h2 className="text-3xl sm:text-4xl lg:text-5xl font-extrabold text-[#f0f4ff] tracking-tight mb-4">
                 Set Up In Under 10 Minutes.{" "}
-                <span className="text-transparent bg-clip-text bg-gradient-to-r from-[#3b82f6] to-[#93c5fd]">
+                <span className="text-transparent bg-clip-text bg-gradient-to-r from-[#C9A84C] to-[#D4B56A]">
                   Here Is Exactly How It Works.
                 </span>
               </h2>
@@ -731,8 +731,8 @@ export default function LandingPage() {
                 <FadeUp key={i} delay={i * 0.09}>
                   <div className="flex items-start gap-5 group">
                     <div className="flex flex-col items-center flex-shrink-0">
-                      <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-[#2563eb]/25 to-[#1e3a6e]/40 border border-[#2563eb]/30 flex items-center justify-center group-hover:from-[#2563eb]/35 transition-all">
-                        <span className="text-[20px] font-extrabold text-[#60a5fa]">{step.n}</span>
+                      <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-[#C9A84C]/25 to-[#1e3a6e]/40 border border-[#C9A84C]/30 flex items-center justify-center group-hover:from-[#C9A84C]/35 transition-all">
+                        <span className="text-[20px] font-extrabold text-[#C9A84C]">{step.n}</span>
                       </div>
                       {i < 4 && (
                         <div className="w-[2px] h-8 bg-gradient-to-b from-[#2a3347] to-transparent mt-1" />
@@ -741,7 +741,7 @@ export default function LandingPage() {
                     <div className="flex-1 pt-3 pb-2">
                       <div className="flex items-start sm:items-center justify-between gap-4 flex-col sm:flex-row">
                         <h3 className="text-[16px] font-semibold text-[#e8edf5]">{step.title}</h3>
-                        <span className="text-[12px] font-bold text-[#2563eb] bg-[#2563eb]/10 border border-[#2563eb]/20 px-3 py-1 rounded-full flex-shrink-0">
+                        <span className="text-[12px] font-bold text-[#C9A84C] bg-[#C9A84C]/10 border border-[#C9A84C]/20 px-3 py-1 rounded-full flex-shrink-0">
                           {step.time}
                         </span>
                       </div>
@@ -773,7 +773,7 @@ export default function LandingPage() {
                     Feature
                   </div>
                   <div className="px-5 py-5 text-center border-l border-[#1e2d4a]/60">
-                    <div className="text-[15px] font-extrabold text-[#60a5fa]">TuttoHQ</div>
+                    <div className="text-[15px] font-extrabold text-[#C9A84C]">TuttoHQ</div>
                     <div className="text-[11px] text-[#3d506a] mt-0.5">$199/month</div>
                   </div>
                   <div className="px-5 py-5 text-center border-l border-[#1e2d4a]/60">
@@ -852,13 +852,13 @@ export default function LandingPage() {
 
             <FadeUp delay={0.1}>
               <div className="mt-12 relative">
-                <div className="absolute inset-0 bg-gradient-to-b from-[#2563eb]/20 via-[#2563eb]/5 to-transparent rounded-3xl blur-3xl -z-10" />
-                <div className="rounded-3xl border border-[#2563eb]/35 bg-[#0c1526] p-8 sm:p-12 relative overflow-hidden">
+                <div className="absolute inset-0 bg-gradient-to-b from-[#C9A84C]/20 via-[#C9A84C]/5 to-transparent rounded-3xl blur-3xl -z-10" />
+                <div className="rounded-3xl border border-[#C9A84C]/35 bg-[#0c1526] p-8 sm:p-12 relative overflow-hidden">
                   {/* Subtle top gradient */}
-                  <div className="absolute inset-x-0 top-0 h-[2px] bg-gradient-to-r from-transparent via-[#3b82f6]/60 to-transparent" />
+                  <div className="absolute inset-x-0 top-0 h-[2px] bg-gradient-to-r from-transparent via-[#C9A84C]/60 to-transparent" />
 
-                  <div className="inline-flex items-center gap-1.5 px-4 py-1 rounded-full bg-[#2563eb]/15 border border-[#2563eb]/25 text-[12px] font-bold text-[#60a5fa] mb-8">
-                    <Star className="w-3 h-3 fill-[#60a5fa]" />
+                  <div className="inline-flex items-center gap-1.5 px-4 py-1 rounded-full bg-[#C9A84C]/15 border border-[#C9A84C]/25 text-[12px] font-bold text-[#C9A84C] mb-8">
+                    <Star className="w-3 h-3 fill-[#C9A84C]" />
                     Most affordable full-featured platform
                   </div>
 
@@ -896,7 +896,7 @@ export default function LandingPage() {
 
                   <Link
                     href="/signup"
-                    className="block w-full py-4 rounded-xl bg-[#2563eb] hover:bg-[#1d4ed8] text-white text-[16px] font-bold transition-all duration-200 shadow-xl shadow-[#2563eb]/25 hover:shadow-[#2563eb]/40 hover:scale-[1.01]"
+                    className="block w-full py-4 rounded-xl bg-[#C9A84C] hover:bg-[#B8933D] text-white text-[16px] font-bold transition-all duration-200 shadow-xl shadow-[#C9A84C]/25 hover:shadow-[#C9A84C]/40 hover:scale-[1.01]"
                   >
                     Start Your Free 14-Day Trial
                   </Link>
@@ -988,8 +988,8 @@ export default function LandingPage() {
         {/* ═══ FINAL CTA ═══════════════════════════════════════════════════════ */}
         <section className="py-24 lg:py-36 relative overflow-hidden">
           <div className="absolute inset-0 pointer-events-none select-none">
-            <div className="absolute inset-0 bg-gradient-to-b from-transparent via-[#2563eb]/5 to-transparent" />
-            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[700px] h-[500px] rounded-full bg-[#2563eb]/8 blur-[100px]" />
+            <div className="absolute inset-0 bg-gradient-to-b from-transparent via-[#C9A84C]/5 to-transparent" />
+            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[700px] h-[500px] rounded-full bg-[#C9A84C]/8 blur-[100px]" />
           </div>
 
           <div className="relative max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
@@ -1003,7 +1003,7 @@ export default function LandingPage() {
               </p>
               <Link
                 href="/signup"
-                className="inline-block px-10 py-5 rounded-xl bg-[#2563eb] hover:bg-[#1d4ed8] text-white text-[17px] font-bold transition-all duration-200 shadow-2xl shadow-[#2563eb]/25 hover:shadow-[#2563eb]/40 hover:scale-[1.02] mb-12"
+                className="inline-block px-10 py-5 rounded-xl bg-[#C9A84C] hover:bg-[#B8933D] text-white text-[17px] font-bold transition-all duration-200 shadow-2xl shadow-[#C9A84C]/25 hover:shadow-[#C9A84C]/40 hover:scale-[1.02] mb-12"
               >
                 Start Free Trial — Takes Under 10 Minutes
               </Link>
@@ -1030,7 +1030,7 @@ export default function LandingPage() {
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
             <div className="flex flex-col md:flex-row items-center justify-between gap-6 mb-8">
               <div className="flex items-center gap-3">
-                <div className="w-8 h-8 rounded-lg bg-[#2563eb] flex items-center justify-center flex-shrink-0">
+                <div className="w-8 h-8 rounded-lg bg-[#C9A84C] flex items-center justify-center flex-shrink-0">
                   <FileText className="w-4 h-4 text-white" />
                 </div>
                 <div>
