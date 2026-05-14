@@ -1,4 +1,4 @@
-"use client"
+﻿"use client"
 
 import { useState, useEffect, useRef } from "react"
 import Link from "next/link"
@@ -515,8 +515,8 @@ export default function SettingsPage() {
     setProjectImportResult(null)
   }
 
-  const inputCls = "w-full h-9 px-3 rounded-md border border-[#2a3347] text-[13px] text-[#e8edf5] bg-[#0d1117] focus:outline-none focus:ring-1 focus:ring-[#2563eb]/40 focus:border-[#2563eb]/50 placeholder:text-[#4f617a] transition-all"
-  const labelCls = "block text-[12px] font-medium text-[#8b9ab5] mb-1"
+  const inputCls = "w-full h-9 px-3 rounded-md border border-[#2E3A52] text-[13px] text-[#F8FAFC] bg-[#0A0F1E] focus:outline-none focus:ring-1 focus:ring-[#2563eb]/40 focus:border-[#2563eb]/50 placeholder:text-[#64748B] transition-all"
+  const labelCls = "block text-[12px] font-medium text-[#94A3B8] mb-1"
 
   const tabs: { key: Tab; label: string }[] = [
     { key: "company",  label: "Company" },
@@ -526,28 +526,28 @@ export default function SettingsPage() {
   ]
 
   return (
-    <div className="min-h-screen bg-[#0f1117]">
+    <div className="min-h-screen bg-[#0A0F1E]">
       <div className="max-w-[720px] mx-auto py-12 px-6">
 
         <div className="flex items-center justify-between mb-8">
           <div>
-            <h1 className="text-[22px] font-bold text-[#e8edf5] tracking-tight">Settings</h1>
-            <p className="text-[13px] text-[#8b9ab5] mt-0.5">TuttoHQ</p>
+            <h1 className="text-[22px] font-bold text-[#F8FAFC] tracking-tight">Settings</h1>
+            <p className="text-[13px] text-[#94A3B8] mt-0.5">TuttoHQ</p>
           </div>
-          <Link href="/" className="text-[13px] text-[#8b9ab5] hover:text-[#e8edf5] transition-colors">
+          <Link href="/" className="text-[13px] text-[#94A3B8] hover:text-[#F8FAFC] transition-colors">
             ← Back to library
           </Link>
         </div>
 
-        <div className="flex gap-1 mb-6 border-b border-[#2a3347]">
+        <div className="flex gap-1 mb-6 border-b border-[#2E3A52]">
           {tabs.map(t => (
             <button
               key={t.key}
               onClick={() => setActiveTab(t.key)}
               className={`px-4 py-2.5 text-[13px] font-medium transition-colors border-b-2 -mb-px ${
                 activeTab === t.key
-                  ? "border-[#2563eb] text-[#e8edf5]"
-                  : "border-transparent text-[#8b9ab5] hover:text-[#e8edf5]"
+                  ? "border-[#2563eb] text-[#F8FAFC]"
+                  : "border-transparent text-[#94A3B8] hover:text-[#F8FAFC]"
               }`}
             >
               {t.label}
@@ -558,20 +558,20 @@ export default function SettingsPage() {
         {activeTab === "company" && (
           <div className="space-y-4">
             {loadingCompany ? (
-              <div className="text-[13px] text-[#8b9ab5]">Loading…</div>
+              <div className="text-[13px] text-[#94A3B8]">Loading…</div>
             ) : (
               <>
-                <div className="bg-[#161b27] rounded-xl border border-[#2a3347] p-5">
-                  <h2 className="text-[14px] font-semibold text-[#e8edf5] mb-0.5">Company Logo</h2>
-                  <p className="text-[12px] text-[#8b9ab5] mb-4">
+                <div className="bg-[#141929] rounded-xl border border-[#2E3A52] p-5">
+                  <h2 className="text-[14px] font-semibold text-[#F8FAFC] mb-0.5">Company Logo</h2>
+                  <p className="text-[12px] text-[#94A3B8] mb-4">
                     Displayed in the app header. PNG, SVG, or JPG recommended.
                   </p>
                   <div className="flex items-center gap-4">
-                    <div className="w-16 h-16 rounded-lg border border-[#2a3347] bg-[#0d1117] flex items-center justify-center overflow-hidden flex-shrink-0">
+                    <div className="w-16 h-16 rounded-lg border border-[#2E3A52] bg-[#0A0F1E] flex items-center justify-center overflow-hidden flex-shrink-0">
                       {logoUrl ? (
                         <img src={logoUrl} alt="Logo" className="w-full h-full object-contain p-1" />
                       ) : (
-                        <svg className="w-7 h-7 text-[#4f617a]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <svg className="w-7 h-7 text-[#64748B]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
                         </svg>
                       )}
@@ -580,33 +580,33 @@ export default function SettingsPage() {
                       <button
                         onClick={() => logoInputRef.current?.click()}
                         disabled={uploadingLogo}
-                        className="h-8 px-4 rounded-md border border-[#2a3347] text-[13px] text-[#c8d3e6] hover:bg-white/[0.05] transition-colors disabled:opacity-50"
+                        className="h-8 px-4 rounded-md border border-[#2E3A52] text-[13px] text-[#CBD5E1] hover:bg-white/[0.05] transition-colors disabled:opacity-50"
                       >
                         {uploadingLogo ? "Uploading…" : logoUrl ? "Replace logo" : "Upload logo"}
                       </button>
-                      {logoUrl && <p className="text-[11px] text-[#8b9ab5]">Logo is active</p>}
+                      {logoUrl && <p className="text-[11px] text-[#94A3B8]">Logo is active</p>}
                     </div>
                   </div>
                   <input ref={logoInputRef} type="file" accept="image/*" onChange={handleLogoChange} className="hidden" />
                 </div>
 
-                <div className="bg-[#161b27] rounded-xl border border-[#2a3347] p-5">
-                  <h2 className="text-[14px] font-semibold text-[#e8edf5] mb-0.5">Cover Page Template</h2>
-                  <p className="text-[12px] text-[#8b9ab5] mb-4">
+                <div className="bg-[#141929] rounded-xl border border-[#2E3A52] p-5">
+                  <h2 className="text-[14px] font-semibold text-[#F8FAFC] mb-0.5">Cover Page Template</h2>
+                  <p className="text-[12px] text-[#94A3B8] mb-4">
                     This PDF will be prepended to every submittal when a user opens or downloads it. Must be a PDF file.
                   </p>
                   <div className="flex items-center gap-3">
                     <div className={`flex-1 h-9 px-3 rounded-md border flex items-center text-[13px] ${
                       hasCoverPage
-                        ? "border-[#2a3347] bg-[#0d1117] text-[#c8d3e6]"
-                        : "border-dashed border-[#2a3347] text-[#4f617a]"
+                        ? "border-[#2E3A52] bg-[#0A0F1E] text-[#CBD5E1]"
+                        : "border-dashed border-[#2E3A52] text-[#64748B]"
                     }`}>
                       {hasCoverPage ? "📄 cover.pdf — active" : "No cover page uploaded"}
                     </div>
                     <button
                       onClick={() => coverInputRef.current?.click()}
                       disabled={uploadingCover}
-                      className="h-9 px-4 rounded-md border border-[#2a3347] text-[13px] text-[#c8d3e6] hover:bg-white/[0.05] transition-colors disabled:opacity-50 flex-shrink-0"
+                      className="h-9 px-4 rounded-md border border-[#2E3A52] text-[13px] text-[#CBD5E1] hover:bg-white/[0.05] transition-colors disabled:opacity-50 flex-shrink-0"
                     >
                       {uploadingCover ? "Uploading…" : hasCoverPage ? "Replace" : "Upload PDF"}
                     </button>
@@ -626,17 +626,17 @@ export default function SettingsPage() {
 
         {activeTab === "team" && (
           <div className="space-y-4">
-            <div className="bg-[#161b27] rounded-xl border border-[#2a3347] overflow-hidden">
-              <div className="flex items-center justify-between px-5 py-4 border-b border-[#2a3347]">
+            <div className="bg-[#141929] rounded-xl border border-[#2E3A52] overflow-hidden">
+              <div className="flex items-center justify-between px-5 py-4 border-b border-[#2E3A52]">
                 <div>
-                  <h2 className="text-[14px] font-semibold text-[#e8edf5]">Team Members</h2>
-                  <p className="text-[12px] text-[#8b9ab5] mt-0.5">Used to populate Reviewed By / Certified By fields on cover sheets.</p>
+                  <h2 className="text-[14px] font-semibold text-[#F8FAFC]">Team Members</h2>
+                  <p className="text-[12px] text-[#94A3B8] mt-0.5">Used to populate Reviewed By / Certified By fields on cover sheets.</p>
                 </div>
                 {!showTeamForm && !teamImportRows && (
                   <div className="flex items-center gap-2 flex-shrink-0">
                     <button
                       onClick={() => teamCsvInputRef.current?.click()}
-                      className="h-8 px-3 rounded-md border border-[#2a3347] text-[13px] text-[#c8d3e6] hover:bg-white/[0.05] transition-colors flex items-center gap-1.5"
+                      className="h-8 px-3 rounded-md border border-[#2E3A52] text-[13px] text-[#CBD5E1] hover:bg-white/[0.05] transition-colors flex items-center gap-1.5"
                     >
                       <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
@@ -655,8 +655,8 @@ export default function SettingsPage() {
               <input ref={teamCsvInputRef} type="file" accept=".csv,text/csv" onChange={handleTeamCsvChange} className="hidden" />
 
               {showTeamForm && (
-                <div className="px-5 py-4 border-b border-[#2a3347] bg-[#0d1117]/50">
-                  <p className="text-[13px] font-semibold text-[#e8edf5] mb-3">
+                <div className="px-5 py-4 border-b border-[#2E3A52] bg-[#0A0F1E]/50">
+                  <p className="text-[13px] font-semibold text-[#F8FAFC] mb-3">
                     {editingMember ? "Edit member" : "New member"}
                   </p>
                   <form onSubmit={saveMember} className="space-y-3">
@@ -698,7 +698,7 @@ export default function SettingsPage() {
                       <button
                         type="button"
                         onClick={cancelMemberForm}
-                        className="h-8 px-3 rounded-md border border-[#2a3347] text-[13px] text-[#8b9ab5] hover:text-[#e8edf5] hover:bg-white/[0.05] transition-colors"
+                        className="h-8 px-3 rounded-md border border-[#2E3A52] text-[13px] text-[#94A3B8] hover:text-[#F8FAFC] hover:bg-white/[0.05] transition-colors"
                       >
                         Cancel
                       </button>
@@ -715,9 +715,9 @@ export default function SettingsPage() {
               )}
 
               {teamImportRows && (
-                <div className="border-b border-[#2a3347] bg-[#0d1117]/50">
+                <div className="border-b border-[#2E3A52] bg-[#0A0F1E]/50">
                   <div className="px-5 py-3 flex items-center justify-between">
-                    <div className="text-[13px] font-semibold text-[#e8edf5]">
+                    <div className="text-[13px] font-semibold text-[#F8FAFC]">
                       Preview — {teamImportRows.length} row{teamImportRows.length !== 1 ? "s" : ""}
                       {teamImportRows.filter(r => !r.name).length > 0 && (
                         <span className="ml-2 text-[12px] font-normal text-amber-400">
@@ -734,37 +734,37 @@ export default function SettingsPage() {
                   </div>
                   <div className="overflow-x-auto max-h-60 overflow-y-auto">
                     <table className="w-full">
-                      <thead className="sticky top-0 bg-[#0d1117]">
-                        <tr className="border-b border-[#2a3347]">
-                          <th className="text-left px-5 py-2 text-[11px] font-semibold text-[#4f617a] uppercase tracking-wider">Name</th>
-                          <th className="text-left px-3 py-2 text-[11px] font-semibold text-[#4f617a] uppercase tracking-wider">Title</th>
-                          <th className="text-left px-3 py-2 text-[11px] font-semibold text-[#4f617a] uppercase tracking-wider">Email</th>
+                      <thead className="sticky top-0 bg-[#0A0F1E]">
+                        <tr className="border-b border-[#2E3A52]">
+                          <th className="text-left px-5 py-2 text-[11px] font-semibold text-[#64748B] uppercase tracking-wider">Name</th>
+                          <th className="text-left px-3 py-2 text-[11px] font-semibold text-[#64748B] uppercase tracking-wider">Title</th>
+                          <th className="text-left px-3 py-2 text-[11px] font-semibold text-[#64748B] uppercase tracking-wider">Email</th>
                         </tr>
                       </thead>
                       <tbody>
                         {teamImportRows.map((r, i) => (
-                          <tr key={i} className={`border-b border-[#2a3347]/50 ${!r.name ? "bg-red-500/5" : ""}`}>
+                          <tr key={i} className={`border-b border-[#2E3A52]/50 ${!r.name ? "bg-red-500/5" : ""}`}>
                             <td className="px-5 py-2 text-[13px]">
                               {r.name
-                                ? <span className="text-[#e8edf5]">{r.name}</span>
+                                ? <span className="text-[#F8FAFC]">{r.name}</span>
                                 : <span className="text-red-400 italic">missing</span>}
                             </td>
-                            <td className="px-3 py-2 text-[13px] text-[#8b9ab5]">{r.title || <span className="text-[#4f617a]">—</span>}</td>
-                            <td className="px-3 py-2 text-[13px] text-[#8b9ab5]">{r.email || <span className="text-[#4f617a]">—</span>}</td>
+                            <td className="px-3 py-2 text-[13px] text-[#94A3B8]">{r.title || <span className="text-[#64748B]">—</span>}</td>
+                            <td className="px-3 py-2 text-[13px] text-[#94A3B8]">{r.email || <span className="text-[#64748B]">—</span>}</td>
                           </tr>
                         ))}
                       </tbody>
                     </table>
                   </div>
-                  <div className="px-5 py-3 flex items-center justify-between border-t border-[#2a3347]">
-                    <span className="text-[12px] text-[#8b9ab5]">
+                  <div className="px-5 py-3 flex items-center justify-between border-t border-[#2E3A52]">
+                    <span className="text-[12px] text-[#94A3B8]">
                       {teamImportRows.filter(r => r.name).length} of {teamImportRows.length} rows will be imported
                     </span>
                     <div className="flex gap-2">
                       <button
                         onClick={cancelTeamImport}
                         disabled={teamImporting}
-                        className="h-8 px-3 rounded-md border border-[#2a3347] text-[13px] text-[#8b9ab5] hover:text-[#e8edf5] hover:bg-white/[0.05] transition-colors disabled:opacity-50"
+                        className="h-8 px-3 rounded-md border border-[#2E3A52] text-[13px] text-[#94A3B8] hover:text-[#F8FAFC] hover:bg-white/[0.05] transition-colors disabled:opacity-50"
                       >
                         Cancel
                       </button>
@@ -781,7 +781,7 @@ export default function SettingsPage() {
               )}
 
               {teamImportResult && teamImportResult.errors.length > 0 && (
-                <div className="px-5 py-3 border-b border-[#2a3347] bg-red-500/5">
+                <div className="px-5 py-3 border-b border-[#2E3A52] bg-red-500/5">
                   <p className="text-[12px] font-semibold text-red-400 mb-1">Some rows failed:</p>
                   {teamImportResult.errors.map((e, i) => (
                     <p key={i} className="text-[12px] text-red-400/80">{e}</p>
@@ -790,12 +790,12 @@ export default function SettingsPage() {
               )}
 
               {teamLoading && (
-                <div className="px-5 py-4 text-[13px] text-[#8b9ab5]">Loading…</div>
+                <div className="px-5 py-4 text-[13px] text-[#94A3B8]">Loading…</div>
               )}
 
               {!teamLoading && teamMembers.length === 0 && !teamImportRows && (
                 <div className="px-5 py-6 text-center space-y-2">
-                  <p className="text-[13px] text-[#4f617a]">No team members yet.</p>
+                  <p className="text-[13px] text-[#64748B]">No team members yet.</p>
                   <button onClick={downloadTeamTemplate} className="text-[12px] text-[#60a5fa] hover:text-[#93c5fd] transition-colors">
                     Download CSV template
                   </button>
@@ -805,31 +805,31 @@ export default function SettingsPage() {
               {!teamLoading && teamMembers.length > 0 && (
                 <table className="w-full">
                   <thead>
-                    <tr className="border-b border-[#2a3347]">
-                      <th className="text-left px-5 py-2.5 text-[11px] font-semibold text-[#4f617a] uppercase tracking-wider">Name</th>
-                      <th className="text-left px-3 py-2.5 text-[11px] font-semibold text-[#4f617a] uppercase tracking-wider">Title</th>
-                      <th className="text-left px-3 py-2.5 text-[11px] font-semibold text-[#4f617a] uppercase tracking-wider">Email</th>
+                    <tr className="border-b border-[#2E3A52]">
+                      <th className="text-left px-5 py-2.5 text-[11px] font-semibold text-[#64748B] uppercase tracking-wider">Name</th>
+                      <th className="text-left px-3 py-2.5 text-[11px] font-semibold text-[#64748B] uppercase tracking-wider">Title</th>
+                      <th className="text-left px-3 py-2.5 text-[11px] font-semibold text-[#64748B] uppercase tracking-wider">Email</th>
                       <th className="px-3 py-2.5 w-16" />
                     </tr>
                   </thead>
                   <tbody>
                     {teamMembers.map((m, i) => (
-                      <tr key={m.id} className={`${i < teamMembers.length - 1 ? "border-b border-[#2a3347]" : ""} hover:bg-white/[0.03] transition-colors group`}>
-                        <td className="px-5 py-3 text-[13px] font-medium text-[#e8edf5]">{m.name}</td>
-                        <td className="px-3 py-3 text-[13px] text-[#8b9ab5]">{m.title ?? <span className="text-[#4f617a]">—</span>}</td>
-                        <td className="px-3 py-3 text-[13px] text-[#8b9ab5]">{m.email ?? <span className="text-[#4f617a]">—</span>}</td>
+                      <tr key={m.id} className={`${i < teamMembers.length - 1 ? "border-b border-[#2E3A52]" : ""} hover:bg-white/[0.03] transition-colors group`}>
+                        <td className="px-5 py-3 text-[13px] font-medium text-[#F8FAFC]">{m.name}</td>
+                        <td className="px-3 py-3 text-[13px] text-[#94A3B8]">{m.title ?? <span className="text-[#64748B]">—</span>}</td>
+                        <td className="px-3 py-3 text-[13px] text-[#94A3B8]">{m.email ?? <span className="text-[#64748B]">—</span>}</td>
                         <td className="px-3 py-3">
                           <div className="flex items-center gap-1.5 justify-end opacity-0 group-hover:opacity-100 transition-opacity">
                             <button
                               onClick={() => openEditMember(m)}
-                              className="p-1 rounded text-[#4f617a] hover:text-[#c8d3e6] hover:bg-white/[0.08] transition-colors"
+                              className="p-1 rounded text-[#64748B] hover:text-[#CBD5E1] hover:bg-white/[0.08] transition-colors"
                               title="Edit"
                             >
                               <PencilIcon />
                             </button>
                             <button
                               onClick={() => deleteMember(m)}
-                              className="p-1 rounded text-[#4f617a] hover:text-red-400 hover:bg-white/[0.08] transition-colors"
+                              className="p-1 rounded text-[#64748B] hover:text-red-400 hover:bg-white/[0.08] transition-colors"
                               title="Delete"
                             >
                               <XIcon className="h-3 w-3" />
@@ -853,17 +853,17 @@ export default function SettingsPage() {
 
         {activeTab === "projects" && (
           <div className="space-y-4">
-            <div className="bg-[#161b27] rounded-xl border border-[#2a3347] overflow-hidden">
-              <div className="flex items-center justify-between px-5 py-4 border-b border-[#2a3347]">
+            <div className="bg-[#141929] rounded-xl border border-[#2E3A52] overflow-hidden">
+              <div className="flex items-center justify-between px-5 py-4 border-b border-[#2E3A52]">
                 <div>
-                  <h2 className="text-[14px] font-semibold text-[#e8edf5]">Projects</h2>
-                  <p className="text-[12px] text-[#8b9ab5] mt-0.5">Projects available when generating submittal cover sheets.</p>
+                  <h2 className="text-[14px] font-semibold text-[#F8FAFC]">Projects</h2>
+                  <p className="text-[12px] text-[#94A3B8] mt-0.5">Projects available when generating submittal cover sheets.</p>
                 </div>
                 {!showProjectForm && !projectImportRows && (
                   <div className="flex items-center gap-2 flex-shrink-0">
                     <button
                       onClick={() => projectCsvInputRef.current?.click()}
-                      className="h-8 px-3 rounded-md border border-[#2a3347] text-[13px] text-[#c8d3e6] hover:bg-white/[0.05] transition-colors flex items-center gap-1.5"
+                      className="h-8 px-3 rounded-md border border-[#2E3A52] text-[13px] text-[#CBD5E1] hover:bg-white/[0.05] transition-colors flex items-center gap-1.5"
                     >
                       <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
@@ -882,8 +882,8 @@ export default function SettingsPage() {
               <input ref={projectCsvInputRef} type="file" accept=".csv,text/csv" onChange={handleProjectCsvChange} className="hidden" />
 
               {showProjectForm && (
-                <div className="px-5 py-4 border-b border-[#2a3347] bg-[#0d1117]/50">
-                  <p className="text-[13px] font-semibold text-[#e8edf5] mb-3">
+                <div className="px-5 py-4 border-b border-[#2E3A52] bg-[#0A0F1E]/50">
+                  <p className="text-[13px] font-semibold text-[#F8FAFC] mb-3">
                     {editingProject ? "Edit project" : "New project"}
                   </p>
                   <form onSubmit={saveProject} className="space-y-3">
@@ -947,7 +947,7 @@ export default function SettingsPage() {
                       <button
                         type="button"
                         onClick={cancelProjectForm}
-                        className="h-8 px-3 rounded-md border border-[#2a3347] text-[13px] text-[#8b9ab5] hover:text-[#e8edf5] hover:bg-white/[0.05] transition-colors"
+                        className="h-8 px-3 rounded-md border border-[#2E3A52] text-[13px] text-[#94A3B8] hover:text-[#F8FAFC] hover:bg-white/[0.05] transition-colors"
                       >
                         Cancel
                       </button>
@@ -964,9 +964,9 @@ export default function SettingsPage() {
               )}
 
               {projectImportRows && (
-                <div className="border-b border-[#2a3347] bg-[#0d1117]/50">
+                <div className="border-b border-[#2E3A52] bg-[#0A0F1E]/50">
                   <div className="px-5 py-3 flex items-center justify-between">
-                    <div className="text-[13px] font-semibold text-[#e8edf5]">
+                    <div className="text-[13px] font-semibold text-[#F8FAFC]">
                       Preview — {projectImportRows.length} row{projectImportRows.length !== 1 ? "s" : ""}
                       {projectImportRows.filter(r => !r.name).length > 0 && (
                         <span className="ml-2 text-[12px] font-normal text-amber-400">
@@ -983,41 +983,41 @@ export default function SettingsPage() {
                   </div>
                   <div className="overflow-x-auto max-h-60 overflow-y-auto">
                     <table className="w-full">
-                      <thead className="sticky top-0 bg-[#0d1117]">
-                        <tr className="border-b border-[#2a3347]">
-                          <th className="text-left px-5 py-2 text-[11px] font-semibold text-[#4f617a] uppercase tracking-wider">Name</th>
-                          <th className="text-left px-3 py-2 text-[11px] font-semibold text-[#4f617a] uppercase tracking-wider">No.</th>
-                          <th className="text-left px-3 py-2 text-[11px] font-semibold text-[#4f617a] uppercase tracking-wider">Location</th>
-                          <th className="text-left px-3 py-2 text-[11px] font-semibold text-[#4f617a] uppercase tracking-wider">GC</th>
-                          <th className="text-left px-3 py-2 text-[11px] font-semibold text-[#4f617a] uppercase tracking-wider">Architect</th>
+                      <thead className="sticky top-0 bg-[#0A0F1E]">
+                        <tr className="border-b border-[#2E3A52]">
+                          <th className="text-left px-5 py-2 text-[11px] font-semibold text-[#64748B] uppercase tracking-wider">Name</th>
+                          <th className="text-left px-3 py-2 text-[11px] font-semibold text-[#64748B] uppercase tracking-wider">No.</th>
+                          <th className="text-left px-3 py-2 text-[11px] font-semibold text-[#64748B] uppercase tracking-wider">Location</th>
+                          <th className="text-left px-3 py-2 text-[11px] font-semibold text-[#64748B] uppercase tracking-wider">GC</th>
+                          <th className="text-left px-3 py-2 text-[11px] font-semibold text-[#64748B] uppercase tracking-wider">Architect</th>
                         </tr>
                       </thead>
                       <tbody>
                         {projectImportRows.map((r, i) => (
-                          <tr key={i} className={`border-b border-[#2a3347]/50 ${!r.name ? "bg-red-500/5" : ""}`}>
+                          <tr key={i} className={`border-b border-[#2E3A52]/50 ${!r.name ? "bg-red-500/5" : ""}`}>
                             <td className="px-5 py-2 text-[13px]">
                               {r.name
-                                ? <span className="text-[#e8edf5]">{r.name}</span>
+                                ? <span className="text-[#F8FAFC]">{r.name}</span>
                                 : <span className="text-red-400 italic">missing</span>}
                             </td>
-                            <td className="px-3 py-2 text-[13px] text-[#8b9ab5]">{r.number || <span className="text-[#4f617a]">—</span>}</td>
-                            <td className="px-3 py-2 text-[13px] text-[#8b9ab5]">{r.location || <span className="text-[#4f617a]">—</span>}</td>
-                            <td className="px-3 py-2 text-[13px] text-[#8b9ab5]">{r.gc_name || <span className="text-[#4f617a]">—</span>}</td>
-                            <td className="px-3 py-2 text-[13px] text-[#8b9ab5]">{r.architect || <span className="text-[#4f617a]">—</span>}</td>
+                            <td className="px-3 py-2 text-[13px] text-[#94A3B8]">{r.number || <span className="text-[#64748B]">—</span>}</td>
+                            <td className="px-3 py-2 text-[13px] text-[#94A3B8]">{r.location || <span className="text-[#64748B]">—</span>}</td>
+                            <td className="px-3 py-2 text-[13px] text-[#94A3B8]">{r.gc_name || <span className="text-[#64748B]">—</span>}</td>
+                            <td className="px-3 py-2 text-[13px] text-[#94A3B8]">{r.architect || <span className="text-[#64748B]">—</span>}</td>
                           </tr>
                         ))}
                       </tbody>
                     </table>
                   </div>
-                  <div className="px-5 py-3 flex items-center justify-between border-t border-[#2a3347]">
-                    <span className="text-[12px] text-[#8b9ab5]">
+                  <div className="px-5 py-3 flex items-center justify-between border-t border-[#2E3A52]">
+                    <span className="text-[12px] text-[#94A3B8]">
                       {projectImportRows.filter(r => r.name).length} of {projectImportRows.length} rows will be imported
                     </span>
                     <div className="flex gap-2">
                       <button
                         onClick={cancelProjectImport}
                         disabled={projectImporting}
-                        className="h-8 px-3 rounded-md border border-[#2a3347] text-[13px] text-[#8b9ab5] hover:text-[#e8edf5] hover:bg-white/[0.05] transition-colors disabled:opacity-50"
+                        className="h-8 px-3 rounded-md border border-[#2E3A52] text-[13px] text-[#94A3B8] hover:text-[#F8FAFC] hover:bg-white/[0.05] transition-colors disabled:opacity-50"
                       >
                         Cancel
                       </button>
@@ -1034,7 +1034,7 @@ export default function SettingsPage() {
               )}
 
               {projectImportResult && projectImportResult.errors.length > 0 && (
-                <div className="px-5 py-3 border-b border-[#2a3347] bg-red-500/5">
+                <div className="px-5 py-3 border-b border-[#2E3A52] bg-red-500/5">
                   <p className="text-[12px] font-semibold text-red-400 mb-1">Some rows failed:</p>
                   {projectImportResult.errors.map((e, i) => (
                     <p key={i} className="text-[12px] text-red-400/80">{e}</p>
@@ -1043,12 +1043,12 @@ export default function SettingsPage() {
               )}
 
               {projectsLoading && (
-                <div className="px-5 py-4 text-[13px] text-[#8b9ab5]">Loading…</div>
+                <div className="px-5 py-4 text-[13px] text-[#94A3B8]">Loading…</div>
               )}
 
               {!projectsLoading && projects.length === 0 && !projectImportRows && (
                 <div className="px-5 py-6 text-center space-y-2">
-                  <p className="text-[13px] text-[#4f617a]">No projects yet.</p>
+                  <p className="text-[13px] text-[#64748B]">No projects yet.</p>
                   <button onClick={downloadProjectTemplate} className="text-[12px] text-[#60a5fa] hover:text-[#93c5fd] transition-colors">
                     Download CSV template
                   </button>
@@ -1058,33 +1058,33 @@ export default function SettingsPage() {
               {!projectsLoading && projects.length > 0 && (
                 <table className="w-full">
                   <thead>
-                    <tr className="border-b border-[#2a3347]">
-                      <th className="text-left px-5 py-2.5 text-[11px] font-semibold text-[#4f617a] uppercase tracking-wider">Name</th>
-                      <th className="text-left px-3 py-2.5 text-[11px] font-semibold text-[#4f617a] uppercase tracking-wider">No.</th>
-                      <th className="text-left px-3 py-2.5 text-[11px] font-semibold text-[#4f617a] uppercase tracking-wider">Location</th>
-                      <th className="text-left px-3 py-2.5 text-[11px] font-semibold text-[#4f617a] uppercase tracking-wider">GC</th>
+                    <tr className="border-b border-[#2E3A52]">
+                      <th className="text-left px-5 py-2.5 text-[11px] font-semibold text-[#64748B] uppercase tracking-wider">Name</th>
+                      <th className="text-left px-3 py-2.5 text-[11px] font-semibold text-[#64748B] uppercase tracking-wider">No.</th>
+                      <th className="text-left px-3 py-2.5 text-[11px] font-semibold text-[#64748B] uppercase tracking-wider">Location</th>
+                      <th className="text-left px-3 py-2.5 text-[11px] font-semibold text-[#64748B] uppercase tracking-wider">GC</th>
                       <th className="px-3 py-2.5 w-16" />
                     </tr>
                   </thead>
                   <tbody>
                     {projects.map((p, i) => (
-                      <tr key={p.id} className={`${i < projects.length - 1 ? "border-b border-[#2a3347]" : ""} hover:bg-white/[0.03] transition-colors group`}>
-                        <td className="px-5 py-3 text-[13px] font-medium text-[#e8edf5]">{p.name}</td>
-                        <td className="px-3 py-3 text-[13px] text-[#8b9ab5]">{p.number ?? <span className="text-[#4f617a]">—</span>}</td>
-                        <td className="px-3 py-3 text-[13px] text-[#8b9ab5]">{p.location ?? <span className="text-[#4f617a]">—</span>}</td>
-                        <td className="px-3 py-3 text-[13px] text-[#8b9ab5]">{p.gc_name ?? <span className="text-[#4f617a]">—</span>}</td>
+                      <tr key={p.id} className={`${i < projects.length - 1 ? "border-b border-[#2E3A52]" : ""} hover:bg-white/[0.03] transition-colors group`}>
+                        <td className="px-5 py-3 text-[13px] font-medium text-[#F8FAFC]">{p.name}</td>
+                        <td className="px-3 py-3 text-[13px] text-[#94A3B8]">{p.number ?? <span className="text-[#64748B]">—</span>}</td>
+                        <td className="px-3 py-3 text-[13px] text-[#94A3B8]">{p.location ?? <span className="text-[#64748B]">—</span>}</td>
+                        <td className="px-3 py-3 text-[13px] text-[#94A3B8]">{p.gc_name ?? <span className="text-[#64748B]">—</span>}</td>
                         <td className="px-3 py-3">
                           <div className="flex items-center gap-1.5 justify-end opacity-0 group-hover:opacity-100 transition-opacity">
                             <button
                               onClick={() => openEditProject(p)}
-                              className="p-1 rounded text-[#4f617a] hover:text-[#c8d3e6] hover:bg-white/[0.08] transition-colors"
+                              className="p-1 rounded text-[#64748B] hover:text-[#CBD5E1] hover:bg-white/[0.08] transition-colors"
                               title="Edit"
                             >
                               <PencilIcon />
                             </button>
                             <button
                               onClick={() => deleteProject(p)}
-                              className="p-1 rounded text-[#4f617a] hover:text-red-400 hover:bg-white/[0.08] transition-colors"
+                              className="p-1 rounded text-[#64748B] hover:text-red-400 hover:bg-white/[0.08] transition-colors"
                               title="Delete"
                             >
                               <XIcon className="h-3 w-3" />
@@ -1109,47 +1109,47 @@ export default function SettingsPage() {
         {activeTab === "gmail" && (
           <div className="space-y-4">
             {gmailLoading ? (
-              <div className="text-[13px] text-[#8b9ab5]">Loading…</div>
+              <div className="text-[13px] text-[#94A3B8]">Loading…</div>
             ) : (
               <>
-                <div className="bg-[#161b27] rounded-xl border border-[#2a3347] p-5">
+                <div className="bg-[#141929] rounded-xl border border-[#2E3A52] p-5">
                   <div className="flex items-start justify-between gap-4">
                     <div>
-                      <h2 className="text-[14px] font-semibold text-[#e8edf5] mb-0.5">Gmail Integration</h2>
-                      <p className="text-[12px] text-[#8b9ab5]">
+                      <h2 className="text-[14px] font-semibold text-[#F8FAFC] mb-0.5">Gmail Integration</h2>
+                      <p className="text-[12px] text-[#94A3B8]">
                         Connect a Gmail account so TuttoHQ can receive submittal files sent to that inbox.
                       </p>
                     </div>
                     <div className={`flex-shrink-0 flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium border ${
                       gmailConn?.connected
                         ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400"
-                        : "bg-[#0d1117] border-[#2a3347] text-[#4f617a]"
+                        : "bg-[#0A0F1E] border-[#2E3A52] text-[#64748B]"
                     }`}>
-                      <span className={`w-1.5 h-1.5 rounded-full ${gmailConn?.connected ? "bg-emerald-400" : "bg-[#4f617a]"}`} />
+                      <span className={`w-1.5 h-1.5 rounded-full ${gmailConn?.connected ? "bg-emerald-400" : "bg-[#64748B]"}`} />
                       {gmailConn?.connected ? "Connected" : "Not connected"}
                     </div>
                   </div>
 
                   {gmailConn?.connected ? (
                     <div className="mt-5 space-y-4">
-                      <div className="bg-[#0d1117] rounded-lg border border-[#2a3347] divide-y divide-[#2a3347]">
+                      <div className="bg-[#0A0F1E] rounded-lg border border-[#2E3A52] divide-y divide-[#2E3A52]">
                         <div className="flex items-center justify-between px-4 py-3">
-                          <span className="text-[12px] text-[#8b9ab5]">Connected account</span>
-                          <span className="text-[13px] text-[#e8edf5] font-medium">{gmailConn.gmail_address}</span>
+                          <span className="text-[12px] text-[#94A3B8]">Connected account</span>
+                          <span className="text-[13px] text-[#F8FAFC] font-medium">{gmailConn.gmail_address}</span>
                         </div>
                         {gmailConn.created_at && (
                           <div className="flex items-center justify-between px-4 py-3">
-                            <span className="text-[12px] text-[#8b9ab5]">Connected since</span>
-                            <span className="text-[13px] text-[#8b9ab5]">
+                            <span className="text-[12px] text-[#94A3B8]">Connected since</span>
+                            <span className="text-[13px] text-[#94A3B8]">
                               {new Date(gmailConn.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
                             </span>
                           </div>
                         )}
                         <div className="flex items-center justify-between px-4 py-3">
-                          <span className="text-[12px] text-[#8b9ab5]">Push notifications</span>
+                          <span className="text-[12px] text-[#94A3B8]">Push notifications</span>
                           <div className="flex items-center gap-2">
                             {gmailConn.watch_expiry ? (
-                              <span className="text-[13px] text-[#8b9ab5]">
+                              <span className="text-[13px] text-[#94A3B8]">
                                 active until {new Date(gmailConn.watch_expiry).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
                               </span>
                             ) : (
@@ -1169,7 +1169,7 @@ export default function SettingsPage() {
                       <div className="flex gap-2">
                         <a
                           href="/api/auth/gmail"
-                          className="h-8 px-4 rounded-md border border-[#2a3347] text-[13px] text-[#c8d3e6] hover:bg-white/[0.05] transition-colors inline-flex items-center"
+                          className="h-8 px-4 rounded-md border border-[#2E3A52] text-[13px] text-[#CBD5E1] hover:bg-white/[0.05] transition-colors inline-flex items-center"
                         >
                           Reconnect
                         </a>
@@ -1197,12 +1197,12 @@ export default function SettingsPage() {
                   )}
                 </div>
 
-                <div className="bg-[#161b27] rounded-xl border border-[#2a3347] p-5">
-                  <h2 className="text-[14px] font-semibold text-[#e8edf5] mb-3">Setup Instructions</h2>
-                  <ol className="space-y-3 text-[13px] text-[#8b9ab5]">
+                <div className="bg-[#141929] rounded-xl border border-[#2E3A52] p-5">
+                  <h2 className="text-[14px] font-semibold text-[#F8FAFC] mb-3">Setup Instructions</h2>
+                  <ol className="space-y-3 text-[13px] text-[#94A3B8]">
                     <li className="flex gap-3">
                       <span className="flex-shrink-0 w-5 h-5 rounded-full bg-[#2563eb]/20 text-[#60a5fa] text-[11px] font-semibold flex items-center justify-center">1</span>
-                      <span>Click <strong className="text-[#c8d3e6]">Connect Gmail account</strong> above and sign in with the Gmail account you want TuttoHQ to monitor.</span>
+                      <span>Click <strong className="text-[#CBD5E1]">Connect Gmail account</strong> above and sign in with the Gmail account you want TuttoHQ to monitor.</span>
                     </li>
                     <li className="flex gap-3">
                       <span className="flex-shrink-0 w-5 h-5 rounded-full bg-[#2563eb]/20 text-[#60a5fa] text-[11px] font-semibold flex items-center justify-center">2</span>
@@ -1212,10 +1212,10 @@ export default function SettingsPage() {
                       <span className="flex-shrink-0 w-5 h-5 rounded-full bg-[#2563eb]/20 text-[#60a5fa] text-[11px] font-semibold flex items-center justify-center">3</span>
                       <span>
                         In Google Cloud Console, create a Pub/Sub topic and a push subscription. Set the push endpoint to:
-                        <code className="block mt-1.5 px-2.5 py-1.5 rounded bg-[#0d1117] border border-[#2a3347] text-[11px] text-[#c8d3e6] font-mono break-all">
-                          {process.env.NEXT_PUBLIC_APP_URL}/api/gmail-intake?token=<span className="text-[#4f617a]">&lt;GMAIL_WEBHOOK_SECRET&gt;</span>
+                        <code className="block mt-1.5 px-2.5 py-1.5 rounded bg-[#0A0F1E] border border-[#2E3A52] text-[11px] text-[#CBD5E1] font-mono break-all">
+                          {process.env.NEXT_PUBLIC_APP_URL}/api/gmail-intake?token=<span className="text-[#64748B]">&lt;GMAIL_WEBHOOK_SECRET&gt;</span>
                         </code>
-                        Set <code className="text-[#c8d3e6]">GMAIL_WEBHOOK_SECRET</code> and <code className="text-[#c8d3e6]">GOOGLE_PUBSUB_TOPIC</code> as environment variables in your deployment.
+                        Set <code className="text-[#CBD5E1]">GMAIL_WEBHOOK_SECRET</code> and <code className="text-[#CBD5E1]">GOOGLE_PUBSUB_TOPIC</code> as environment variables in your deployment.
                       </span>
                     </li>
                     <li className="flex gap-3">

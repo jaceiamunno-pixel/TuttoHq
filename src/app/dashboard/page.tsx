@@ -1968,7 +1968,7 @@ export default function Home() {
                 <select
                   value={globalProjectId}
                   onChange={e => setGlobalProjectId(e.target.value)}
-                  className="h-7 pl-3 pr-7 rounded-md border border-[#2E3A52] bg-[#1e2535] text-[12px] text-[#CBD5E1] appearance-none cursor-pointer hover:border-[#3a4a63] transition-colors focus:outline-none focus:border-[#2563eb]"
+                  className="h-7 pl-3 pr-7 rounded-md border border-[#2E3A52] bg-[#1e2535] text-[12px] text-[#CBD5E1] appearance-none cursor-pointer hover:border-[#3D4F6B] transition-colors focus:outline-none focus:border-[#2563eb]"
                 >
                   <option value="">All Projects</option>
                   {appProjects.map(p => (
@@ -2078,7 +2078,7 @@ export default function Home() {
               {globalProjectId && closeoutItems.length > 0 && (
                 <button
                   onClick={() => setShowNewCloseout(true)}
-                  className="h-8 px-3 rounded-md border border-[#2E3A52] text-[#94A3B8] text-[12px] font-semibold hover:border-[#3a4a63] hover:text-[#F8FAFC] transition-colors flex items-center gap-1.5"
+                  className="h-8 px-3 rounded-md border border-[#2E3A52] text-[#94A3B8] text-[12px] font-semibold hover:border-[#3D4F6B] hover:text-[#F8FAFC] transition-colors flex items-center gap-1.5"
                 >
                   <PlusIcon /> Add Item
                 </button>
@@ -2844,7 +2844,7 @@ export default function Home() {
                                         <input value={closeoutEditNotes} onChange={e => setCloseoutEditNotes(e.target.value)} className="w-full h-8 px-2 rounded border border-[#2E3A52] bg-[#0A0F1E] text-[12px] text-[#F8FAFC] focus:outline-none focus:ring-1 focus:ring-[#2563eb]/40" /></div>
                                     </div>
                                     <div className="flex items-center gap-2">
-                                      <button onClick={() => { setCloseoutUploadingId(item.id); closeoutFileRef.current?.click() }} className="text-[11px] text-[#64748B] hover:text-[#60a5fa] px-2 py-1 border border-[#2E3A52] rounded hover:border-[#3a4a63] transition-colors">
+                                      <button onClick={() => { setCloseoutUploadingId(item.id); closeoutFileRef.current?.click() }} className="text-[11px] text-[#64748B] hover:text-[#60a5fa] px-2 py-1 border border-[#2E3A52] rounded hover:border-[#3D4F6B] transition-colors">
                                         {item.file_name ? `attached: ${item.file_name.slice(0,25)}` : "+ Upload Document"}
                                       </button>
                                       <div className="flex-1" />
@@ -2947,7 +2947,7 @@ export default function Home() {
                                     <div><label className="block text-[11px] font-medium text-[#64748B] mb-1">Notes</label>
                                       <input value={closeoutEditNotes} onChange={e => setCloseoutEditNotes(e.target.value)} placeholder="Add notes…" className="w-full h-8 px-2 rounded border border-[#2E3A52] bg-[#0A0F1E] text-[12px] text-[#F8FAFC] focus:outline-none focus:ring-1 focus:ring-[#2563eb]/40 placeholder:text-[#64748B]" /></div>
                                     <div className="flex items-center gap-2">
-                                      <button onClick={() => { setCloseoutUploadingId(item.id); closeoutFileRef.current?.click() }} className="text-[11px] text-[#64748B] hover:text-[#60a5fa] px-2 py-1 border border-[#2E3A52] rounded hover:border-[#3a4a63] transition-colors">
+                                      <button onClick={() => { setCloseoutUploadingId(item.id); closeoutFileRef.current?.click() }} className="text-[11px] text-[#64748B] hover:text-[#60a5fa] px-2 py-1 border border-[#2E3A52] rounded hover:border-[#3D4F6B] transition-colors">
                                         {item.file_name ? `attached: ${item.file_name.slice(0,25)}` : "+ Upload Document"}
                                       </button>
                                       <div className="flex-1" />
@@ -3568,7 +3568,7 @@ export default function Home() {
                   <label className={labelCls}>Attach File</label>
                   <input type="file" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png"
                     onChange={e => setRfiFile(e.target.files?.[0] ?? null)}
-                    className="w-full text-[13px] text-[#94A3B8] file:mr-3 file:py-1 file:px-3 file:rounded file:border-0 file:text-[12px] file:bg-[#2E3A52] file:text-[#CBD5E1] hover:file:bg-[#374158]" />
+                    className="w-full text-[13px] text-[#94A3B8] file:mr-3 file:py-1 file:px-3 file:rounded file:border-0 file:text-[12px] file:bg-[#2E3A52] file:text-[#CBD5E1] hover:file:bg-[#2E3A52]" />
                 </div>
               </div>
               <div className="flex justify-end gap-2 px-6 py-4 border-t border-[#2E3A52] flex-shrink-0">
@@ -3767,7 +3767,7 @@ export default function Home() {
                     <label className={labelCls2}>Attach File</label>
                     <input type="file" accept=".pdf,.doc,.docx,.xlsx,.xls,.png,.jpg,.jpeg"
                       onChange={e => setCoFile(e.target.files?.[0] ?? null)}
-                      className="w-full text-[13px] text-[#94A3B8] file:mr-3 file:py-1.5 file:px-3 file:rounded file:border-0 file:bg-[#2E3A52] file:text-[#CBD5E1] file:text-[12px] file:cursor-pointer hover:file:bg-[#374151] cursor-pointer" />
+                      className="w-full text-[13px] text-[#94A3B8] file:mr-3 file:py-1.5 file:px-3 file:rounded file:border-0 file:bg-[#2E3A52] file:text-[#CBD5E1] file:text-[12px] file:cursor-pointer hover:file:bg-[#2E3A52] cursor-pointer" />
                   </div>
                 </>)
               })()}

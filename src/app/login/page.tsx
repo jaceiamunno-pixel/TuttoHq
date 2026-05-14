@@ -1,4 +1,4 @@
-"use client"
+﻿"use client"
 
 import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
@@ -57,11 +57,11 @@ export default function LoginPage() {
     }
   }
 
-  const inputCls = "w-full h-10 px-3 rounded-md border border-[#2a3347] bg-[#0d1117] text-[14px] text-[#e8edf5] placeholder-[#4f617a] focus:outline-none focus:ring-2 focus:ring-[#2563eb]/40 focus:border-[#2563eb]/60 transition-all"
+  const inputCls = "w-full h-10 px-3 rounded-md border border-[#2E3A52] bg-[#0A0F1E] text-[14px] text-[#F8FAFC] placeholder-[#64748B] focus:outline-none focus:ring-2 focus:ring-[#2563eb]/40 focus:border-[#2563eb]/60 transition-all"
 
   return (
-    <div className="min-h-screen bg-[#0f1117] flex items-center justify-center">
-      <div className="bg-[#161b27] rounded-xl border border-[#2a3347] shadow-2xl w-[360px] p-8">
+    <div className="min-h-screen bg-[#0A0F1E] flex items-center justify-center">
+      <div className="bg-[#141929] rounded-xl border border-[#2E3A52] shadow-2xl w-[360px] p-8">
 
         <div className="text-center mb-7">
           <div className="w-12 h-12 rounded-xl bg-[#2563eb]/15 border border-[#2563eb]/30 flex items-center justify-center mx-auto mb-4">
@@ -69,14 +69,14 @@ export default function LoginPage() {
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
             </svg>
           </div>
-          <h1 className="text-[18px] font-bold text-[#e8edf5] tracking-tight">TuttoHQ</h1>
-          <p className="text-[13px] text-[#8b9ab5] mt-1">Construction Document Management</p>
+          <h1 className="text-[18px] font-bold text-[#F8FAFC] tracking-tight">TuttoHQ</h1>
+          <p className="text-[13px] text-[#94A3B8] mt-1">Construction Document Management</p>
         </div>
 
         {mode === "signin" ? (
           <form onSubmit={handleSignIn} className="space-y-4">
             <div>
-              <label className="block text-[12px] font-medium text-[#8b9ab5] mb-1.5">Email</label>
+              <label className="block text-[12px] font-medium text-[#94A3B8] mb-1.5">Email</label>
               <input
                 type="email" value={email} onChange={e => setEmail(e.target.value)}
                 required autoFocus placeholder="you@company.com"
@@ -84,7 +84,7 @@ export default function LoginPage() {
               />
             </div>
             <div>
-              <label className="block text-[12px] font-medium text-[#8b9ab5] mb-1.5">Password</label>
+              <label className="block text-[12px] font-medium text-[#94A3B8] mb-1.5">Password</label>
               <input
                 type="password" value={password} onChange={e => setPassword(e.target.value)}
                 required placeholder="••••••••"
@@ -99,9 +99,9 @@ export default function LoginPage() {
           </form>
         ) : (
           <form onSubmit={handleSetPassword} className="space-y-4">
-            <p className="text-[13px] text-[#8b9ab5] -mt-2 mb-1">Create a password for your account.</p>
+            <p className="text-[13px] text-[#94A3B8] -mt-2 mb-1">Create a password for your account.</p>
             <div>
-              <label className="block text-[12px] font-medium text-[#8b9ab5] mb-1.5">New password</label>
+              <label className="block text-[12px] font-medium text-[#94A3B8] mb-1.5">New password</label>
               <input
                 type="password" value={password} onChange={e => setPassword(e.target.value)}
                 required autoFocus minLength={8} placeholder="Min. 8 characters"
@@ -109,7 +109,7 @@ export default function LoginPage() {
               />
             </div>
             <div>
-              <label className="block text-[12px] font-medium text-[#8b9ab5] mb-1.5">Confirm password</label>
+              <label className="block text-[12px] font-medium text-[#94A3B8] mb-1.5">Confirm password</label>
               <input
                 type="password" value={confirm} onChange={e => setConfirm(e.target.value)}
                 required minLength={8} placeholder="••••••••"
