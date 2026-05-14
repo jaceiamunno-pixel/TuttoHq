@@ -2,9 +2,9 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 
 @theme {
-  --color-bg-base:         #FFFFFF;
-  --color-bg-surface:      #F8F9FA;
-  --color-bg-secondary:    #F1F3F5;
+  --color-bg-base:         #FDF0E8;
+  --color-bg-surface:      #F9E8DA;
+  --color-bg-secondary:    #F4DFD0;
   --color-border-col:      #E2E8F0;
   --color-accent:          #7B9BB5;
   --color-accent-hover:    #6A8AA4;
@@ -17,9 +17,9 @@
 }
 
 :root {
-  --bg-base:           #FFFFFF;
-  --bg-surface:        #F8F9FA;
-  --bg-secondary:      #F1F3F5;
+  --bg-base:           #FDF0E8;
+  --bg-surface:        #F9E8DA;
+  --bg-secondary:      #F4DFD0;
   --border:            #E2E8F0;
   --accent:            #7B9BB5;
   --accent-hover:      #6A8AA4;
@@ -36,11 +36,11 @@
 }
 
 html {
-  background-color: #FFFFFF;
+  background-color: #FDF0E8;
   color: #0F172A;
 }
 
 body {
-  background-color: #FFFFFF;
+  background-color: #FDF0E8;
   color: #0F172A;
 }

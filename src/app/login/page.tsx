@@ -57,11 +57,11 @@ export default function LoginPage() {
     }
   }
 
-  const inputCls = "w-full h-10 px-3 rounded-md border border-[#E2E8F0] bg-white text-[14px] text-[#0F172A] placeholder-[#64748B] focus:outline-none focus:ring-2 focus:ring-[#7B9BB5]/40 focus:border-[#7B9BB5]/60 transition-all"
+  const inputCls = "w-full h-10 px-3 rounded-md border border-[#E2E8F0] bg-[#FDF0E8] text-[14px] text-[#0F172A] placeholder-[#64748B] focus:outline-none focus:ring-2 focus:ring-[#7B9BB5]/40 focus:border-[#7B9BB5]/60 transition-all"
 
   return (
-    <div className="min-h-screen bg-white flex items-center justify-center">
-      <div className="bg-[#F8F9FA] rounded-xl border border-[#E2E8F0] shadow-2xl w-[360px] p-8">
+    <div className="min-h-screen bg-[#FDF0E8] flex items-center justify-center">
+      <div className="bg-[#F9E8DA] rounded-xl border border-[#E2E8F0] shadow-2xl w-[360px] p-8">
 
         <div className="text-center mb-7">
           <div className="w-12 h-12 rounded-xl bg-[#7B9BB5]/15 border border-[#7B9BB5]/30 flex items-center justify-center mx-auto mb-4">
