@@ -1,1 +1,28 @@
 @import "tailwindcss";
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+:root {
+  --bg-primary: #0A0F1E;
+  --bg-secondary: #1E2535;
+  --bg-card: #141929;
+  --accent-blue: #2563EB;
+  --accent-blue-hover: #1D4ED8;
+  --accent-amber: #F59E0B;
+  --text-primary: #F8FAFC;
+  --text-secondary: #94A3B8;
+  --border: #2E3A52;
+  --status-received: #2563EB;
+  --status-pending: #F59E0B;
+  --status-approved: #22C55E;
+  --status-rejected: #EF4444;
+  --status-needs-review: #F59E0B;
+}
+
+* {
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+}
+
+html, body {
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+}
