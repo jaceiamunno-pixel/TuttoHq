@@ -5,10 +5,13 @@ import { PDFBuilder } from "@/lib/pdf-builder"
 
 export async function POST(req: NextRequest) {
   const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
   const body = await req.json()
   const {
     submittalId,
+    projectId,
     projectName,
     projectNumber,
     projectLocation,
@@ -98,6 +101,42 @@ export async function POST(req: NextRequest) {
 
   const finalBytes = await mergedDoc.save()
   const filename = submittalId ? "submittal_transmittal.pdf" : "cover_sheet.pdf"
+
+  // Save merged PDF to project submittal log if a project was selected
+  if (projectId && submittalId) {
+    try {
+      const safeName = (description ?? "submittal").replace(/[^a-zA-Z0-9._-]/g, "_")
+      const storagePath = `project-submittals/${projectId}/${Date.now()}_${safeName}_transmittal.pdf`
+
+      await supabase.storage.from("submittals").upload(storagePath, finalBytes, {
+        contentType: "application/pdf",
+        upsert: false,
+      })
+
+      const { data: orig } = await supabase.from("submittals")
+        .select("csi_division, division_name, csi_section, section_name, material_name, manufacturer, dimensions")
+        .eq("id", submittalId).maybeSingle()
+
+      await supabase.from("submittals").insert({
+        file_name:     description?.trim() || safeName,
+        storage_path:  storagePath,
+        mime_type:     "application/pdf",
+        csi_division:  orig?.csi_division  ?? null,
+        division_name: orig?.division_name ?? null,
+        csi_section:   orig?.csi_section   ?? null,
+        section_name:  orig?.section_name  ?? null,
+        material_name: orig?.material_name ?? null,
+        manufacturer:  orig?.manufacturer  ?? null,
+        dimensions:    orig?.dimensions    ?? null,
+        project_id:    projectId,
+        status:        "active",
+        review_status: "Received",
+        uploaded_by:   user.id,
+      })
+    } catch {
+      // Non-fatal: PDF still downloads even if DB save fails
+    }
+  }
 
   return new NextResponse(Buffer.from(finalBytes), {
     headers: {

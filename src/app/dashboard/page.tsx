@@ -904,7 +904,7 @@ export default function Home() {
     if (!coverForm || !openFileCtx) return
     setGeneratingCover(true)
     try {
-      const res = await fetch("/api/generate-cover", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ submittalId: openFileCtx.file.id, ...coverForm }) })
+      const res = await fetch("/api/generate-cover", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ submittalId: openFileCtx.file.id, projectId: modalProjectId || null, ...coverForm }) })
       if (!res.ok) {
         const errJson = await res.json().catch(() => ({}))
         throw new Error(errJson.error ?? `Server error ${res.status}`)
@@ -919,6 +919,7 @@ export default function Home() {
       document.body.removeChild(a)
       URL.revokeObjectURL(url)
       closeFileModal()
+      if (modalProjectId) loadSubmittals(modalProjectId)
     } catch (err) {
       alert("Failed to generate transmittal: " + (err instanceof Error ? err.message : "Unknown error"))
     } finally { setGeneratingCover(false) }
