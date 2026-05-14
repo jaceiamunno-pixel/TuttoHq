@@ -734,7 +734,7 @@ export default function SettingsPage() {
 
   return (
     <div className="min-h-screen bg-[#F4F5F7]">
-      <div className="max-w-[720px] mx-auto py-12 px-6">
+      <div className="max-w-[1040px] mx-auto py-12 px-6">
 
         <div className="flex items-center justify-between mb-8">
           <div>
@@ -1436,11 +1436,11 @@ export default function SettingsPage() {
                 <div className="px-5 py-8 text-center"><p className="text-[13px] text-[#64748B]">No subcontractors yet.</p></div>
               )}
               {!subsLoading && subcontractors.length > 0 && (
-                <div className="overflow-x-auto">
+                <div>
                   <table className="w-full">
                     <thead className="sticky top-0 bg-[#F8F9FA]">
                       <tr className="border-b border-[#E2E8F0]">
-                        {["Company Name","Trade","Contact","Phone","Email","License",""].map(h => <th key={h} className="text-left px-4 py-2.5 text-[11px] font-semibold text-[#64748B] uppercase tracking-wider whitespace-nowrap">{h}</th>)}
+                        {["Company Name","Trade","Contact","Phone","Email","License",""].map(h => <th key={h} className="text-left px-4 py-2.5 text-[11px] font-semibold text-[#64748B] uppercase tracking-wider">{h}</th>)}
                       </tr>
                     </thead>
                     <tbody>
@@ -1508,11 +1508,11 @@ export default function SettingsPage() {
                 <div className="px-5 py-8 text-center"><p className="text-[13px] text-[#64748B]">No suppliers yet.</p></div>
               )}
               {!supplLoading && suppliers.length > 0 && (
-                <div className="overflow-x-auto">
+                <div>
                   <table className="w-full">
                     <thead className="sticky top-0 bg-[#F8F9FA]">
                       <tr className="border-b border-[#E2E8F0]">
-                        {["Company Name","Material/Specialty","Contact","Phone","Email","Website",""].map(h => <th key={h} className="text-left px-4 py-2.5 text-[11px] font-semibold text-[#64748B] uppercase tracking-wider whitespace-nowrap">{h}</th>)}
+                        {["Company Name","Material/Specialty","Contact","Phone","Email","Website",""].map(h => <th key={h} className="text-left px-4 py-2.5 text-[11px] font-semibold text-[#64748B] uppercase tracking-wider">{h}</th>)}
                       </tr>
                     </thead>
                     <tbody>
@@ -1577,11 +1577,11 @@ export default function SettingsPage() {
                 <div className="px-5 py-8 text-center"><p className="text-[13px] text-[#64748B]">No construction managers yet.</p></div>
               )}
               {!cmsLoading && cms.length > 0 && (
-                <div className="overflow-x-auto">
+                <div>
                   <table className="w-full">
                     <thead className="sticky top-0 bg-[#F8F9FA]">
                       <tr className="border-b border-[#E2E8F0]">
-                        {["Company Name","Contact","Phone","Email","Address","Notes",""].map(h => <th key={h} className="text-left px-4 py-2.5 text-[11px] font-semibold text-[#64748B] uppercase tracking-wider whitespace-nowrap">{h}</th>)}
+                        {["Company Name","Contact","Phone","Email","Address","Notes",""].map(h => <th key={h} className="text-left px-4 py-2.5 text-[11px] font-semibold text-[#64748B] uppercase tracking-wider">{h}</th>)}
                       </tr>
                     </thead>
                     <tbody>
