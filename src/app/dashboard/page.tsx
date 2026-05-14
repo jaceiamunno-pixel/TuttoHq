@@ -854,10 +854,15 @@ export default function Home() {
     setUploadStep("manual")
   }
 
-  function handleFileOpen(file: SubmittalFile, divNum: string, divName: string, secCode: string, secName: string) {
+  function handleFileOpen(file: SubmittalFile, divNum: string, divName: string, secCode: string, secName: string, existingProjectId?: string | null) {
     setOpenFileCtx({ file, divNum, divName, secCode, secName })
-    setFileModalStep("project")
-    setModalProjectId("")
+    if (existingProjectId) {
+      setModalProjectId(existingProjectId)
+      setFileModalStep("coversheet")
+    } else {
+      setFileModalStep("project")
+      setModalProjectId("")
+    }
     setCoverForm(null)
   }
 
@@ -2129,7 +2134,8 @@ export default function Home() {
                         <button
                           onClick={() => handleFileOpen(
                             { id: s.id, file_name: s.file_name, file_url: "", mime_type: s.mime_type, file_size: s.file_size, created_at: s.created_at },
-                            s.csi_division ?? "", s.division_name ?? "", s.csi_section ?? "", s.section_name ?? ""
+                            s.csi_division ?? "", s.division_name ?? "", s.csi_section ?? "", s.section_name ?? "",
+                            s.project_id
                           )}
                           className="text-[11px] text-[#8b9ab5] hover:text-[#e8edf5] px-2 py-1 rounded hover:bg-white/[0.05] transition-colors"
                         >Open</button>
