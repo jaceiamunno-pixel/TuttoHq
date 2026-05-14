@@ -1452,9 +1452,9 @@ export default function SettingsPage() {
                           <td className="px-4 py-2.5 text-[12px] text-[#64748B]">{s.phone ?? "—"}</td>
                           <td className="px-4 py-2.5 text-[12px] text-[#64748B]">{s.email ?? "—"}</td>
                           <td className="px-4 py-2.5 text-[12px] text-[#64748B]">{s.license_number ?? "—"}</td>
-                          <td className="px-4 py-2.5 text-right opacity-0 group-hover:opacity-100 transition-opacity">
-                            <button onClick={() => openEditSub(s)} className="p-1 rounded text-[#64748B] hover:text-[#0F172A] hover:bg-[#F4F5F7]/[0.08] transition-colors mr-1"><PencilIcon /></button>
-                            <button onClick={() => deleteSub(s)} className="p-1 rounded text-[#64748B] hover:text-red-400 hover:bg-[#F4F5F7]/[0.08] transition-colors"><XIcon /></button>
+                          <td className="px-4 py-2.5 text-right">
+                            <button onClick={() => openEditSub(s)} className="p-1 rounded text-[#64748B] hover:text-[#0F172A] transition-colors mr-1"><PencilIcon /></button>
+                            <button onClick={() => deleteSub(s)} className="p-1 rounded text-[#64748B] hover:text-red-400 transition-colors"><XIcon /></button>
                           </td>
                         </tr>
                       ))}
@@ -1524,9 +1524,9 @@ export default function SettingsPage() {
                           <td className="px-4 py-2.5 text-[12px] text-[#64748B]">{s.phone ?? "—"}</td>
                           <td className="px-4 py-2.5 text-[12px] text-[#64748B]">{s.email ?? "—"}</td>
                           <td className="px-4 py-2.5 text-[12px] text-[#64748B]">{s.website ? <a href={s.website} target="_blank" rel="noopener noreferrer" className="text-[#7B9BB5] hover:underline">{s.website.replace(/^https?:\/\//, "")}</a> : "—"}</td>
-                          <td className="px-4 py-2.5 text-right opacity-0 group-hover:opacity-100 transition-opacity">
-                            <button onClick={() => openEditSuppl(s)} className="p-1 rounded text-[#64748B] hover:text-[#0F172A] hover:bg-[#F4F5F7]/[0.08] transition-colors mr-1"><PencilIcon /></button>
-                            <button onClick={() => deleteSuppl(s)} className="p-1 rounded text-[#64748B] hover:text-red-400 hover:bg-[#F4F5F7]/[0.08] transition-colors"><XIcon /></button>
+                          <td className="px-4 py-2.5 text-right">
+                            <button onClick={() => openEditSuppl(s)} className="p-1 rounded text-[#64748B] hover:text-[#0F172A] transition-colors mr-1"><PencilIcon /></button>
+                            <button onClick={() => deleteSuppl(s)} className="p-1 rounded text-[#64748B] hover:text-red-400 transition-colors"><XIcon /></button>
                           </td>
                         </tr>
                       ))}
@@ -1593,9 +1593,9 @@ export default function SettingsPage() {
                           <td className="px-4 py-2.5 text-[12px] text-[#64748B]">{c.email ?? "—"}</td>
                           <td className="px-4 py-2.5 text-[12px] text-[#64748B] max-w-[160px] truncate">{c.address ?? "—"}</td>
                           <td className="px-4 py-2.5 text-[12px] text-[#64748B]">{c.notes ?? "—"}</td>
-                          <td className="px-4 py-2.5 text-right opacity-0 group-hover:opacity-100 transition-opacity">
-                            <button onClick={() => openEditCm(c)} className="p-1 rounded text-[#64748B] hover:text-[#0F172A] hover:bg-[#F4F5F7]/[0.08] transition-colors mr-1"><PencilIcon /></button>
-                            <button onClick={() => deleteCm(c)} className="p-1 rounded text-[#64748B] hover:text-red-400 hover:bg-[#F4F5F7]/[0.08] transition-colors"><XIcon /></button>
+                          <td className="px-4 py-2.5 text-right">
+                            <button onClick={() => openEditCm(c)} className="p-1 rounded text-[#64748B] hover:text-[#0F172A] transition-colors mr-1"><PencilIcon /></button>
+                            <button onClick={() => deleteCm(c)} className="p-1 rounded text-[#64748B] hover:text-red-400 transition-colors"><XIcon /></button>
                           </td>
                         </tr>
                       ))}
