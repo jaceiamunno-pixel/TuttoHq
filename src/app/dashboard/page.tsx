@@ -2357,7 +2357,7 @@ export default function Home() {
                           <span className={r.schedule_impact === "Yes" ? "text-amber-400" : r.schedule_impact === "No" ? "text-green-400" : "text-[#64748B]"}>{r.schedule_impact ?? "TBD"}</span>
                         </td>
                         <td className="px-4 py-2.5 text-[12px]">
-                          <span className={r.cost_impact === "Yes" ? "text-amber-400" : r.cost_impact === "No" ? "text-green-400" : "text-[#64748B]"}>{r.cost_impact ?? "TBD"}</span>
+                          <span className="text-[#64748B]">{r.cost_impact ?? "TBD"}</span>
                         </td>
                         <td className="px-4 py-2.5 text-[12px] whitespace-nowrap">
                           {r.due_date ? <span className={isOverdue ? "text-red-400 font-medium" : "text-[#64748B]"}>{fmtDateOnly(r.due_date)}{isOverdue ? " ⚠" : ""}</span> : <span className="text-[#64748B]">—</span>}
@@ -3921,10 +3921,8 @@ export default function Home() {
                   </div>
                   <div className="flex-1">
                     <label className={labelCls}>Cost Impact</label>
-                    <select value={rfiCostImpact} onChange={e => setRfiCostImpact(e.target.value)}
-                      className="w-full h-9 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40">
-                      {["Yes","No","TBD"].map(v => <option key={v} value={v}>{v}</option>)}
-                    </select>
+                    <input value={rfiCostImpact === "TBD" ? "" : rfiCostImpact} onChange={e => setRfiCostImpact(e.target.value)} placeholder="e.g. $2,500"
+                      className="w-full h-9 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40" />
                   </div>
                 </div>
                 <div>
