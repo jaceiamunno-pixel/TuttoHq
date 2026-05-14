@@ -130,3 +130,13 @@ CREATE POLICY "Authenticated users can delete closeout_items"
 -- ─── Submittals RLS — allow soft-delete (UPDATE status) ──────────────────────
 CREATE POLICY "Authenticated users can update submittals"
   ON submittals FOR UPDATE TO authenticated USING (true) WITH CHECK (true);
+
+-- ─── Transmittal send-to fields on submittals ─────────────────────────────────
+ALTER TABLE submittals
+  ADD COLUMN IF NOT EXISTS send_to_type           TEXT,
+  ADD COLUMN IF NOT EXISTS send_to_company        TEXT,
+  ADD COLUMN IF NOT EXISTS send_to_contact        TEXT,
+  ADD COLUMN IF NOT EXISTS send_to_email          TEXT,
+  ADD COLUMN IF NOT EXISTS send_to_phone          TEXT,
+  ADD COLUMN IF NOT EXISTS transmitted_by         TEXT,
+  ADD COLUMN IF NOT EXISTS transmitted_by_company TEXT;

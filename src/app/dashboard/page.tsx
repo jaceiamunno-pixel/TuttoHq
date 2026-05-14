@@ -50,6 +50,13 @@ interface SubmittalRecord {
   received_at: string | null
   manually_overridden: boolean | null
   overridden_by: string | null
+  send_to_type: string | null
+  send_to_company: string | null
+  send_to_contact: string | null
+  send_to_email: string | null
+  send_to_phone: string | null
+  transmitted_by: string | null
+  transmitted_by_company: string | null
 }
 
 type BatchStatus = "pending" | "classifying" | "ready" | "error" | "uploading" | "done" | "upload-error"
@@ -83,7 +90,8 @@ interface DrawingRecord { id: string; drawing_number: string; sheet_title: strin
 interface CloseoutItem { id: string; project_id: string; category: string; item_type: string; title: string; status: string; assigned_to: string | null; due_date: string | null; file_url: string | null; file_name: string | null; notes: string | null; sort_order: number; folder_name: string | null; linked_record_id: string | null; linked_record_type: string | null; completed_at: string | null; created_at: string }
 type FileModalStep = "project" | "coversheet" | "form"
 interface OpenFileCtx { file: SubmittalFile; divNum: string; divName: string; secCode: string; secName: string }
-interface CoverFormData { projectName: string; projectNumber: string; projectLocation: string; gcName: string; architect: string; specSectionNo: string; specSectionTitle: string; description: string; dateSubmitted: string; submittalNo: string; reviewedBy: string; certifiedBy: string; notes: string }
+interface CoverFormData { projectName: string; projectNumber: string; projectLocation: string; gcName: string; architect: string; specSectionNo: string; specSectionTitle: string; description: string; dateSubmitted: string; submittalNo: string; reviewedBy: string; certifiedBy: string; notes: string; sendToType: "cm" | "subcontractor" | "supplier" | ""; sendToCompany: string; sendToContact: string; sendToEmail: string; sendToPhone: string; transmittedBy: string; transmittedByCompany: string }
+interface CoverContact { id: string; company_name: string; contact_name: string | null; email: string | null; phone: string | null }
 
 // ─── CSI division list for upload form ───────────────────────────────────────
 
@@ -623,6 +631,8 @@ export default function Home() {
   const [coverForm, setCoverForm]         = useState<CoverFormData | null>(null)
   const [coverEditId, setCoverEditId]     = useState<string | null>(null)
   const [generatingCover, setGeneratingCover] = useState(false)
+  const [coverProjectSubs, setCoverProjectSubs]           = useState<CoverContact[]>([])
+  const [coverProjectSuppliers, setCoverProjectSuppliers] = useState<CoverContact[]>([])
 
   // Sidebar
   const [sidebarOpen, setSidebarOpen] = useState(false)
@@ -882,6 +892,7 @@ export default function Home() {
   function openEditCoverSheet(s: SubmittalRecord) {
     const proj = appProjects.find(p => p.id === s.project_id)
     const today = new Date().toLocaleDateString("en-US", { month: "2-digit", day: "2-digit", year: "numeric" })
+    const myName = teamMembers.find(m => m.email === userEmail)?.name ?? userEmail ?? ""
     setOpenFileCtx({
       file: { id: s.id, file_name: s.file_name, file_url: "", mime_type: s.mime_type, file_size: s.file_size, created_at: s.created_at },
       divNum: s.csi_division ?? "", divName: s.division_name ?? "",
@@ -897,8 +908,16 @@ export default function Home() {
       description: s.file_name.replace(/\.[^.]+$/, ""),
       dateSubmitted: today, submittalNo: "1",
       reviewedBy: "", certifiedBy: "", notes: "",
+      sendToType: (s.send_to_type as "cm"|"subcontractor"|"supplier"|"") ?? "",
+      sendToCompany: s.send_to_company ?? "",
+      sendToContact: s.send_to_contact ?? "",
+      sendToEmail: s.send_to_email ?? "",
+      sendToPhone: s.send_to_phone ?? "",
+      transmittedBy: s.transmitted_by ?? myName,
+      transmittedByCompany: s.transmitted_by_company ?? proj?.gc_name ?? "",
     })
     setFileModalStep("form")
+    if (s.project_id) loadCoverContacts(s.project_id)
   }
 
   function openFileDirectly() {
@@ -907,12 +926,24 @@ export default function Home() {
     closeFileModal()
   }
 
+  async function loadCoverContacts(projectId: string) {
+    if (!projectId) { setCoverProjectSubs([]); setCoverProjectSuppliers([]); return }
+    const [subsRes, supplRes] = await Promise.all([
+      fetch(`/api/projects/${projectId}/subcontractors`),
+      fetch(`/api/projects/${projectId}/suppliers`),
+    ])
+    setCoverProjectSubs(subsRes.ok ? await subsRes.json() : [])
+    setCoverProjectSuppliers(supplRes.ok ? await supplRes.json() : [])
+  }
+
   function initCoverForm() {
     if (!openFileCtx) return
     const proj = appProjects.find(p => p.id === modalProjectId)
     const today = new Date().toLocaleDateString("en-US", { month: "2-digit", day: "2-digit", year: "numeric" })
-    setCoverForm({ projectName: proj?.name ?? "", projectNumber: proj?.number ?? "", projectLocation: proj?.location ?? "", gcName: proj?.gc_name ?? "", architect: proj?.architect ?? "", specSectionNo: openFileCtx.secCode, specSectionTitle: openFileCtx.secName, description: openFileCtx.file.file_name.replace(/\.[^.]+$/, ""), dateSubmitted: today, submittalNo: "1", reviewedBy: "", certifiedBy: "", notes: "" })
+    const myName = teamMembers.find(m => m.email === userEmail)?.name ?? userEmail ?? ""
+    setCoverForm({ projectName: proj?.name ?? "", projectNumber: proj?.number ?? "", projectLocation: proj?.location ?? "", gcName: proj?.gc_name ?? "", architect: proj?.architect ?? "", specSectionNo: openFileCtx.secCode, specSectionTitle: openFileCtx.secName, description: openFileCtx.file.file_name.replace(/\.[^.]+$/, ""), dateSubmitted: today, submittalNo: "1", reviewedBy: "", certifiedBy: "", notes: "", sendToType: "", sendToCompany: "", sendToContact: "", sendToEmail: "", sendToPhone: "", transmittedBy: myName, transmittedByCompany: proj?.gc_name ?? "" })
     setFileModalStep("form")
+    if (modalProjectId) loadCoverContacts(modalProjectId)
   }
 
   function openTransmittal(s: SubmittalRecord) {
@@ -923,8 +954,10 @@ export default function Home() {
     })
     const pid = s.project_id ?? ""
     setModalProjectId(pid)
+    setCoverEditId(s.id)
     const proj = appProjects.find(p => p.id === pid)
     const today = new Date().toLocaleDateString("en-US", { month: "2-digit", day: "2-digit", year: "numeric" })
+    const myName = teamMembers.find(m => m.email === userEmail)?.name ?? userEmail ?? ""
     setCoverForm({
       projectName: proj?.name ?? "", projectNumber: proj?.number ?? "",
       projectLocation: proj?.location ?? "", gcName: proj?.gc_name ?? "",
@@ -933,8 +966,16 @@ export default function Home() {
       description: s.file_name.replace(/\.[^.]+$/, ""),
       dateSubmitted: today, submittalNo: "1",
       reviewedBy: "", certifiedBy: "", notes: "",
+      sendToType: (s.send_to_type as "cm"|"subcontractor"|"supplier"|"") ?? "",
+      sendToCompany: s.send_to_company ?? "",
+      sendToContact: s.send_to_contact ?? "",
+      sendToEmail: s.send_to_email ?? "",
+      sendToPhone: s.send_to_phone ?? "",
+      transmittedBy: s.transmitted_by ?? myName,
+      transmittedByCompany: s.transmitted_by_company ?? proj?.gc_name ?? "",
     })
     setFileModalStep("form")
+    if (pid) loadCoverContacts(pid)
   }
 
   async function handleGenerateCover(e: React.FormEvent) {
@@ -1684,7 +1725,9 @@ export default function Home() {
         setOpenFileCtx({ file: { id: rec.id, file_name: rec.file_name, file_url: "", mime_type: rec.mime_type, file_size: rec.file_size, created_at: rec.created_at }, divNum: rec.csi_division ?? uploadDiv, divName: rec.division_name ?? uploadDivName, secCode: rec.csi_section ?? uploadSec, secName: rec.section_name ?? uploadSecName })
         setModalProjectId(globalProjectId)
         setCoverEditId(rec.id)
-        setCoverForm({ projectName: proj?.name ?? "", projectNumber: proj?.number ?? "", projectLocation: proj?.location ?? "", gcName: proj?.gc_name ?? "", architect: proj?.architect ?? "", specSectionNo: rec.csi_section ?? uploadSec, specSectionTitle: rec.section_name ?? uploadSecName, description: rec.file_name.replace(/\.[^.]+$/, ""), dateSubmitted: today, submittalNo: "1", reviewedBy: "", certifiedBy: "", notes: "" })
+        const myName = teamMembers.find(m => m.email === userEmail)?.name ?? userEmail ?? ""
+        setCoverForm({ projectName: proj?.name ?? "", projectNumber: proj?.number ?? "", projectLocation: proj?.location ?? "", gcName: proj?.gc_name ?? "", architect: proj?.architect ?? "", specSectionNo: rec.csi_section ?? uploadSec, specSectionTitle: rec.section_name ?? uploadSecName, description: rec.file_name.replace(/\.[^.]+$/, ""), dateSubmitted: today, submittalNo: "1", reviewedBy: "", certifiedBy: "", notes: "", sendToType: "", sendToCompany: "", sendToContact: "", sendToEmail: "", sendToPhone: "", transmittedBy: myName, transmittedByCompany: proj?.gc_name ?? "" })
+        loadCoverContacts(globalProjectId)
         setFileModalStep("form")
       } else {
         loadSubmittals()
@@ -2202,6 +2245,11 @@ export default function Home() {
                         )}
                         {s.manually_overridden && (
                           <span className="text-[10px] text-[#7B9BB5]">✎ Overridden</span>
+                        )}
+                        {s.send_to_company && (
+                          <span className="text-[10px] text-emerald-600" title={`Transmitted to: ${s.send_to_company}${s.send_to_contact ? ` — ${s.send_to_contact}` : ""}${s.send_to_email ? ` · ${s.send_to_email}` : ""}`}>
+                            ↗ {s.send_to_company}{s.send_to_contact ? ` (${s.send_to_contact})` : ""}
+                          </span>
                         )}
                       </div>
                     </td>
@@ -4437,6 +4485,77 @@ export default function Home() {
                       <option value="">Select…</option>
                       {teamMembers.map(m => <option key={m.id} value={m.name}>{m.name}{m.title ? ` — ${m.title}` : ""}</option>)}
                     </select>
+                  </div>
+                </div>
+
+                {/* ── SEND TO ── */}
+                <div className="border border-[#E2E8F0] rounded-lg overflow-hidden">
+                  <div className="px-3 py-2 bg-[#F8F9FA] border-b border-[#E2E8F0] flex items-center justify-between">
+                    <span className="text-[11px] font-bold text-[#0F172A] uppercase tracking-wide">Send To</span>
+                    {coverForm.sendToType && <button type="button" onClick={() => setCoverForm(prev => ({ ...prev!, sendToType: "", sendToCompany: "", sendToContact: "", sendToEmail: "", sendToPhone: "" }))} className="text-[10px] text-[#64748B] hover:text-red-400">Clear</button>}
+                  </div>
+                  <div className="p-3 space-y-3">
+                    <div className="flex flex-wrap gap-2">
+                      {([["cm", "Construction Manager"], ["subcontractor", "Subcontractor"], ["supplier", "Supplier"]] as const).map(([key, label]) => (
+                        <button key={key} type="button"
+                          onClick={() => setCoverForm(prev => ({ ...prev!, sendToType: key, sendToCompany: "", sendToContact: "", sendToEmail: "", sendToPhone: "" }))}
+                          className={`h-7 px-3 rounded text-[11px] font-semibold transition-colors ${coverForm.sendToType === key ? "bg-[#7B9BB5] text-white" : "border border-[#E2E8F0] text-[#64748B] hover:border-[#7B9BB5] hover:text-[#7B9BB5]"}`}
+                        >{label}</button>
+                      ))}
+                    </div>
+                    {coverForm.sendToType !== "" && (
+                      <div className="space-y-3">
+                        {(coverForm.sendToType === "subcontractor" || coverForm.sendToType === "supplier") && (
+                          <div>
+                            <label className={labelCls}>Select {coverForm.sendToType === "subcontractor" ? "Subcontractor" : "Supplier"}</label>
+                            <select
+                              value=""
+                              onChange={e => {
+                                const list = coverForm.sendToType === "subcontractor" ? coverProjectSubs : coverProjectSuppliers
+                                const sel = list.find(x => x.id === e.target.value)
+                                if (sel) setCoverForm(prev => ({ ...prev!, sendToCompany: sel.company_name, sendToContact: sel.contact_name ?? "", sendToEmail: sel.email ?? "", sendToPhone: sel.phone ?? "" }))
+                              }}
+                              className={inputCls}
+                            >
+                              <option value="">— select to auto-fill —</option>
+                              {(coverForm.sendToType === "subcontractor" ? coverProjectSubs : coverProjectSuppliers).map(x => (
+                                <option key={x.id} value={x.id}>{x.company_name}</option>
+                              ))}
+                            </select>
+                          </div>
+                        )}
+                        <div className="grid grid-cols-2 gap-3">
+                          <div>
+                            <label className={labelCls}>Company Name</label>
+                            <input value={coverForm.sendToCompany} onChange={e => setCoverForm(prev => ({ ...prev!, sendToCompany: e.target.value }))} placeholder="Company name" className={inputCls} />
+                          </div>
+                          <div>
+                            <label className={labelCls}>Contact Name</label>
+                            <input value={coverForm.sendToContact} onChange={e => setCoverForm(prev => ({ ...prev!, sendToContact: e.target.value }))} placeholder="Contact name" className={inputCls} />
+                          </div>
+                          <div>
+                            <label className={labelCls}>Email</label>
+                            <input type="email" value={coverForm.sendToEmail} onChange={e => setCoverForm(prev => ({ ...prev!, sendToEmail: e.target.value }))} placeholder="email@company.com" className={inputCls} />
+                          </div>
+                          <div>
+                            <label className={labelCls}>Phone</label>
+                            <input value={coverForm.sendToPhone} onChange={e => setCoverForm(prev => ({ ...prev!, sendToPhone: e.target.value }))} placeholder="(555) 555-5555" className={inputCls} />
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* ── TRANSMITTED BY ── */}
+                <div className="flex gap-3">
+                  <div className="flex-1">
+                    <label className={labelCls}>Transmitted By</label>
+                    <input value={coverForm.transmittedBy} onChange={e => setCoverForm(prev => ({ ...prev!, transmittedBy: e.target.value }))} placeholder="Your name" className={inputCls} />
+                  </div>
+                  <div className="flex-1">
+                    <label className={labelCls}>Company</label>
+                    <input value={coverForm.transmittedByCompany} onChange={e => setCoverForm(prev => ({ ...prev!, transmittedByCompany: e.target.value }))} placeholder="Your company" className={inputCls} />
                   </div>
                 </div>
 

@@ -26,6 +26,13 @@ export async function POST(req: NextRequest) {
     reviewedBy,
     certifiedBy,
     notes,
+    sendToType,
+    sendToCompany,
+    sendToContact,
+    sendToEmail,
+    sendToPhone,
+    transmittedBy,
+    transmittedByCompany,
   } = body
 
   const { data: settings } = await supabase
@@ -50,6 +57,23 @@ export async function POST(req: NextRequest) {
     if (projectLocation) b.oneCol("Project Location", projectLocation)
     if (gcName || architect)
       b.twoCol("General Contractor", gcName ?? "—", 50, "Architect", architect ?? "—", 50)
+    b.gap()
+  }
+
+  if (transmittedBy || transmittedByCompany) {
+    b.sectionHeader("TRANSMITTED BY")
+    b.twoCol("Name", transmittedBy ?? "—", 50, "Company", transmittedByCompany ?? "—", 50)
+    b.gap()
+  }
+
+  if (sendToType) {
+    const typeLabel = sendToType === "cm" ? "Construction Manager" : sendToType === "subcontractor" ? "Subcontractor" : "Supplier"
+    b.sectionHeader("TRANSMITTED TO")
+    b.twoCol("Company", sendToCompany ?? "—", 60, "Type", typeLabel, 40)
+    if (sendToContact || sendToEmail)
+      b.twoCol("Contact", sendToContact ?? "—", 50, "Email", sendToEmail ?? "—", 50)
+    if (sendToPhone)
+      b.oneCol("Phone", sendToPhone)
     b.gap()
   }
 
@@ -116,6 +140,16 @@ export async function POST(req: NextRequest) {
 
       const targetId = existingId || null
 
+      const transmittalFields = {
+        send_to_type:           sendToType    || null,
+        send_to_company:        sendToCompany || null,
+        send_to_contact:        sendToContact || null,
+        send_to_email:          sendToEmail   || null,
+        send_to_phone:          sendToPhone   || null,
+        transmitted_by:         transmittedBy || null,
+        transmitted_by_company: transmittedByCompany || null,
+      }
+
       if (targetId) {
         // UPDATE the existing record (e.g. after direct upload or editing a cover sheet)
         await supabase.from("submittals").update({
@@ -124,6 +158,7 @@ export async function POST(req: NextRequest) {
           mime_type:    "application/pdf",
           project_id:   projectId,
           review_status: "Received",
+          ...transmittalFields,
         }).eq("id", targetId)
       } else if (submittalId) {
         // INSERT a new project record linked from a library item
@@ -146,6 +181,7 @@ export async function POST(req: NextRequest) {
           status:        "active",
           review_status: "Received",
           uploaded_by:   user.id,
+          ...transmittalFields,
         })
       }
     } catch {
