@@ -2125,8 +2125,9 @@ export default function Home() {
               </button>
             </div>
           ) : (
+            <div className="mx-4 my-4 rounded-xl border border-[#2E3A52] overflow-clip bg-[#141929]">
             <table className="w-full text-[13px] border-collapse">
-              <thead className="sticky top-0 bg-[#141929] z-10">
+              <thead className="sticky top-0 bg-[#0A0F1E] z-10">
                 <tr className="border-b border-[#2E3A52]">
                   <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-10">#</th>
                   <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest">Title</th>
@@ -2139,7 +2140,7 @@ export default function Home() {
               </thead>
               <tbody>
                 {logSubmittals.map((s, i) => (
-                  <tr key={s.id} className="border-b border-[#2E3A52]/40 hover:bg-white/[0.02] transition-colors group">
+                  <tr key={s.id} className="border-b border-[#2E3A52]/60 hover:bg-[#2563eb]/[0.05] transition-colors group">
                     <td className="px-4 py-2.5 text-[#64748B] tabular-nums text-[12px]">{logSubmittals.length - i}</td>
                     <td className="px-4 py-2.5 max-w-0">
                       <div className="flex items-center gap-1.5">
@@ -2200,6 +2201,7 @@ export default function Home() {
                 ))}
               </tbody>
             </table>
+            </div>
           )}
           </>)}
 
@@ -2223,8 +2225,9 @@ export default function Home() {
                 </button>
               </div>
             ) : (
-              <table className="w-full text-[13px] border-collapse">
-                <thead className="sticky top-0 bg-[#141929] z-10">
+              <div className="mx-4 my-4 rounded-xl border border-[#2E3A52] overflow-clip bg-[#141929]">
+            <table className="w-full text-[13px] border-collapse">
+                <thead className="sticky top-0 bg-[#0A0F1E] z-10">
                   <tr className="border-b border-[#2E3A52]">
                     <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-24">RFI #</th>
                     <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest">Subject</th>
@@ -2241,7 +2244,7 @@ export default function Home() {
                   {rfis.map(r => {
                     const isOverdue = r.due_date && new Date(r.due_date) < new Date() && r.status !== "Closed" && r.status !== "Answered" && r.status !== "Void"
                     return (
-                      <tr key={r.id} className="border-b border-[#2E3A52]/40 hover:bg-white/[0.02] transition-colors">
+                      <tr key={r.id} className="border-b border-[#2E3A52]/60 hover:bg-[#2563eb]/[0.05] transition-colors">
                         <td className="px-4 py-2.5 text-[12px] font-mono text-[#60a5fa]">{r.rfi_number}</td>
                         <td className="px-4 py-2.5 max-w-0">
                           <p className="text-[#CBD5E1] font-medium truncate" title={r.subject}>{r.subject}</p>
@@ -2274,6 +2277,7 @@ export default function Home() {
                   })}
                 </tbody>
               </table>
+              </div>
             )
           )}
 
@@ -2323,8 +2327,9 @@ export default function Home() {
                     </button>
                   </div>
                 ) : (
-                  <table className="w-full text-[13px] border-collapse">
-                    <thead className="sticky top-0 bg-[#141929] z-10">
+                  <div className="mx-4 my-4 rounded-xl border border-[#2E3A52] overflow-clip bg-[#141929]">
+            <table className="w-full text-[13px] border-collapse">
+                    <thead className="sticky top-0 bg-[#0A0F1E] z-10">
                       <tr className="border-b border-[#2E3A52]">
                         <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-20">CO #</th>
                         <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-32">Project</th>
@@ -2349,7 +2354,7 @@ export default function Home() {
                         }
                         const badgeCls = statusColor[c.status] ?? "bg-[#2E3A52] text-[#94A3B8]"
                         return (
-                          <tr key={c.id} className="border-b border-[#2E3A52]/40 hover:bg-white/[0.02] transition-colors">
+                          <tr key={c.id} className="border-b border-[#2E3A52]/60 hover:bg-[#2563eb]/[0.05] transition-colors">
                             <td className="px-4 py-2.5 text-[12px] font-mono text-[#60a5fa]">{c.co_number}</td>
                             <td className="px-4 py-2.5 text-[#94A3B8] text-[12px] truncate">{proj?.name ?? "—"}</td>
                             <td className="px-4 py-2.5 max-w-0"><p className="text-[#CBD5E1] truncate">{c.proposal ?? "—"}</p></td>
@@ -2378,6 +2383,7 @@ export default function Home() {
                       })}
                     </tbody>
                   </table>
+                  </div>
                 )}
               </div>
             )
@@ -2403,8 +2409,9 @@ export default function Home() {
                 </button>
               </div>
             ) : (
-              <table className="w-full text-[13px] border-collapse">
-                <thead className="sticky top-0 bg-[#141929] z-10">
+              <div className="mx-4 my-4 rounded-xl border border-[#2E3A52] overflow-clip bg-[#141929]">
+            <table className="w-full text-[13px] border-collapse">
+                <thead className="sticky top-0 bg-[#0A0F1E] z-10">
                   <tr className="border-b border-[#2E3A52]">
                     <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-10">#</th>
                     <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-20">Item</th>
@@ -2422,7 +2429,7 @@ export default function Home() {
                     const isOverdue = p.due_date && new Date(p.due_date) < new Date() && p.status !== "Completed" && p.status !== "Void"
                     const isStruck  = p.status === "Completed" || p.status === "Void"
                     return (
-                      <tr key={p.id} className={`border-b border-[#2E3A52]/40 hover:bg-white/[0.02] transition-colors ${isStruck ? "opacity-50" : ""}`}>
+                      <tr key={p.id} className={`border-b border-[#2E3A52]/60 hover:bg-[#2563eb]/[0.05] transition-colors ${isStruck ? "opacity-50" : ""}`}>
                         <td className="px-4 py-2.5 text-[#64748B] tabular-nums text-[12px]">{punchItems.length - i}</td>
                         <td className="px-4 py-2.5 text-[12px] font-mono text-[#60a5fa]">{p.item_number}</td>
                         <td className="px-4 py-2.5 max-w-0">
@@ -2452,6 +2459,7 @@ export default function Home() {
                   })}
                 </tbody>
               </table>
+              </div>
             )
           )}
           {/* Daily reports */}
@@ -2474,8 +2482,9 @@ export default function Home() {
                 </button>
               </div>
             ) : (
-              <table className="w-full text-[13px] border-collapse">
-                <thead className="sticky top-0 bg-[#141929] z-10">
+              <div className="mx-4 my-4 rounded-xl border border-[#2E3A52] overflow-clip bg-[#141929]">
+            <table className="w-full text-[13px] border-collapse">
+                <thead className="sticky top-0 bg-[#0A0F1E] z-10">
                   <tr className="border-b border-[#2E3A52]">
                     <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-10">#</th>
                     <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-28">Date</th>
@@ -2488,7 +2497,7 @@ export default function Home() {
                 </thead>
                 <tbody>
                   {dailyReports.map((r, i) => (
-                    <tr key={r.id} className="border-b border-[#2E3A52]/40 hover:bg-white/[0.02] transition-colors cursor-pointer" onClick={() => { setViewDaily(r); setDailyEditing(false) }}>
+                    <tr key={r.id} className="border-b border-[#2E3A52]/60 hover:bg-[#2563eb]/[0.05] transition-colors cursor-pointer" onClick={() => { setViewDaily(r); setDailyEditing(false) }}>
                       <td className="px-4 py-2.5 text-[#64748B] tabular-nums text-[12px]">{dailyReports.length - i}</td>
                       <td className="px-4 py-2.5 text-[#CBD5E1] font-medium text-[12px] whitespace-nowrap">{fmtDateOnly(r.report_date)}</td>
                       <td className="px-4 py-2.5 max-w-0">
@@ -2511,6 +2520,7 @@ export default function Home() {
                   ))}
                 </tbody>
               </table>
+              </div>
             )
           )}
           {/* Drawing log */}
@@ -2535,8 +2545,9 @@ export default function Home() {
                 </button>
               </div>
             ) : (
-              <table className="w-full text-[13px] border-collapse">
-                <thead className="sticky top-0 bg-[#141929] z-10">
+              <div className="mx-4 my-4 rounded-xl border border-[#2E3A52] overflow-clip bg-[#141929]">
+            <table className="w-full text-[13px] border-collapse">
+                <thead className="sticky top-0 bg-[#0A0F1E] z-10">
                   <tr className="border-b border-[#2E3A52]">
                     <th className="w-8" />
                     <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-28">Drawing No.</th>
@@ -2554,7 +2565,7 @@ export default function Home() {
                     const isExpanded = expandedDrawings.has(d.drawing_number)
                     return (
                       <>
-                        <tr key={d.id} className="border-b border-[#2E3A52]/40 hover:bg-white/[0.02] transition-colors">
+                        <tr key={d.id} className="border-b border-[#2E3A52]/60 hover:bg-[#2563eb]/[0.05] transition-colors">
                           <td className="px-2 py-2.5 text-center">
                             {history.length > 0 && (
                               <button onClick={() => setExpandedDrawings(prev => { const n = new Set(prev); isExpanded ? n.delete(d.drawing_number) : n.add(d.drawing_number); return n })}
@@ -2600,6 +2611,7 @@ export default function Home() {
                   })}
                 </tbody>
               </table>
+              </div>
             )
           })()}
 
