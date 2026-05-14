@@ -635,6 +635,7 @@ export default function Home() {
   const [coverProjectSubs, setCoverProjectSubs]           = useState<CoverContact[]>([])
   const [coverProjectSuppliers, setCoverProjectSuppliers] = useState<CoverContact[]>([])
   const [coverProjectCms, setCoverProjectCms]             = useState<CoverContact[]>([])
+  const [coverSelectedId, setCoverSelectedId]             = useState<string>("")
 
   // Sidebar
   const [sidebarOpen, setSidebarOpen] = useState(false)
@@ -919,6 +920,7 @@ export default function Home() {
       transmittedBy: s.transmitted_by ?? myName,
       transmittedByCompany: s.transmitted_by_company ?? proj?.gc_name ?? "",
     })
+    setCoverSelectedId(s.send_to_type ? "__manual__" : "")
     setFileModalStep("form")
     if (s.project_id) loadCoverContacts(s.project_id)
   }
@@ -946,6 +948,7 @@ export default function Home() {
     const proj = appProjects.find(p => p.id === modalProjectId)
     const today = new Date().toLocaleDateString("en-US", { month: "2-digit", day: "2-digit", year: "numeric" })
     const myName = teamMembers.find(m => m.email === userEmail)?.name ?? userEmail ?? ""
+    setCoverSelectedId("")
     setCoverForm({ projectName: proj?.name ?? "", projectNumber: proj?.number ?? "", projectLocation: proj?.location ?? "", gcName: proj?.gc_name ?? "", architect: proj?.architect ?? "", specSectionNo: openFileCtx.secCode, specSectionTitle: openFileCtx.secName, description: openFileCtx.file.file_name.replace(/\.[^.]+$/, ""), dateSubmitted: today, submittalNo: "1", reviewedBy: "", certifiedBy: "", notes: "", sendToType: "", sendToCompany: "", sendToContact: "", sendToEmail: "", sendToPhone: "", sendToAddress: "", transmittedBy: myName, transmittedByCompany: proj?.gc_name ?? "" })
     setFileModalStep("form")
     if (modalProjectId) loadCoverContacts(modalProjectId)
@@ -980,6 +983,7 @@ export default function Home() {
       transmittedBy: s.transmitted_by ?? myName,
       transmittedByCompany: s.transmitted_by_company ?? proj?.gc_name ?? "",
     })
+    setCoverSelectedId(s.send_to_type ? "__manual__" : "")
     setFileModalStep("form")
     if (pid) loadCoverContacts(pid)
   }
@@ -4498,65 +4502,70 @@ export default function Home() {
                 <div className="border border-[#E2E8F0] rounded-lg overflow-hidden">
                   <div className="px-3 py-2 bg-[#F8F9FA] border-b border-[#E2E8F0] flex items-center justify-between">
                     <span className="text-[11px] font-bold text-[#0F172A] uppercase tracking-wide">Send To</span>
-                    {coverForm.sendToType && <button type="button" onClick={() => setCoverForm(prev => ({ ...prev!, sendToType: "", sendToCompany: "", sendToContact: "", sendToEmail: "", sendToPhone: "" }))} className="text-[10px] text-[#64748B] hover:text-red-400">Clear</button>}
+                    {coverForm.sendToType && <button type="button" onClick={() => { setCoverSelectedId(""); setCoverForm(prev => ({ ...prev!, sendToType: "", sendToCompany: "", sendToContact: "", sendToEmail: "", sendToPhone: "", sendToAddress: "" })) }} className="text-[10px] text-[#64748B] hover:text-red-400">Clear</button>}
                   </div>
                   <div className="p-3 space-y-3">
                     <div className="flex flex-wrap gap-2">
                       {([["cm", "Construction Manager"], ["subcontractor", "Subcontractor"], ["supplier", "Supplier"]] as const).map(([key, label]) => (
                         <button key={key} type="button"
-                          onClick={() => setCoverForm(prev => ({ ...prev!, sendToType: key, sendToCompany: "", sendToContact: "", sendToEmail: "", sendToPhone: "", sendToAddress: "" }))}
+                          onClick={() => { setCoverSelectedId(""); setCoverForm(prev => ({ ...prev!, sendToType: key, sendToCompany: "", sendToContact: "", sendToEmail: "", sendToPhone: "", sendToAddress: "" })) }}
                           className={`h-7 px-3 rounded text-[11px] font-semibold transition-colors ${coverForm.sendToType === key ? "bg-[#7B9BB5] text-white" : "border border-[#E2E8F0] text-[#64748B] hover:border-[#7B9BB5] hover:text-[#7B9BB5]"}`}
                         >{label}</button>
                       ))}
                     </div>
-                    {coverForm.sendToType !== "" && (
-                      <div className="space-y-3">
-                        {(coverForm.sendToType === "cm" || coverForm.sendToType === "subcontractor" || coverForm.sendToType === "supplier") && (() => {
-                          const list = coverForm.sendToType === "cm" ? coverProjectCms : coverForm.sendToType === "subcontractor" ? coverProjectSubs : coverProjectSuppliers
-                          const label = coverForm.sendToType === "cm" ? "Construction Manager" : coverForm.sendToType === "subcontractor" ? "Subcontractor" : "Supplier"
-                          return list.length > 0 ? (
-                            <div>
-                              <label className={labelCls}>Select {label}</label>
-                              <select
-                                value=""
-                                onChange={e => {
-                                  const sel = list.find(x => x.id === e.target.value)
+                    {coverForm.sendToType !== "" && (() => {
+                      const list = coverForm.sendToType === "cm" ? coverProjectCms : coverForm.sendToType === "subcontractor" ? coverProjectSubs : coverProjectSuppliers
+                      const typeLabel = coverForm.sendToType === "cm" ? "Construction Manager" : coverForm.sendToType === "subcontractor" ? "Subcontractor" : "Supplier"
+                      return (
+                        <div className="space-y-3">
+                          <div>
+                            <label className={labelCls}>Select {typeLabel}</label>
+                            <select
+                              value={coverSelectedId}
+                              onChange={e => {
+                                const val = e.target.value
+                                setCoverSelectedId(val)
+                                if (val === "" || val === "__manual__") {
+                                  setCoverForm(prev => ({ ...prev!, sendToCompany: "", sendToContact: "", sendToEmail: "", sendToPhone: "", sendToAddress: "" }))
+                                } else {
+                                  const sel = list.find(x => x.id === val)
                                   if (sel) setCoverForm(prev => ({ ...prev!, sendToCompany: sel.company_name, sendToContact: sel.contact_name ?? "", sendToEmail: sel.email ?? "", sendToPhone: sel.phone ?? "", sendToAddress: sel.address ?? "" }))
-                                }}
-                                className={inputCls}
-                              >
-                                <option value="">— select to auto-fill —</option>
-                                {list.map(x => <option key={x.id} value={x.id}>{x.company_name}{x.contact_name ? ` — ${x.contact_name}` : ""}</option>)}
-                              </select>
+                                }
+                              }}
+                              className={inputCls}
+                            >
+                              <option value="">— Select a {typeLabel} —</option>
+                              {list.map(x => <option key={x.id} value={x.id}>{x.company_name}{x.contact_name ? ` — ${x.contact_name}` : ""}</option>)}
+                              <option value="__manual__">Enter manually</option>
+                            </select>
+                          </div>
+                          <div className="grid grid-cols-2 gap-3">
+                            <div>
+                              <label className={labelCls}>Company Name</label>
+                              <input value={coverForm.sendToCompany} onChange={e => setCoverForm(prev => ({ ...prev!, sendToCompany: e.target.value }))} placeholder="Company name" className={inputCls} />
                             </div>
-                          ) : null
-                        })()}
-                        <div className="grid grid-cols-2 gap-3">
-                          <div>
-                            <label className={labelCls}>Company Name</label>
-                            <input value={coverForm.sendToCompany} onChange={e => setCoverForm(prev => ({ ...prev!, sendToCompany: e.target.value }))} placeholder="Company name" className={inputCls} />
+                            <div>
+                              <label className={labelCls}>Contact Name</label>
+                              <input value={coverForm.sendToContact} onChange={e => setCoverForm(prev => ({ ...prev!, sendToContact: e.target.value }))} placeholder="Contact name" className={inputCls} />
+                            </div>
+                            <div>
+                              <label className={labelCls}>Email</label>
+                              <input type="email" value={coverForm.sendToEmail} onChange={e => setCoverForm(prev => ({ ...prev!, sendToEmail: e.target.value }))} placeholder="email@company.com" className={inputCls} />
+                            </div>
+                            <div>
+                              <label className={labelCls}>Phone</label>
+                              <input value={coverForm.sendToPhone} onChange={e => setCoverForm(prev => ({ ...prev!, sendToPhone: e.target.value }))} placeholder="(555) 555-5555" className={inputCls} />
+                            </div>
                           </div>
-                          <div>
-                            <label className={labelCls}>Contact Name</label>
-                            <input value={coverForm.sendToContact} onChange={e => setCoverForm(prev => ({ ...prev!, sendToContact: e.target.value }))} placeholder="Contact name" className={inputCls} />
-                          </div>
-                          <div>
-                            <label className={labelCls}>Email</label>
-                            <input type="email" value={coverForm.sendToEmail} onChange={e => setCoverForm(prev => ({ ...prev!, sendToEmail: e.target.value }))} placeholder="email@company.com" className={inputCls} />
-                          </div>
-                          <div>
-                            <label className={labelCls}>Phone</label>
-                            <input value={coverForm.sendToPhone} onChange={e => setCoverForm(prev => ({ ...prev!, sendToPhone: e.target.value }))} placeholder="(555) 555-5555" className={inputCls} />
-                          </div>
+                          {(coverForm.sendToType === "cm" || coverForm.sendToAddress) && (
+                            <div>
+                              <label className={labelCls}>Address</label>
+                              <input value={coverForm.sendToAddress} onChange={e => setCoverForm(prev => ({ ...prev!, sendToAddress: e.target.value }))} placeholder="123 Main St, City, State 00000" className={inputCls} />
+                            </div>
+                          )}
                         </div>
-                        {(coverForm.sendToType === "cm" || coverForm.sendToAddress) && (
-                          <div>
-                            <label className={labelCls}>Address</label>
-                            <input value={coverForm.sendToAddress} onChange={e => setCoverForm(prev => ({ ...prev!, sendToAddress: e.target.value }))} placeholder="123 Main St, City, State 00000" className={inputCls} />
-                          </div>
-                        )}
-                      </div>
-                    )}
+                      )
+                    })()}
                   </div>
                 </div>
 
