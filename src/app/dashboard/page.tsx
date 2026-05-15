@@ -798,8 +798,10 @@ export default function Home() {
   const [closeoutAllPunch, setCloseoutAllPunch]   = useState<PunchItem[]>([])
   const [closeoutTeam, setCloseoutTeam]           = useState<{id:string;name:string;title:string|null}[]>([])
   const [closeoutLoading, setCloseoutLoading]     = useState(false)
-  const [closeoutIniting, setCloseoutIniting]     = useState(false)
-  const [closeoutGenerating, setCloseoutGenerating] = useState(false)
+  const [closeoutIniting, setCloseoutIniting]         = useState(false)
+  const [closeoutGenerating, setCloseoutGenerating]   = useState(false)
+  const [closeoutResetting, setCloseoutResetting]     = useState(false)
+  const [closeoutResetConfirm, setCloseoutResetConfirm] = useState(false)
   const [closeoutEditId, setCloseoutEditId]       = useState<string | null>(null)
   const [closeoutEditTitle, setCloseoutEditTitle] = useState("")
   const [closeoutEditAssigned, setCloseoutEditAssigned] = useState("")
@@ -2254,6 +2256,35 @@ export default function Home() {
                 >
                   <PlusIcon /> Add Folder
                 </button>
+              )}
+              {globalProjectId && closeoutItems.length > 0 && (
+                closeoutResetConfirm ? (
+                  <div className="flex items-center gap-2 bg-red-50 border border-red-200 rounded-lg px-3 py-1.5">
+                    <span className="text-[12px] text-red-600 font-medium">Reset all closeout items?</span>
+                    <button
+                      disabled={closeoutResetting}
+                      onClick={async () => {
+                        setCloseoutResetting(true)
+                        await fetch("/api/closeout/reset", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ project_id: globalProjectId }) })
+                        setCloseoutResetConfirm(false)
+                        setCloseoutResetting(false)
+                        loadCloseout()
+                      }}
+                      className="text-[12px] font-semibold text-white bg-red-500 hover:bg-red-600 px-2.5 py-1 rounded transition-colors disabled:opacity-50 flex items-center gap-1"
+                    >
+                      {closeoutResetting ? <SpinnerIcon className="h-3 w-3" /> : null}
+                      Yes, Reset
+                    </button>
+                    <button onClick={() => setCloseoutResetConfirm(false)} className="text-[12px] text-[#64748B] hover:text-[#0F172A] transition-colors">Cancel</button>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => setCloseoutResetConfirm(true)}
+                    className="h-8 px-3 rounded-md border border-red-200 text-red-400 text-[12px] font-semibold hover:bg-red-50 hover:text-red-500 transition-colors"
+                  >
+                    Reset
+                  </button>
+                )
               )}
               {globalProjectId && closeoutItems.length > 0 && (
                 <button
