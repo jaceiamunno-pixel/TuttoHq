@@ -1579,12 +1579,13 @@ export default function Home() {
 
       const proj = appProjects.find(p => p.id === sub.project_id)
       const title = sub.file_name.replace(/\.[^.]+$/, "")
+      const safeName = title.replace(/[^a-zA-Z0-9_-]/g, "_")
       const div = [sub.csi_division, sub.division_name].filter(Boolean).join(" — ")
-      const subject = `Submittal Transmittal — ${proj?.name ?? ""} — ${subNum} — ${title} — ${div}`
+      const emailSubject = `Submittal Transmittal — ${proj?.name ?? ""} — ${subNum} — ${title} — ${div}`
       const today = new Date().toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })
       const senderName = sub.transmitted_by ?? ""
       const senderCompany = sub.transmitted_by_company ?? proj?.gc_name ?? ""
-      const body = [
+      const emailBody = [
         "Please find attached the following submittal for your review:",
         "",
         `Project: ${proj?.name ?? ""}`,
@@ -1603,18 +1604,47 @@ export default function Home() {
         senderCompany,
       ].join("\n")
 
-      const mailto = `mailto:${encodeURIComponent(sub.send_to_email ?? "")}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`
+      // Fetch PDF as a blob so we can share/download it directly
+      const pdfRes = await fetch(url)
+      const pdfBlob = await pdfRes.blob()
+      const pdfFile = new File([pdfBlob], `${safeName}_transmittal.pdf`, { type: "application/pdf" })
 
-      // Download the PDF first (mailto: cannot attach files)
-      const a = document.createElement("a")
-      a.href = url
-      a.download = `${title.replace(/[^a-zA-Z0-9_-]/g, "_")}_transmittal.pdf`
-      document.body.appendChild(a)
-      a.click()
-      document.body.removeChild(a)
+      // Web Share API: on mobile this opens the native share sheet with the PDF attached
+      // The user picks their email app and the file is already there
+      if (typeof navigator.share === "function" && navigator.canShare?.({ files: [pdfFile] })) {
+        try {
+          await navigator.share({
+            files: [pdfFile],
+            title: emailSubject,
+            text: emailBody,
+          })
+          setShowTransmittalConfirm(true)
+          return
+        } catch {
+          // User cancelled share sheet — fall through to mailto fallback
+        }
+      }
 
-      // Open email client
-      window.location.href = mailto
+      // Desktop fallback: download PDF then open email client
+      // Must use object URL (same-origin) so the download attribute is respected
+      const objectUrl = URL.createObjectURL(pdfBlob)
+      const dlLink = document.createElement("a")
+      dlLink.href = objectUrl
+      dlLink.download = `${safeName}_transmittal.pdf`
+      document.body.appendChild(dlLink)
+      dlLink.click()
+      document.body.removeChild(dlLink)
+
+      // Open mailto after a short delay so the browser doesn't block both
+      const mailto = `mailto:${encodeURIComponent(sub.send_to_email ?? "")}?subject=${encodeURIComponent(emailSubject)}&body=${encodeURIComponent(emailBody)}`
+      setTimeout(() => {
+        const mailLink = document.createElement("a")
+        mailLink.href = mailto
+        document.body.appendChild(mailLink)
+        mailLink.click()
+        document.body.removeChild(mailLink)
+        URL.revokeObjectURL(objectUrl)
+      }, 300)
 
       setShowTransmittalConfirm(true)
     } finally {
@@ -4752,7 +4782,8 @@ export default function Home() {
           <div className="bg-white rounded-xl border border-[#E2E8F0] shadow-2xl w-full sm:w-[420px] mx-4 sm:mx-0 p-6">
             <h2 className="text-[16px] font-bold text-[#0F172A] mb-2">Has this transmittal been sent?</h2>
             <p className="text-[13px] text-[#64748B] mb-1">
-              Your PDF was downloaded and your email client was opened. Please attach the downloaded PDF to the email before sending.
+              The PDF was downloaded to your device and your email client was opened with the subject and body pre-filled.
+              <strong className="text-[#0F172A]"> Attach the downloaded PDF to the email before sending.</strong>
             </p>
             {transmittalSub?.send_to_email && (
               <p className="text-[13px] text-[#64748B] mb-4">
