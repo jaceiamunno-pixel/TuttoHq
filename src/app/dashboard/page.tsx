@@ -741,6 +741,7 @@ export default function Home() {
   const [dailySafety, setDailySafety]                 = useState("")
   const dailyFileRef  = useRef<HTMLInputElement>(null)
   const [dailySaving, setDailySaving]                 = useState(false)
+  const [dailySaveError, setDailySaveError]           = useState("")
   const [dailyEditing, setDailyEditing]               = useState(false)
   const [dailyEditSaving, setDailyEditSaving]         = useState(false)
   const [dailyPhotos, setDailyPhotos]                 = useState<{id: string; url: string; file_name: string}[]>([])
@@ -1589,6 +1590,7 @@ export default function Home() {
   async function createDaily(e: React.FormEvent) {
     e.preventDefault()
     setDailySaving(true)
+    setDailySaveError("")
     try {
       const dailyFd = new FormData()
       const dailyFields: Record<string, string> = { report_date: dailyDate, project_id: dailyProjectId, prepared_by: dailyPreparedBy, weather_conditions: dailyWeather, temperature: dailyTemp, manpower_count: dailyManpower, work_performed: dailyWorkPerformed, equipment: dailyEquipment, materials_delivered: dailyMaterials, visitors: dailyVisitors, issues_delays: dailyIssues, safety_notes: dailySafety }
@@ -1599,6 +1601,9 @@ export default function Home() {
         setShowNewDaily(false)
         setDailyDate(new Date().toISOString().slice(0, 10)); setDailyProjectId(""); setDailyPreparedBy(""); setDailyWeather(""); setDailyTemp(""); setDailyManpower(""); setDailyWorkPerformed(""); setDailyEquipment(""); setDailyMaterials(""); setDailyVisitors(""); setDailyIssues(""); setDailySafety("")
         loadDaily()
+      } else {
+        const data = await res.json().catch(() => ({}))
+        setDailySaveError(data.error ?? "Failed to create report. Please try again.")
       }
     } finally { setDailySaving(false) }
   }
@@ -3782,16 +3787,21 @@ export default function Home() {
                     </div>
                   )}
                 </div>
-                <div className="flex justify-end gap-2 px-6 py-4 border-t border-[#E2E8F0] flex-shrink-0">
-                  <button type="button" onClick={onClose}
-                    className="h-8 px-4 rounded-md border border-[#E2E8F0] text-[13px] text-[#64748B] hover:bg-[#0F172A]/[0.04] transition-colors">
-                    Cancel
-                  </button>
-                  <button type="submit" disabled={isEdit ? dailyEditSaving : dailySaving}
-                    className="h-8 px-4 rounded-md bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors disabled:opacity-50 flex items-center gap-2">
-                    {(isEdit ? dailyEditSaving : dailySaving) && <SpinnerIcon className="h-3 w-3" />}
-                    {isEdit ? (dailyEditSaving ? "Saving…" : "Save Changes") : (dailySaving ? "Creating…" : "Create Report")}
-                  </button>
+                <div className="flex items-center justify-between gap-2 px-6 py-4 border-t border-[#E2E8F0] flex-shrink-0">
+                  {!isEdit && dailySaveError ? (
+                    <p className="text-[12px] text-red-500 flex-1 mr-2">{dailySaveError}</p>
+                  ) : <span />}
+                  <div className="flex gap-2 flex-shrink-0">
+                    <button type="button" onClick={onClose}
+                      className="h-8 px-4 rounded-md border border-[#E2E8F0] text-[13px] text-[#64748B] hover:bg-[#0F172A]/[0.04] transition-colors">
+                      Cancel
+                    </button>
+                    <button type="submit" disabled={isEdit ? dailyEditSaving : dailySaving}
+                      className="h-8 px-4 rounded-md bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors disabled:opacity-50 flex items-center gap-2">
+                      {(isEdit ? dailyEditSaving : dailySaving) && <SpinnerIcon className="h-3 w-3" />}
+                      {isEdit ? (dailyEditSaving ? "Saving…" : "Save Changes") : (dailySaving ? "Creating…" : "Create Report")}
+                    </button>
+                  </div>
                 </div>
               </form>
             </div>
