@@ -39,7 +39,6 @@ export async function POST(req: NextRequest) {
   const { data: settings } = await supabase
     .from("company_settings")
     .select("logo_path")
-    .eq("id", 1)
     .maybeSingle()
 
   let logoBytes: ArrayBuffer | null = null

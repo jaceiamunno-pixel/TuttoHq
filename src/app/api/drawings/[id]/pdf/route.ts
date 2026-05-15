@@ -23,7 +23,7 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
     if (p) project = p
   }
 
-  const { data: settings } = await supabase.from("company_settings").select("logo_path").eq("id", 1).maybeSingle()
+  const { data: settings } = await supabase.from("company_settings").select("logo_path").maybeSingle()
   let logoBytes: ArrayBuffer | null = null
   if (settings?.logo_path) {
     const { data: blob } = await supabase.storage.from("company-assets").download(settings.logo_path)

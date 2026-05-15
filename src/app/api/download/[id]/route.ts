@@ -32,7 +32,6 @@ export async function GET(
   const { data: settings } = await supabase
     .from("company_settings")
     .select("cover_page_path")
-    .eq("id", 1)
     .maybeSingle()
 
   // No cover page — redirect to signed URL

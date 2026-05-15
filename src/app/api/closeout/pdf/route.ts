@@ -19,7 +19,7 @@ export async function POST(req: NextRequest) {
     supabase.from("rfis").select("*").eq("project_id", project_id).order("rfi_number"),
     supabase.from("change_orders").select("*").eq("project_id", project_id).order("co_number"),
     supabase.from("drawing_log").select("*").eq("project_id", project_id).eq("is_current", true).order("drawing_number"),
-    supabase.from("company_settings").select("*").single(),
+    supabase.from("company_settings").select("*").maybeSingle(),
   ])
 
   const project = projectRes.data

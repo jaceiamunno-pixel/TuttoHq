@@ -7,7 +7,6 @@ export async function GET() {
   const { data: settings } = await supabase
     .from("company_settings")
     .select("logo_path, cover_page_path")
-    .eq("id", 1)
     .maybeSingle()
 
   let logo_url: string | null = null
@@ -35,8 +34,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Missing type or file" }, { status: 400 })
   }
 
+  const { data: profile } = await supabase.from("user_profiles").select("company_id").maybeSingle()
+  const companyId = profile?.company_id ?? "shared"
+
   const ext  = file.name.split(".").pop() ?? "bin"
-  const path = type === "logo" ? `logo.${ext}` : "cover.pdf"
+  const path = type === "logo" ? `${companyId}/logo.${ext}` : `${companyId}/cover.pdf`
 
   const { error: uploadError } = await supabase.storage
     .from("company-assets")
@@ -49,9 +51,12 @@ export async function POST(req: NextRequest) {
 
   const updateData = type === "logo" ? { logo_path: path } : { cover_page_path: path }
 
-  await supabase
-    .from("company_settings")
-    .upsert({ id: 1, ...updateData, updated_at: new Date().toISOString() })
+  const { data: existing } = await supabase.from("company_settings").select("id").maybeSingle()
+  if (existing) {
+    await supabase.from("company_settings").update({ ...updateData, updated_at: new Date().toISOString() }).eq("id", existing.id)
+  } else {
+    await supabase.from("company_settings").insert(updateData)
+  }
 
   if (type === "logo") {
     const { data: urlData } = await supabase.storage
