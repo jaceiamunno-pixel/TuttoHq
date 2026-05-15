@@ -87,7 +87,7 @@ interface ChangeOrder {
 }
 interface PunchItem { id: string; item_number: string; description: string; location: string | null; assigned_to: string | null; due_date: string | null; priority: string; status: string; notes: string | null; project_id: string | null; created_at: string; completed_at: string | null; uploaded_by: string; generated_pdf_path?: string | null; file_name?: string | null; file_path?: string | null }
 interface DailyReport { id: string; report_date: string; project_id: string | null; prepared_by: string | null; weather_conditions: string | null; temperature: string | null; manpower_count: number | null; work_performed: string | null; equipment: string | null; materials_delivered: string | null; visitors: string | null; issues_delays: string | null; safety_notes: string | null; created_at: string; uploaded_by: string; generated_pdf_path?: string | null; file_name?: string | null; file_path?: string | null }
-interface DrawingRecord { id: string; drawing_number: string; sheet_title: string; discipline: string | null; revision: string; revision_date: string | null; status: string; scale: string | null; notes: string | null; project_id: string | null; is_current: boolean; superseded_at: string | null; created_at: string; uploaded_by: string; generated_pdf_path?: string | null; file_name?: string | null; file_path?: string | null }
+interface DrawingRecord { id: string; drawing_number: string; sheet_title: string; discipline: string | null; revision: string; revision_date: string | null; status: string; scale: string | null; notes: string | null; project_id: string | null; is_current: boolean; superseded_at: string | null; created_at: string; uploaded_by: string; generated_pdf_path?: string | null; file_name?: string | null; file_path?: string | null; file_url?: string | null }
 interface CloseoutItem { id: string; project_id: string; category: string; item_type: string; title: string; status: string; assigned_to: string | null; due_date: string | null; file_url: string | null; file_name: string | null; notes: string | null; sort_order: number; folder_name: string | null; linked_record_id: string | null; linked_record_type: string | null; completed_at: string | null; created_at: string }
 type FileModalStep = "project" | "coversheet" | "form"
 interface OpenFileCtx { file: SubmittalFile; divNum: string; divName: string; secCode: string; secName: string }
@@ -2646,72 +2646,81 @@ export default function Home() {
                 </button>
               </div>
             ) : (
-              <div className="mx-4 my-4 rounded-xl border border-[#E2E8F0] overflow-clip bg-white">
-            <table className="w-full text-[13px] border-collapse">
-                <thead className="sticky top-0 bg-[#F8F9FA] z-10">
-                  <tr className="border-b border-[#E2E8F0]">
-                    <th className="w-8" />
-                    <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-28">Drawing No.</th>
-                    <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest">Sheet Title</th>
-                    <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-28">Discipline</th>
-                    <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-16">Rev</th>
-                    <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-24">Rev Date</th>
-                    <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-44">Status</th>
-                    <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-28">Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
+              <div className="px-4 py-4">
+                <div className="grid gap-4" style={{ gridTemplateColumns: "repeat(5, minmax(0, 1fr))" }}>
                   {currentDrawings.map(d => {
                     const history = allSuperseded.filter(s => s.drawing_number === d.drawing_number)
                     const isExpanded = expandedDrawings.has(d.drawing_number)
+                    const isImg = /\.(png|jpg|jpeg|gif|webp)$/i.test(d.file_name ?? "")
+                    const isPdf = /\.pdf$/i.test(d.file_name ?? "")
                     return (
-                      <>
-                        <tr key={d.id} className="border-b border-[#E2E8F0]/60 hover:bg-[#F8F9FA] transition-colors">
-                          <td className="px-2 py-2.5 text-center">
-                            {history.length > 0 && (
-                              <button onClick={() => setExpandedDrawings(prev => { const n = new Set(prev); isExpanded ? n.delete(d.drawing_number) : n.add(d.drawing_number); return n })}
-                                className="text-[#64748B] hover:text-[#64748B] transition-colors flex items-center justify-center w-full" title={`${history.length} previous revision${history.length !== 1 ? "s" : ""}`}>
-                                <ToggleIcon open={isExpanded} />
-                              </button>
-                            )}
-                          </td>
-                          <td className="px-4 py-2.5 text-[12px] font-mono text-[#7B9BB5] whitespace-nowrap">{d.drawing_number}</td>
-                          <td className="px-4 py-2.5 max-w-0"><p className="text-[#0F172A] font-medium truncate" title={d.sheet_title}>{d.sheet_title}</p></td>
-                          <td className="px-4 py-2.5 text-[#64748B] text-[12px]">{d.discipline ?? "—"}</td>
-                          <td className="px-4 py-2.5 text-[12px] font-mono font-bold text-[#0F172A]">{d.revision}</td>
-                          <td className="px-4 py-2.5 text-[#64748B] text-[12px] whitespace-nowrap">{d.revision_date ? fmtDateOnly(d.revision_date) : "—"}</td>
-                          <td className="px-4 py-2.5"><DrawingStatusBadge status={d.status} /></td>
-                          <td className="px-4 py-2.5">
-                            <div className="flex items-center gap-1">
-                              <button onClick={() => openAddRevision(d)}
-                                className="text-[11px] text-[#7B9BB5] hover:text-[#7B9BB5] px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors whitespace-nowrap">
-                                + Rev
-                              </button>
-                              <button onClick={() => generateDrawingPdf(d.id)} disabled={drawingGeneratingPdf}
-                                className="text-[11px] text-[#7B9BB5] hover:text-[#7B9BB5] px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors disabled:opacity-50">PDF</button>
-                              <button onClick={e => { e.stopPropagation(); deleteDrawing(d.id) }}
-                                className="text-[11px] text-red-400 hover:text-red-300 px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors">Del</button>
+                      <div key={d.id} className="bg-white rounded-xl border border-[#E2E8F0] overflow-hidden flex flex-col shadow-sm">
+                        {/* Preview */}
+                        <div className="relative bg-[#F1F3F5] overflow-hidden" style={{ height: 180 }}>
+                          {d.file_url && isImg && (
+                            <img src={d.file_url} alt={d.sheet_title} className="w-full h-full object-contain" />
+                          )}
+                          {d.file_url && isPdf && (
+                            <div className="w-full h-full overflow-hidden">
+                              <iframe
+                                src={`${d.file_url}#toolbar=0&navpanes=0&scrollbar=0&view=Fit`}
+                                title={d.sheet_title}
+                                style={{ width: "200%", height: "200%", transform: "scale(0.5)", transformOrigin: "0 0", border: "none", pointerEvents: "none" }}
+                              />
                             </div>
-                          </td>
-                        </tr>
-                        {/* Revision history rows */}
-                        {isExpanded && history.map(h => (
-                          <tr key={h.id} className="border-b border-[#E2E8F0]/20 bg-white/40">
-                            <td />
-                            <td className="px-4 py-1.5 text-[11px] font-mono text-[#64748B]">{h.drawing_number}</td>
-                            <td className="px-4 py-1.5 text-[11px] text-[#64748B] truncate max-w-0">{h.sheet_title}</td>
-                            <td className="px-4 py-1.5 text-[11px] text-[#64748B]">{h.discipline ?? "—"}</td>
-                            <td className="px-4 py-1.5 text-[11px] font-mono text-[#64748B]">{h.revision}</td>
-                            <td className="px-4 py-1.5 text-[11px] text-[#64748B] whitespace-nowrap">{h.revision_date ? fmtDateOnly(h.revision_date) : "—"}</td>
-                            <td className="px-4 py-1.5"><span className="text-[10px] text-[#64748B]">Superseded {h.superseded_at ? fmtDate(h.superseded_at) : ""}</span></td>
-                            <td />
-                          </tr>
-                        ))}
-                      </>
+                          )}
+                          {(!d.file_url || (!isImg && !isPdf)) && (
+                            <div className="flex flex-col items-center justify-center h-full gap-2">
+                              <svg className="w-8 h-8 text-[#94A3B8]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                              </svg>
+                              <span className="text-[11px] text-[#94A3B8]">No file attached</span>
+                            </div>
+                          )}
+                          {/* Revision history toggle */}
+                          {history.length > 0 && (
+                            <button
+                              onClick={() => setExpandedDrawings(prev => { const n = new Set(prev); isExpanded ? n.delete(d.drawing_number) : n.add(d.drawing_number); return n })}
+                              className="absolute top-1.5 left-1.5 bg-black/50 hover:bg-black/70 text-white text-[9px] font-bold px-1.5 py-0.5 rounded transition-colors"
+                            >{history.length} rev</button>
+                          )}
+                        </div>
+
+                        {/* Info */}
+                        <div className="p-2.5 flex flex-col gap-1 flex-1">
+                          <div className="flex items-center justify-between gap-1">
+                            <span className="text-[11px] font-mono font-bold text-[#7B9BB5] truncate">{d.drawing_number}</span>
+                            <span className="text-[10px] text-[#64748B] flex-shrink-0">Rev {d.revision}</span>
+                          </div>
+                          <p className="text-[12px] font-medium text-[#0F172A] leading-tight line-clamp-2">{d.sheet_title}</p>
+                          <div className="mt-auto pt-1">
+                            <DrawingStatusBadge status={d.status} />
+                          </div>
+                          <div className="flex items-center gap-1 pt-1 border-t border-[#E2E8F0] mt-1">
+                            <button onClick={() => openAddRevision(d)} className="flex-1 text-[10px] text-[#7B9BB5] hover:text-[#5A7A94] font-semibold py-1 hover:bg-[#F8F9FA] rounded transition-colors text-center">+ Rev</button>
+                            <button onClick={() => generateDrawingPdf(d.id)} disabled={drawingGeneratingPdf} className="flex-1 text-[10px] text-[#7B9BB5] hover:text-[#5A7A94] font-semibold py-1 hover:bg-[#F8F9FA] rounded transition-colors disabled:opacity-40 text-center">PDF</button>
+                            {d.file_url && (
+                              <a href={d.file_url} target="_blank" rel="noopener noreferrer" className="flex-1 text-[10px] text-[#7B9BB5] hover:text-[#5A7A94] font-semibold py-1 hover:bg-[#F8F9FA] rounded transition-colors text-center">Open</a>
+                            )}
+                            <button onClick={e => { e.stopPropagation(); deleteDrawing(d.id) }} className="flex-1 text-[10px] text-red-400 hover:text-red-500 font-semibold py-1 hover:bg-red-50 rounded transition-colors text-center">Del</button>
+                          </div>
+                        </div>
+
+                        {/* Revision history */}
+                        {isExpanded && history.length > 0 && (
+                          <div className="border-t border-[#E2E8F0] bg-[#F8F9FA] px-2.5 py-2 space-y-1">
+                            {history.map(h => (
+                              <div key={h.id} className="flex items-center justify-between text-[10px] text-[#64748B]">
+                                <span className="font-mono">Rev {h.revision}</span>
+                                <span>Superseded {h.superseded_at ? fmtDate(h.superseded_at) : ""}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
                     )
                   })}
-                </tbody>
-              </table>
+                </div>
               </div>
             )
           })()}
