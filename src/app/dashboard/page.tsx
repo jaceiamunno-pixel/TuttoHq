@@ -3636,7 +3636,7 @@ export default function Home() {
       {/* ── Add Closeout Item modal ───────────────────────────────────────── */}
       {showNewCloseout && (
         <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center" onClick={e => { if (e.target === e.currentTarget) setShowNewCloseout(false) }}>
-          <div className="bg-white rounded-xl border border-[#E2E8F0] shadow-2xl w-full sm:w-[480px] mx-4 sm:mx-0 p-6">
+          <div className="bg-white rounded-xl border border-[#E2E8F0] shadow-2xl w-full sm:w-[480px] mx-4 sm:mx-0 p-6 max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between mb-5">
               <h2 className="text-[15px] font-bold text-[#0F172A]">Add Closeout Item</h2>
               <button onClick={() => setShowNewCloseout(false)} className="text-[#64748B] hover:text-[#64748B] transition-colors"><XIcon className="h-4 w-4" /></button>
@@ -3946,8 +3946,8 @@ export default function Home() {
       {(showNewDrawing || addRevisionFor) && (
         <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center"
           onClick={e => { if (e.target === e.currentTarget) { setShowNewDrawing(false); setAddRevisionFor(null) } }}>
-          <div className="bg-white rounded-xl border border-[#E2E8F0] shadow-2xl w-full sm:w-[560px] mx-4 sm:mx-0">
-            <div className="flex items-center justify-between px-6 pt-5 pb-4 border-b border-[#E2E8F0]">
+          <div className="bg-white rounded-xl border border-[#E2E8F0] shadow-2xl w-full sm:w-[560px] mx-4 sm:mx-0 max-h-[90vh] flex flex-col">
+            <div className="flex-shrink-0 flex items-center justify-between px-6 pt-5 pb-4 border-b border-[#E2E8F0]">
               <div>
                 <h2 className="text-[15px] font-bold text-[#0F172A]">{addRevisionFor ? "Add Revision" : "Add Drawing"}</h2>
                 {addRevisionFor && <p className="text-[12px] text-[#64748B] mt-0.5">Supersedes {addRevisionFor.drawing_number} Rev {addRevisionFor.revision}</p>}
@@ -3956,8 +3956,8 @@ export default function Home() {
                 <XIcon className="h-4 w-4" />
               </button>
             </div>
-            <form onSubmit={createDrawing}>
-              <div className="px-6 py-4 space-y-3">
+            <form onSubmit={createDrawing} className="flex flex-col flex-1 min-h-0">
+              <div className="px-6 py-4 space-y-3 overflow-y-auto flex-1">
                 <div className="flex flex-col sm:flex-row gap-3">
                   <div className="flex-1">
                     <label className={labelCls}>Drawing Number <span className="text-red-400">*</span></label>
@@ -4044,15 +4044,15 @@ export default function Home() {
       {showNewPunch && (
         <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center"
           onClick={e => { if (e.target === e.currentTarget) setShowNewPunch(false) }}>
-          <div className="bg-white rounded-xl border border-[#E2E8F0] shadow-2xl w-full sm:w-[520px] mx-4 sm:mx-0">
-            <div className="flex items-center justify-between px-6 pt-5 pb-4 border-b border-[#E2E8F0]">
+          <div className="bg-white rounded-xl border border-[#E2E8F0] shadow-2xl w-full sm:w-[520px] mx-4 sm:mx-0 max-h-[90vh] flex flex-col">
+            <div className="flex-shrink-0 flex items-center justify-between px-6 pt-5 pb-4 border-b border-[#E2E8F0]">
               <h2 className="text-[15px] font-bold text-[#0F172A]">New Punch Item</h2>
               <button onClick={() => setShowNewPunch(false)} className="text-[#64748B] hover:text-[#64748B] transition-colors">
                 <XIcon className="h-4 w-4" />
               </button>
             </div>
-            <form onSubmit={createPunch}>
-              <div className="px-6 py-4 space-y-3">
+            <form onSubmit={createPunch} className="flex flex-col flex-1 min-h-0">
+              <div className="px-6 py-4 space-y-3 overflow-y-auto flex-1">
                 <div>
                   <label className={labelCls}>Description <span className="text-red-400">*</span></label>
                   <textarea required rows={2} value={punchDesc} onChange={e => setPunchDesc(e.target.value)} autoFocus
@@ -4125,8 +4125,8 @@ export default function Home() {
       {viewPunch && (
         <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center"
           onClick={e => { if (e.target === e.currentTarget) setViewPunch(null) }}>
-          <div className="bg-white rounded-xl border border-[#E2E8F0] shadow-2xl w-full sm:w-[500px] mx-4 sm:mx-0">
-            <div className="flex items-center justify-between px-6 pt-5 pb-4 border-b border-[#E2E8F0]">
+          <div className="bg-white rounded-xl border border-[#E2E8F0] shadow-2xl w-full sm:w-[500px] mx-4 sm:mx-0 max-h-[90vh] flex flex-col">
+            <div className="flex-shrink-0 flex items-center justify-between px-6 pt-5 pb-4 border-b border-[#E2E8F0]">
               <div>
                 <span className="text-[11px] font-mono text-[#7B9BB5]">{viewPunch.item_number}</span>
                 <h2 className="text-[15px] font-bold text-[#0F172A] mt-0.5">{viewPunch.description}</h2>
@@ -4135,7 +4135,7 @@ export default function Home() {
                 <XIcon className="h-4 w-4" />
               </button>
             </div>
-            <div className="px-6 py-4 space-y-4">
+            <div className="px-6 py-4 space-y-4 overflow-y-auto flex-1">
               <div className="grid grid-cols-2 gap-3 text-[12px]">
                 {viewPunch.location && <div><span className="text-[#64748B]">Location: </span><span className="text-[#0F172A]">{viewPunch.location}</span></div>}
                 {viewPunch.assigned_to && <div><span className="text-[#64748B]">Assigned to: </span><span className="text-[#0F172A]">{viewPunch.assigned_to}</span></div>}
