@@ -26,22 +26,8 @@ export async function POST(req: NextRequest) {
   // ── INSPECTIONS ───────────────────────────────────────────────────────────
   rows.push({ ...base, category: "inspections", item_type: "substantial_completion", title: "Certificate of Substantial Completion", sort_order: 200 })
 
-  // ── FINANCIAL — per sub + retainage ──────────────────────────────────────
-  let finIdx = 300
-  for (const m of team ?? []) {
-    const sub = m.title ? `${m.name} (${m.title})` : m.name
-    rows.push({ ...base, category: "financial", item_type: "lien_waiver_conditional",   title: `Conditional Lien Waiver — ${sub}`,   assigned_to: m.name, notes: "Conditional",   sort_order: finIdx++ })
-    rows.push({ ...base, category: "financial", item_type: "lien_waiver_unconditional", title: `Unconditional Lien Waiver — ${sub}`, assigned_to: m.name, notes: "Unconditional", sort_order: finIdx++ })
-    rows.push({ ...base, category: "financial", item_type: "final_pay_app",             title: `Final Pay Application — ${sub}`,     assigned_to: m.name,                          sort_order: finIdx++ })
-  }
-  rows.push({ ...base, category: "financial", item_type: "retainage", title: "Retainage Release Confirmation", sort_order: 395 })
-
-  // ── WARRANTIES — workmanship per sub (manufacturer added manually) ────────
-  let warIdx = 700
-  for (const m of team ?? []) {
-    const sub = m.title ? `${m.name} (${m.title})` : m.name
-    rows.push({ ...base, category: "warranties", item_type: "workmanship_warranty", title: `Workmanship Warranty — ${sub}`, assigned_to: m.name, notes: "1-Year Workmanship", sort_order: warIdx++ })
-  }
+  // ── WARRANTIES — single company warranty ─────────────────────────────────
+  rows.push({ ...base, category: "warranties", item_type: "company_warranty", title: "Company Warranty", sort_order: 700 })
 
   // ── HANDOVER ──────────────────────────────────────────────────────────────
   rows.push({ ...base, category: "handover", item_type: "keys",          title: "Keys, Access Cards & Credentials",    sort_order: 600 })

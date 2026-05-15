@@ -2737,7 +2737,6 @@ export default function Home() {
             const CATS = [
               { key: "documents",      label: "Documents",      total: docTotal, done: docDone },
               { key: "inspections",    label: "Inspections",    total: closeoutItems.filter(i=>i.category==="inspections").length,    done: closeoutItems.filter(i=>i.category==="inspections"&&i.status==="complete").length },
-              { key: "financial",      label: "Financial",      total: closeoutItems.filter(i=>i.category==="financial").length,      done: closeoutItems.filter(i=>i.category==="financial"&&i.status==="complete").length },
               { key: "warranties",     label: "Warranties",     total: closeoutItems.filter(i=>i.category==="warranties").length,     done: closeoutItems.filter(i=>i.category==="warranties"&&i.status==="complete").length },
               { key: "handover",       label: "Handover",       total: closeoutItems.filter(i=>i.category==="handover").length,       done: closeoutItems.filter(i=>i.category==="handover"&&i.status==="complete").length },
               { key: "subcontractors", label: "Subcontractors", total: subItems.length,  done: subItems.filter(i=>i.status==="complete").length },
@@ -2981,7 +2980,7 @@ export default function Home() {
                       )
                     })()}
 
-                    {/* ── STANDARD CHECKLIST CATEGORIES (Inspections, Financial, Training, Handover, Warranties) ── */}
+                    {/* ── STANDARD CHECKLIST CATEGORIES (Inspections, Warranties, Training, Handover) ── */}
                     {CATS.filter(c => c.key !== "documents" && c.key !== "subcontractors" && c.key !== "suppliers").map(cat => {
                       const items = closeoutItems.filter(i => i.category === cat.key)
                       return (
@@ -2990,7 +2989,6 @@ export default function Home() {
                             <div className="flex items-center gap-2">
                               <span className="text-[13px] font-bold text-[#0F172A]">{cat.label}</span>
                               <span className="text-[11px] text-[#64748B]">{cat.done}/{cat.total} complete</span>
-                              {cat.key === "financial" && closeoutTeam.length > 0 && <span className="text-[10px] text-[#64748B] bg-[#F4F5F7] px-1.5 py-0.5 rounded">{closeoutTeam.length} subs</span>}
                             </div>
                             <button onClick={() => { setNewCloseoutCategory(cat.key); setShowNewCloseout(true) }} className="text-[11px] text-white/70 hover:text-white transition-colors flex items-center gap-1"><PlusIcon /> Add</button>
                           </div>
@@ -3335,7 +3333,6 @@ export default function Home() {
                 <select value={newCloseoutCategory} onChange={e => { setNewCloseoutCategory(e.target.value); setNewCloseoutFolder("") }} className={inputCls}>
                   <option value="documents">Documents</option>
                   <option value="inspections">Inspections</option>
-                  <option value="financial">Financial</option>
                   <option value="training">Training</option>
                   <option value="handover">Handover</option>
                   <option value="warranties">Warranties</option>
