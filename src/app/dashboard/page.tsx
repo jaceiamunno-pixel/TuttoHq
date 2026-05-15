@@ -58,6 +58,10 @@ interface SubmittalRecord {
   send_to_address: string | null
   transmitted_by: string | null
   transmitted_by_company: string | null
+  generated_pdf_path: string | null
+  transmittal_sent_at: string | null
+  transmittal_recipient: string | null
+  submittal_number: string | null
 }
 
 type BatchStatus = "pending" | "classifying" | "ready" | "error" | "uploading" | "done" | "upload-error"
@@ -407,6 +411,7 @@ const STATUS_STYLES: Record<string, string> = {
   "Rejected":               "bg-red-100 text-red-700",
   "Revise and Resubmit":    "bg-amber-100 text-amber-700",
   "Needs Review":           "bg-amber-100 text-amber-700",
+  "Transmitted":            "bg-purple-100 text-purple-700",
 }
 function StatusBadge({ status }: { status: string }) {
   const cls = STATUS_STYLES[status] ?? "bg-gray-100 text-gray-500"
@@ -698,6 +703,10 @@ export default function Home() {
   const [coGeneratingPdf, setCoGeneratingPdf]         = useState(false)
   const [punchGeneratingPdf, setPunchGeneratingPdf]   = useState(false)
   const [dailyGeneratingPdf, setDailyGeneratingPdf]   = useState(false)
+  const [transmittalSub, setTransmittalSub]           = useState<SubmittalRecord | null>(null)
+  const [transmittalLoading, setTransmittalLoading]   = useState(false)
+  const [transmittalPdfUrl, setTransmittalPdfUrl]     = useState<string | null>(null)
+  const [showTransmittalConfirm, setShowTransmittalConfirm] = useState(false)
   const [drawingGeneratingPdf, setDrawingGeneratingPdf] = useState(false)
 
   // Punch list
@@ -1558,6 +1567,78 @@ export default function Home() {
     if (viewDaily) await loadDailyPhotos(viewDaily.id)
   }
 
+  async function handleTransmittal(sub: SubmittalRecord, subNum: number) {
+    setTransmittalSub(sub)
+    setTransmittalLoading(true)
+    setTransmittalPdfUrl(null)
+    try {
+      const res = await fetch(`/api/transmittal/${sub.id}`, { method: "POST" })
+      if (!res.ok) { alert("Failed to generate transmittal PDF. Please try again."); return }
+      const { url } = await res.json()
+      setTransmittalPdfUrl(url)
+
+      const proj = appProjects.find(p => p.id === sub.project_id)
+      const title = sub.file_name.replace(/\.[^.]+$/, "")
+      const div = [sub.csi_division, sub.division_name].filter(Boolean).join(" — ")
+      const subject = `Submittal Transmittal — ${proj?.name ?? ""} — ${subNum} — ${title} — ${div}`
+      const today = new Date().toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })
+      const senderName = sub.transmitted_by ?? ""
+      const senderCompany = sub.transmitted_by_company ?? proj?.gc_name ?? ""
+      const body = [
+        "Please find attached the following submittal for your review:",
+        "",
+        `Project: ${proj?.name ?? ""}`,
+        `Submittal No.: ${subNum}`,
+        `Title: ${title}`,
+        `CSI Division: ${div}`,
+        `Section: ${sub.section_name ?? sub.csi_section ?? ""}`,
+        `Date: ${today}`,
+        "",
+        "Please review and return with your response at your earliest convenience.",
+        "",
+        `This submittal has been transmitted by ${senderName} on behalf of ${senderCompany}.`,
+        "",
+        "Regards,",
+        senderName,
+        senderCompany,
+      ].join("\n")
+
+      const mailto = `mailto:${encodeURIComponent(sub.send_to_email ?? "")}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`
+
+      // Download the PDF first (mailto: cannot attach files)
+      const a = document.createElement("a")
+      a.href = url
+      a.download = `${title.replace(/[^a-zA-Z0-9_-]/g, "_")}_transmittal.pdf`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+
+      // Open email client
+      window.location.href = mailto
+
+      setShowTransmittalConfirm(true)
+    } finally {
+      setTransmittalLoading(false)
+    }
+  }
+
+  async function markTransmitted() {
+    if (!transmittalSub) return
+    await fetch(`/api/submittals/${transmittalSub.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        review_status: "Transmitted",
+        transmittal_sent_at: new Date().toISOString(),
+        transmittal_recipient: transmittalSub.send_to_email ?? transmittalSub.send_to_contact ?? "",
+      }),
+    })
+    setShowTransmittalConfirm(false)
+    setTransmittalSub(null)
+    setTransmittalPdfUrl(null)
+    loadSubmittals()
+  }
+
   async function saveCoStatus() {
     if (!viewCo) return
     setCoRespondSaving(true)
@@ -2385,11 +2466,15 @@ export default function Home() {
                         {s.manually_overridden && (
                           <span className="text-[10px] text-[#7B9BB5]">✎ Overridden</span>
                         )}
-                        {s.send_to_company && (
+                        {s.transmittal_sent_at ? (
+                          <span className="text-[10px] text-purple-600" title={`Transmitted on ${fmtDate(s.transmittal_sent_at)}${s.transmittal_recipient ? ` to ${s.transmittal_recipient}` : ""}`}>
+                            ✉ Sent {fmtDate(s.transmittal_sent_at)}
+                          </span>
+                        ) : s.send_to_company ? (
                           <span className="text-[10px] text-emerald-600" title={`Transmitted to: ${s.send_to_company}${s.send_to_contact ? ` — ${s.send_to_contact}` : ""}${s.send_to_email ? ` · ${s.send_to_email}` : ""}`}>
                             ↗ {s.send_to_company}{s.send_to_contact ? ` (${s.send_to_contact})` : ""}
                           </span>
-                        )}
+                        ) : null}
                       </div>
                     </td>
                     <td className="px-4 py-2.5 text-[#64748B] text-[12px] whitespace-nowrap">
@@ -2413,13 +2498,21 @@ export default function Home() {
                           <button
                             onClick={() => openEditCoverSheet(s)}
                             className="text-[11px] text-[#7B9BB5] hover:text-[#7B9BB5] px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors"
-                          >Cover Sheet</button>
+                          >Cover</button>
                         ) : (
                           <button
                             onClick={() => openTransmittal(s)}
                             className="text-[11px] text-[#7B9BB5] hover:text-[#7B9BB5] px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors"
-                          >Transmittal</button>
+                          >Cover</button>
                         )}
+                        <button
+                          onClick={() => handleTransmittal(s, logSubmittals.length - i)}
+                          disabled={transmittalLoading && transmittalSub?.id === s.id}
+                          className="text-[11px] text-emerald-700 hover:text-emerald-800 px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors disabled:opacity-50 flex items-center gap-1 whitespace-nowrap"
+                        >
+                          {transmittalLoading && transmittalSub?.id === s.id ? <SpinnerIcon className="h-3 w-3" /> : null}
+                          Transmit
+                        </button>
                         <button
                           onClick={() => deleteSubmittal(s)}
                           className="text-[11px] text-[#64748B] hover:text-red-400 px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors"
@@ -2448,8 +2541,15 @@ export default function Home() {
                     {s.project_id ? (
                       <button onClick={() => openEditCoverSheet(s)} className="text-[11px] text-[#7B9BB5] px-2 py-1 rounded border border-[#E2E8F0] bg-[#F8F9FA] transition-colors">Cover</button>
                     ) : (
-                      <button onClick={() => openTransmittal(s)} className="text-[11px] text-[#7B9BB5] px-2 py-1 rounded border border-[#E2E8F0] bg-[#F8F9FA] transition-colors">Transmittal</button>
+                      <button onClick={() => openTransmittal(s)} className="text-[11px] text-[#7B9BB5] px-2 py-1 rounded border border-[#E2E8F0] bg-[#F8F9FA] transition-colors">Cover</button>
                     )}
+                    <button
+                      onClick={() => handleTransmittal(s, logSubmittals.length - i)}
+                      disabled={transmittalLoading && transmittalSub?.id === s.id}
+                      className="text-[11px] text-emerald-700 px-2 py-1 rounded border border-[#E2E8F0] bg-[#F8F9FA] transition-colors disabled:opacity-50 flex items-center gap-1">
+                      {transmittalLoading && transmittalSub?.id === s.id ? <SpinnerIcon className="h-3 w-3" /> : null}
+                      Transmit
+                    </button>
                     <button onClick={() => deleteSubmittal(s)} className="text-[11px] text-red-400 px-2 py-1 rounded border border-[#E2E8F0] bg-[#F8F9FA] transition-colors">Delete</button>
                   </div>
                 </div>
@@ -4641,6 +4741,39 @@ export default function Home() {
                   {coRespondSaving ? "Saving…" : "Save Changes"}
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Transmittal confirmation dialog ─────────────────────────────── */}
+      {showTransmittalConfirm && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center">
+          <div className="bg-white rounded-xl border border-[#E2E8F0] shadow-2xl w-full sm:w-[420px] mx-4 sm:mx-0 p-6">
+            <h2 className="text-[16px] font-bold text-[#0F172A] mb-2">Has this transmittal been sent?</h2>
+            <p className="text-[13px] text-[#64748B] mb-1">
+              Your PDF was downloaded and your email client was opened. Please attach the downloaded PDF to the email before sending.
+            </p>
+            {transmittalSub?.send_to_email && (
+              <p className="text-[13px] text-[#64748B] mb-4">
+                Recipient: <span className="font-medium text-[#0F172A]">{transmittalSub.send_to_email}</span>
+              </p>
+            )}
+            {!transmittalSub?.send_to_email && <div className="mb-4" />}
+            <p className="text-[13px] text-[#64748B] mb-5">
+              Clicking <strong>Yes</strong> will mark this submittal as <span className="text-purple-700 font-semibold">Transmitted</span> and log the date and recipient.
+            </p>
+            <div className="flex gap-3 justify-end">
+              <button
+                onClick={() => { setShowTransmittalConfirm(false); setTransmittalSub(null); setTransmittalPdfUrl(null) }}
+                className="h-9 px-5 rounded-md border border-[#E2E8F0] text-[13px] text-[#64748B] hover:bg-[#0F172A]/[0.04] transition-colors">
+                No, not yet
+              </button>
+              <button
+                onClick={markTransmitted}
+                className="h-9 px-5 rounded-md bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors">
+                Yes, mark as Transmitted
+              </button>
             </div>
           </div>
         </div>

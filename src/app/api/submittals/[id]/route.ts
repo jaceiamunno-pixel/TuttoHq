@@ -10,7 +10,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   const { id } = await params
   const updates = await req.json()
 
-  const allowed = ["review_status", "csi_division", "division_name", "csi_section", "section_name", "project_id"]
+  const allowed = ["review_status", "csi_division", "division_name", "csi_section", "section_name", "project_id", "transmittal_sent_at", "transmittal_recipient"]
   const safe = Object.fromEntries(Object.entries(updates).filter(([k]) => allowed.includes(k)))
 
   // Auto-flag when a user manually changes the CSI classification
