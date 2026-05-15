@@ -1980,7 +1980,7 @@ export default function Home() {
               </svg>
             </button>
             {projectDropdownOpen && (
-              <div className="absolute left-3 right-3 top-full mt-1 z-50 bg-[#1a2840] border border-white/10 rounded-lg shadow-xl overflow-hidden">
+              <div onClick={e => e.stopPropagation()} className="absolute left-3 right-3 top-full mt-1 z-50 bg-[#1a2840] border border-white/10 rounded-lg shadow-xl overflow-hidden">
                 {[{ id: "", name: "All Projects", number: null }, ...appProjects].map(p => (
                   <button
                     key={p.id}
