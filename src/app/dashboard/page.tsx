@@ -651,8 +651,8 @@ export default function Home() {
   useEffect(() => {
     if (!projectDropdownOpen) return
     const close = () => setProjectDropdownOpen(false)
-    document.addEventListener("click", close, true)
-    return () => document.removeEventListener("click", close, true)
+    document.addEventListener("click", close)
+    return () => document.removeEventListener("click", close)
   }, [projectDropdownOpen])
 
   // Module navigation
@@ -1980,7 +1980,7 @@ export default function Home() {
               </svg>
             </button>
             {projectDropdownOpen && (
-              <div onClick={e => e.stopPropagation()} className="absolute left-3 right-3 top-full mt-1 z-50 bg-[#1a2840] border border-white/10 rounded-lg shadow-xl overflow-hidden">
+              <div className="absolute left-3 right-3 top-full mt-1 z-50 bg-[#1a2840] border border-white/10 rounded-lg shadow-xl overflow-hidden">
                 {[{ id: "", name: "All Projects", number: null }, ...appProjects].map(p => (
                   <button
                     key={p.id}
