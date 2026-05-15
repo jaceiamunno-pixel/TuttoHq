@@ -649,7 +649,7 @@ export default function Home() {
   }, [])
 
   // Module navigation
-  const [activeModule, setActiveModule] = useState<"submittals" | "rfis" | "changeorders" | "punch" | "daily" | "drawings" | "closeout">("submittals")
+  const [activeModule, setActiveModule] = useState<"library" | "submittals" | "rfis" | "changeorders" | "punch" | "daily" | "drawings" | "closeout">("submittals")
   const [globalProjectId, setGlobalProjectId] = useState<string>("")
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
   // Sync submittal project filter with global project selection
@@ -2217,8 +2217,8 @@ export default function Home() {
         <div className="flex-shrink-0 border-b border-white/[0.12] bg-[#0A1628] relative">
           {/* Desktop tabs row */}
           <div className="hidden sm:flex items-center px-4 gap-0.5">
-            {(["submittals","rfis","changeorders","punch","daily","drawings","closeout"] as const).map(mod => {
-              const labels: Record<string, string> = { submittals: "Submittals", rfis: "RFIs", changeorders: "Change Orders", punch: "Punch List", daily: "Daily Reports", drawings: "Drawing Log", closeout: "Closeout" }
+            {(["library","submittals","rfis","changeorders","punch","daily","drawings","closeout"] as const).map(mod => {
+              const labels: Record<string, string> = { library: "Library", submittals: "Submittal Log", rfis: "RFIs", changeorders: "Change Orders", punch: "Punch List", daily: "Daily Reports", drawings: "Drawing Log", closeout: "Closeout" }
               const isActive = activeModule === mod
               return (
                 <button key={mod} onClick={() => setActiveModule(mod)}
@@ -2260,7 +2260,7 @@ export default function Home() {
           {/* Mobile nav bar */}
           <div className="flex sm:hidden items-center justify-between px-4 py-2.5">
             <span className="text-[14px] font-semibold text-white">
-              {{ submittals: "Submittals", rfis: "RFIs", changeorders: "Change Orders", punch: "Punch List", daily: "Daily Reports", drawings: "Drawing Log", closeout: "Closeout" }[activeModule]}
+              {{ library: "Library", submittals: "Submittal Log", rfis: "RFIs", changeorders: "Change Orders", punch: "Punch List", daily: "Daily Reports", drawings: "Drawing Log", closeout: "Closeout" }[activeModule]}
             </span>
             <button
               onClick={() => setMobileNavOpen(prev => !prev)}
@@ -2276,8 +2276,8 @@ export default function Home() {
           {/* Mobile dropdown menu */}
           {mobileNavOpen && (
             <div className="sm:hidden absolute top-full left-0 right-0 bg-[#0A1628] border-b border-white/[0.12] z-50 shadow-lg">
-              {(["submittals","rfis","changeorders","punch","daily","drawings","closeout"] as const).map(mod => {
-                const labels: Record<string, string> = { submittals: "Submittals", rfis: "RFIs", changeorders: "Change Orders", punch: "Punch List", daily: "Daily Reports", drawings: "Drawing Log", closeout: "Closeout" }
+              {(["library","submittals","rfis","changeorders","punch","daily","drawings","closeout"] as const).map(mod => {
+                const labels: Record<string, string> = { library: "Library", submittals: "Submittal Log", rfis: "RFIs", changeorders: "Change Orders", punch: "Punch List", daily: "Daily Reports", drawings: "Drawing Log", closeout: "Closeout" }
                 const isActive = activeModule === mod
                 return (
                   <button key={mod}
@@ -2315,24 +2315,37 @@ export default function Home() {
           )}
         </div>
 
-        {/* Submittal action bar */}
-        {activeModule === "submittals" && (
+        {/* Library action bar */}
+        {activeModule === "library" && (
         <div className="flex-shrink-0 border-b border-[#E2E8F0] bg-white flex items-center justify-between px-4 py-2.5 gap-2 min-w-0">
-          <p className="text-[13px] font-semibold text-[#0F172A] truncate min-w-0">Submittal Log <span className="text-[#64748B] font-normal ml-1">({logSubmittals.length})</span></p>
+          <p className="text-[13px] font-semibold text-[#0F172A] truncate min-w-0">Submittal Library</p>
           <div className="flex items-center gap-2 flex-shrink-0">
             <button
               onClick={() => { setShowBatch(true); setBatchPhase("select"); setBatchItems([]) }}
               className="h-8 px-3 rounded-md border border-[#E2E8F0] text-[12px] text-[#64748B] hover:bg-[#0F172A]/[0.04] transition-colors flex items-center gap-1.5 whitespace-nowrap"
             >
-              <LayersIcon /> Batch
+              <LayersIcon /> Batch Upload
             </button>
             <button
               onClick={() => setShowUpload(true)}
               className="h-8 px-4 rounded-md bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors flex items-center gap-1.5 whitespace-nowrap"
             >
-              <PlusIcon /> Upload
+              <PlusIcon /> Upload Submittal to Library
             </button>
           </div>
+        </div>
+        )}
+
+        {/* Submittal Log action bar */}
+        {activeModule === "submittals" && (
+        <div className="flex-shrink-0 border-b border-[#E2E8F0] bg-white flex items-center justify-between px-4 py-2.5 gap-2 min-w-0">
+          <p className="text-[13px] font-semibold text-[#0F172A] truncate min-w-0">Submittal Log <span className="text-[#64748B] font-normal ml-1">({logSubmittals.length})</span></p>
+          <button
+            onClick={() => setActiveModule("library")}
+            className="h-8 px-3 rounded-md border border-[#E2E8F0] text-[12px] text-[#7B9BB5] hover:bg-[#0F172A]/[0.04] transition-colors flex items-center gap-1.5 whitespace-nowrap flex-shrink-0"
+          >
+            <PlusIcon /> Upload to Library
+          </button>
         </div>
         )}
 
@@ -2439,6 +2452,63 @@ export default function Home() {
         {/* Content */}
         <div className="flex-1 overflow-y-auto min-h-0">
 
+          {/* Library */}
+          {activeModule === "library" && (
+            <div className="px-4 py-4 max-w-4xl">
+              {treeLoading ? (
+                <div className="flex items-center gap-2 py-8 text-[13px] text-[#64748B]">
+                  <SpinnerIcon className="h-4 w-4" /> Loading library…
+                </div>
+              ) : divisions.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-24 text-center">
+                  <div className="w-14 h-14 rounded-2xl bg-[#7B9BB5]/10 border border-[#7B9BB5]/20 flex items-center justify-center mb-4">
+                    <svg className="w-7 h-7 text-[#7B9BB5]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                    </svg>
+                  </div>
+                  <p className="text-[15px] font-bold text-[#0F172A]">Your library is empty</p>
+                  <p className="text-[13px] text-[#64748B] mt-1.5 mb-5">Upload submittals to start building your CSI library.</p>
+                  <button onClick={() => setShowUpload(true)} className="h-9 px-5 rounded-lg bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors inline-flex items-center gap-2">
+                    <PlusIcon /> Upload Submittal to Library
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {divisions.map(div => (
+                    <div key={div.num} className="bg-white rounded-xl border border-[#E2E8F0] overflow-hidden">
+                      <div className="flex items-center justify-between px-4 py-3 bg-[#F8F9FA] border-b border-[#E2E8F0]">
+                        <div className="flex items-center gap-2.5">
+                          <span className="text-[11px] font-mono font-bold text-[#7B9BB5] bg-[#7B9BB5]/10 px-2 py-0.5 rounded">{div.num}</span>
+                          <span className="text-[13px] font-semibold text-[#0F172A]">{div.name}</span>
+                        </div>
+                        <span className="text-[11px] text-[#64748B]">{div.file_count} {div.file_count === 1 ? "file" : "files"}</span>
+                      </div>
+                      <div className="divide-y divide-[#E2E8F0]">
+                        {div.sections.filter(s => (s.file_count ?? 0) > 0).map(sec => (
+                          <button
+                            key={sec.code}
+                            onClick={() => {
+                              toggleSection(sec.code)
+                              setSidebarOpen(true)
+                              sessionStorage.setItem("sidebarOpen", "true")
+                            }}
+                            className="w-full flex items-center justify-between px-4 py-2.5 hover:bg-[#F4F5F7] transition-colors text-left"
+                          >
+                            <div className="flex items-center gap-2.5">
+                              <span className="text-[11px] font-mono text-[#64748B]">{sec.code}</span>
+                              <span className="text-[13px] text-[#0F172A]">{sec.name}</span>
+                            </div>
+                            <span className="text-[11px] text-[#64748B] flex-shrink-0 ml-4">{sec.file_count} {sec.file_count === 1 ? "file" : "files"} →</span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Submittal log */}
           {activeModule === "submittals" && (<>
           {logLoading ? (
@@ -2452,10 +2522,10 @@ export default function Home() {
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                 </svg>
               </div>
-              <p className="text-[15px] font-bold text-[#0F172A]">No submittals yet</p>
-              <p className="text-[13px] text-[#64748B] mt-1.5">Upload your first submittal to get started.</p>
-              <button onClick={() => setShowUpload(true)} className="mt-5 h-9 px-5 rounded-lg bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors inline-flex items-center gap-2">
-                <PlusIcon /> Upload submittal
+              <p className="text-[15px] font-bold text-[#0F172A]">No submittals in this project yet</p>
+              <p className="text-[13px] text-[#64748B] mt-1.5">Upload submittals to the Library first, then attach them to a project.</p>
+              <button onClick={() => setActiveModule("library")} className="mt-5 h-9 px-5 rounded-lg bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors inline-flex items-center gap-2">
+                Go to Library
               </button>
             </div>
           ) : (
