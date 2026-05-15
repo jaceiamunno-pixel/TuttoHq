@@ -717,6 +717,10 @@ export default function Home() {
   const [punchEditStatus, setPunchEditStatus]     = useState("")
   const [punchEditNotes, setPunchEditNotes]       = useState("")
   const [punchEditSaving, setPunchEditSaving]     = useState(false)
+  const [punchPhotos, setPunchPhotos]             = useState<{id: string; url: string; file_name: string}[]>([])
+  const [punchPhotosLoading, setPunchPhotosLoading] = useState(false)
+  const [punchPhotoUploading, setPunchPhotoUploading] = useState(false)
+  const punchPhotoRef = useRef<HTMLInputElement>(null)
 
   // Daily reports
   const [dailyReports, setDailyReports]               = useState<DailyReport[]>([])
@@ -739,6 +743,10 @@ export default function Home() {
   const [dailySaving, setDailySaving]                 = useState(false)
   const [dailyEditing, setDailyEditing]               = useState(false)
   const [dailyEditSaving, setDailyEditSaving]         = useState(false)
+  const [dailyPhotos, setDailyPhotos]                 = useState<{id: string; url: string; file_name: string}[]>([])
+  const [dailyPhotosLoading, setDailyPhotosLoading]   = useState(false)
+  const [dailyPhotoUploading, setDailyPhotoUploading] = useState(false)
+  const dailyPhotoRef = useRef<HTMLInputElement>(null)
 
   // Drawing log
   const [drawings, setDrawings]                       = useState<DrawingRecord[]>([])
@@ -1269,6 +1277,14 @@ export default function Home() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { if (activeModule === "closeout") loadCloseout() }, [activeModule, globalProjectId])
 
+  useEffect(() => {
+    if (viewPunch) { setPunchPhotos([]); loadPunchPhotos(viewPunch.id) }
+  }, [viewPunch?.id])
+
+  useEffect(() => {
+    if (viewDaily) { setDailyPhotos([]); loadDailyPhotos(viewDaily.id) }
+  }, [viewDaily?.id])
+
   function openAddRevision(d: DrawingRecord) {
     setAddRevisionFor(d)
     setDwgNumber(d.drawing_number)
@@ -1491,6 +1507,54 @@ export default function Home() {
       const data = await res.json()
       if (res.ok && data.url) { window.open(data.url, "_blank"); loadDrawings() }
     } finally { setDrawingGeneratingPdf(false) }
+  }
+
+  async function loadPunchPhotos(id: string) {
+    setPunchPhotosLoading(true)
+    const res = await fetch(`/api/photos?entity_type=punch_item&entity_id=${id}`)
+    if (res.ok) setPunchPhotos(await res.json())
+    setPunchPhotosLoading(false)
+  }
+
+  async function uploadPunchPhoto(file: File) {
+    if (!viewPunch) return
+    setPunchPhotoUploading(true)
+    const fd = new FormData()
+    fd.append("entity_type", "punch_item")
+    fd.append("entity_id", viewPunch.id)
+    fd.append("file", file)
+    const res = await fetch("/api/photos", { method: "POST", body: fd })
+    if (res.ok) await loadPunchPhotos(viewPunch.id)
+    setPunchPhotoUploading(false)
+  }
+
+  async function deletePunchPhoto(photoId: string) {
+    await fetch(`/api/photos?id=${photoId}`, { method: "DELETE" })
+    if (viewPunch) await loadPunchPhotos(viewPunch.id)
+  }
+
+  async function loadDailyPhotos(id: string) {
+    setDailyPhotosLoading(true)
+    const res = await fetch(`/api/photos?entity_type=daily_report&entity_id=${id}`)
+    if (res.ok) setDailyPhotos(await res.json())
+    setDailyPhotosLoading(false)
+  }
+
+  async function uploadDailyPhoto(file: File) {
+    if (!viewDaily) return
+    setDailyPhotoUploading(true)
+    const fd = new FormData()
+    fd.append("entity_type", "daily_report")
+    fd.append("entity_id", viewDaily.id)
+    fd.append("file", file)
+    const res = await fetch("/api/photos", { method: "POST", body: fd })
+    if (res.ok) await loadDailyPhotos(viewDaily.id)
+    setDailyPhotoUploading(false)
+  }
+
+  async function deleteDailyPhoto(photoId: string) {
+    await fetch(`/api/photos?id=${photoId}`, { method: "DELETE" })
+    if (viewDaily) await loadDailyPhotos(viewDaily.id)
   }
 
   async function saveCoStatus() {
@@ -3789,6 +3853,37 @@ export default function Home() {
                   <span>{viewDaily.file_name}</span>
                 </div>
               )}
+
+              {/* Photo section */}
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-[11px] font-bold text-[#64748B] uppercase tracking-widest">Photos</span>
+                  <button type="button" onClick={() => dailyPhotoRef.current?.click()} disabled={dailyPhotoUploading}
+                    className="h-7 px-3 rounded-md border border-[#E2E8F0] text-[12px] text-[#64748B] hover:bg-[#0F172A]/[0.04] transition-colors disabled:opacity-50 flex items-center gap-1.5">
+                    {dailyPhotoUploading ? <><SpinnerIcon className="h-3 w-3" /> Uploading…</> : "+ Add Photo"}
+                  </button>
+                  <input ref={dailyPhotoRef} type="file" accept="image/*" capture="environment" className="hidden"
+                    onChange={e => { const f = e.target.files?.[0]; if (f) uploadDailyPhoto(f); e.target.value = "" }} />
+                </div>
+                {dailyPhotosLoading ? (
+                  <div className="flex justify-center py-3"><SpinnerIcon className="h-4 w-4 text-[#64748B]" /></div>
+                ) : dailyPhotos.length > 0 ? (
+                  <div className="grid grid-cols-3 gap-2">
+                    {dailyPhotos.map(ph => (
+                      <div key={ph.id} className="relative group aspect-square rounded-md overflow-hidden border border-[#E2E8F0] bg-[#F4F5F7]">
+                        <img src={ph.url} alt={ph.file_name ?? ""} className="w-full h-full object-cover cursor-pointer"
+                          onClick={() => window.open(ph.url, "_blank")} />
+                        <button onClick={() => deleteDailyPhoto(ph.id)}
+                          className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 transition-opacity h-6 w-6 rounded-full bg-red-500 text-white text-[11px] flex items-center justify-center shadow">
+                          ✕
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-[12px] text-[#64748B] italic">No photos yet — tap "+ Add Photo" to capture or upload</p>
+                )}
+              </div>
             </div>
           </div>
         </div>
@@ -4006,6 +4101,38 @@ export default function Home() {
                   <span>{viewPunch.file_name}</span>
                 </div>
               )}
+
+              {/* Photo section */}
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <span className={labelCls}>Photos</span>
+                  <button type="button" onClick={() => punchPhotoRef.current?.click()} disabled={punchPhotoUploading}
+                    className="h-7 px-3 rounded-md border border-[#E2E8F0] text-[12px] text-[#64748B] hover:bg-[#0F172A]/[0.04] transition-colors disabled:opacity-50 flex items-center gap-1.5">
+                    {punchPhotoUploading ? <><SpinnerIcon className="h-3 w-3" /> Uploading…</> : "+ Add Photo"}
+                  </button>
+                  <input ref={punchPhotoRef} type="file" accept="image/*" capture="environment" className="hidden"
+                    onChange={e => { const f = e.target.files?.[0]; if (f) uploadPunchPhoto(f); e.target.value = "" }} />
+                </div>
+                {punchPhotosLoading ? (
+                  <div className="flex justify-center py-3"><SpinnerIcon className="h-4 w-4 text-[#64748B]" /></div>
+                ) : punchPhotos.length > 0 ? (
+                  <div className="grid grid-cols-3 gap-2">
+                    {punchPhotos.map(ph => (
+                      <div key={ph.id} className="relative group aspect-square rounded-md overflow-hidden border border-[#E2E8F0] bg-[#F4F5F7]">
+                        <img src={ph.url} alt={ph.file_name ?? ""} className="w-full h-full object-cover cursor-pointer"
+                          onClick={() => window.open(ph.url, "_blank")} />
+                        <button onClick={() => deletePunchPhoto(ph.id)}
+                          className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 transition-opacity h-6 w-6 rounded-full bg-red-500 text-white text-[11px] flex items-center justify-center shadow">
+                          ✕
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-[12px] text-[#64748B] italic">No photos yet — tap "+ Add Photo" to capture or upload</p>
+                )}
+              </div>
+
               <div className="border-t border-[#E2E8F0] pt-4 space-y-3">
                 <div>
                   <label className={labelCls}>Update Notes</label>
