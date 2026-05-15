@@ -1756,7 +1756,7 @@ export default function Home() {
   const labelCls = "block text-[11px] font-semibold text-[#64748B] uppercase tracking-[0.08em] mb-1.5"
 
   return (
-    <div className="flex min-h-screen bg-[#F4F5F7]">
+    <div className="flex min-h-screen bg-[#F4F5F7] overflow-x-hidden w-full">
 
       {/* ── Sidebar ───────────────────────────────────────────────────────── */}
       {sidebarOpen && (
@@ -2132,18 +2132,18 @@ export default function Home() {
 
         {/* Submittal action bar */}
         {activeModule === "submittals" && (
-        <div className="flex-shrink-0 border-b border-[#E2E8F0] bg-white flex items-center justify-between px-4 py-2.5">
-          <p className="text-[13px] font-semibold text-[#0F172A]">Submittal Log <span className="text-[#64748B] font-normal ml-1">({logSubmittals.length})</span></p>
-          <div className="flex items-center gap-2">
+        <div className="flex-shrink-0 border-b border-[#E2E8F0] bg-white flex items-center justify-between px-4 py-2.5 gap-2 min-w-0">
+          <p className="text-[13px] font-semibold text-[#0F172A] truncate min-w-0">Submittal Log <span className="text-[#64748B] font-normal ml-1">({logSubmittals.length})</span></p>
+          <div className="flex items-center gap-2 flex-shrink-0">
             <button
               onClick={() => { setShowBatch(true); setBatchPhase("select"); setBatchItems([]) }}
-              className="h-8 px-3 rounded-md border border-[#E2E8F0] text-[12px] text-[#64748B] hover:bg-[#0F172A]/[0.04] transition-colors flex items-center gap-1.5"
+              className="h-8 px-3 rounded-md border border-[#E2E8F0] text-[12px] text-[#64748B] hover:bg-[#0F172A]/[0.04] transition-colors flex items-center gap-1.5 whitespace-nowrap"
             >
               <LayersIcon /> Batch
             </button>
             <button
               onClick={() => setShowUpload(true)}
-              className="h-8 px-4 rounded-md bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors flex items-center gap-1.5"
+              className="h-8 px-4 rounded-md bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors flex items-center gap-1.5 whitespace-nowrap"
             >
               <PlusIcon /> Upload
             </button>
@@ -2153,9 +2153,9 @@ export default function Home() {
 
         {/* RFI action bar */}
         {activeModule === "rfis" && (
-          <div className="flex-shrink-0 border-b border-[#E2E8F0] bg-white flex items-center justify-between px-4 py-2.5">
-            <p className="text-[13px] font-semibold text-[#0F172A]">RFI Log <span className="text-[#64748B] font-normal ml-1">({rfis.length})</span></p>
-            <button onClick={() => setShowNewRfi(true)} className="h-8 px-4 rounded-md bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors flex items-center gap-1.5">
+          <div className="flex-shrink-0 border-b border-[#E2E8F0] bg-white flex items-center justify-between px-4 py-2.5 gap-2 min-w-0">
+            <p className="text-[13px] font-semibold text-[#0F172A] truncate min-w-0">RFI Log <span className="text-[#64748B] font-normal ml-1">({rfis.length})</span></p>
+            <button onClick={() => setShowNewRfi(true)} className="h-8 px-4 rounded-md bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors flex items-center gap-1.5 flex-shrink-0 whitespace-nowrap">
               <PlusIcon /> New RFI
             </button>
           </div>
@@ -2163,9 +2163,9 @@ export default function Home() {
 
         {/* Change Orders action bar */}
         {activeModule === "changeorders" && (
-          <div className="flex-shrink-0 border-b border-[#E2E8F0] bg-white flex items-center justify-between px-4 py-2.5">
-            <p className="text-[13px] font-semibold text-[#0F172A]">Change Orders <span className="text-[#64748B] font-normal ml-1">({changeOrders.length})</span></p>
-            <button onClick={() => setShowNewCo(true)} className="h-8 px-4 rounded-md bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors flex items-center gap-1.5">
+          <div className="flex-shrink-0 border-b border-[#E2E8F0] bg-white flex items-center justify-between px-4 py-2.5 gap-2 min-w-0">
+            <p className="text-[13px] font-semibold text-[#0F172A] truncate min-w-0">Change Orders <span className="text-[#64748B] font-normal ml-1">({changeOrders.length})</span></p>
+            <button onClick={() => setShowNewCo(true)} className="h-8 px-4 rounded-md bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors flex items-center gap-1.5 flex-shrink-0 whitespace-nowrap">
               <PlusIcon /> New CO
             </button>
           </div>
@@ -2173,14 +2173,11 @@ export default function Home() {
 
         {/* Punch list action bar */}
         {activeModule === "punch" && (
-          <div className="flex-shrink-0 border-b border-[#E2E8F0] bg-white flex items-center justify-between px-4 py-2.5">
-            <div className="flex items-center gap-3">
-              <p className="text-[13px] font-semibold text-[#0F172A]">Punch List <span className="text-[#64748B] font-normal ml-1">({punchItems.filter(p => p.status !== "Void").length} items)</span></p>
-              {punchItems.filter(p => p.status === "Open" || p.status === "In Progress").length > 0 && (
-                <span className="text-[11px] text-amber-400">{punchItems.filter(p => p.status === "Open" || p.status === "In Progress").length} open</span>
-              )}
+          <div className="flex-shrink-0 border-b border-[#E2E8F0] bg-white flex items-center justify-between px-4 py-2.5 gap-2 min-w-0">
+            <div className="flex items-center gap-2 min-w-0 truncate">
+              <p className="text-[13px] font-semibold text-[#0F172A] truncate">Punch List <span className="text-[#64748B] font-normal ml-1">({punchItems.filter(p => p.status !== "Void").length})</span></p>
             </div>
-            <button onClick={() => setShowNewPunch(true)} className="h-8 px-4 rounded-md bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors flex items-center gap-1.5">
+            <button onClick={() => setShowNewPunch(true)} className="h-8 px-4 rounded-md bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors flex items-center gap-1.5 flex-shrink-0 whitespace-nowrap">
               <PlusIcon /> New Item
             </button>
           </div>

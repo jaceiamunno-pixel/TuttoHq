@@ -734,24 +734,24 @@ export default function SettingsPage() {
 
   return (
     <div className="min-h-screen bg-[#F4F5F7]">
-      <div className="max-w-[1040px] mx-auto py-12 px-6">
+      <div className="max-w-[1040px] mx-auto py-8 sm:py-12 px-4 sm:px-6">
 
-        <div className="flex items-center justify-between mb-8">
+        <div className="flex items-center justify-between mb-6 sm:mb-8">
           <div>
-            <h1 className="text-[22px] font-bold text-[#0F172A] tracking-tight">Settings</h1>
+            <h1 className="text-[20px] sm:text-[22px] font-bold text-[#0F172A] tracking-tight">Settings</h1>
             <p className="text-[13px] text-[#64748B] mt-0.5">TuttoHQ</p>
           </div>
-          <Link href="/" className="text-[13px] text-[#64748B] hover:text-[#0F172A] transition-colors">
-            ← Back to library
+          <Link href="/" className="text-[13px] text-[#64748B] hover:text-[#0F172A] transition-colors whitespace-nowrap">
+            ← Back
           </Link>
         </div>
 
-        <div className="flex gap-1 mb-6 border-b border-[#E2E8F0]">
+        <div className="flex gap-1 mb-6 border-b border-[#E2E8F0] overflow-x-auto scrollbar-none -mx-4 px-4 sm:mx-0 sm:px-0">
           {tabs.map(t => (
             <button
               key={t.key}
               onClick={() => setActiveTab(t.key)}
-              className={`px-4 py-2.5 text-[13px] font-medium transition-colors border-b-2 -mb-px ${
+              className={`px-3 sm:px-4 py-2.5 text-[13px] font-medium transition-colors border-b-2 -mb-px whitespace-nowrap ${
                 activeTab === t.key
                   ? "border-[#7B9BB5] text-[#0F172A]"
                   : "border-transparent text-[#64748B] hover:text-[#0F172A]"
