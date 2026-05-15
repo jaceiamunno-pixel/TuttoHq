@@ -166,3 +166,13 @@ CREATE TABLE IF NOT EXISTS project_cms (
 );
 ALTER TABLE project_cms ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "auth full project_cms" ON project_cms FOR ALL TO authenticated USING (true) WITH CHECK (true);
+
+-- ─── Companies (created on signup) ───────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS companies (
+  id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name       TEXT NOT NULL,
+  owner_id   UUID REFERENCES auth.users(id),
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+ALTER TABLE companies ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "auth full companies" ON companies FOR ALL TO authenticated USING (true) WITH CHECK (true);

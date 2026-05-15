@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
+import Link from "next/link"
 import { createClient } from "@/lib/supabase/client"
 
 type Mode = "signin" | "set-password"
@@ -96,6 +97,12 @@ export default function LoginPage() {
               className="w-full h-10 bg-[#7B9BB5] text-white text-[14px] font-semibold rounded-md hover:bg-[#6A8AA4] transition-colors disabled:opacity-50 mt-1">
               {loading ? "Signing in…" : "Sign in"}
             </button>
+            <p className="text-center text-[12px] text-[#64748B] pt-1">
+              Don&apos;t have an account?{" "}
+              <Link href="/signup" className="text-[#7B9BB5] hover:text-[#6A8AA4] font-medium transition-colors">
+                Create an account
+              </Link>
+            </p>
           </form>
         ) : (
           <form onSubmit={handleSetPassword} className="space-y-4">

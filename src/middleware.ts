@@ -32,7 +32,7 @@ export async function middleware(request: NextRequest) {
 
   // Public paths accessible without auth
   const PUBLIC_PATHS = ["/", "/signup", "/login"]
-  const isPublic = PUBLIC_PATHS.includes(path) || path.startsWith("/api/auth")
+  const isPublic = PUBLIC_PATHS.includes(path) || path.startsWith("/api/auth") || path === "/api/signup"
 
   if (!user && !isPublic) {
     const url = request.nextUrl.clone()
