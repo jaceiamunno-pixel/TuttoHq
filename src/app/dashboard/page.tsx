@@ -579,7 +579,7 @@ export default function Home() {
 
   // Search
   const [query, setQuery]                 = useState("")
-  const [searchResults, setSearchResults] = useState<SubmittalFile[] | null>(null)
+  const [searchResults, setSearchResults] = useState<SubmittalRecord[] | null>(null)
   const [searching, setSearching]         = useState(false)
   const [searchError, setSearchError]     = useState<string | null>(null)
   const [searchAiSummary, setSearchAiSummary] = useState<string | null>(null)
@@ -1938,6 +1938,7 @@ export default function Home() {
   }
 
   const isSearchMode = searchResults !== null || searching
+  const displaySubmittals = isSearchMode ? (searchResults ?? []) : logSubmittals
 
   const inputCls = "w-full h-9 px-3 rounded-md border border-[#E2E8F0] text-[14px] text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40 focus:border-[#7B9BB5]/50 placeholder:text-[#64748B] transition-all"
   const labelCls = "block text-[11px] font-semibold text-[#64748B] uppercase tracking-[0.08em] mb-1.5"
@@ -2128,14 +2129,48 @@ export default function Home() {
 
         {/* Submittal Log action bar */}
         {activeModule === "submittals" && (
-        <div className="flex-shrink-0 border-b border-[#E2E8F0] bg-white flex items-center justify-between px-4 py-2.5 gap-2 min-w-0">
-          <p className="text-[13px] font-semibold text-[#0F172A] truncate min-w-0">Submittal Log <span className="text-[#64748B] font-normal ml-1">({logSubmittals.length})</span></p>
-          <button
-            onClick={() => setActiveModule("library")}
-            className="h-8 px-3 rounded-md border border-[#E2E8F0] text-[12px] text-[#7B9BB5] hover:bg-[#0F172A]/[0.04] transition-colors flex items-center gap-1.5 whitespace-nowrap flex-shrink-0"
-          >
-            <PlusIcon /> Upload to Library
-          </button>
+        <div className="flex-shrink-0 border-b border-[#E2E8F0] bg-white">
+          <div className="flex items-center justify-between px-4 py-2.5 gap-2 min-w-0">
+            <p className="text-[13px] font-semibold text-[#0F172A] truncate min-w-0">
+              {isSearchMode
+                ? <><span className="text-[#64748B] font-normal">Search results</span>{searchResults !== null && <span className="text-[#64748B] font-normal ml-1">({searchResults.length})</span>}</>
+                : <>Submittal Log <span className="text-[#64748B] font-normal ml-1">({logSubmittals.length})</span></>
+              }
+            </p>
+            <button
+              onClick={() => setActiveModule("library")}
+              className="h-8 px-3 rounded-md border border-[#E2E8F0] text-[12px] text-[#7B9BB5] hover:bg-[#0F172A]/[0.04] transition-colors flex items-center gap-1.5 whitespace-nowrap flex-shrink-0"
+            >
+              <PlusIcon /> Upload to Library
+            </button>
+          </div>
+          <form onSubmit={handleSearch} className="flex items-center gap-2 px-4 pb-2.5">
+            <div className="relative flex-1">
+              <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[#94A3B8] pointer-events-none"><SearchIcon /></span>
+              <input
+                ref={inputRef}
+                type="search"
+                value={query}
+                onChange={e => setQuery(e.target.value)}
+                placeholder="Search submittals by name, spec section, or description…"
+                className="w-full h-8 pl-8 pr-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40 focus:border-[#7B9BB5]/50 placeholder:text-[#94A3B8]"
+              />
+              {query && (
+                <button type="button" onClick={clearSearch} className="absolute right-2 top-1/2 -translate-y-1/2 text-[#94A3B8] hover:text-[#0F172A]">
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12"/></svg>
+                </button>
+              )}
+            </div>
+            <button type="submit" disabled={searching} className="h-8 px-3 rounded-md bg-[#7B9BB5] text-white text-[12px] font-semibold hover:bg-[#6A8AA4] transition-colors flex items-center gap-1.5 flex-shrink-0 disabled:opacity-60">
+              {searching ? <SpinnerIcon className="h-3.5 w-3.5" /> : "Search"}
+            </button>
+          </form>
+          {searchAiSummary && (
+            <p className="px-4 pb-2 text-[12px] text-[#64748B] italic">{searchAiSummary}</p>
+          )}
+          {searchError && (
+            <p className="px-4 pb-2 text-[12px] text-red-500">{searchError}</p>
+          )}
         </div>
         )}
 
@@ -2301,11 +2336,15 @@ export default function Home() {
 
           {/* Submittal log */}
           {activeModule === "submittals" && (<>
-          {logLoading ? (
+          {searching ? (
+            <div className="flex items-center justify-center h-40 gap-2 text-[13px] text-[#64748B]">
+              <SpinnerIcon className="h-4 w-4" /> Searching…
+            </div>
+          ) : logLoading ? (
             <div className="flex items-center justify-center h-40 gap-2 text-[13px] text-[#64748B]">
               <SpinnerIcon className="h-4 w-4" /> Loading…
             </div>
-          ) : logSubmittals.length === 0 ? (
+          ) : displaySubmittals.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-full py-24 text-center">
               <div className="w-14 h-14 rounded-2xl bg-[#7B9BB5]/10 border border-[#7B9BB5]/20 flex items-center justify-center mb-4">
                 <svg className="w-7 h-7 text-[#7B9BB5]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -2335,9 +2374,9 @@ export default function Home() {
                 </tr>
               </thead>
               <tbody>
-                {logSubmittals.map((s, i) => (
+                {displaySubmittals.map((s, i) => (
                   <tr key={s.id} className="border-b border-[#E2E8F0]/60 hover:bg-[#F8F9FA] transition-colors group">
-                    <td className="px-4 py-2.5 text-[#64748B] tabular-nums text-[12px]">{logSubmittals.length - i}</td>
+                    <td className="px-4 py-2.5 text-[#64748B] tabular-nums text-[12px]">{displaySubmittals.length - i}</td>
                     <td className="px-4 py-2.5 max-w-0">
                       <div className="flex items-center gap-1.5">
                         <p className="text-[#0F172A] font-medium truncate" title={s.file_name}>{s.file_name}</p>
@@ -2396,7 +2435,7 @@ export default function Home() {
                           >Cover</button>
                         )}
                         <button
-                          onClick={() => handleTransmittal(s, logSubmittals.length - i)}
+                          onClick={() => handleTransmittal(s, displaySubmittals.length - i)}
                           disabled={transmittalLoading && transmittalSub?.id === s.id}
                           className="text-[11px] text-emerald-700 hover:text-emerald-800 px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors disabled:opacity-50 flex items-center gap-1 whitespace-nowrap"
                         >
@@ -2417,7 +2456,7 @@ export default function Home() {
             </div>
             {/* Mobile card list */}
             <div className="sm:hidden px-3 py-3 space-y-2">
-              {logSubmittals.map((s, i) => (
+              {displaySubmittals.map((s, i) => (
                 <div key={s.id} className="bg-white rounded-xl border border-[#E2E8F0] p-3 shadow-sm">
                   <div className="flex items-start justify-between gap-2 mb-1.5">
                     <p className="text-[13px] font-medium text-[#0F172A] leading-tight flex-1 min-w-0 truncate" title={s.file_name}>{s.file_name}</p>
@@ -2434,7 +2473,7 @@ export default function Home() {
                       <button onClick={() => openTransmittal(s)} className="text-[11px] text-[#7B9BB5] px-2 py-1 rounded border border-[#E2E8F0] bg-[#F8F9FA] transition-colors">Cover</button>
                     )}
                     <button
-                      onClick={() => handleTransmittal(s, logSubmittals.length - i)}
+                      onClick={() => handleTransmittal(s, displaySubmittals.length - i)}
                       disabled={transmittalLoading && transmittalSub?.id === s.id}
                       className="text-[11px] text-emerald-700 px-2 py-1 rounded border border-[#E2E8F0] bg-[#F8F9FA] transition-colors disabled:opacity-50 flex items-center gap-1">
                       {transmittalLoading && transmittalSub?.id === s.id ? <SpinnerIcon className="h-3 w-3" /> : null}

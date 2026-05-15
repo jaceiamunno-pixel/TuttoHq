@@ -5,7 +5,7 @@ import Anthropic from "@anthropic-ai/sdk"
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Row = Record<string, any>
 
-const SELECT = "id, file_name, storage_path, mime_type, file_size, created_at, csi_division, division_name, csi_section, section_name"
+const SELECT = "id, file_name, storage_path, mime_type, file_size, created_at, csi_division, division_name, csi_section, section_name, material_name, manufacturer, dimensions, review_status, ai_confidence, ai_reasoning, status, uploaded_by, project_id, sender_email, received_at, manually_overridden, overridden_by, send_to_type, send_to_company, send_to_contact, send_to_email, send_to_phone, send_to_address, transmitted_by, transmitted_by_company, generated_pdf_path, transmittal_sent_at, transmittal_recipient, submittal_number"
 
 interface AiExpansion {
   terms: string[]
@@ -134,16 +134,8 @@ export async function GET(req: NextRequest) {
   }
 
   const files = allRows.slice(0, 50).map(r => ({
-    id:            r.id,
-    file_name:     r.file_name,
-    file_url:      r.storage_path ? (signedUrls[r.storage_path] ?? "") : "",
-    mime_type:     r.mime_type,
-    file_size:     r.file_size,
-    created_at:    r.created_at,
-    csi_division:  r.csi_division,
-    division_name: r.division_name,
-    csi_section:   r.csi_section,
-    section_name:  r.section_name,
+    ...r,
+    file_url: r.storage_path ? (signedUrls[r.storage_path] ?? "") : "",
   }))
 
   return NextResponse.json({ files, aiSummary: ai.summary || null })
