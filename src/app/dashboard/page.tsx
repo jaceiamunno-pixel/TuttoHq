@@ -644,9 +644,16 @@ export default function Home() {
 
   // Sidebar
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [projectDropdownOpen, setProjectDropdownOpen] = useState(false)
   useEffect(() => {
     if (sessionStorage.getItem("sidebarOpen") === "true") setSidebarOpen(true)
   }, [])
+  useEffect(() => {
+    if (!projectDropdownOpen) return
+    const close = () => setProjectDropdownOpen(false)
+    document.addEventListener("click", close, true)
+    return () => document.removeEventListener("click", close, true)
+  }, [projectDropdownOpen])
 
   // Module navigation
   const [activeModule, setActiveModule] = useState<"library" | "submittals" | "rfis" | "changeorders" | "punch" | "daily" | "drawings" | "closeout">("submittals")
@@ -1959,20 +1966,31 @@ export default function Home() {
 
         {/* Project selector */}
         {appProjects.length > 0 && (
-          <div className="flex-shrink-0 px-3 pt-3 pb-2">
+          <div className="flex-shrink-0 px-3 pt-3 pb-2 relative">
             <p className="text-[10px] font-bold text-[#64748B] uppercase tracking-widest px-1 mb-1.5">Project</p>
-            <select
-              value={globalProjectId}
-              onChange={e => setGlobalProjectId(e.target.value)}
-              className="w-full h-8 px-2 rounded-lg bg-white/[0.06] border border-white/10 text-[12px] text-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40 cursor-pointer"
+            <button
+              onClick={() => setProjectDropdownOpen(o => !o)}
+              className="w-full h-8 px-2.5 rounded-lg bg-white/[0.06] border border-white/10 text-[12px] text-white flex items-center justify-between gap-1 hover:bg-white/[0.10] transition-colors"
             >
-              <option value="">All Projects</option>
-              {appProjects.map(p => (
-                <option key={p.id} value={p.id}>{p.name}{p.number ? ` — ${p.number}` : ""}</option>
-              ))}
-            </select>
-            {globalProjectId && (
-              <button onClick={() => setGlobalProjectId("")} className="mt-1 text-[11px] text-[#64748B] hover:text-white transition-colors">✕ Clear project</button>
+              <span className="truncate">
+                {globalProjectId ? (appProjects.find(p => p.id === globalProjectId)?.name ?? "All Projects") : "All Projects"}
+              </span>
+              <svg className={`w-3.5 h-3.5 flex-shrink-0 text-[#64748B] transition-transform ${projectDropdownOpen ? "rotate-180" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+              </svg>
+            </button>
+            {projectDropdownOpen && (
+              <div className="absolute left-3 right-3 top-full mt-1 z-50 bg-[#1a2840] border border-white/10 rounded-lg shadow-xl overflow-hidden">
+                {[{ id: "", name: "All Projects", number: null }, ...appProjects].map(p => (
+                  <button
+                    key={p.id}
+                    onClick={() => { setGlobalProjectId(p.id); setProjectDropdownOpen(false) }}
+                    className={`w-full text-left px-3 py-2 text-[12px] truncate transition-colors ${globalProjectId === p.id ? "bg-[#7B9BB5]/20 text-white" : "text-[#94A3B8] hover:bg-white/[0.06] hover:text-white"}`}
+                  >
+                    {p.name}{p.number ? ` — ${p.number}` : ""}
+                  </button>
+                ))}
+              </div>
             )}
           </div>
         )}
