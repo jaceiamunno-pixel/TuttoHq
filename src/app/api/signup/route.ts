@@ -30,17 +30,31 @@ export async function POST(req: NextRequest) {
 
   const userId = authData.user.id
 
-  // Create company record
-  await admin.from("companies").insert({
-    name: companyName.trim(),
-    owner_id: userId,
-  })
+  // Create company record and capture the new company id
+  const { data: companyRow, error: companyError } = await admin
+    .from("companies")
+    .insert({ name: companyName.trim(), owner_id: userId })
+    .select("id")
+    .single()
+
+  if (companyError || !companyRow) {
+    // Roll back auth user to avoid orphaned accounts
+    await admin.auth.admin.deleteUser(userId)
+    return NextResponse.json({ error: "Failed to create company" }, { status: 500 })
+  }
+
+  const companyId = companyRow.id
+
+  // Map user → company so get_my_company_id() works for all RLS policies
+  await admin.from("user_profiles").insert({ user_id: userId, company_id: companyId })
 
   // Add owner as a team member so they appear in RFI/report dropdowns
+  // company_id is explicit here since this INSERT uses the service role (no auth context)
   await admin.from("team_members").insert({
-    name: fullName.trim(),
-    email: email.trim().toLowerCase(),
-    title: "Owner",
+    name:       fullName.trim(),
+    email:      email.trim().toLowerCase(),
+    title:      "Owner",
+    company_id: companyId,
   })
 
   return NextResponse.json({ ok: true })
