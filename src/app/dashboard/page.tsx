@@ -2107,6 +2107,11 @@ export default function Home() {
                   </button>
                 )
               })}
+              {/* Settings link — mobile */}
+              <a href="/settings"
+                className="w-full text-left px-4 py-3 text-[13px] font-medium border-l-2 border-transparent text-[#94A3B8] hover:text-white hover:bg-white/[0.04] transition-colors flex items-center gap-2">
+                Settings
+              </a>
               {/* Global project filter — mobile */}
               {appProjects.length > 0 && (
                 <div className="px-4 py-3 border-t border-white/[0.12] flex items-center gap-2">
