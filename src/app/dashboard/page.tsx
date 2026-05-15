@@ -646,6 +646,7 @@ export default function Home() {
   // Module navigation
   const [activeModule, setActiveModule] = useState<"submittals" | "rfis" | "changeorders" | "punch" | "daily" | "drawings" | "closeout">("submittals")
   const [globalProjectId, setGlobalProjectId] = useState<string>("")
+  const [mobileNavOpen, setMobileNavOpen] = useState(false)
   // Sync submittal project filter with global project selection
   useEffect(() => { setActiveProjectId(globalProjectId || null) }, [globalProjectId])
 
@@ -1761,7 +1762,7 @@ export default function Home() {
       {sidebarOpen && (
         <div className="fixed inset-0 z-30" onClick={() => { setSidebarOpen(false); sessionStorage.setItem("sidebarOpen", "false") }} />
       )}
-      <aside className={`fixed left-0 top-0 h-screen z-40 bg-[#0A1628] border-r border-white/10 flex flex-col overflow-hidden transition-[width] duration-200 ease-in-out ${sidebarOpen ? "w-80" : "w-12"}`}>
+      <aside className={`fixed left-0 top-0 h-screen z-40 bg-[#0A1628] border-r border-white/10 hidden sm:flex flex-col overflow-hidden transition-[width] duration-200 ease-in-out ${sidebarOpen ? "w-80" : "w-12"}`}>
 
         {/* Rail header — always visible */}
         <div className="flex-shrink-0 flex items-center justify-between h-12 px-3 border-b border-white/10">
@@ -2023,7 +2024,7 @@ export default function Home() {
       </aside>
 
       {/* ── Main content area ─────────────────────────────────────────────── */}
-      <div className="flex-1 flex flex-col min-h-0 ml-12">
+      <div className="flex-1 flex flex-col min-h-0 ml-0 sm:ml-12">
 
         {/* Logo bar */}
         {logoUrl && (
@@ -2033,42 +2034,97 @@ export default function Home() {
         )}
 
         {/* Module navigation */}
-        <div className="flex-shrink-0 border-b border-white/[0.12] bg-[#0A1628] flex items-center px-4 gap-0.5">
-          {(["submittals","rfis","changeorders","punch","daily","drawings","closeout"] as const).map(mod => {
-            const labels: Record<string, string> = { submittals: "Submittals", rfis: "RFIs", changeorders: "Change Orders", punch: "Punch List", daily: "Daily Reports", drawings: "Drawing Log", closeout: "Closeout" }
-            const isActive = activeModule === mod
-            return (
-              <button key={mod} onClick={() => setActiveModule(mod)}
-                className={`px-3 py-3 text-[13px] font-medium border-b-2 transition-colors whitespace-nowrap ${isActive ? "border-white text-white font-semibold" : "border-transparent text-[#94A3B8] hover:text-white"}`}>
-                {labels[mod]}
-                {mod === "closeout" && globalProjectId && closeoutItems.length > 0 && (() => {
-                  const pct = Math.round(closeoutItems.filter(i => i.status === "complete").length / closeoutItems.length * 100)
-                  return <span className={`ml-1.5 text-[10px] font-bold px-1.5 py-0.5 rounded-full ${pct === 100 ? "bg-emerald-500/20 text-emerald-400" : pct >= 50 ? "bg-amber-500/20 text-amber-400" : "bg-red-500/20 text-red-400"}`}>{pct}%</span>
-                })()}
-              </button>
-            )
-          })}
-          {/* Global project filter — right side */}
-          {appProjects.length > 0 && (
-            <div className="ml-auto flex items-center gap-2 py-1.5 flex-shrink-0">
-              <span className="text-[11px] text-white whitespace-nowrap">Project:</span>
-              <div className="relative">
-                <select
-                  value={globalProjectId}
-                  onChange={e => setGlobalProjectId(e.target.value)}
-                  className="h-7 pl-3 pr-7 rounded-md border border-white/30 bg-[#1E3A5F] text-[12px] text-white appearance-none cursor-pointer hover:bg-[#1E3A5F]/80 transition-colors focus:outline-none focus:border-white backdrop-blur-sm"
-                >
-                  <option value="">All Projects</option>
-                  {appProjects.map(p => (
-                    <option key={p.id} value={p.id}>{p.name}{p.number ? ` — ${p.number}` : ""}</option>
-                  ))}
-                </select>
-                <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-[#64748B]">
-                  <svg width="10" height="10" viewBox="0 0 12 12" fill="none"><path d="M2 4l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
-                </span>
+        <div className="flex-shrink-0 border-b border-white/[0.12] bg-[#0A1628] relative">
+          {/* Desktop tabs row */}
+          <div className="hidden sm:flex items-center px-4 gap-0.5">
+            {(["submittals","rfis","changeorders","punch","daily","drawings","closeout"] as const).map(mod => {
+              const labels: Record<string, string> = { submittals: "Submittals", rfis: "RFIs", changeorders: "Change Orders", punch: "Punch List", daily: "Daily Reports", drawings: "Drawing Log", closeout: "Closeout" }
+              const isActive = activeModule === mod
+              return (
+                <button key={mod} onClick={() => setActiveModule(mod)}
+                  className={`px-3 py-3 text-[13px] font-medium border-b-2 transition-colors whitespace-nowrap ${isActive ? "border-white text-white font-semibold" : "border-transparent text-[#94A3B8] hover:text-white"}`}>
+                  {labels[mod]}
+                  {mod === "closeout" && globalProjectId && closeoutItems.length > 0 && (() => {
+                    const pct = Math.round(closeoutItems.filter(i => i.status === "complete").length / closeoutItems.length * 100)
+                    return <span className={`ml-1.5 text-[10px] font-bold px-1.5 py-0.5 rounded-full ${pct === 100 ? "bg-emerald-500/20 text-emerald-400" : pct >= 50 ? "bg-amber-500/20 text-amber-400" : "bg-red-500/20 text-red-400"}`}>{pct}%</span>
+                  })()}
+                </button>
+              )
+            })}
+            {/* Global project filter — right side (desktop) */}
+            {appProjects.length > 0 && (
+              <div className="ml-auto flex items-center gap-2 py-1.5 flex-shrink-0">
+                <span className="text-[11px] text-white whitespace-nowrap">Project:</span>
+                <div className="relative">
+                  <select
+                    value={globalProjectId}
+                    onChange={e => setGlobalProjectId(e.target.value)}
+                    className="h-7 pl-3 pr-7 rounded-md border border-white/30 bg-[#1E3A5F] text-[12px] text-white appearance-none cursor-pointer hover:bg-[#1E3A5F]/80 transition-colors focus:outline-none focus:border-white backdrop-blur-sm"
+                  >
+                    <option value="">All Projects</option>
+                    {appProjects.map(p => (
+                      <option key={p.id} value={p.id}>{p.name}{p.number ? ` — ${p.number}` : ""}</option>
+                    ))}
+                  </select>
+                  <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-[#64748B]">
+                    <svg width="10" height="10" viewBox="0 0 12 12" fill="none"><path d="M2 4l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                  </span>
+                </div>
+                {globalProjectId && (
+                  <button onClick={() => setGlobalProjectId("")} className="text-[11px] text-white/70 hover:text-white transition-colors px-1" title="Clear filter">✕</button>
+                )}
               </div>
-              {globalProjectId && (
-                <button onClick={() => setGlobalProjectId("")} className="text-[11px] text-white/70 hover:text-white transition-colors px-1" title="Clear filter">✕</button>
+            )}
+          </div>
+
+          {/* Mobile nav bar */}
+          <div className="flex sm:hidden items-center justify-between px-4 py-2.5">
+            <span className="text-[14px] font-semibold text-white">
+              {{ submittals: "Submittals", rfis: "RFIs", changeorders: "Change Orders", punch: "Punch List", daily: "Daily Reports", drawings: "Drawing Log", closeout: "Closeout" }[activeModule]}
+            </span>
+            <button
+              onClick={() => setMobileNavOpen(prev => !prev)}
+              className="text-[#94A3B8] hover:text-white transition-colors p-1"
+              aria-label="Open navigation menu"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={mobileNavOpen ? "M6 18L18 6M6 6l12 12" : "M4 6h16M4 12h16M4 18h16"} />
+              </svg>
+            </button>
+          </div>
+
+          {/* Mobile dropdown menu */}
+          {mobileNavOpen && (
+            <div className="sm:hidden absolute top-full left-0 right-0 bg-[#0A1628] border-b border-white/[0.12] z-50 shadow-lg">
+              {(["submittals","rfis","changeorders","punch","daily","drawings","closeout"] as const).map(mod => {
+                const labels: Record<string, string> = { submittals: "Submittals", rfis: "RFIs", changeorders: "Change Orders", punch: "Punch List", daily: "Daily Reports", drawings: "Drawing Log", closeout: "Closeout" }
+                const isActive = activeModule === mod
+                return (
+                  <button key={mod}
+                    onClick={() => { setActiveModule(mod); setMobileNavOpen(false) }}
+                    className={`w-full text-left px-4 py-3 text-[13px] font-medium border-l-2 transition-colors ${isActive ? "border-white text-white bg-white/[0.06]" : "border-transparent text-[#94A3B8] hover:text-white hover:bg-white/[0.04]"}`}>
+                    {labels[mod]}
+                  </button>
+                )
+              })}
+              {/* Global project filter — mobile */}
+              {appProjects.length > 0 && (
+                <div className="px-4 py-3 border-t border-white/[0.12] flex items-center gap-2">
+                  <span className="text-[11px] text-white whitespace-nowrap">Project:</span>
+                  <select
+                    value={globalProjectId}
+                    onChange={e => setGlobalProjectId(e.target.value)}
+                    className="flex-1 h-7 pl-3 pr-2 rounded-md border border-white/30 bg-[#1E3A5F] text-[12px] text-white cursor-pointer focus:outline-none"
+                  >
+                    <option value="">All Projects</option>
+                    {appProjects.map(p => (
+                      <option key={p.id} value={p.id}>{p.name}{p.number ? ` — ${p.number}` : ""}</option>
+                    ))}
+                  </select>
+                  {globalProjectId && (
+                    <button onClick={() => setGlobalProjectId("")} className="text-[11px] text-white/70 hover:text-white transition-colors" title="Clear filter">✕</button>
+                  )}
+                </div>
               )}
             </div>
           )}
@@ -2221,7 +2277,9 @@ export default function Home() {
               </button>
             </div>
           ) : (
-            <div className="mx-4 my-4 rounded-xl border border-[#E2E8F0] overflow-clip bg-white">
+            <>
+            {/* Desktop table */}
+            <div className="hidden sm:block mx-4 my-4 rounded-xl border border-[#E2E8F0] overflow-clip bg-white">
             <table className="w-full text-[13px] border-collapse">
               <thead className="sticky top-0 bg-[#F8F9FA] z-10">
                 <tr className="border-b border-[#E2E8F0]">
@@ -2303,6 +2361,30 @@ export default function Home() {
               </tbody>
             </table>
             </div>
+            {/* Mobile card list */}
+            <div className="sm:hidden px-3 py-3 space-y-2">
+              {logSubmittals.map((s, i) => (
+                <div key={s.id} className="bg-white rounded-xl border border-[#E2E8F0] p-3 shadow-sm">
+                  <div className="flex items-start justify-between gap-2 mb-1.5">
+                    <p className="text-[13px] font-medium text-[#0F172A] leading-tight flex-1 min-w-0 truncate" title={s.file_name}>{s.file_name}</p>
+                    <StatusBadge status={s.review_status ?? "Received"} />
+                  </div>
+                  <p className="text-[11px] text-[#64748B] mb-1">{s.section_name ?? s.csi_section ?? "—"} {s.division_name ? `· ${s.division_name}` : ""}</p>
+                  <p className="text-[11px] text-[#64748B] mb-2">{fmtDate(s.received_at ?? s.created_at)}</p>
+                  <div className="flex items-center gap-1 flex-wrap">
+                    <button onClick={() => window.open(`/api/download/${s.id}`, "_blank")} className="text-[11px] text-[#64748B] hover:text-[#0F172A] px-2 py-1 rounded border border-[#E2E8F0] bg-[#F8F9FA] transition-colors">Open</button>
+                    <button onClick={() => openEditModal(s)} className="text-[11px] text-[#64748B] hover:text-[#0F172A] px-2 py-1 rounded border border-[#E2E8F0] bg-[#F8F9FA] transition-colors">Edit</button>
+                    {s.project_id ? (
+                      <button onClick={() => openEditCoverSheet(s)} className="text-[11px] text-[#7B9BB5] px-2 py-1 rounded border border-[#E2E8F0] bg-[#F8F9FA] transition-colors">Cover</button>
+                    ) : (
+                      <button onClick={() => openTransmittal(s)} className="text-[11px] text-[#7B9BB5] px-2 py-1 rounded border border-[#E2E8F0] bg-[#F8F9FA] transition-colors">Transmittal</button>
+                    )}
+                    <button onClick={() => deleteSubmittal(s)} className="text-[11px] text-red-400 px-2 py-1 rounded border border-[#E2E8F0] bg-[#F8F9FA] transition-colors">Delete</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+            </>
           )}
           </>)}
 
@@ -2326,7 +2408,9 @@ export default function Home() {
                 </button>
               </div>
             ) : (
-              <div className="mx-4 my-4 rounded-xl border border-[#E2E8F0] overflow-clip bg-white">
+              <>
+              {/* Desktop table */}
+              <div className="hidden sm:block mx-4 my-4 rounded-xl border border-[#E2E8F0] overflow-clip bg-white">
             <table className="w-full text-[13px] border-collapse">
                 <thead className="sticky top-0 bg-[#F8F9FA] z-10">
                   <tr className="border-b border-[#E2E8F0]">
@@ -2379,6 +2463,29 @@ export default function Home() {
                 </tbody>
               </table>
               </div>
+              {/* Mobile card list */}
+              <div className="sm:hidden px-3 py-3 space-y-2">
+                {rfis.map(r => {
+                  const isOverdue = r.due_date && new Date(r.due_date) < new Date() && r.status !== "Closed" && r.status !== "Answered" && r.status !== "Void"
+                  return (
+                    <div key={r.id} className="bg-white rounded-xl border border-[#E2E8F0] p-3 shadow-sm">
+                      <div className="flex items-start justify-between gap-2 mb-1">
+                        <span className="text-[11px] font-mono text-[#7B9BB5] flex-shrink-0">{r.rfi_number}</span>
+                        <RfiStatusBadge status={r.status} />
+                      </div>
+                      <p className="text-[13px] font-medium text-[#0F172A] mb-1">{r.subject}</p>
+                      <p className="text-[11px] text-[#64748B] mb-1">From: {r.received_from ?? r.submitted_by ?? "—"}</p>
+                      {r.due_date && <p className="text-[11px] mb-2"><span className={isOverdue ? "text-red-400 font-medium" : "text-[#64748B]"}>Due: {fmtDateOnly(r.due_date)}{isOverdue ? " ⚠" : ""}</span></p>}
+                      <div className="flex items-center gap-1">
+                        <button onClick={() => { setViewRfi(r); setRfiResponse(r.response ?? ""); setRfiResponseStatus(r.status) }} className="text-[11px] text-[#64748B] px-2 py-1 rounded border border-[#E2E8F0] bg-[#F8F9FA]">View</button>
+                        <button onClick={() => generateRfiPdf(r.id)} disabled={rfiGeneratingPdf} className="text-[11px] text-[#7B9BB5] px-2 py-1 rounded border border-[#E2E8F0] bg-[#F8F9FA] disabled:opacity-50">PDF</button>
+                        <button onClick={() => deleteRfi(r.id)} className="text-[11px] text-red-400 px-2 py-1 rounded border border-[#E2E8F0] bg-[#F8F9FA]">Del</button>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+              </>
             )
           )}
 
@@ -2428,7 +2535,9 @@ export default function Home() {
                     </button>
                   </div>
                 ) : (
-                  <div className="mx-4 my-4 rounded-xl border border-[#E2E8F0] overflow-clip bg-white">
+                  <>
+                  {/* Desktop table */}
+                  <div className="hidden sm:block mx-4 my-4 rounded-xl border border-[#E2E8F0] overflow-clip bg-white">
             <table className="w-full text-[13px] border-collapse">
                     <thead className="sticky top-0 bg-[#F8F9FA] z-10">
                       <tr className="border-b border-[#E2E8F0]">
@@ -2485,6 +2594,34 @@ export default function Home() {
                     </tbody>
                   </table>
                   </div>
+                  {/* Mobile card list */}
+                  <div className="sm:hidden px-3 py-3 space-y-2">
+                    {changeOrders.map(c => {
+                      const proj = appProjects.find(p => p.id === c.project_id)
+                      const statusColor: Record<string, string> = { Draft: "bg-gray-100 text-gray-500", Submitted: "bg-blue-100 text-blue-700", "Under Review": "bg-amber-100 text-amber-700", Approved: "bg-green-100 text-green-700", Rejected: "bg-red-100 text-red-700", Void: "bg-gray-100 text-gray-500" }
+                      const badgeCls = statusColor[c.status] ?? "bg-gray-100 text-gray-500"
+                      return (
+                        <div key={c.id} className="bg-white rounded-xl border border-[#E2E8F0] p-3 shadow-sm">
+                          <div className="flex items-start justify-between gap-2 mb-1">
+                            <span className="text-[11px] font-mono text-[#7B9BB5]">{c.co_number}</span>
+                            <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold ${badgeCls}`}>{c.status}</span>
+                          </div>
+                          <p className="text-[13px] font-medium text-[#0F172A] mb-1 truncate">{c.proposal ?? "—"}</p>
+                          {proj && <p className="text-[11px] text-[#64748B] mb-1">{proj.name}</p>}
+                          <div className="flex items-center justify-between mb-2">
+                            <span className="text-[12px] font-semibold text-[#0F172A]">{c.pricing_sum != null ? new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(c.pricing_sum) : "—"}</span>
+                            <span className="text-[11px] text-[#64748B]">{c.date ? fmtDateOnly(c.date) : ""}</span>
+                          </div>
+                          <div className="flex items-center gap-1">
+                            <button onClick={() => { setViewCo(c); setCoResponseStatus(c.status); setCoAssignedTo(c.assigned_to ?? "") }} className="text-[11px] text-[#64748B] px-2 py-1 rounded border border-[#E2E8F0] bg-[#F8F9FA]">View</button>
+                            <button onClick={() => generateCoPdf(c.id)} disabled={coGeneratingPdf} className="text-[11px] text-[#7B9BB5] px-2 py-1 rounded border border-[#E2E8F0] bg-[#F8F9FA] disabled:opacity-50">PDF</button>
+                            <button onClick={() => deleteCo(c.id)} className="text-[11px] text-red-400 px-2 py-1 rounded border border-[#E2E8F0] bg-[#F8F9FA]">Del</button>
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                  </>
                 )}
               </div>
             )
@@ -2510,7 +2647,9 @@ export default function Home() {
                 </button>
               </div>
             ) : (
-              <div className="mx-4 my-4 rounded-xl border border-[#E2E8F0] overflow-clip bg-white">
+              <>
+              {/* Desktop table */}
+              <div className="hidden sm:block mx-4 my-4 rounded-xl border border-[#E2E8F0] overflow-clip bg-white">
             <table className="w-full text-[13px] border-collapse">
                 <thead className="sticky top-0 bg-[#F8F9FA] z-10">
                   <tr className="border-b border-[#E2E8F0]">
@@ -2561,6 +2700,34 @@ export default function Home() {
                 </tbody>
               </table>
               </div>
+              {/* Mobile card list */}
+              <div className="sm:hidden px-3 py-3 space-y-2">
+                {punchItems.map(p => {
+                  const isOverdue = p.due_date && new Date(p.due_date) < new Date() && p.status !== "Completed" && p.status !== "Void"
+                  const isStruck = p.status === "Completed" || p.status === "Void"
+                  return (
+                    <div key={p.id} className={`bg-white rounded-xl border border-[#E2E8F0] p-3 shadow-sm ${isStruck ? "opacity-50" : ""}`}>
+                      <div className="flex items-start justify-between gap-2 mb-1">
+                        <span className="text-[11px] font-mono text-[#7B9BB5]">{p.item_number}</span>
+                        <div className="flex items-center gap-1">
+                          <PunchPriorityBadge priority={p.priority} />
+                          <PunchStatusBadge status={p.status} />
+                        </div>
+                      </div>
+                      <p className={`text-[13px] font-medium mb-1 ${isStruck ? "line-through text-[#64748B]" : "text-[#0F172A]"}`}>{p.description}</p>
+                      {p.location && <p className="text-[11px] text-[#64748B] mb-0.5">Location: {p.location}</p>}
+                      {p.assigned_to && <p className="text-[11px] text-[#64748B] mb-1">Assigned: {p.assigned_to}</p>}
+                      {p.due_date && <p className="text-[11px] mb-2"><span className={isOverdue ? "text-red-400 font-medium" : "text-[#64748B]"}>Due: {fmtDateOnly(p.due_date)}{isOverdue ? " ⚠" : ""}</span></p>}
+                      <div className="flex items-center gap-1">
+                        <button onClick={() => { setViewPunch(p); setPunchEditStatus(p.status); setPunchEditNotes(p.notes ?? "") }} className="text-[11px] text-[#64748B] px-2 py-1 rounded border border-[#E2E8F0] bg-[#F8F9FA]">Edit</button>
+                        <button onClick={() => generatePunchPdf(p.id)} disabled={punchGeneratingPdf} className="text-[11px] text-[#7B9BB5] px-2 py-1 rounded border border-[#E2E8F0] bg-[#F8F9FA] disabled:opacity-50">PDF</button>
+                        <button onClick={e => { e.stopPropagation(); deletePunchItem(p.id) }} className="text-[11px] text-red-400 px-2 py-1 rounded border border-[#E2E8F0] bg-[#F8F9FA]">Del</button>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+              </>
             )
           )}
           {/* Daily reports */}
@@ -2583,7 +2750,9 @@ export default function Home() {
                 </button>
               </div>
             ) : (
-              <div className="mx-4 my-4 rounded-xl border border-[#E2E8F0] overflow-clip bg-white">
+              <>
+              {/* Desktop table */}
+              <div className="hidden sm:block mx-4 my-4 rounded-xl border border-[#E2E8F0] overflow-clip bg-white">
             <table className="w-full text-[13px] border-collapse">
                 <thead className="sticky top-0 bg-[#F8F9FA] z-10">
                   <tr className="border-b border-[#E2E8F0]">
@@ -2622,6 +2791,28 @@ export default function Home() {
                 </tbody>
               </table>
               </div>
+              {/* Mobile card list */}
+              <div className="sm:hidden px-3 py-3 space-y-2">
+                {dailyReports.map(r => (
+                  <div key={r.id} className="bg-white rounded-xl border border-[#E2E8F0] p-3 shadow-sm cursor-pointer" onClick={() => { setViewDaily(r); setDailyEditing(false) }}>
+                    <div className="flex items-start justify-between gap-2 mb-1">
+                      <p className="text-[13px] font-semibold text-[#0F172A]">{fmtDateOnly(r.report_date)}</p>
+                      {r.manpower_count != null && <span className="text-[11px] text-[#64748B]">{r.manpower_count} workers</span>}
+                    </div>
+                    {r.work_performed && <p className="text-[12px] text-[#64748B] mb-1 line-clamp-2">{r.work_performed}</p>}
+                    <div className="flex items-center gap-3 text-[11px] text-[#64748B] mb-2">
+                      {r.prepared_by && <span>{r.prepared_by}</span>}
+                      {r.weather_conditions && <span>{r.weather_conditions}{r.temperature ? ` · ${r.temperature}` : ""}</span>}
+                    </div>
+                    <div className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
+                      <button onClick={() => openDailyForEdit(r)} className="text-[11px] text-[#64748B] px-2 py-1 rounded border border-[#E2E8F0] bg-[#F8F9FA]">Edit</button>
+                      <button onClick={() => generateDailyPdf(r.id)} disabled={dailyGeneratingPdf} className="text-[11px] text-[#7B9BB5] px-2 py-1 rounded border border-[#E2E8F0] bg-[#F8F9FA] disabled:opacity-50">PDF</button>
+                      <button onClick={() => deleteDaily(r.id)} className="text-[11px] text-red-400 px-2 py-1 rounded border border-[#E2E8F0] bg-[#F8F9FA]">Del</button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              </>
             )
           )}
           {/* Drawing log */}
@@ -2647,7 +2838,7 @@ export default function Home() {
               </div>
             ) : (
               <div className="px-4 py-4">
-                <div className="grid gap-4" style={{ gridTemplateColumns: "repeat(5, minmax(0, 1fr))" }}>
+                <div className="grid gap-4 grid-cols-2 sm:grid-cols-3 lg:grid-cols-5">
                   {currentDrawings.map(d => {
                     const history = allSuperseded.filter(s => s.drawing_number === d.drawing_number)
                     const isExpanded = expandedDrawings.has(d.drawing_number)
@@ -3331,7 +3522,7 @@ export default function Home() {
       {/* ── Add Closeout Item modal ───────────────────────────────────────── */}
       {showNewCloseout && (
         <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center" onClick={e => { if (e.target === e.currentTarget) setShowNewCloseout(false) }}>
-          <div className="bg-white rounded-xl border border-[#E2E8F0] shadow-2xl w-[480px] p-6">
+          <div className="bg-white rounded-xl border border-[#E2E8F0] shadow-2xl w-full sm:w-[480px] mx-4 sm:mx-0 p-6">
             <div className="flex items-center justify-between mb-5">
               <h2 className="text-[15px] font-bold text-[#0F172A]">Add Closeout Item</h2>
               <button onClick={() => setShowNewCloseout(false)} className="text-[#64748B] hover:text-[#64748B] transition-colors"><XIcon className="h-4 w-4" /></button>
@@ -3390,7 +3581,7 @@ export default function Home() {
       {/* ── Add Closeout Folder modal ────────────────────────────────────── */}
       {showAddFolder && (
         <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center" onClick={e => { if (e.target === e.currentTarget) setShowAddFolder(false) }}>
-          <div className="bg-white rounded-xl border border-[#E2E8F0] shadow-2xl w-[420px] p-6">
+          <div className="bg-white rounded-xl border border-[#E2E8F0] shadow-2xl w-full sm:w-[420px] mx-4 sm:mx-0 p-6">
             <div className="flex items-center justify-between mb-5">
               <h2 className="text-[15px] font-bold text-[#0F172A]">Add Folder</h2>
               <button onClick={() => setShowAddFolder(false)} className="text-[#64748B] hover:text-[#64748B] transition-colors"><XIcon className="h-4 w-4" /></button>
@@ -3425,7 +3616,7 @@ export default function Home() {
         return (
           <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center"
             onClick={e => { if (e.target === e.currentTarget) onClose() }}>
-            <div className="bg-white rounded-xl border border-[#E2E8F0] shadow-2xl w-[680px] max-h-[90vh] flex flex-col">
+            <div className="bg-white rounded-xl border border-[#E2E8F0] shadow-2xl w-full sm:w-[680px] mx-4 sm:mx-0 max-h-[90vh] flex flex-col">
               <div className="flex items-center justify-between px-6 pt-5 pb-4 border-b border-[#E2E8F0] flex-shrink-0">
                 <h2 className="text-[15px] font-bold text-[#0F172A]">{isEdit ? "Edit Daily Report" : "New Daily Report"}</h2>
                 <button onClick={onClose} className="text-[#64748B] hover:text-[#64748B] transition-colors"><XIcon className="h-4 w-4" /></button>
@@ -3546,7 +3737,7 @@ export default function Home() {
       {viewDaily && !dailyEditing && (
         <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center"
           onClick={e => { if (e.target === e.currentTarget) setViewDaily(null) }}>
-          <div className="bg-white rounded-xl border border-[#E2E8F0] shadow-2xl w-[620px] max-h-[85vh] flex flex-col">
+          <div className="bg-white rounded-xl border border-[#E2E8F0] shadow-2xl w-full sm:w-[620px] mx-4 sm:mx-0 max-h-[85vh] flex flex-col">
             <div className="flex items-center justify-between px-6 pt-5 pb-4 border-b border-[#E2E8F0] flex-shrink-0">
               <div>
                 <p className="text-[11px] text-[#64748B] uppercase tracking-widest font-bold">Daily Report</p>
@@ -3605,7 +3796,7 @@ export default function Home() {
       {(showNewDrawing || addRevisionFor) && (
         <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center"
           onClick={e => { if (e.target === e.currentTarget) { setShowNewDrawing(false); setAddRevisionFor(null) } }}>
-          <div className="bg-white rounded-xl border border-[#E2E8F0] shadow-2xl w-[560px]">
+          <div className="bg-white rounded-xl border border-[#E2E8F0] shadow-2xl w-full sm:w-[560px] mx-4 sm:mx-0">
             <div className="flex items-center justify-between px-6 pt-5 pb-4 border-b border-[#E2E8F0]">
               <div>
                 <h2 className="text-[15px] font-bold text-[#0F172A]">{addRevisionFor ? "Add Revision" : "Add Drawing"}</h2>
@@ -3703,7 +3894,7 @@ export default function Home() {
       {showNewPunch && (
         <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center"
           onClick={e => { if (e.target === e.currentTarget) setShowNewPunch(false) }}>
-          <div className="bg-white rounded-xl border border-[#E2E8F0] shadow-2xl w-[520px]">
+          <div className="bg-white rounded-xl border border-[#E2E8F0] shadow-2xl w-full sm:w-[520px] mx-4 sm:mx-0">
             <div className="flex items-center justify-between px-6 pt-5 pb-4 border-b border-[#E2E8F0]">
               <h2 className="text-[15px] font-bold text-[#0F172A]">New Punch Item</h2>
               <button onClick={() => setShowNewPunch(false)} className="text-[#64748B] hover:text-[#64748B] transition-colors">
@@ -3784,7 +3975,7 @@ export default function Home() {
       {viewPunch && (
         <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center"
           onClick={e => { if (e.target === e.currentTarget) setViewPunch(null) }}>
-          <div className="bg-white rounded-xl border border-[#E2E8F0] shadow-2xl w-[500px]">
+          <div className="bg-white rounded-xl border border-[#E2E8F0] shadow-2xl w-full sm:w-[500px] mx-4 sm:mx-0">
             <div className="flex items-center justify-between px-6 pt-5 pb-4 border-b border-[#E2E8F0]">
               <div>
                 <span className="text-[11px] font-mono text-[#7B9BB5]">{viewPunch.item_number}</span>
@@ -3862,7 +4053,7 @@ export default function Home() {
       {showNewRfi && (
         <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4"
           onClick={e => { if (e.target === e.currentTarget) setShowNewRfi(false) }}>
-          <div className="bg-white rounded-xl border border-[#E2E8F0] shadow-2xl w-[580px] flex flex-col max-h-[90vh]">
+          <div className="bg-white rounded-xl border border-[#E2E8F0] shadow-2xl w-full sm:w-[580px] mx-4 sm:mx-0 flex flex-col max-h-[90vh]">
             <div className="flex items-center justify-between px-6 pt-5 pb-4 border-b border-[#E2E8F0] flex-shrink-0">
               <h2 className="text-[15px] font-bold text-[#0F172A]">New RFI</h2>
               <button onClick={() => setShowNewRfi(false)} className="text-[#64748B] hover:text-[#64748B] transition-colors">
@@ -3974,7 +4165,7 @@ export default function Home() {
       {viewRfi && (
         <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4"
           onClick={e => { if (e.target === e.currentTarget) setViewRfi(null) }}>
-          <div className="bg-white rounded-xl border border-[#E2E8F0] shadow-2xl w-[680px] flex flex-col max-h-[90vh]">
+          <div className="bg-white rounded-xl border border-[#E2E8F0] shadow-2xl w-full sm:w-[680px] mx-4 sm:mx-0 flex flex-col max-h-[90vh]">
             <div className="flex items-center justify-between px-6 pt-5 pb-4 border-b border-[#E2E8F0] flex-shrink-0">
               <div className="flex items-center gap-3">
                 <span className="text-[12px] font-mono text-[#7B9BB5] flex-shrink-0">{viewRfi.rfi_number}</span>
@@ -4066,7 +4257,7 @@ export default function Home() {
       {showNewCo && (
         <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4"
           onClick={e => { if (e.target === e.currentTarget) setShowNewCo(false) }}>
-          <div className="bg-white border border-[#E2E8F0] rounded-xl w-full max-w-2xl flex flex-col max-h-[90vh]">
+          <div className="bg-white border border-[#E2E8F0] rounded-xl w-full max-w-2xl mx-4 sm:mx-0 flex flex-col max-h-[90vh]">
             <div className="flex items-center justify-between px-6 py-4 border-b border-[#E2E8F0] flex-shrink-0">
               <h2 className="text-[16px] font-bold text-[#0F172A]">New Change Order</h2>
               <button onClick={() => setShowNewCo(false)} className="text-[#64748B] hover:text-[#0F172A] transition-colors">
@@ -4174,7 +4365,7 @@ export default function Home() {
       {viewCo && (
         <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4"
           onClick={e => { if (e.target === e.currentTarget) setViewCo(null) }}>
-          <div className="bg-white border border-[#E2E8F0] rounded-xl w-full max-w-2xl flex flex-col max-h-[90vh]">
+          <div className="bg-white border border-[#E2E8F0] rounded-xl w-full max-w-2xl mx-4 sm:mx-0 flex flex-col max-h-[90vh]">
             {/* Header */}
             <div className="flex items-start justify-between px-6 py-4 border-b border-[#E2E8F0] flex-shrink-0">
               <div>
@@ -4322,7 +4513,7 @@ export default function Home() {
           className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center"
           onClick={e => { if (e.target === e.currentTarget) closeFileModal() }}
         >
-          <div className="bg-white rounded-xl border border-[#E2E8F0] shadow-2xl w-[460px] p-6">
+          <div className="bg-white rounded-xl border border-[#E2E8F0] shadow-2xl w-full sm:w-[460px] mx-4 sm:mx-0 p-6">
             <div className="flex items-center justify-between mb-1">
               <h2 className="text-[15px] font-bold text-[#0F172A]">Open Submittal</h2>
               <button onClick={closeFileModal} className="text-[#64748B] hover:text-[#64748B] transition-colors">
@@ -4378,7 +4569,7 @@ export default function Home() {
           className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center"
           onClick={e => { if (e.target === e.currentTarget) closeFileModal() }}
         >
-          <div className="bg-white rounded-xl border border-[#E2E8F0] shadow-2xl w-[460px] p-6">
+          <div className="bg-white rounded-xl border border-[#E2E8F0] shadow-2xl w-full sm:w-[460px] mx-4 sm:mx-0 p-6">
             <div className="flex items-center justify-between mb-1">
               <h2 className="text-[15px] font-bold text-[#0F172A]">Add Cover Sheet?</h2>
               <button onClick={closeFileModal} className="text-[#64748B] hover:text-[#64748B] transition-colors">
@@ -4420,7 +4611,7 @@ export default function Home() {
           className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center"
           onClick={e => { if (e.target === e.currentTarget) closeFileModal() }}
         >
-          <div className="bg-white rounded-xl border border-[#E2E8F0] shadow-2xl w-[680px]">
+          <div className="bg-white rounded-xl border border-[#E2E8F0] shadow-2xl w-full sm:w-[680px] mx-4 sm:mx-0">
             <div className="flex items-center justify-between px-6 pt-5 pb-4 border-b border-[#E2E8F0]">
               <h2 className="text-[15px] font-bold text-[#0F172A]">Submittal Transmittal</h2>
               <button onClick={closeFileModal} className="text-[#64748B] hover:text-[#64748B] transition-colors">
@@ -4626,7 +4817,7 @@ export default function Home() {
           className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center"
           onClick={e => { if (e.target === e.currentTarget) closeModal() }}
         >
-          <div className="bg-white rounded-xl border border-[#E2E8F0] shadow-2xl w-[440px] p-6">
+          <div className="bg-white rounded-xl border border-[#E2E8F0] shadow-2xl w-full sm:w-[440px] mx-4 sm:mx-0 p-6">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-[15px] font-bold text-[#0F172A]">Upload Submittal</h2>
               <button onClick={closeModal} className="text-[#64748B] hover:text-[#64748B] transition-colors">
@@ -4842,7 +5033,7 @@ export default function Home() {
       {editSubmittal && (
         <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center"
           onClick={e => { if (e.target === e.currentTarget) setEditSubmittal(null) }}>
-          <div className="bg-white rounded-xl border border-[#E2E8F0] shadow-2xl w-[460px] p-6">
+          <div className="bg-white rounded-xl border border-[#E2E8F0] shadow-2xl w-full sm:w-[460px] mx-4 sm:mx-0 p-6">
             <div className="flex items-center justify-between mb-1">
               <h2 className="text-[15px] font-bold text-[#0F172A]">Edit Submittal</h2>
               <button onClick={() => setEditSubmittal(null)} className="text-[#64748B] hover:text-[#64748B] transition-colors"><XIcon className="h-4 w-4" /></button>
@@ -4906,7 +5097,7 @@ export default function Home() {
       {showBatch && (
         <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center"
           onClick={e => { if (e.target === e.currentTarget) closeBatch() }}>
-          <div className="bg-white rounded-xl border border-[#E2E8F0] shadow-2xl w-[700px] max-h-[85vh] flex flex-col">
+          <div className="bg-white rounded-xl border border-[#E2E8F0] shadow-2xl w-full sm:w-[700px] mx-4 sm:mx-0 max-h-[85vh] flex flex-col">
 
             {/* Header */}
             <div className="flex items-center justify-between px-6 pt-5 pb-4 border-b border-[#E2E8F0] flex-shrink-0">
@@ -5128,7 +5319,7 @@ export default function Home() {
           className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center"
           onClick={e => { if (e.target === e.currentTarget) setShowManage(false) }}
         >
-          <div className="bg-white rounded-xl border border-[#E2E8F0] shadow-2xl w-[360px] p-5">
+          <div className="bg-white rounded-xl border border-[#E2E8F0] shadow-2xl w-full sm:w-[360px] mx-4 sm:mx-0 p-5">
             <div className="flex items-center justify-between mb-1">
               <h2 className="text-[15px] font-bold text-[#0F172A]">Manage Divisions</h2>
               <button onClick={() => setShowManage(false)} className="text-[#64748B] hover:text-[#64748B] transition-colors">
