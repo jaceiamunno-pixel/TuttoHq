@@ -2087,21 +2087,19 @@ export default function Home() {
               </a>
               {/* Global project filter — mobile */}
               {appProjects.length > 0 && (
-                <div className="px-4 py-3 border-t border-white/[0.12] flex items-center gap-2">
-                  <span className="text-[11px] text-white whitespace-nowrap">Project:</span>
-                  <select
-                    value={globalProjectId}
-                    onChange={e => setGlobalProjectId(e.target.value)}
-                    className="flex-1 h-7 pl-3 pr-2 rounded-md border border-white/30 bg-[#1E3A5F] text-[12px] text-white cursor-pointer focus:outline-none"
-                  >
-                    <option value="">All Projects</option>
-                    {appProjects.map(p => (
-                      <option key={p.id} value={p.id}>{p.name}{p.number ? ` — ${p.number}` : ""}</option>
+                <div className="px-4 py-3 border-t border-white/[0.12]">
+                  <p className="text-[10px] font-bold text-[#64748B] uppercase tracking-widest mb-2">Project</p>
+                  <div className="space-y-0.5">
+                    {[{ id: "", name: "All Projects" }, ...appProjects].map(p => (
+                      <button
+                        key={p.id}
+                        onClick={() => { setGlobalProjectId(p.id); setMobileNavOpen(false) }}
+                        className={`w-full text-left px-3 py-2 rounded-md text-[13px] font-medium transition-colors ${globalProjectId === p.id ? "bg-white/[0.12] text-white" : "text-[#94A3B8] hover:text-white hover:bg-white/[0.06]"}`}
+                      >
+                        {p.name}{"number" in p && p.number ? ` — ${p.number}` : ""}
+                      </button>
                     ))}
-                  </select>
-                  {globalProjectId && (
-                    <button onClick={() => setGlobalProjectId("")} className="text-[11px] text-white/70 hover:text-white transition-colors" title="Clear filter">✕</button>
-                  )}
+                  </div>
                 </div>
               )}
             </div>
@@ -2117,13 +2115,13 @@ export default function Home() {
               onClick={() => { setShowBatch(true); setBatchPhase("select"); setBatchItems([]) }}
               className="h-8 px-3 rounded-md border border-[#E2E8F0] text-[12px] text-[#64748B] hover:bg-[#0F172A]/[0.04] transition-colors flex items-center gap-1.5 whitespace-nowrap"
             >
-              <LayersIcon /> Batch Upload
+              <LayersIcon /> <span className="hidden sm:inline">Batch </span>Upload
             </button>
             <button
               onClick={() => setShowUpload(true)}
               className="h-8 px-4 rounded-md bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors flex items-center gap-1.5 whitespace-nowrap"
             >
-              <PlusIcon /> Upload Submittal to Library
+              <PlusIcon /> <span className="hidden sm:inline">Upload Submittal to </span>Library
             </button>
           </div>
         </div>
@@ -2230,7 +2228,7 @@ export default function Home() {
 
         {/* Closeout action bar */}
         {activeModule === "closeout" && (
-          <div className="flex-shrink-0 border-b border-[#E2E8F0] bg-white flex items-center justify-between px-4 py-2.5">
+          <div className="flex-shrink-0 border-b border-[#E2E8F0] bg-white px-4 py-2.5 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex items-center gap-3">
               <p className="text-[13px] font-semibold text-[#0F172A]">Project Closeout</p>
               {globalProjectId && closeoutItems.length > 0 && (() => {
@@ -2240,68 +2238,53 @@ export default function Home() {
                 return <span className="text-[11px] text-[#64748B]">{pct}% complete</span>
               })()}
             </div>
-            <div className="flex items-center gap-2">
-              {globalProjectId && closeoutItems.length > 0 && (
-                <button
-                  onClick={() => setShowNewCloseout(true)}
-                  className="h-8 px-3 rounded-md border border-[#E2E8F0] text-[#64748B] text-[12px] font-semibold hover:border-[#E2E8F0] hover:text-[#0F172A] transition-colors flex items-center gap-1.5"
-                >
-                  <PlusIcon /> Add Item
-                </button>
-              )}
-              {globalProjectId && closeoutItems.length > 0 && (
-                <button
-                  onClick={() => setShowAddFolder(true)}
-                  className="h-8 px-3 rounded-md border border-[#E2E8F0] text-[#64748B] text-[12px] font-semibold hover:border-[#E2E8F0] hover:text-[#0F172A] transition-colors flex items-center gap-1.5"
-                >
-                  <PlusIcon /> Add Folder
-                </button>
-              )}
-              {globalProjectId && closeoutItems.length > 0 && (
-                closeoutResetConfirm ? (
-                  <div className="flex items-center gap-2 bg-red-50 border border-red-200 rounded-lg px-3 py-1.5">
-                    <span className="text-[12px] text-red-600 font-medium">Reset all closeout items?</span>
-                    <button
-                      disabled={closeoutResetting}
-                      onClick={async () => {
-                        setCloseoutResetting(true)
-                        await fetch("/api/closeout/reset", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ project_id: globalProjectId }) })
-                        setCloseoutResetConfirm(false)
-                        setCloseoutResetting(false)
-                        loadCloseout()
-                      }}
-                      className="text-[12px] font-semibold text-white bg-red-500 hover:bg-red-600 px-2.5 py-1 rounded transition-colors disabled:opacity-50 flex items-center gap-1"
-                    >
-                      {closeoutResetting ? <SpinnerIcon className="h-3 w-3" /> : null}
-                      Yes, Reset
-                    </button>
-                    <button onClick={() => setCloseoutResetConfirm(false)} className="text-[12px] text-[#64748B] hover:text-[#0F172A] transition-colors">Cancel</button>
-                  </div>
-                ) : (
+            {globalProjectId && closeoutItems.length > 0 && (
+              closeoutResetConfirm ? (
+                <div className="flex items-center gap-2 bg-red-50 border border-red-200 rounded-lg px-3 py-1.5 flex-wrap">
+                  <span className="text-[12px] text-red-600 font-medium">Reset all closeout items?</span>
                   <button
-                    onClick={() => setCloseoutResetConfirm(true)}
-                    className="h-8 px-3 rounded-md border border-red-200 text-red-400 text-[12px] font-semibold hover:bg-red-50 hover:text-red-500 transition-colors"
+                    disabled={closeoutResetting}
+                    onClick={async () => {
+                      setCloseoutResetting(true)
+                      await fetch("/api/closeout/reset", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ project_id: globalProjectId }) })
+                      setCloseoutResetConfirm(false)
+                      setCloseoutResetting(false)
+                      loadCloseout()
+                    }}
+                    className="text-[12px] font-semibold text-white bg-red-500 hover:bg-red-600 px-2.5 py-1 rounded transition-colors disabled:opacity-50 flex items-center gap-1"
                   >
+                    {closeoutResetting ? <SpinnerIcon className="h-3 w-3" /> : null}
+                    Yes, Reset
+                  </button>
+                  <button onClick={() => setCloseoutResetConfirm(false)} className="text-[12px] text-[#64748B] hover:text-[#0F172A] transition-colors">Cancel</button>
+                </div>
+              ) : (
+                <div className="flex items-center gap-2 flex-wrap">
+                  <button onClick={() => setShowNewCloseout(true)} className="h-8 px-3 rounded-md border border-[#E2E8F0] text-[#64748B] text-[12px] font-semibold hover:text-[#0F172A] transition-colors flex items-center gap-1.5">
+                    <PlusIcon /> Add Item
+                  </button>
+                  <button onClick={() => setShowAddFolder(true)} className="h-8 px-3 rounded-md border border-[#E2E8F0] text-[#64748B] text-[12px] font-semibold hover:text-[#0F172A] transition-colors flex items-center gap-1.5">
+                    <PlusIcon /> Add Folder
+                  </button>
+                  <button onClick={() => setCloseoutResetConfirm(true)} className="h-8 px-3 rounded-md border border-red-200 text-red-400 text-[12px] font-semibold hover:bg-red-50 hover:text-red-500 transition-colors">
                     Reset
                   </button>
-                )
-              )}
-              {globalProjectId && closeoutItems.length > 0 && (
-                <button
-                  disabled={closeoutGenerating}
-                  onClick={async () => {
-                    setCloseoutGenerating(true)
-                    const res = await fetch("/api/closeout/pdf", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ project_id: globalProjectId }) })
-                    const d = await res.json()
-                    if (d.url) window.open(d.url, "_blank")
-                    setCloseoutGenerating(false)
-                  }}
-                  className="h-8 px-4 rounded-md bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors flex items-center gap-1.5 disabled:opacity-50"
-                >
-                  {closeoutGenerating ? <><SpinnerIcon className="h-3.5 w-3.5" /> Generating…</> : "Generate Package"}
-                </button>
-              )}
-            </div>
+                  <button
+                    disabled={closeoutGenerating}
+                    onClick={async () => {
+                      setCloseoutGenerating(true)
+                      const res = await fetch("/api/closeout/pdf", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ project_id: globalProjectId }) })
+                      const d = await res.json()
+                      if (d.url) window.open(d.url, "_blank")
+                      setCloseoutGenerating(false)
+                    }}
+                    className="h-8 px-4 rounded-md bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors flex items-center gap-1.5 disabled:opacity-50"
+                  >
+                    {closeoutGenerating ? <><SpinnerIcon className="h-3.5 w-3.5" /> Generating…</> : "Package"}
+                  </button>
+                </div>
+              )
+            )}
           </div>
         )}
 
@@ -3756,8 +3739,8 @@ export default function Home() {
                 <div className="px-6 py-4 space-y-4 overflow-y-auto flex-1 min-h-0">
 
                   {/* Row 1: Date, Project, Prepared By */}
-                  <div className="flex gap-3">
-                    <div className="w-36 flex-shrink-0">
+                  <div className="flex flex-col sm:flex-row gap-3">
+                    <div className="sm:w-36 sm:flex-shrink-0">
                       <label className={labelCls}>Date <span className="text-red-400">*</span></label>
                       <input type="date" required value={dailyDate} onChange={e => setDailyDate(e.target.value)} className={inputCls} />
                     </div>
@@ -3780,7 +3763,7 @@ export default function Home() {
                   </div>
 
                   {/* Row 2: Weather, Temp, Manpower */}
-                  <div className="flex gap-3">
+                  <div className="flex flex-col sm:flex-row gap-3">
                     <div className="flex-1">
                       <label className={labelCls}>Weather</label>
                       <select value={dailyWeather} onChange={e => setDailyWeather(e.target.value)}
@@ -3789,11 +3772,11 @@ export default function Home() {
                         {["Clear", "Partly Cloudy", "Cloudy", "Rain", "Heavy Rain", "Snow", "Fog", "Wind"].map(w => <option key={w} value={w}>{w}</option>)}
                       </select>
                     </div>
-                    <div className="w-28 flex-shrink-0">
+                    <div className="sm:w-28 sm:flex-shrink-0">
                       <label className={labelCls}>Temperature</label>
                       <input type="text" value={dailyTemp} onChange={e => setDailyTemp(e.target.value)} placeholder="e.g. 72°F" className={inputCls} />
                     </div>
-                    <div className="w-28 flex-shrink-0">
+                    <div className="sm:w-28 sm:flex-shrink-0">
                       <label className={labelCls}>Manpower</label>
                       <input type="number" min={0} value={dailyManpower} onChange={e => setDailyManpower(e.target.value)} placeholder="# workers" className={inputCls} />
                     </div>
@@ -3807,7 +3790,7 @@ export default function Home() {
                   </div>
 
                   {/* Equipment & Materials side by side */}
-                  <div className="flex gap-3">
+                  <div className="flex flex-col sm:flex-row gap-3">
                     <div className="flex-1">
                       <label className={labelCls}>Equipment on Site</label>
                       <textarea rows={2} value={dailyEquipment} onChange={e => setDailyEquipment(e.target.value)}
@@ -3821,7 +3804,7 @@ export default function Home() {
                   </div>
 
                   {/* Visitors & Issues side by side */}
-                  <div className="flex gap-3">
+                  <div className="flex flex-col sm:flex-row gap-3">
                     <div className="flex-1">
                       <label className={labelCls}>Visitors / Inspections</label>
                       <textarea rows={2} value={dailyVisitors} onChange={e => setDailyVisitors(e.target.value)}
@@ -3975,7 +3958,7 @@ export default function Home() {
             </div>
             <form onSubmit={createDrawing}>
               <div className="px-6 py-4 space-y-3">
-                <div className="flex gap-3">
+                <div className="flex flex-col sm:flex-row gap-3">
                   <div className="flex-1">
                     <label className={labelCls}>Drawing Number <span className="text-red-400">*</span></label>
                     <input type="text" required value={dwgNumber} onChange={e => setDwgNumber(e.target.value)}
@@ -3993,7 +3976,7 @@ export default function Home() {
                   <input type="text" required value={dwgTitle} onChange={e => setDwgTitle(e.target.value)}
                     placeholder="e.g. First Floor Plan" className={inputCls} />
                 </div>
-                <div className="flex gap-3">
+                <div className="flex flex-col sm:flex-row gap-3">
                   <div className="flex-1">
                     <label className={labelCls}>Discipline</label>
                     <select value={dwgDiscipline} onChange={e => setDwgDiscipline(e.target.value)}
@@ -4010,7 +3993,7 @@ export default function Home() {
                     </select>
                   </div>
                 </div>
-                <div className="flex gap-3">
+                <div className="flex flex-col sm:flex-row gap-3">
                   <div className="flex-1">
                     <label className={labelCls}>Revision Date</label>
                     <input type="date" value={dwgRevDate} onChange={e => setDwgRevDate(e.target.value)} className={inputCls} />
@@ -4076,7 +4059,7 @@ export default function Home() {
                     placeholder="Describe the deficiency, item to correct, or work to complete"
                     className="w-full px-3 py-2 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40 resize-none placeholder:text-[#64748B]" />
                 </div>
-                <div className="flex gap-3">
+                <div className="flex flex-col sm:flex-row gap-3">
                   <div className="flex-1">
                     <label className={labelCls}>Location / Room</label>
                     <input type="text" value={punchLocation} onChange={e => setPunchLocation(e.target.value)}
@@ -4088,7 +4071,7 @@ export default function Home() {
                       placeholder="Trade or subcontractor" className={inputCls} />
                   </div>
                 </div>
-                <div className="flex gap-3">
+                <div className="flex flex-col sm:flex-row gap-3">
                   <div className="flex-1">
                     <label className={labelCls}>Priority</label>
                     <select value={punchPriority} onChange={e => setPunchPriority(e.target.value)}
@@ -4295,7 +4278,7 @@ export default function Home() {
                       placeholder="Name of subcontractor, vendor, etc." className={`${inputCls} mt-1.5`} />
                   )}
                 </div>
-                <div className="flex gap-3">
+                <div className="flex flex-col sm:flex-row gap-3">
                   <div className="flex-1">
                     <label className={labelCls}>Specification Section</label>
                     <input type="text" value={rfiSpecSection} onChange={e => setRfiSpecSection(e.target.value)}
@@ -4307,7 +4290,7 @@ export default function Home() {
                       placeholder="Area or room" className={inputCls} />
                   </div>
                 </div>
-                <div className="flex gap-3">
+                <div className="flex flex-col sm:flex-row gap-3">
                   <div className="flex-1">
                     <label className={labelCls}>Schedule Impact</label>
                     <select value={rfiScheduleImpact} onChange={e => setRfiScheduleImpact(e.target.value)}
@@ -4329,7 +4312,7 @@ export default function Home() {
                     {teamMembers.map(m => <option key={m.id} value={m.name}>{m.name}</option>)}
                   </select>
                 </div>
-                <div className="flex gap-3">
+                <div className="flex flex-col sm:flex-row gap-3">
                   <div className="flex-1">
                     <label className={labelCls}>Date Issued</label>
                     <input type="date" value={rfiDateIssued} onChange={e => setRfiDateIssued(e.target.value)} className={inputCls} />
@@ -4855,7 +4838,7 @@ export default function Home() {
             <form onSubmit={handleGenerateCover}>
               <div className="px-6 py-4 space-y-3 overflow-y-auto max-h-[75vh]">
 
-                <div className="flex gap-3">
+                <div className="flex flex-col sm:flex-row gap-3">
                   <div className="flex-[2]">
                     <label className={labelCls}>Project Name</label>
                     <input type="text" value={coverForm.projectName} onChange={e => setCoverForm(prev => ({ ...prev!, projectName: e.target.value }))} placeholder="Project name" className={inputCls} />
@@ -4871,7 +4854,7 @@ export default function Home() {
                   <input type="text" value={coverForm.projectLocation} onChange={e => setCoverForm(prev => ({ ...prev!, projectLocation: e.target.value }))} placeholder="City, State" className={inputCls} />
                 </div>
 
-                <div className="flex gap-3">
+                <div className="flex flex-col sm:flex-row gap-3">
                   <div className="flex-1">
                     <label className={labelCls}>General Contractor</label>
                     <input type="text" value={coverForm.gcName} onChange={e => setCoverForm(prev => ({ ...prev!, gcName: e.target.value }))} placeholder="GC name" className={inputCls} />
@@ -4882,7 +4865,7 @@ export default function Home() {
                   </div>
                 </div>
 
-                <div className="flex gap-3">
+                <div className="flex flex-col sm:flex-row gap-3">
                   <div className="flex-1">
                     <label className={labelCls}>Spec Section No.</label>
                     <input type="text" value={coverForm.specSectionNo} onChange={e => setCoverForm(prev => ({ ...prev!, specSectionNo: e.target.value }))} placeholder="03 30 00" className={inputCls} />
@@ -4898,7 +4881,7 @@ export default function Home() {
                   <input type="text" value={coverForm.description} onChange={e => setCoverForm(prev => ({ ...prev!, description: e.target.value }))} placeholder="Description of submittal" className={inputCls} />
                 </div>
 
-                <div className="flex gap-3">
+                <div className="flex flex-col sm:flex-row gap-3">
                   <div className="flex-1">
                     <label className={labelCls}>Date Submitted</label>
                     <input type="text" value={coverForm.dateSubmitted} onChange={e => setCoverForm(prev => ({ ...prev!, dateSubmitted: e.target.value }))} placeholder="MM/DD/YYYY" className={inputCls} />
@@ -4909,7 +4892,7 @@ export default function Home() {
                   </div>
                 </div>
 
-                <div className="flex gap-3">
+                <div className="flex flex-col sm:flex-row gap-3">
                   <div className="flex-1">
                     <label className={labelCls}>Reviewed By</label>
                     <select value={coverForm.reviewedBy} onChange={e => setCoverForm(prev => ({ ...prev!, reviewedBy: e.target.value }))} className="w-full h-9 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40">
@@ -4998,7 +4981,7 @@ export default function Home() {
                 </div>
 
                 {/* ── TRANSMITTED BY ── */}
-                <div className="flex gap-3">
+                <div className="flex flex-col sm:flex-row gap-3">
                   <div className="flex-1">
                     <label className={labelCls}>Transmitted By</label>
                     <input value={coverForm.transmittedBy} onChange={e => setCoverForm(prev => ({ ...prev!, transmittedBy: e.target.value }))} placeholder="Your name" className={inputCls} />
