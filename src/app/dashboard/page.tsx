@@ -1939,324 +1939,96 @@ export default function Home() {
     <div className="flex min-h-screen bg-[#F4F5F7] overflow-x-hidden w-full">
 
       {/* ── Sidebar ───────────────────────────────────────────────────────── */}
-      {sidebarOpen && (
-        <div className="fixed inset-0 z-30" onClick={() => { setSidebarOpen(false); sessionStorage.setItem("sidebarOpen", "false") }} />
-      )}
-      <aside className={`fixed left-0 top-0 h-screen z-40 bg-[#0A1628] border-r border-white/10 hidden sm:flex flex-col overflow-hidden transition-[width] duration-200 ease-in-out ${sidebarOpen ? "w-80" : "w-12"}`}>
+      <aside className="fixed left-0 top-0 h-screen z-40 bg-[#0A1628] border-r border-white/10 hidden sm:flex flex-col w-56 overflow-hidden">
 
-        {/* Rail header — always visible */}
-        <div className="flex-shrink-0 flex items-center justify-between h-12 px-3 border-b border-white/10">
-          <div className="flex items-center gap-2.5 min-w-0">
-            <div className="w-6 h-6 rounded-md bg-[#7B9BB5]/10 border border-[#7B9BB5]/30 flex items-center justify-center flex-shrink-0">
-              <svg className="w-3.5 h-3.5 text-[#7B9BB5]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-              </svg>
-            </div>
-            {sidebarOpen && <span className="text-[14px] font-bold text-[#F8FAFC] tracking-tight truncate">TuttoHQ</span>}
-          </div>
-          <button
-            onClick={() => { const next = !sidebarOpen; setSidebarOpen(next); sessionStorage.setItem("sidebarOpen", String(next)) }}
-            className="w-5 h-5 flex items-center justify-center text-[#94A3B8] hover:text-[#94A3B8] transition-colors flex-shrink-0 rounded hover:bg-white/[0.08]"
-          >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={sidebarOpen ? "M15 19l-7-7 7-7" : "M9 5l7 7-7 7"} />
-            </svg>
-          </button>
-        </div>
-
-        {/* Expanded sidebar body */}
-        {sidebarOpen && <><p className="text-[11px] text-[#94A3B8] px-5 pt-2 pb-1">Construction Documents</p>
-
-        {/* Search */}
-        <div className="flex-shrink-0 px-3 pb-2">
-          <form onSubmit={handleSearch}>
-            <div className="relative">
-              <div className="absolute inset-y-0 left-0 flex items-center pl-2.5 pointer-events-none text-[#94A3B8]">
-                <SearchIcon />
-              </div>
-              <input
-                ref={inputRef}
-                type="text"
-                value={query}
-                onChange={e => setQuery(e.target.value)}
-                onKeyDown={e => e.key === "Escape" && clearSearch()}
-                placeholder="Search submittals…"
-                className="w-full h-8 pl-8 pr-6 rounded-md text-[13px] bg-white/[0.08] border border-white/20 text-[#F8FAFC] placeholder-[#94A3B8] focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40 focus:border-[#7B9BB5]/50 transition-all"
-              />
-              {query && (
-                <button
-                  type="button"
-                  onClick={clearSearch}
-                  className="absolute inset-y-0 right-0 flex items-center pr-2 text-[#94A3B8] hover:text-[#94A3B8] transition-colors"
-                >
-                  <XIcon />
-                </button>
-              )}
-            </div>
-          </form>
-        </div>
-
-        <div className="flex-shrink-0 border-t border-white/10 mx-3 mt-0.5 mb-1.5" />
-
-        {/* Section label + upload button */}
-        <div className="flex-shrink-0 px-4 pb-1">
-          {isSearchMode && searchAiSummary && !searching && (
-            <p className="text-[11px] text-[#7B9BB5] mb-1 flex items-center gap-1">
-              <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm1 14.93V17a1 1 0 0 1-2 0v-.07A8 8 0 0 1 4.07 9H5a1 1 0 0 1 0 2 6 6 0 0 0 6 6zm-1-6.93A2 2 0 1 1 14 12a2 2 0 0 1-2-1.93z"/></svg>
-              AI: {searchAiSummary}
-            </p>
-          )}
-        <div className="flex items-center justify-between">
-          <span className="text-[10px] font-bold text-[#94A3B8] uppercase tracking-widest">
-            {isSearchMode
-              ? (searching ? "Searching…" : `${searchResults?.length ?? 0} results`)
-              : "Divisions"}
-          </span>
-          <div className="flex items-center gap-2">
-            {isSearchMode && !searching && (
-              <button
-                onClick={clearSearch}
-                className="text-[11px] text-[#94A3B8] hover:text-[#F8FAFC] transition-colors"
-              >
-                Clear
-              </button>
-            )}
-            {!isSearchMode && (
-              <div className="flex items-center gap-1.5">
-                <button
-                  onClick={() => setShowManage(true)}
-                  title="Manage divisions"
-                  className="text-[#94A3B8] hover:text-[#94A3B8] transition-colors"
-                >
-                  <SlidersIcon />
-                </button>
-                <button
-                  onClick={() => { setShowBatch(true); setBatchPhase("select"); setBatchItems([]) }}
-                  title="Batch upload"
-                  className="text-[#94A3B8] hover:text-[#94A3B8] transition-colors"
-                >
-                  <LayersIcon />
-                </button>
-                <button
-                  onClick={() => setShowUpload(true)}
-                  title="Upload submittal"
-                  className="text-[#94A3B8] hover:text-[#94A3B8] transition-colors"
-                >
-                  <PlusIcon />
-                </button>
-              </div>
-            )}
-          </div>
-        </div>
-        </div>
-
-        {/* Scrollable tree */}
-        <div className="flex-1 overflow-y-auto px-2 pb-2 min-h-0">
-
-          {treeLoading && !isSearchMode && (
-            <div className="flex items-center gap-2 px-3 py-2 text-[13px] text-[#94A3B8]">
-              <SpinnerIcon /> Loading…
-            </div>
-          )}
-
-          {treeError && !isSearchMode && (
-            <p className="px-3 py-1 text-[12px] text-red-400">{treeError}</p>
-          )}
-
-          {searching && (
-            <div className="flex items-center gap-2 px-3 py-2 text-[13px] text-[#94A3B8]">
-              <SpinnerIcon /> Searching…
-            </div>
-          )}
-
-          {/* Search results */}
-          {!searching && isSearchMode && (
+        {/* Header */}
+        <div className="flex-shrink-0 flex items-center gap-2.5 h-14 px-4 border-b border-white/10">
+          {logoUrl ? (
+            <img src={logoUrl} alt="Logo" className="h-7 max-w-[130px] object-contain" />
+          ) : (
             <>
-              {searchError && <p className="px-3 py-1 text-[12px] text-red-400">{searchError}</p>}
-              {searchResults?.length === 0 && (
-                <p className="px-3 py-2 text-[13px] text-[#94A3B8]">No results for &ldquo;{query}&rdquo;</p>
-              )}
-              {searchResults?.map(file => (
-                <SidebarFileRow
-                  key={file.id}
-                  file={file}
-                  indent={8}
-                  onOpen={() => handleFileOpen(file, file.csi_division ?? "", file.division_name ?? "", file.csi_section ?? "", file.section_name ?? "")}
-                />
-              ))}
+              <div className="w-7 h-7 rounded-lg bg-[#7B9BB5]/10 border border-[#7B9BB5]/30 flex items-center justify-center flex-shrink-0">
+                <svg className="w-4 h-4 text-[#7B9BB5]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>
+              </div>
+              <span className="text-[15px] font-bold text-white tracking-tight">TuttoHQ</span>
             </>
           )}
-
-          {/* Division tree */}
-          {!isSearchMode && !treeLoading && !treeError && divisions.filter(d => !hiddenDivisions.has(d.num)).map(div => {
-            const isOpen = openDivisions.has(div.num)
-            return (
-              <div key={div.num}>
-                <button
-                  onClick={() => toggleDivision(div.num)}
-                  className="w-full flex items-center gap-1.5 h-8 px-2 rounded-md hover:bg-white/[0.08] transition-colors text-left group"
-                >
-                  <span className="w-4 flex items-center justify-center flex-shrink-0">
-                    <ToggleIcon open={isOpen} />
-                  </span>
-                  <span className="text-[11px] font-mono text-[#94A3B8] w-5 text-right flex-shrink-0">{div.num}</span>
-                  <span className="flex-1 text-[13px] font-semibold text-[#F8FAFC] truncate">{div.name}</span>
-                  {div.file_count > 0 && (
-                    <span className="text-[10px] text-[#94A3B8] flex-shrink-0 tabular-nums bg-white/[0.12] px-1.5 py-0.5 rounded">{div.file_count}</span>
-                  )}
-                </button>
-
-                <div className={`grid transition-all duration-150 ${isOpen ? "grid-rows-[1fr]" : "grid-rows-[0fr]"}`}>
-                  <div className="overflow-hidden">
-                    <div className="ml-[20px] border-l border-white/10 pl-1">
-                      {div.sections.map(sec => {
-                        const secOpen    = openSections.has(sec.code)
-                        const secLoading = loadingSections.has(sec.code)
-                        const files      = sectionFiles[sec.code] ?? []
-                        return (
-                          <div key={sec.code}>
-                            <button
-                              onClick={() => toggleSection(sec.code)}
-                              className="w-full flex items-center gap-1.5 h-7 px-1.5 rounded-md hover:bg-white/[0.08] transition-colors text-left group"
-                            >
-                              <span className="w-3.5 flex items-center justify-center flex-shrink-0">
-                                {secLoading
-                                  ? <SpinnerIcon className="h-2.5 w-2.5" />
-                                  : <ToggleIcon open={secOpen} />
-                                }
-                              </span>
-                              <span className="flex-1 text-[12px] text-[#94A3B8] truncate">
-                                <span className="font-mono text-[#94A3B8] mr-1.5">{sec.code}</span>{sec.name}
-                              </span>
-                              {(sec.file_count ?? 0) > 0 && (
-                                <span className="text-[10px] text-[#94A3B8] flex-shrink-0 tabular-nums bg-white/[0.12] px-1.5 py-0.5 rounded">{sec.file_count}</span>
-                              )}
-                            </button>
-
-                            <div className={`grid transition-all duration-150 ${secOpen ? "grid-rows-[1fr]" : "grid-rows-[0fr]"}`}>
-                              <div className="overflow-hidden">
-                                <div className="ml-[14px] border-l border-white/10 pl-1">
-                                  {secLoading && (
-                                    <div className="flex items-center gap-1.5 h-7 px-2 text-[12px] text-[#94A3B8]">
-                                      <SpinnerIcon className="h-2.5 w-2.5" /> Loading…
-                                    </div>
-                                  )}
-                                  {!secLoading && sectionFiles[sec.code] !== undefined && files.length === 0 && (
-                                    <p className="px-2 h-7 flex items-center text-[12px] text-[#94A3B8]">Empty</p>
-                                  )}
-                                  {!secLoading && files.map(file => (
-                                    <SidebarFileRow
-                                      key={file.id}
-                                      file={file}
-                                      indent={8}
-                                      onOpen={() => handleFileOpen(file, div.num, div.name, sec.code, sec.name)}
-                                      onDelete={async () => {
-                                        const res = await fetch(`/api/files/${file.id}`, { method: "DELETE" })
-                                        if (res.ok) {
-                                          setSectionFiles(prev => ({
-                                            ...prev,
-                                            [sec.code]: (prev[sec.code] ?? []).filter(f => f.id !== file.id),
-                                          }))
-                                          loadTree()
-                                        }
-                                      }}
-                                    />
-                                  ))}
-                                </div>
-                              </div>
-                            </div>
-                          </div>
-                        )
-                      })}
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )
-          })}
         </div>
 
-        {/* Settings + sign out */}
-        <div className="flex-shrink-0 border-t border-white/10">
-          <div className="px-2 pt-1.5">
-            <Link
-              href="/settings"
-              className="flex items-center gap-2 h-8 px-2 rounded-md text-[12px] text-[#94A3B8] hover:bg-white/[0.08] hover:text-[#F8FAFC] transition-colors"
+        {/* Project selector */}
+        {appProjects.length > 0 && (
+          <div className="flex-shrink-0 px-3 pt-3 pb-2">
+            <p className="text-[10px] font-bold text-[#64748B] uppercase tracking-widest px-1 mb-1.5">Project</p>
+            <select
+              value={globalProjectId}
+              onChange={e => setGlobalProjectId(e.target.value)}
+              className="w-full h-8 px-2 rounded-lg bg-white/[0.06] border border-white/10 text-[12px] text-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40 cursor-pointer"
             >
-              <svg className="h-3.5 w-3.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-              </svg>
-              Settings
-            </Link>
-          </div>
-          <div className="flex items-center justify-between px-3 py-2.5">
-            <span className="text-[11px] text-[#94A3B8] truncate min-w-0">{userEmail}</span>
-            <button
-              onClick={signOut}
-              className="text-[11px] text-[#94A3B8] hover:text-[#F8FAFC] transition-colors flex-shrink-0 ml-2"
-            >
-              Sign out
-            </button>
-          </div>
-        </div>
-        </>}
-      </aside>
-
-      {/* ── Main content area ─────────────────────────────────────────────── */}
-      <div className="flex-1 flex flex-col min-h-0 ml-0 sm:ml-12">
-
-        {/* Logo bar */}
-        {logoUrl && (
-          <div className="flex-shrink-0 flex items-center justify-end px-6 py-2 bg-[#0A1628]">
-            <img src={logoUrl} alt="Company logo" className="h-7 max-w-[160px] object-contain" />
+              <option value="">All Projects</option>
+              {appProjects.map(p => (
+                <option key={p.id} value={p.id}>{p.name}{p.number ? ` — ${p.number}` : ""}</option>
+              ))}
+            </select>
+            {globalProjectId && (
+              <button onClick={() => setGlobalProjectId("")} className="mt-1 text-[11px] text-[#64748B] hover:text-white transition-colors">✕ Clear project</button>
+            )}
           </div>
         )}
 
+        {/* Module nav */}
+        <nav className="flex-1 overflow-y-auto px-2 py-2 space-y-0.5">
+          {([
+            { id: "library",       label: "Library",        icon: <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 14v3m4-3v3m4-3v3M3 21h18M3 10h18M3 7l9-4 9 4M4 10h16v11H4V10z" /></svg> },
+            { id: "submittals",    label: "Submittal Log",  icon: <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" /></svg> },
+            { id: "rfis",          label: "RFIs",           icon: <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg> },
+            { id: "changeorders",  label: "Change Orders",  icon: <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 14l6-6m-5.5.5h.01m4.99 5h.01M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16l3.5-2 3.5 2 3.5-2 3.5 2z" /></svg> },
+            { id: "punch",         label: "Punch List",     icon: <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" /></svg> },
+            { id: "daily",         label: "Daily Reports",  icon: <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg> },
+            { id: "drawings",      label: "Drawing Log",    icon: <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7" /></svg> },
+            { id: "closeout",      label: "Closeout",       icon: <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z" /></svg> },
+          ] as { id: typeof activeModule; label: string; icon: React.ReactNode }[]).map(item => (
+            <button
+              key={item.id}
+              onClick={() => setActiveModule(item.id)}
+              className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-[13px] font-medium transition-colors ${activeModule === item.id ? "bg-white/[0.12] text-white" : "text-[#94A3B8] hover:text-white hover:bg-white/[0.06]"}`}
+            >
+              {item.icon}
+              <span className="truncate">{item.label}</span>
+              {item.id === "closeout" && globalProjectId && closeoutItems.length > 0 && (() => {
+                const pct = Math.round(closeoutItems.filter(i => i.status === "complete").length / closeoutItems.length * 100)
+                return <span className={`ml-auto text-[10px] font-bold px-1.5 py-0.5 rounded-full flex-shrink-0 ${pct === 100 ? "bg-emerald-500/20 text-emerald-400" : pct >= 50 ? "bg-amber-500/20 text-amber-400" : "bg-red-500/20 text-red-400"}`}>{pct}%</span>
+              })()}
+            </button>
+          ))}
+        </nav>
+
+        {/* Bottom */}
+        <div className="flex-shrink-0 border-t border-white/10 px-2 py-2 space-y-0.5">
+          <Link
+            href="/settings"
+            className="flex items-center gap-3 px-3 py-2 rounded-lg text-[13px] text-[#94A3B8] hover:text-white hover:bg-white/[0.06] transition-colors"
+          >
+            <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+            </svg>
+            Settings
+          </Link>
+          <div className="flex items-center justify-between px-3 py-1.5">
+            <span className="text-[11px] text-[#64748B] truncate min-w-0">{userEmail}</span>
+            <button onClick={signOut} className="text-[11px] text-[#94A3B8] hover:text-white transition-colors flex-shrink-0 ml-2">Sign out</button>
+          </div>
+        </div>
+      </aside>
+
+      {/* ── Main content area ─────────────────────────────────────────────── */}
+      <div className="flex-1 flex flex-col min-h-0 ml-0 sm:ml-56">
+
+
         {/* Module navigation */}
         <div className="flex-shrink-0 border-b border-white/[0.12] bg-[#0A1628] relative">
-          {/* Desktop tabs row */}
-          <div className="hidden sm:flex items-center px-4 gap-0.5">
-            {(["library","submittals","rfis","changeorders","punch","daily","drawings","closeout"] as const).map(mod => {
-              const labels: Record<string, string> = { library: "Library", submittals: "Submittal Log", rfis: "RFIs", changeorders: "Change Orders", punch: "Punch List", daily: "Daily Reports", drawings: "Drawing Log", closeout: "Closeout" }
-              const isActive = activeModule === mod
-              return (
-                <button key={mod} onClick={() => setActiveModule(mod)}
-                  className={`px-3 py-3 text-[13px] font-medium border-b-2 transition-colors whitespace-nowrap ${isActive ? "border-white text-white font-semibold" : "border-transparent text-[#94A3B8] hover:text-white"}`}>
-                  {labels[mod]}
-                  {mod === "closeout" && globalProjectId && closeoutItems.length > 0 && (() => {
-                    const pct = Math.round(closeoutItems.filter(i => i.status === "complete").length / closeoutItems.length * 100)
-                    return <span className={`ml-1.5 text-[10px] font-bold px-1.5 py-0.5 rounded-full ${pct === 100 ? "bg-emerald-500/20 text-emerald-400" : pct >= 50 ? "bg-amber-500/20 text-amber-400" : "bg-red-500/20 text-red-400"}`}>{pct}%</span>
-                  })()}
-                </button>
-              )
-            })}
-            {/* Global project filter — right side (desktop) */}
-            {appProjects.length > 0 && (
-              <div className="ml-auto flex items-center gap-2 py-1.5 flex-shrink-0">
-                <span className="text-[11px] text-white whitespace-nowrap">Project:</span>
-                <div className="relative">
-                  <select
-                    value={globalProjectId}
-                    onChange={e => setGlobalProjectId(e.target.value)}
-                    className="h-7 pl-3 pr-7 rounded-md border border-white/30 bg-[#1E3A5F] text-[12px] text-white appearance-none cursor-pointer hover:bg-[#1E3A5F]/80 transition-colors focus:outline-none focus:border-white backdrop-blur-sm"
-                  >
-                    <option value="">All Projects</option>
-                    {appProjects.map(p => (
-                      <option key={p.id} value={p.id}>{p.name}{p.number ? ` — ${p.number}` : ""}</option>
-                    ))}
-                  </select>
-                  <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-[#64748B]">
-                    <svg width="10" height="10" viewBox="0 0 12 12" fill="none"><path d="M2 4l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
-                  </span>
-                </div>
-                {globalProjectId && (
-                  <button onClick={() => setGlobalProjectId("")} className="text-[11px] text-white/70 hover:text-white transition-colors px-1" title="Clear filter">✕</button>
-                )}
-              </div>
-            )}
-          </div>
-
           {/* Mobile nav bar */}
           <div className="flex sm:hidden items-center justify-between px-4 py-2.5">
             <span className="text-[14px] font-semibold text-white">
