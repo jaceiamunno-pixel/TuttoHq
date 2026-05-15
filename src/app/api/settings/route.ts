@@ -49,7 +49,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Upload failed" }, { status: 500 })
   }
 
-  const updateData = type === "logo" ? { logo_path: path } : { cover_page_path: path }
+  const updateData: Record<string, string> = type === "logo" ? { logo_path: path } : { cover_page_path: path }
 
   const { data: existing } = await supabase.from("company_settings").select("id").maybeSingle()
   if (existing) {
