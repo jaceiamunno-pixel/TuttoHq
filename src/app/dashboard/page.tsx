@@ -1946,10 +1946,10 @@ export default function Home() {
   const labelCls = "block text-[11px] font-semibold text-[#64748B] uppercase tracking-[0.08em] mb-1.5"
 
   return (
-    <div className="flex min-h-screen bg-[#F4F5F7] overflow-x-hidden w-full">
+    <div className="flex bg-[#F4F5F7] w-full overflow-hidden" style={{ height: '100dvh' }}>
 
       {/* ── Sidebar ───────────────────────────────────────────────────────── */}
-      <aside className="fixed left-0 top-0 h-screen z-40 bg-[#0A1628] border-r border-white/10 hidden sm:flex flex-col w-56 overflow-hidden">
+      <aside className="fixed left-0 top-0 z-40 bg-[#0A1628] border-r border-white/10 hidden sm:flex flex-col w-56 overflow-hidden" style={{ height: '100dvh' }}>
 
         {/* Header */}
         <div className="flex-shrink-0 flex items-center gap-2.5 h-14 px-4 border-b border-white/10">
