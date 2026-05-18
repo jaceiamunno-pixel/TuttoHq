@@ -2324,21 +2324,45 @@ export default function Home() {
                       </div>
                       <div className="divide-y divide-[#E2E8F0]">
                         {div.sections.filter(s => (s.file_count ?? 0) > 0).map(sec => (
-                          <button
-                            key={sec.code}
-                            onClick={() => {
-                              toggleSection(sec.code)
-                              setSidebarOpen(true)
-                              sessionStorage.setItem("sidebarOpen", "true")
-                            }}
-                            className="w-full flex items-center justify-between px-4 py-2.5 hover:bg-[#F4F5F7] transition-colors text-left"
-                          >
-                            <div className="flex items-center gap-2.5">
-                              <span className="text-[11px] font-mono text-[#64748B]">{sec.code}</span>
-                              <span className="text-[13px] text-[#0F172A]">{sec.name}</span>
-                            </div>
-                            <span className="text-[11px] text-[#64748B] flex-shrink-0 ml-4">{sec.file_count} {sec.file_count === 1 ? "file" : "files"} →</span>
-                          </button>
+                          <div key={sec.code}>
+                            <button
+                              onClick={() => toggleSection(sec.code)}
+                              className="w-full flex items-center justify-between px-4 py-2.5 hover:bg-[#F4F5F7] transition-colors text-left"
+                            >
+                              <div className="flex items-center gap-2.5 min-w-0">
+                                <span className="text-[11px] font-mono text-[#64748B] flex-shrink-0">{sec.code}</span>
+                                <span className="text-[13px] text-[#0F172A] truncate">{sec.name}</span>
+                              </div>
+                              <div className="flex items-center gap-1.5 flex-shrink-0 ml-4">
+                                <span className="text-[11px] text-[#64748B]">{sec.file_count} {sec.file_count === 1 ? "file" : "files"}</span>
+                                <svg className={`w-3.5 h-3.5 text-[#64748B] transition-transform ${openSections.has(sec.code) ? "rotate-90" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7"/></svg>
+                              </div>
+                            </button>
+                            {openSections.has(sec.code) && (
+                              <div className="border-t border-[#E2E8F0] bg-[#F8F9FA] px-4 py-2 space-y-0.5">
+                                {loadingSections.has(sec.code) ? (
+                                  <div className="flex items-center gap-2 py-2 text-[12px] text-[#64748B]"><SpinnerIcon className="h-3.5 w-3.5" /> Loading…</div>
+                                ) : (sectionFiles[sec.code] ?? []).length === 0 ? (
+                                  <p className="text-[12px] text-[#64748B] py-2">No files found.</p>
+                                ) : (sectionFiles[sec.code] ?? []).map(file => (
+                                  <div key={file.id} className="flex items-center gap-2 py-1.5 group">
+                                    <span className={`flex-shrink-0 w-1.5 h-1.5 rounded-full ${getDot(file.mime_type)}`} />
+                                    <span className="flex-1 min-w-0 text-[12px] text-[#0F172A] truncate">{file.file_name}</span>
+                                    <a
+                                      href={file.file_url}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="flex-shrink-0 text-[11px] text-[#7B9BB5] hover:text-[#5A7A94] font-medium px-2 py-0.5 rounded hover:bg-[#7B9BB5]/10 transition-colors"
+                                    >Open</a>
+                                    <button
+                                      onClick={() => handleFileOpen(file, div.num, div.name, sec.code, sec.name)}
+                                      className="flex-shrink-0 text-[11px] text-[#64748B] hover:text-[#0F172A] font-medium px-2 py-0.5 rounded hover:bg-[#0F172A]/[0.04] transition-colors"
+                                    >Cover</button>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
                         ))}
                       </div>
                     </div>
