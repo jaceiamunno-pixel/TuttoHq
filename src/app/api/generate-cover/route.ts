@@ -93,6 +93,11 @@ export async function POST(req: NextRequest) {
     description,
     dateSubmitted,
     submittalNo,
+    revisionNo,
+    dueDate,
+    isCritical,
+    partyRequired,
+    copyTo,
     reviewedBy,
     certifiedBy,
     notes,
@@ -132,12 +137,12 @@ export async function POST(req: NextRequest) {
     specSectionTitle:      specSectionTitle || "",
     specSectionNumber:     specSectionNo  || "",
     submittalNumber:       String(Math.max(1, parseInt(submittalNo || "1", 10) || 1)).padStart(2, "0"),
-    revisionNumber:        "00",          // pending migration: submittals.revision_number
+    revisionNumber:        String(parseInt(revisionNo || "0", 10) || 0).padStart(2, "0"),
     dateSubmitted:         dateSubmitted  || "",
-    submittalDueDate:      "",            // pending migration: submittals.due_date
-    criticalSubmittal:     false,         // pending migration: submittals.is_critical
-    submittalPartyRequired: false,        // pending migration: submittals.party_required
-    copyTo:                "",            // pending migration: submittals.copy_to
+    submittalDueDate:      dueDate        || "",
+    criticalSubmittal:     !!isCritical,
+    submittalPartyRequired: !!partyRequired,
+    copyTo:                copyTo         || "",
     // stamps: all empty — pending migration: submittal_reviews table
   }
 

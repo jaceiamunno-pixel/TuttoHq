@@ -63,6 +63,11 @@ interface SubmittalRecord {
   transmittal_sent_at: string | null
   transmittal_recipient: string | null
   submittal_number: string | null
+  revision_number: string | null
+  due_date: string | null
+  is_critical: boolean | null
+  party_required: boolean | null
+  copy_to: string | null
 }
 
 type BatchStatus = "pending" | "classifying" | "ready" | "error" | "uploading" | "done" | "upload-error"
@@ -96,7 +101,7 @@ interface DrawingRecord { id: string; drawing_number: string; sheet_title: strin
 interface CloseoutItem { id: string; project_id: string; category: string; item_type: string; title: string; status: string; assigned_to: string | null; due_date: string | null; file_url: string | null; file_name: string | null; notes: string | null; sort_order: number; folder_name: string | null; linked_record_id: string | null; linked_record_type: string | null; completed_at: string | null; created_at: string }
 type FileModalStep = "project" | "coversheet" | "form"
 interface OpenFileCtx { file: SubmittalFile; divNum: string; divName: string; secCode: string; secName: string }
-interface CoverFormData { projectName: string; projectNumber: string; projectLocation: string; gcName: string; architect: string; specSectionNo: string; specSectionTitle: string; description: string; dateSubmitted: string; submittalNo: string; reviewedBy: string; certifiedBy: string; notes: string; sendToType: "cm" | "subcontractor" | "supplier" | ""; sendToCompany: string; sendToContact: string; sendToEmail: string; sendToPhone: string; sendToAddress: string; transmittedBy: string; transmittedByCompany: string }
+interface CoverFormData { projectName: string; projectNumber: string; projectLocation: string; gcName: string; architect: string; specSectionNo: string; specSectionTitle: string; description: string; dateSubmitted: string; submittalNo: string; revisionNo: string; dueDate: string; isCritical: boolean; partyRequired: boolean; copyTo: string; reviewedBy: string; certifiedBy: string; notes: string; sendToType: "cm" | "subcontractor" | "supplier" | ""; sendToCompany: string; sendToContact: string; sendToEmail: string; sendToPhone: string; sendToAddress: string; transmittedBy: string; transmittedByCompany: string }
 interface CoverContact { id: string; company_name: string; contact_name: string | null; email: string | null; phone: string | null; address?: string | null }
 
 // ─── CSI division list for upload form ───────────────────────────────────────
@@ -939,7 +944,10 @@ export default function Home() {
       architect: proj?.architect ?? "", specSectionNo: s.csi_section ?? "",
       specSectionTitle: s.section_name ?? "",
       description: s.file_name.replace(/\.[^.]+$/, ""),
-      dateSubmitted: today, submittalNo: "1",
+      dateSubmitted: today, submittalNo: s.submittal_number ?? "1",
+      revisionNo: s.revision_number ?? "00", dueDate: s.due_date ?? "",
+      isCritical: s.is_critical ?? false, partyRequired: s.party_required ?? false,
+      copyTo: s.copy_to ?? "",
       reviewedBy: "", certifiedBy: "", notes: "",
       sendToType: (s.send_to_type as "cm"|"subcontractor"|"supplier"|"") ?? "",
       sendToCompany: s.send_to_company ?? "",
@@ -979,7 +987,7 @@ export default function Home() {
     const today = new Date().toLocaleDateString("en-US", { month: "2-digit", day: "2-digit", year: "numeric" })
     const myName = teamMembers.find(m => m.email === userEmail)?.name ?? userEmail ?? ""
     setCoverSelectedId("")
-    setCoverForm({ projectName: proj?.name ?? "", projectNumber: proj?.number ?? "", projectLocation: proj?.location ?? "", gcName: proj?.gc_name ?? "", architect: proj?.architect ?? "", specSectionNo: openFileCtx.secCode, specSectionTitle: openFileCtx.secName, description: openFileCtx.file.file_name.replace(/\.[^.]+$/, ""), dateSubmitted: today, submittalNo: "1", reviewedBy: "", certifiedBy: "", notes: "", sendToType: "", sendToCompany: "", sendToContact: "", sendToEmail: "", sendToPhone: "", sendToAddress: "", transmittedBy: myName, transmittedByCompany: proj?.gc_name ?? "" })
+    setCoverForm({ projectName: proj?.name ?? "", projectNumber: proj?.number ?? "", projectLocation: proj?.location ?? "", gcName: proj?.gc_name ?? "", architect: proj?.architect ?? "", specSectionNo: openFileCtx.secCode, specSectionTitle: openFileCtx.secName, description: openFileCtx.file.file_name.replace(/\.[^.]+$/, ""), dateSubmitted: today, submittalNo: "1", revisionNo: "00", dueDate: "", isCritical: false, partyRequired: false, copyTo: "", reviewedBy: "", certifiedBy: "", notes: "", sendToType: "", sendToCompany: "", sendToContact: "", sendToEmail: "", sendToPhone: "", sendToAddress: "", transmittedBy: myName, transmittedByCompany: proj?.gc_name ?? "" })
     setFileModalStep("form")
     if (modalProjectId) loadCoverContacts(modalProjectId)
   }
@@ -1002,7 +1010,10 @@ export default function Home() {
       architect: proj?.architect ?? "", specSectionNo: s.csi_section ?? "",
       specSectionTitle: s.section_name ?? "",
       description: s.file_name.replace(/\.[^.]+$/, ""),
-      dateSubmitted: today, submittalNo: "1",
+      dateSubmitted: today, submittalNo: s.submittal_number ?? "1",
+      revisionNo: s.revision_number ?? "00", dueDate: s.due_date ?? "",
+      isCritical: s.is_critical ?? false, partyRequired: s.party_required ?? false,
+      copyTo: s.copy_to ?? "",
       reviewedBy: "", certifiedBy: "", notes: "",
       sendToType: (s.send_to_type as "cm"|"subcontractor"|"supplier"|"") ?? "",
       sendToCompany: s.send_to_company ?? "",
@@ -1928,7 +1939,7 @@ export default function Home() {
         setModalProjectId(globalProjectId)
         setCoverEditId(rec.id)
         const myName = teamMembers.find(m => m.email === userEmail)?.name ?? userEmail ?? ""
-        setCoverForm({ projectName: proj?.name ?? "", projectNumber: proj?.number ?? "", projectLocation: proj?.location ?? "", gcName: proj?.gc_name ?? "", architect: proj?.architect ?? "", specSectionNo: rec.csi_section ?? uploadSec, specSectionTitle: rec.section_name ?? uploadSecName, description: rec.file_name.replace(/\.[^.]+$/, ""), dateSubmitted: today, submittalNo: "1", reviewedBy: "", certifiedBy: "", notes: "", sendToType: "", sendToCompany: "", sendToContact: "", sendToEmail: "", sendToPhone: "", sendToAddress: "", transmittedBy: myName, transmittedByCompany: proj?.gc_name ?? "" })
+        setCoverForm({ projectName: proj?.name ?? "", projectNumber: proj?.number ?? "", projectLocation: proj?.location ?? "", gcName: proj?.gc_name ?? "", architect: proj?.architect ?? "", specSectionNo: rec.csi_section ?? uploadSec, specSectionTitle: rec.section_name ?? uploadSecName, description: rec.file_name.replace(/\.[^.]+$/, ""), dateSubmitted: today, submittalNo: "1", revisionNo: "00", dueDate: "", isCritical: false, partyRequired: false, copyTo: "", reviewedBy: "", certifiedBy: "", notes: "", sendToType: "", sendToCompany: "", sendToContact: "", sendToEmail: "", sendToPhone: "", sendToAddress: "", transmittedBy: myName, transmittedByCompany: proj?.gc_name ?? "" })
         loadCoverContacts(globalProjectId)
         setFileModalStep("form")
       } else {
@@ -4916,6 +4927,33 @@ export default function Home() {
                     <label className={labelCls}>Submittal No.</label>
                     <input type="text" value={coverForm.submittalNo} onChange={e => setCoverForm(prev => ({ ...prev!, submittalNo: e.target.value }))} placeholder="1" className={inputCls} />
                   </div>
+                </div>
+
+                <div className="flex flex-col sm:flex-row gap-3">
+                  <div className="flex-1">
+                    <label className={labelCls}>Revision No.</label>
+                    <input type="text" value={coverForm.revisionNo} onChange={e => setCoverForm(prev => ({ ...prev!, revisionNo: e.target.value }))} placeholder="00" className={inputCls} />
+                  </div>
+                  <div className="flex-1">
+                    <label className={labelCls}>Due Date</label>
+                    <input type="date" value={coverForm.dueDate} onChange={e => setCoverForm(prev => ({ ...prev!, dueDate: e.target.value }))} className={inputCls} />
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-6 py-0.5">
+                  <label className="flex items-center gap-2 cursor-pointer select-none">
+                    <input type="checkbox" checked={coverForm.isCritical} onChange={e => setCoverForm(prev => ({ ...prev!, isCritical: e.target.checked }))} className="w-4 h-4 rounded border-[#E2E8F0] accent-[#7B9BB5]" />
+                    <span className="text-[13px] text-[#0F172A]">Critical Submittal</span>
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer select-none">
+                    <input type="checkbox" checked={coverForm.partyRequired} onChange={e => setCoverForm(prev => ({ ...prev!, partyRequired: e.target.checked }))} className="w-4 h-4 rounded border-[#E2E8F0] accent-[#7B9BB5]" />
+                    <span className="text-[13px] text-[#0F172A]">Submittal Party Required</span>
+                  </label>
+                </div>
+
+                <div>
+                  <label className={labelCls}>Copy To</label>
+                  <input type="text" value={coverForm.copyTo} onChange={e => setCoverForm(prev => ({ ...prev!, copyTo: e.target.value }))} placeholder="Names or emails, comma-separated" className={inputCls} />
                 </div>
 
                 <div className="flex flex-col sm:flex-row gap-3">
