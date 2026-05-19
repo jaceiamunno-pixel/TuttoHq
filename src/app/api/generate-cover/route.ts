@@ -1,11 +1,10 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import { PDFDocument } from "pdf-lib"
-import { renderToStaticMarkup } from "react-dom/server"
-import React from "react"
 import fs from "fs"
 import path from "path"
-import SubmittalCoversheet, { type SubmittalCoversheetProps } from "@/components/submittals/SubmittalCoversheet"
+import { type SubmittalCoversheetProps } from "@/components/submittals/SubmittalCoversheet"
+import { buildCoversheetHtml } from "@/lib/coversheet-html"
 
 // Vercel Pro: allow up to 60 s for browser launch + PDF render
 export const maxDuration = 60
@@ -47,7 +46,7 @@ async function launchBrowser() {
 
 async function renderCoversheetToPdf(props: SubmittalCoversheetProps): Promise<Buffer> {
   const css = getCss()
-  const markup = renderToStaticMarkup(React.createElement(SubmittalCoversheet, props))
+  const markup = buildCoversheetHtml(props)
   const html = `<!DOCTYPE html>
 <html lang="en">
 <head>
