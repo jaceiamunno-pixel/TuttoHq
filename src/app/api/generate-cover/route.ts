@@ -1,76 +1,8 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import { PDFDocument } from "pdf-lib"
-import fs from "fs"
-import path from "path"
 import { type SubmittalCoversheetProps } from "@/components/submittals/SubmittalCoversheet"
-import { buildCoversheetHtml } from "@/lib/coversheet-html"
-
-// Vercel Pro: allow up to 60 s for browser launch + PDF render
-export const maxDuration = 60
-
-// Read CSS once at module load (cached across warm invocations)
-const CSS_PATH = path.join(process.cwd(), "src/components/submittals/submittal-coversheet.css")
-let _css: string | null = null
-function getCss(): string {
-  if (!_css) _css = fs.readFileSync(CSS_PATH, "utf-8")
-  return _css
-}
-
-async function launchBrowser() {
-  // Production (Vercel Lambda): use @sparticuz/chromium binary
-  if (process.env.NODE_ENV === "production") {
-    const chromium = (await import("@sparticuz/chromium")).default
-    const puppeteer = (await import("puppeteer-core")).default
-    return puppeteer.launch({
-      args: chromium.args,
-      executablePath: await chromium.executablePath(),
-      headless: true,
-      defaultViewport: chromium.defaultViewport,
-    })
-  }
-
-  // Local dev: use Chrome pointed to via CHROMIUM_EXECUTABLE_PATH env var.
-  // Set in .env.local, e.g.:
-  //   Windows: CHROMIUM_EXECUTABLE_PATH="C:\Program Files\Google\Chrome\Application\chrome.exe"
-  //   macOS:   CHROMIUM_EXECUTABLE_PATH="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
-  const executablePath = process.env.CHROMIUM_EXECUTABLE_PATH
-  if (!executablePath) {
-    throw new Error(
-      "Set CHROMIUM_EXECUTABLE_PATH in .env.local to your local Chrome path for PDF generation in development."
-    )
-  }
-  const puppeteer = (await import("puppeteer-core")).default
-  return puppeteer.launch({ headless: true, executablePath })
-}
-
-async function renderCoversheetToPdf(props: SubmittalCoversheetProps): Promise<Buffer> {
-  const css = getCss()
-  const markup = buildCoversheetHtml(props)
-  const html = `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <style>${css}</style>
-</head>
-<body>${markup}</body>
-</html>`
-
-  const browser = await launchBrowser()
-  try {
-    const page = await browser.newPage()
-    await page.setContent(html, { waitUntil: "networkidle0" })
-    await page.emulateMediaType("print")
-    const pdfBuffer = await page.pdf({
-      format: "Letter",
-      printBackground: true,   // required for steel-blue field fills
-    })
-    return Buffer.from(pdfBuffer)
-  } finally {
-    await browser.close()
-  }
-}
+import { buildCoversheetPdf } from "@/lib/coversheet-pdf"
 
 export async function POST(req: NextRequest) {
   const supabase = await createClient()
@@ -110,24 +42,21 @@ export async function POST(req: NextRequest) {
     transmittedByCompany,
   } = body
 
-  // Fetch company logo as a signed URL (Puppeteer needs an absolute URL it can fetch)
+  // Fetch company logo as raw bytes
   const { data: settings } = await supabase
     .from("company_settings")
     .select("logo_path")
     .maybeSingle()
 
-  let gcLogoUrl: string | undefined
+  let logoBytes: ArrayBuffer | null = null
   if (settings?.logo_path) {
-    const { data: signed } = await supabase.storage
+    const { data: logoBlob } = await supabase.storage
       .from("company-assets")
-      .createSignedUrl(settings.logo_path, 3600)
-    gcLogoUrl = signed?.signedUrl ?? undefined
+      .download(settings.logo_path)
+    if (logoBlob) logoBytes = await logoBlob.arrayBuffer()
   }
 
-  // Build coversheet props from the form payload.
-  // Fields marked "(pending migration)" will be wired up once the columns exist.
   const coversheetProps: SubmittalCoversheetProps = {
-    gcLogoUrl,
     gcName:                gcName         || "",
     projectName:           projectName    || "",
     projectNumber:         projectNumber  || "",
@@ -142,11 +71,9 @@ export async function POST(req: NextRequest) {
     criticalSubmittal:     !!isCritical,
     submittalPartyRequired: !!partyRequired,
     copyTo:                copyTo         || "",
-    // stamps: all empty — pending migration: submittal_reviews table
   }
 
-  // Render the React component to a PDF via Puppeteer
-  const coverBytes = await renderCoversheetToPdf(coversheetProps)
+  const coverBytes = await buildCoversheetPdf(coversheetProps, logoBytes)
 
   // Merge cover page with original submittal PDF (if any)
   const mergedDoc = await PDFDocument.create()
