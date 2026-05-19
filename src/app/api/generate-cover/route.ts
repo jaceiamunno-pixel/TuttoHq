@@ -1,7 +1,77 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import { PDFDocument } from "pdf-lib"
-import { PDFBuilder } from "@/lib/pdf-builder"
+import { renderToStaticMarkup } from "react-dom/server"
+import React from "react"
+import fs from "fs"
+import path from "path"
+import SubmittalCoversheet, { type SubmittalCoversheetProps } from "@/components/submittals/SubmittalCoversheet"
+
+// Vercel Pro: allow up to 60 s for browser launch + PDF render
+export const maxDuration = 60
+
+// Read CSS once at module load (cached across warm invocations)
+const CSS_PATH = path.join(process.cwd(), "src/components/submittals/submittal-coversheet.css")
+let _css: string | null = null
+function getCss(): string {
+  if (!_css) _css = fs.readFileSync(CSS_PATH, "utf-8")
+  return _css
+}
+
+async function launchBrowser() {
+  // Production (Vercel Lambda): use @sparticuz/chromium binary
+  if (process.env.NODE_ENV === "production") {
+    const chromium = (await import("@sparticuz/chromium")).default
+    const puppeteer = (await import("puppeteer-core")).default
+    return puppeteer.launch({
+      args: chromium.args,
+      executablePath: await chromium.executablePath(),
+      headless: true,
+      defaultViewport: chromium.defaultViewport,
+    })
+  }
+
+  // Local dev: use Chrome pointed to via CHROMIUM_EXECUTABLE_PATH env var.
+  // Set in .env.local, e.g.:
+  //   Windows: CHROMIUM_EXECUTABLE_PATH="C:\Program Files\Google\Chrome\Application\chrome.exe"
+  //   macOS:   CHROMIUM_EXECUTABLE_PATH="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+  const executablePath = process.env.CHROMIUM_EXECUTABLE_PATH
+  if (!executablePath) {
+    throw new Error(
+      "Set CHROMIUM_EXECUTABLE_PATH in .env.local to your local Chrome path for PDF generation in development."
+    )
+  }
+  const puppeteer = (await import("puppeteer-core")).default
+  return puppeteer.launch({ headless: true, executablePath })
+}
+
+async function renderCoversheetToPdf(props: SubmittalCoversheetProps): Promise<Buffer> {
+  const css = getCss()
+  const markup = renderToStaticMarkup(React.createElement(SubmittalCoversheet, props))
+  const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>${css}</style>
+</head>
+<body>${markup}</body>
+</html>`
+
+  const browser = await launchBrowser()
+  try {
+    const page = await browser.newPage()
+    await page.setContent(html, { waitUntil: "networkidle0" })
+    await page.emulateMediaType("print")
+    const pdfBuffer = await page.pdf({
+      format: "Letter",
+      printBackground: true,   // required for steel-blue field fills
+    })
+    return Buffer.from(pdfBuffer)
+  } finally {
+    await browser.close()
+  }
+}
 
 export async function POST(req: NextRequest) {
   const supabase = await createClient()
@@ -36,64 +106,43 @@ export async function POST(req: NextRequest) {
     transmittedByCompany,
   } = body
 
+  // Fetch company logo as a signed URL (Puppeteer needs an absolute URL it can fetch)
   const { data: settings } = await supabase
     .from("company_settings")
     .select("logo_path")
     .maybeSingle()
 
-  let logoBytes: ArrayBuffer | null = null
+  let gcLogoUrl: string | undefined
   if (settings?.logo_path) {
-    const { data: logoBlob } = await supabase.storage
+    const { data: signed } = await supabase.storage
       .from("company-assets")
-      .download(settings.logo_path)
-    if (logoBlob) logoBytes = await logoBlob.arrayBuffer()
+      .createSignedUrl(settings.logo_path, 3600)
+    gcLogoUrl = signed?.signedUrl ?? undefined
   }
 
-  const b = await PDFBuilder.create("SUBMITTAL TRANSMITTAL", logoBytes)
-
-  if (projectName || projectNumber) {
-    b.sectionHeader("PROJECT INFORMATION")
-    b.twoCol("Project Name", projectName ?? "—", 65, "Project No.", projectNumber ?? "—", 35)
-    if (projectLocation) b.oneCol("Project Location", projectLocation)
-    if (gcName || architect)
-      b.twoCol("General Contractor", gcName ?? "—", 50, "Architect", architect ?? "—", 50)
-    b.gap()
+  // Build coversheet props from the form payload.
+  // Fields marked "(pending migration)" will be wired up once the columns exist.
+  const coversheetProps: SubmittalCoversheetProps = {
+    gcLogoUrl,
+    gcName:                gcName         || "",
+    projectName:           projectName    || "",
+    projectNumber:         projectNumber  || "",
+    projectLocation:       projectLocation || "",
+    submittalDescription:  description    || "",
+    specSectionTitle:      specSectionTitle || "",
+    specSectionNumber:     specSectionNo  || "",
+    submittalNumber:       String(Math.max(1, parseInt(submittalNo || "1", 10) || 1)).padStart(2, "0"),
+    revisionNumber:        "00",          // pending migration: submittals.revision_number
+    dateSubmitted:         dateSubmitted  || "",
+    submittalDueDate:      "",            // pending migration: submittals.due_date
+    criticalSubmittal:     false,         // pending migration: submittals.is_critical
+    submittalPartyRequired: false,        // pending migration: submittals.party_required
+    copyTo:                "",            // pending migration: submittals.copy_to
+    // stamps: all empty — pending migration: submittal_reviews table
   }
 
-  if (transmittedBy || transmittedByCompany) {
-    b.sectionHeader("TRANSMITTED BY")
-    b.twoCol("Name", transmittedBy ?? "—", 50, "Company", transmittedByCompany ?? "—", 50)
-    b.gap()
-  }
-
-  if (sendToType) {
-    const typeLabel = sendToType === "cm" ? "Construction Manager" : sendToType === "subcontractor" ? "Subcontractor" : "Supplier"
-    b.sectionHeader("TRANSMITTED TO")
-    b.twoCol("Company", sendToCompany ?? "—", 60, "Type", typeLabel, 40)
-    if (sendToContact || sendToEmail)
-      b.twoCol("Contact", sendToContact ?? "—", 50, "Email", sendToEmail ?? "—", 50)
-    if (sendToPhone)
-      b.oneCol("Phone", sendToPhone)
-    if (sendToAddress)
-      b.oneCol("Address", sendToAddress)
-    b.gap()
-  }
-
-  b.sectionHeader("SUBMITTAL INFORMATION")
-  b.twoCol("Spec Section No.", specSectionNo ?? "—", 30, "Spec Section Title", specSectionTitle ?? "—", 70)
-  b.oneCol("Submittal Description", description ?? "")
-  b.twoCol("Date Submitted", dateSubmitted ?? "—", 50, "Submittal No.", submittalNo ?? "—", 50)
-  b.gap()
-
-  b.sectionHeader("REVIEW / CERTIFICATION")
-  b.twoCol("Reviewed By", reviewedBy ?? "—", 50, "Certified by CQM", certifiedBy ?? "—", 50)
-  b.gap()
-
-  if (notes?.trim()) b.textBlock("NOTES", notes)
-
-  b.signatureLines("Reviewed By / Date", "Approved By / Date")
-
-  const coverBytes = await b.save()
+  // Render the React component to a PDF via Puppeteer
+  const coverBytes = await renderCoversheetToPdf(coversheetProps)
 
   // Merge cover page with original submittal PDF (if any)
   const mergedDoc = await PDFDocument.create()
@@ -115,8 +164,7 @@ export async function POST(req: NextRequest) {
           .download(submittalRow.storage_path)
 
         if (submittalBlob) {
-          const submittalPdfBytes = await submittalBlob.arrayBuffer()
-          const submittalDoc = await PDFDocument.load(submittalPdfBytes)
+          const submittalDoc = await PDFDocument.load(await submittalBlob.arrayBuffer())
           const submittalPages = await mergedDoc.copyPages(submittalDoc, submittalDoc.getPageIndices())
           submittalPages.forEach(p => mergedDoc.addPage(p))
         }
@@ -154,7 +202,6 @@ export async function POST(req: NextRequest) {
       }
 
       if (targetId) {
-        // UPDATE the existing record (e.g. after direct upload or editing a cover sheet)
         await supabase.from("submittals").update({
           file_name:    description?.trim() || safeName,
           storage_path: storagePath,
@@ -164,7 +211,6 @@ export async function POST(req: NextRequest) {
           ...transmittalFields,
         }).eq("id", targetId)
       } else if (submittalId) {
-        // INSERT a new project record linked from a library item
         const { data: orig } = await supabase.from("submittals")
           .select("csi_division, division_name, csi_section, section_name, material_name, manufacturer, dimensions")
           .eq("id", submittalId).maybeSingle()

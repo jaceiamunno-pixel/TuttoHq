@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from "react"
 import Link from "next/link"
 import { createClient } from "@/lib/supabase/client"
+import SubmittalCoversheet from "@/components/submittals/SubmittalCoversheet"
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -641,6 +642,7 @@ export default function Home() {
   const [coverProjectSuppliers, setCoverProjectSuppliers] = useState<CoverContact[]>([])
   const [coverProjectCms, setCoverProjectCms]             = useState<CoverContact[]>([])
   const [coverSelectedId, setCoverSelectedId]             = useState<string>("")
+  const [showCoverPreview, setShowCoverPreview]           = useState(false)
 
   // Sidebar
   const [sidebarOpen, setSidebarOpen] = useState(false)
@@ -5027,6 +5029,38 @@ export default function Home() {
                   />
                 </div>
 
+              </div>
+
+              {/* Live coversheet preview */}
+              <div className="border-t border-[#E2E8F0]">
+                <button
+                  type="button"
+                  onClick={() => setShowCoverPreview(p => !p)}
+                  className="w-full flex items-center justify-between px-6 py-3 text-[12px] font-semibold text-[#7B9BB5] hover:text-[#5A7A94] hover:bg-[#F4F5F7] transition-colors"
+                >
+                  <span>Preview Coversheet</span>
+                  <svg className={`w-3.5 h-3.5 transition-transform ${showCoverPreview ? "rotate-180" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7"/></svg>
+                </button>
+                {showCoverPreview && (
+                  <div className="overflow-hidden bg-[#f1f5f9]" style={{ height: 420 }}>
+                    <div style={{ transform: "scale(0.5)", transformOrigin: "top left", width: 816, pointerEvents: "none" }}>
+                      <SubmittalCoversheet
+                        gcName={coverForm!.gcName}
+                        projectName={coverForm!.projectName}
+                        projectNumber={coverForm!.projectNumber}
+                        projectLocation={coverForm!.projectLocation}
+                        submittalDescription={coverForm!.description}
+                        specSectionTitle={coverForm!.specSectionTitle}
+                        specSectionNumber={coverForm!.specSectionNo}
+                        submittalNumber={String(Math.max(1, parseInt(coverForm!.submittalNo || "1", 10) || 1)).padStart(2, "0")}
+                        revisionNumber="00"
+                        dateSubmitted={coverForm!.dateSubmitted}
+                        submittalDueDate=""
+                        copyTo=""
+                      />
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div className="flex justify-end gap-2 px-6 py-4 border-t border-[#E2E8F0]">
