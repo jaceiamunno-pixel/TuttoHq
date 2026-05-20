@@ -404,3 +404,86 @@ UPDATE construction_managers SET company_id = (SELECT company_id FROM user_profi
 -- UPDATE project_subcontractors SET company_id = '<YOUR_COMPANY_ID>' WHERE company_id IS NULL;
 -- UPDATE project_suppliers      SET company_id = '<YOUR_COMPANY_ID>' WHERE company_id IS NULL;
 -- UPDATE project_cms            SET company_id = '<YOUR_COMPANY_ID>' WHERE company_id IS NULL;
+
+-- =============================================================================
+-- COMMITMENTS (executed Subcontracts and Purchase Orders)
+-- "From" party is the tenant company (company_id, set by RLS default).
+-- "To" party is either a subcontractor (for subcontract type) OR a supplier
+-- (for purchase_order type). Exactly one of the two FK columns must be set,
+-- and to_company_name stores a stable display snapshot.
+-- =============================================================================
+
+CREATE TABLE IF NOT EXISTS commitments (
+  id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  project_id          UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  type                TEXT NOT NULL CHECK (type IN ('subcontract','purchase_order')),
+  to_subcontractor_id UUID REFERENCES subcontractors(id),
+  to_supplier_id      UUID REFERENCES suppliers(id),
+  to_company_name     TEXT NOT NULL,
+  status              TEXT NOT NULL DEFAULT 'executed'
+                        CHECK (status IN ('draft','out_for_signature','executed')),
+  executed_file_path  TEXT,
+  executed_file_name  TEXT,
+  executed_at         DATE,
+  contract_value      NUMERIC(14,2),
+  notes               TEXT,
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+  uploaded_by         UUID REFERENCES auth.users(id),
+  company_id          UUID REFERENCES companies(id) DEFAULT get_my_company_id(),
+  -- Exactly one of the two "to" FKs must be set, and it must match the type.
+  CONSTRAINT commitments_to_exactly_one CHECK (
+    (to_subcontractor_id IS NOT NULL AND to_supplier_id IS NULL AND type = 'subcontract')
+    OR
+    (to_supplier_id IS NOT NULL AND to_subcontractor_id IS NULL AND type = 'purchase_order')
+  )
+);
+
+CREATE INDEX IF NOT EXISTS idx_commitments_project   ON commitments(project_id);
+CREATE INDEX IF NOT EXISTS idx_commitments_sub       ON commitments(to_subcontractor_id);
+CREATE INDEX IF NOT EXISTS idx_commitments_supplier  ON commitments(to_supplier_id);
+CREATE INDEX IF NOT EXISTS idx_commitments_type      ON commitments(type);
+CREATE INDEX IF NOT EXISTS idx_commitments_company   ON commitments(company_id);
+
+ALTER TABLE commitments ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "commitments: company select" ON commitments FOR SELECT TO authenticated USING     (company_id = get_my_company_id());
+CREATE POLICY "commitments: company insert" ON commitments FOR INSERT TO authenticated WITH CHECK (company_id = get_my_company_id());
+CREATE POLICY "commitments: company update" ON commitments FOR UPDATE TO authenticated USING     (company_id = get_my_company_id()) WITH CHECK (company_id = get_my_company_id());
+CREATE POLICY "commitments: company delete" ON commitments FOR DELETE TO authenticated USING     (company_id = get_my_company_id());
+
+-- updated_at trigger
+CREATE OR REPLACE FUNCTION commitments_set_updated_at() RETURNS trigger AS $$
+BEGIN
+  NEW.updated_at = now();
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS commitments_set_updated_at ON commitments;
+CREATE TRIGGER commitments_set_updated_at
+  BEFORE UPDATE ON commitments
+  FOR EACH ROW EXECUTE FUNCTION commitments_set_updated_at();
+
+-- ─── Commitment scope (commitment ↔ CSI spec section) ────────────────────────
+-- Junction table linking a commitment to the CSI sections it covers. Spec
+-- section is stored as TEXT (e.g. "033000") to match how submittals/RFIs do
+-- it. Hidden from v1 UI; future auto-assignment of submittals will read this.
+
+CREATE TABLE IF NOT EXISTS commitment_scope (
+  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  commitment_id UUID NOT NULL REFERENCES commitments(id) ON DELETE CASCADE,
+  spec_section  TEXT NOT NULL,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  company_id    UUID REFERENCES companies(id) DEFAULT get_my_company_id(),
+  UNIQUE (commitment_id, spec_section)
+);
+
+CREATE INDEX IF NOT EXISTS idx_commitment_scope_commitment ON commitment_scope(commitment_id);
+CREATE INDEX IF NOT EXISTS idx_commitment_scope_section    ON commitment_scope(spec_section);
+CREATE INDEX IF NOT EXISTS idx_commitment_scope_company    ON commitment_scope(company_id);
+
+ALTER TABLE commitment_scope ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "commitment_scope: company select" ON commitment_scope FOR SELECT TO authenticated USING     (company_id = get_my_company_id());
+CREATE POLICY "commitment_scope: company insert" ON commitment_scope FOR INSERT TO authenticated WITH CHECK (company_id = get_my_company_id());
+CREATE POLICY "commitment_scope: company update" ON commitment_scope FOR UPDATE TO authenticated USING     (company_id = get_my_company_id()) WITH CHECK (company_id = get_my_company_id());
+CREATE POLICY "commitment_scope: company delete" ON commitment_scope FOR DELETE TO authenticated USING     (company_id = get_my_company_id());
