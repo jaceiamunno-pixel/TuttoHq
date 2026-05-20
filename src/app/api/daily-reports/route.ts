@@ -62,7 +62,7 @@ export async function POST(req: NextRequest) {
     await supabase.storage.from("submittals").upload(file_path, fileBytes, { contentType: fileType, upsert: false })
   }
 
-  const { error } = await supabase.from("daily_reports").insert({
+  const { data, error } = await supabase.from("daily_reports").insert({
     report_date,
     project_id: project_id || null,
     prepared_by: prepared_by?.trim() || null,
@@ -79,8 +79,8 @@ export async function POST(req: NextRequest) {
     file_name,
     company_id,
     uploaded_by: user.id,
-  })
+  }).select()
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  return NextResponse.json({ ok: true })
+  return NextResponse.json({ id: data?.[0]?.id, ok: true })
 }

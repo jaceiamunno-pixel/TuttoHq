@@ -771,6 +771,9 @@ export default function Home() {
   const [dailyPhotosLoading, setDailyPhotosLoading]   = useState(false)
   const [dailyPhotoUploading, setDailyPhotoUploading] = useState(false)
   const dailyPhotoRef = useRef<HTMLInputElement>(null)
+  const [dailyPhotosToAdd, setDailyPhotosToAdd]       = useState<File[]>([])
+  const [dailyPhotoUploadError, setDailyPhotoUploadError] = useState("")
+  const dailyPhotosToAddRef = useRef<HTMLInputElement>(null)
 
   // Drawing log
   const [drawings, setDrawings]                       = useState<DrawingRecord[]>([])
@@ -1589,6 +1592,21 @@ export default function Home() {
     if (viewDaily) await loadDailyPhotos(viewDaily.id)
   }
 
+  async function uploadDailyPhotosAtCreation(reportId: string, files: File[]) {
+    const CONCURRENCY = 4
+    for (let i = 0; i < files.length; i += CONCURRENCY) {
+      const batch = files.slice(i, i + CONCURRENCY)
+      const promises = batch.map(file => {
+        const fd = new FormData()
+        fd.append("entity_type", "daily_report")
+        fd.append("entity_id", reportId)
+        fd.append("file", file)
+        return fetch("/api/photos", { method: "POST", body: fd })
+      })
+      await Promise.all(promises)
+    }
+  }
+
   async function handleTransmittal(sub: SubmittalRecord, subNum: number) {
     setTransmittalSub(sub)
     setTransmittalLoading(true)
@@ -1724,6 +1742,7 @@ export default function Home() {
     e.preventDefault()
     setDailySaving(true)
     setDailySaveError("")
+    setDailyPhotoUploadError("")
     try {
       const dailyFd = new FormData()
       const dailyFields: Record<string, string> = { report_date: dailyDate, project_id: dailyProjectId, prepared_by: dailyPreparedBy, weather_conditions: dailyWeather, temperature: dailyTemp, manpower_count: dailyManpower, work_performed: dailyWorkPerformed, equipment: dailyEquipment, materials_delivered: dailyMaterials, visitors: dailyVisitors, issues_delays: dailyIssues, safety_notes: dailySafety }
@@ -1731,8 +1750,18 @@ export default function Home() {
       if (dailyFileRef.current?.files?.[0]) dailyFd.append("file", dailyFileRef.current.files[0])
       const res = await fetch("/api/daily-reports", { method: "POST", body: dailyFd })
       if (res.ok) {
+        const { id: reportId } = await res.json()
+        if (dailyPhotosToAdd.length > 0) {
+          try {
+            await uploadDailyPhotosAtCreation(reportId, dailyPhotosToAdd)
+          } catch (photoErr) {
+            setDailyPhotoUploadError("Report created, but some photos failed to upload. You can add them manually later.")
+          }
+        }
         setShowNewDaily(false)
         setDailyDate(new Date().toISOString().slice(0, 10)); setDailyProjectId(""); setDailyPreparedBy(""); setDailyWeather(""); setDailyTemp(""); setDailyManpower(""); setDailyWorkPerformed(""); setDailyEquipment(""); setDailyMaterials(""); setDailyVisitors(""); setDailyIssues(""); setDailySafety("")
+        setDailyPhotosToAdd([])
+        if (dailyPhotosToAddRef.current) dailyPhotosToAddRef.current.value = ""
         loadDaily()
       } else {
         const data = await res.json().catch(() => ({}))
@@ -2223,7 +2252,7 @@ export default function Home() {
         {activeModule === "daily" && (
           <div className="flex-shrink-0 border-b border-[#E2E8F0] bg-white flex items-center justify-between px-4 py-2.5">
             <p className="text-[13px] font-semibold text-[#0F172A]">Daily Reports <span className="text-[#64748B] font-normal ml-1">({dailyReports.length})</span></p>
-            <button onClick={() => setShowNewDaily(true)} className="h-8 px-4 rounded-md bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors flex items-center gap-1.5">
+            <button onClick={() => { setShowNewDaily(true); setDailyPhotosToAdd([]); setDailyPhotoUploadError(""); if (dailyPhotosToAddRef.current) dailyPhotosToAddRef.current.value = "" }} className="h-8 px-4 rounded-md bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors flex items-center gap-1.5">
               <PlusIcon /> New Report
             </button>
           </div>
@@ -3762,7 +3791,12 @@ export default function Home() {
       {/* ── New / Edit Daily Report modal ────────────────────────────────── */}
       {(showNewDaily || (viewDaily && dailyEditing)) && (() => {
         const isEdit = !!(viewDaily && dailyEditing)
-        const onClose = () => { setShowNewDaily(false); setViewDaily(null); setDailyEditing(false) }
+        const onClose = () => {
+          setShowNewDaily(false); setViewDaily(null); setDailyEditing(false);
+          setDailyPhotosToAdd([])
+          setDailyPhotoUploadError("")
+          if (dailyPhotosToAddRef.current) dailyPhotosToAddRef.current.value = ""
+        }
         const tareaClass = "w-full px-3 py-2 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40 resize-none placeholder:text-[#64748B]"
         return (
           <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center"
@@ -3861,10 +3895,50 @@ export default function Home() {
                       placeholder="Safety observations, incidents, toolbox talks…" className={tareaClass} />
                   </div>
                   {!isEdit && (
-                    <div>
-                      <label className={labelCls}>Attachment <span className="text-[#64748B] font-normal">(optional)</span></label>
-                      <input ref={dailyFileRef} type="file" className="w-full text-[12px] text-[#64748B] file:mr-3 file:py-1 file:px-3 file:rounded file:border file:border-[#E2E8F0] file:bg-[#F4F5F7] file:text-[#64748B] file:text-[11px] file:cursor-pointer hover:file:bg-white/[0.05]" />
-                    </div>
+                    <>
+                      <div>
+                        <label className={labelCls}>Attachment <span className="text-[#64748B] font-normal">(optional)</span></label>
+                        <input ref={dailyFileRef} type="file" className="w-full text-[12px] text-[#64748B] file:mr-3 file:py-1 file:px-3 file:rounded file:border file:border-[#E2E8F0] file:bg-[#F4F5F7] file:text-[#64748B] file:text-[11px] file:cursor-pointer hover:file:bg-white/[0.05]" />
+                      </div>
+                      <div className="border-t border-[#E2E8F0] pt-4">
+                        <label className={labelCls}>Photo Attachments <span className="text-[#64748B] font-normal">(optional, multiple)</span></label>
+                        <div className="flex items-center gap-2 mb-3">
+                          <button type="button" onClick={() => dailyPhotosToAddRef.current?.click()}
+                            className="h-8 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#64748B] bg-[#F4F5F7] hover:bg-white/50 transition-colors font-medium">
+                            + Add Photos
+                          </button>
+                          {dailyPhotosToAdd.length > 0 && (
+                            <span className="text-[12px] text-[#64748B]">{dailyPhotosToAdd.length} photo{dailyPhotosToAdd.length !== 1 ? 's' : ''} selected</span>
+                          )}
+                        </div>
+                        <input ref={dailyPhotosToAddRef} type="file" accept="image/*" multiple className="hidden"
+                          onChange={e => {
+                            const files = Array.from(e.target.files || [])
+                            const validFiles = files.filter(f => {
+                              const sizeOk = f.size <= 10 * 1024 * 1024
+                              if (!sizeOk) setDailyPhotoUploadError(`${f.name} exceeds 10MB limit`)
+                              return sizeOk
+                            })
+                            setDailyPhotosToAdd([...dailyPhotosToAdd, ...validFiles])
+                          }} />
+                        {dailyPhotosToAdd.length > 0 && (
+                          <div className="space-y-2">
+                            {dailyPhotosToAdd.map((file, idx) => (
+                              <div key={idx} className="flex items-center justify-between p-2 bg-[#F4F5F7] rounded-md border border-[#E2E8F0]">
+                                <span className="text-[12px] text-[#0F172A] flex-1 truncate">{file.name} ({(file.size / 1024 / 1024).toFixed(2)}MB)</span>
+                                <button type="button" onClick={() => setDailyPhotosToAdd(dailyPhotosToAdd.filter((_, i) => i !== idx))}
+                                  className="ml-2 text-[#64748B] hover:text-red-500 text-[14px] font-bold transition-colors">
+                                  ✕
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        {dailyPhotoUploadError && (
+                          <p className="text-[12px] text-red-500 mt-2">{dailyPhotoUploadError}</p>
+                        )}
+                      </div>
+                    </>
                   )}
                 </div>
                 <div className="flex items-center justify-between gap-2 px-6 py-4 border-t border-[#E2E8F0] flex-shrink-0">
