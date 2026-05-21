@@ -487,3 +487,117 @@ CREATE POLICY "commitment_scope: company select" ON commitment_scope FOR SELECT 
 CREATE POLICY "commitment_scope: company insert" ON commitment_scope FOR INSERT TO authenticated WITH CHECK (company_id = get_my_company_id());
 CREATE POLICY "commitment_scope: company update" ON commitment_scope FOR UPDATE TO authenticated USING     (company_id = get_my_company_id()) WITH CHECK (company_id = get_my_company_id());
 CREATE POLICY "commitment_scope: company delete" ON commitment_scope FOR DELETE TO authenticated USING     (company_id = get_my_company_id());
+
+-- =============================================================================
+-- SPEC BOOK INGESTION
+-- Upload a PDF spec book -> split into sections -> extract SUBMITTALS articles
+-- -> classify with Claude Haiku -> stage rows for user review -> bulk-commit to
+-- the submittals log. Safe to re-run (uses IF NOT EXISTS throughout).
+-- =============================================================================
+
+-- --- Project documents (spec books, drawings PDFs, addenda) ------------------
+CREATE TABLE IF NOT EXISTS project_documents (
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  project_id      UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  type            TEXT NOT NULL CHECK (type IN ('spec_book','drawings','addendum','other')),
+  file_path       TEXT NOT NULL,
+  file_name       TEXT NOT NULL,
+  file_size_bytes BIGINT,
+  page_count      INT,
+  uploaded_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+  uploaded_by     UUID REFERENCES auth.users(id),
+  parsed_at       TIMESTAMPTZ,
+  parse_status    TEXT NOT NULL DEFAULT 'pending'
+                    CHECK (parse_status IN ('pending','extracting','classifying','parsed','failed')),
+  parse_progress  INT  NOT NULL DEFAULT 0,
+  parse_error     TEXT,
+  company_id      UUID REFERENCES companies(id) DEFAULT get_my_company_id()
+);
+
+CREATE INDEX IF NOT EXISTS idx_project_documents_project ON project_documents(project_id);
+CREATE INDEX IF NOT EXISTS idx_project_documents_type    ON project_documents(type);
+CREATE INDEX IF NOT EXISTS idx_project_documents_company ON project_documents(company_id);
+
+ALTER TABLE project_documents ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "project_documents: company select" ON project_documents FOR SELECT TO authenticated USING     (company_id = get_my_company_id());
+CREATE POLICY "project_documents: company insert" ON project_documents FOR INSERT TO authenticated WITH CHECK (company_id = get_my_company_id());
+CREATE POLICY "project_documents: company update" ON project_documents FOR UPDATE TO authenticated USING     (company_id = get_my_company_id()) WITH CHECK (company_id = get_my_company_id());
+CREATE POLICY "project_documents: company delete" ON project_documents FOR DELETE TO authenticated USING     (company_id = get_my_company_id());
+
+-- --- Spec sections extracted from a spec book --------------------------------
+CREATE TABLE IF NOT EXISTS spec_sections (
+  id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  project_document_id UUID NOT NULL REFERENCES project_documents(id) ON DELETE CASCADE,
+  project_id          UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  spec_number         TEXT NOT NULL,
+  spec_title          TEXT NOT NULL,
+  start_page          INT,
+  end_page            INT,
+  full_text           TEXT,
+  submittals_text     TEXT,
+  has_submittals      BOOLEAN NOT NULL DEFAULT false,
+  parsed_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
+  company_id          UUID REFERENCES companies(id) DEFAULT get_my_company_id()
+);
+
+CREATE INDEX IF NOT EXISTS idx_spec_sections_document ON spec_sections(project_document_id);
+CREATE INDEX IF NOT EXISTS idx_spec_sections_project  ON spec_sections(project_id);
+CREATE INDEX IF NOT EXISTS idx_spec_sections_number   ON spec_sections(spec_number);
+CREATE INDEX IF NOT EXISTS idx_spec_sections_company  ON spec_sections(company_id);
+
+ALTER TABLE spec_sections ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "spec_sections: company select" ON spec_sections FOR SELECT TO authenticated USING     (company_id = get_my_company_id());
+CREATE POLICY "spec_sections: company insert" ON spec_sections FOR INSERT TO authenticated WITH CHECK (company_id = get_my_company_id());
+CREATE POLICY "spec_sections: company update" ON spec_sections FOR UPDATE TO authenticated USING     (company_id = get_my_company_id()) WITH CHECK (company_id = get_my_company_id());
+CREATE POLICY "spec_sections: company delete" ON spec_sections FOR DELETE TO authenticated USING     (company_id = get_my_company_id());
+
+-- --- Staged submittals (Haiku output, awaiting user review) ------------------
+CREATE TABLE IF NOT EXISTS staged_submittals (
+  id                     UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  project_document_id    UUID NOT NULL REFERENCES project_documents(id) ON DELETE CASCADE,
+  spec_section_id        UUID NOT NULL REFERENCES spec_sections(id) ON DELETE CASCADE,
+  project_id             UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  spec_number            TEXT NOT NULL,
+  letter                 TEXT,
+  project_item_name      TEXT NOT NULL,
+  submittal_type         TEXT NOT NULL CHECK (submittal_type IN
+                           ('Product Data','Shop Drawing','Sample','Certification',
+                            'Warranty','O&M Manual','Lab Test','Attic Stock','Other')),
+  description            TEXT NOT NULL,
+  sub_bullets            TEXT[] NOT NULL DEFAULT '{}',
+  is_selected            BOOLEAN NOT NULL DEFAULT true,
+  committed_at           TIMESTAMPTZ,
+  committed_submittal_id UUID REFERENCES submittals(id),
+  created_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
+  company_id             UUID REFERENCES companies(id) DEFAULT get_my_company_id()
+);
+
+CREATE INDEX IF NOT EXISTS idx_staged_submittals_document ON staged_submittals(project_document_id);
+CREATE INDEX IF NOT EXISTS idx_staged_submittals_section  ON staged_submittals(spec_section_id);
+CREATE INDEX IF NOT EXISTS idx_staged_submittals_project  ON staged_submittals(project_id);
+CREATE INDEX IF NOT EXISTS idx_staged_submittals_company  ON staged_submittals(company_id);
+
+ALTER TABLE staged_submittals ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "staged_submittals: company select" ON staged_submittals FOR SELECT TO authenticated USING     (company_id = get_my_company_id());
+CREATE POLICY "staged_submittals: company insert" ON staged_submittals FOR INSERT TO authenticated WITH CHECK (company_id = get_my_company_id());
+CREATE POLICY "staged_submittals: company update" ON staged_submittals FOR UPDATE TO authenticated USING     (company_id = get_my_company_id()) WITH CHECK (company_id = get_my_company_id());
+CREATE POLICY "staged_submittals: company delete" ON staged_submittals FOR DELETE TO authenticated USING     (company_id = get_my_company_id());
+
+-- --- Link existing submittals back to source spec section + origin -----------
+ALTER TABLE submittals
+  ADD COLUMN IF NOT EXISTS spec_section_id UUID REFERENCES spec_sections(id),
+  ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'manual'
+    CHECK (source IN ('manual','gmail','spec_ingestion'));
+
+CREATE INDEX IF NOT EXISTS idx_submittals_spec_section ON submittals(spec_section_id);
+CREATE INDEX IF NOT EXISTS idx_submittals_source       ON submittals(source);
+
+-- Spec-ingested submittals have no uploaded file until the sub actually submits,
+-- so storage_path must allow NULL. No-op if the column is already nullable.
+ALTER TABLE submittals ALTER COLUMN storage_path DROP NOT NULL;
+
+-- Parse telemetry: counts from the most recent parse, so the UI can explain a
+-- parse that produced no staged rows — e.g. a multi-volume spec book whose
+-- bodies for the scoped divisions live in a different volume.
+-- Shape: { sectionsScoped, sectionsFound, sectionsWithSubmittals, staged }
+ALTER TABLE project_documents ADD COLUMN IF NOT EXISTS parse_summary JSONB;

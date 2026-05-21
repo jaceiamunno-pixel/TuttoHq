@@ -30,7 +30,7 @@ interface AiResult { division_num: string; division_name: string; section_code: 
 interface SubmittalRecord {
   id: string
   file_name: string
-  storage_path: string
+  storage_path: string | null
   mime_type: string | null
   file_size: number | null
   csi_division: string | null
@@ -116,6 +116,54 @@ interface Commitment {
   updated_at: string
   uploaded_by: string
 }
+interface SpecBookDoc {
+  id: string
+  project_id: string
+  file_name: string
+  file_size_bytes: number | null
+  page_count: number | null
+  uploaded_at: string
+  parse_status: "pending" | "extracting" | "classifying" | "parsed" | "failed"
+  parse_progress: number
+  parse_error: string | null
+}
+interface SpecSectionRow {
+  id: string
+  spec_number: string
+  spec_title: string
+  start_page: number | null
+  end_page: number | null
+  has_submittals: boolean
+}
+interface StagedSubmittal {
+  id: string
+  spec_section_id: string
+  spec_number: string
+  letter: string | null
+  project_item_name: string
+  submittal_type: string
+  description: string
+  sub_bullets: string[]
+  is_selected: boolean
+  committed_at: string | null
+}
+interface ParseSummary {
+  sectionsScoped: number
+  sectionsFound: number
+  sectionsWithSubmittals: number
+  staged: number
+}
+interface PendingDoc {
+  id: string
+  file_name: string
+  parse_status: string
+  parse_summary: ParseSummary | null
+  uploaded_at: string
+}
+const SUBMITTAL_TYPE_OPTIONS = [
+  "Product Data", "Shop Drawing", "Sample", "Certification",
+  "Warranty", "O&M Manual", "Lab Test", "Attic Stock", "Other",
+] as const
 interface SubcontractorRow { id: string; company_name: string; trade: string | null }
 interface SupplierRow { id: string; company_name: string; specialty: string | null }
 type FileModalStep = "project" | "coversheet" | "form"
@@ -682,7 +730,7 @@ export default function Home() {
   }, [projectDropdownOpen])
 
   // Module navigation
-  const [activeModule, setActiveModule] = useState<"library" | "submittals" | "rfis" | "changeorders" | "punch" | "daily" | "drawings" | "commitments" | "closeout">("submittals")
+  const [activeModule, setActiveModule] = useState<"library" | "submittals" | "rfis" | "changeorders" | "punch" | "daily" | "drawings" | "commitments" | "closeout" | "specbooks">("submittals")
   const [globalProjectId, setGlobalProjectId] = useState<string>("")
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
   // Sync submittal project filter with global project selection
@@ -831,6 +879,24 @@ export default function Home() {
   const [cmtFile, setCmtFile]                         = useState<File | null>(null)
   const [cmtSaving, setCmtSaving]                     = useState(false)
   const [cmtError, setCmtError]                       = useState<string | null>(null)
+
+  // Spec Books (thin document repository)
+  const [specDocs, setSpecDocs]                       = useState<SpecBookDoc[]>([])
+  const [specDocsLoading, setSpecDocsLoading]         = useState(false)
+  const [showSpecUpload, setShowSpecUpload]           = useState(false)
+  const [specUploadFile, setSpecUploadFile]           = useState<File | null>(null)
+  const [specUploadSaving, setSpecUploadSaving]       = useState(false)
+  const [specUploadError, setSpecUploadError]         = useState<string | null>(null)
+  const [specParsingId, setSpecParsingId]             = useState<string | null>(null)
+  const [specParseProgress, setSpecParseProgress]     = useState(0)
+  // Pending Review — staged submittals awaiting commit (lives in Submittals module)
+  const [submittalsView, setSubmittalsView]           = useState<"log" | "pending">("log")
+  const [pendingStaged, setPendingStaged]             = useState<StagedSubmittal[]>([])
+  const [pendingSections, setPendingSections]         = useState<SpecSectionRow[]>([])
+  const [pendingDocuments, setPendingDocuments]       = useState<PendingDoc[]>([])
+  const [pendingLoading, setPendingLoading]           = useState(false)
+  const [specMode, setSpecMode]                       = useState<"consolidated" | "detailed">("consolidated")
+  const [pendingCommitting, setPendingCommitting]     = useState(false)
 
   // Closeout
   const [closeoutItems, setCloseoutItems]         = useState<CloseoutItem[]>([])
@@ -1253,6 +1319,143 @@ export default function Home() {
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { if (activeModule === "commitments") loadCommitments() }, [activeModule, globalProjectId])
+
+  // ── Spec Books (document repository) ─────────────────────────────────────────
+  function loadSpecDocs(pid = globalProjectId) {
+    if (!pid) { setSpecDocs([]); return }
+    setSpecDocsLoading(true)
+    fetch(`/api/spec-books?project_id=${encodeURIComponent(pid)}`)
+      .then(r => r.json())
+      .then(d => setSpecDocs(d.documents ?? []))
+      .catch(() => setSpecDocs([]))
+      .finally(() => setSpecDocsLoading(false))
+  }
+
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { if (activeModule === "specbooks") loadSpecDocs() }, [activeModule, globalProjectId])
+
+  async function uploadSpecBook(e: React.FormEvent) {
+    e.preventDefault()
+    if (!specUploadFile || !globalProjectId) return
+    setSpecUploadSaving(true)
+    setSpecUploadError(null)
+    try {
+      const fd = new FormData()
+      fd.append("file", specUploadFile)
+      fd.append("project_id", globalProjectId)
+      const res = await fetch("/api/spec-books/upload", { method: "POST", body: fd })
+      const d = await res.json()
+      if (!res.ok) throw new Error(d.error ?? "Upload failed")
+      setShowSpecUpload(false)
+      setSpecUploadFile(null)
+      loadSpecDocs()
+      runSpecParse(d.document.id)
+    } catch (err) {
+      setSpecUploadError(err instanceof Error ? err.message : "Upload failed")
+    } finally {
+      setSpecUploadSaving(false)
+    }
+  }
+
+  async function runSpecParse(docId: string) {
+    setSpecParsingId(docId)
+    setSpecParseProgress(0)
+    let polling = true
+    const poll = async () => {
+      while (polling) {
+        await new Promise(r => setTimeout(r, 2000))
+        if (!polling) break
+        try {
+          const r = await fetch(`/api/spec-books/${docId}`)
+          if (r.ok) {
+            const d = await r.json()
+            setSpecParseProgress(d.document?.parse_progress ?? 0)
+          }
+        } catch { /* keep polling */ }
+      }
+    }
+    poll()
+    let ok = false
+    try {
+      const res = await fetch(`/api/spec-books/${docId}/parse`, { method: "POST" })
+      ok = res.ok
+    } catch { /* error surfaced via doc.parse_status */ }
+    polling = false
+    setSpecParsingId(null)
+    loadSpecDocs()
+    if (ok) {
+      // Parse done — land the user on the staged review in the Submittals module.
+      setActiveModule("submittals")
+      setSubmittalsView("pending")
+      loadPending()
+    }
+  }
+
+  async function deleteSpecDoc(docId: string) {
+    if (!confirm("Delete this spec book and all its extracted sections and staged rows?")) return
+    await fetch(`/api/spec-books/${docId}`, { method: "DELETE" })
+    loadSpecDocs()
+  }
+
+  // ── Pending Review (staged submittals) ───────────────────────────────────────
+  function loadPending(pid = globalProjectId) {
+    if (!pid) { setPendingStaged([]); setPendingSections([]); setPendingDocuments([]); return }
+    setPendingLoading(true)
+    fetch(`/api/staged-submittals?project_id=${encodeURIComponent(pid)}`)
+      .then(r => r.json())
+      .then(d => {
+        setPendingStaged(d.staged ?? [])
+        setPendingSections(d.sections ?? [])
+        setPendingDocuments(d.documents ?? [])
+      })
+      .catch(() => { setPendingStaged([]); setPendingSections([]); setPendingDocuments([]) })
+      .finally(() => setPendingLoading(false))
+  }
+
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { if (activeModule === "submittals") loadPending() }, [activeModule, globalProjectId])
+
+  function updateStagedLocal(ids: string[], updates: Partial<StagedSubmittal>) {
+    const set = new Set(ids)
+    setPendingStaged(prev => prev.map(s => set.has(s.id) ? { ...s, ...updates } : s))
+  }
+
+  function patchStaged(ids: string[], updates: Partial<StagedSubmittal>) {
+    updateStagedLocal(ids, updates)
+    for (const id of ids) {
+      fetch(`/api/staged-submittals/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(updates),
+      }).catch(() => { /* optimistic — server reconciles on next load */ })
+    }
+  }
+
+  async function commitStaged() {
+    if (!globalProjectId) return
+    setPendingCommitting(true)
+    try {
+      const res = await fetch("/api/staged-submittals/commit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ project_id: globalProjectId, mode: specMode }),
+      })
+      const d = await res.json()
+      if (!res.ok) throw new Error(d.error ?? "Commit failed")
+      let msg = `Added ${d.committed} submittal${d.committed === 1 ? "" : "s"} to the log.`
+      if (d.skippedMissingSection > 0) {
+        msg += ` ${d.skippedMissingSection} row${d.skippedMissingSection === 1 ? "" : "s"} skipped — their spec section was re-parsed during review.`
+      }
+      alert(msg)
+      setSubmittalsView("log")
+      loadPending()
+      loadSubmittals(globalProjectId)
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Commit failed")
+    } finally {
+      setPendingCommitting(false)
+    }
+  }
 
   function loadCommitmentPartyOptions(type: "subcontract" | "purchase_order") {
     if (type === "subcontract") {
@@ -2215,6 +2418,7 @@ export default function Home() {
             { id: "punch",         label: "Punch List",     icon: <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" /></svg> },
             { id: "daily",         label: "Daily Reports",  icon: <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg> },
             { id: "drawings",      label: "Drawing Log",    icon: <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7" /></svg> },
+            { id: "specbooks",     label: "Spec Books",     icon: <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" /></svg> },
             { id: "commitments",   label: "Commitments",    icon: <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg> },
             { id: "closeout",      label: "Closeout",       icon: <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z" /></svg> },
           ] as { id: typeof activeModule; label: string; icon: React.ReactNode }[]).map(item => (
@@ -2261,7 +2465,7 @@ export default function Home() {
           {/* Mobile nav bar */}
           <div className="flex sm:hidden items-center justify-between px-4 py-2.5">
             <span className="text-[14px] font-semibold text-white">
-              {{ library: "Library", submittals: "Submittal Log", rfis: "RFIs", changeorders: "Change Orders", punch: "Punch List", daily: "Daily Reports", drawings: "Drawing Log", commitments: "Commitments", closeout: "Closeout" }[activeModule]}
+              {{ library: "Library", submittals: "Submittal Log", rfis: "RFIs", changeorders: "Change Orders", punch: "Punch List", daily: "Daily Reports", drawings: "Drawing Log", specbooks: "Spec Books", commitments: "Commitments", closeout: "Closeout" }[activeModule]}
             </span>
             <button
               onClick={() => setMobileNavOpen(prev => !prev)}
@@ -2277,8 +2481,8 @@ export default function Home() {
           {/* Mobile dropdown menu */}
           {mobileNavOpen && (
             <div className="sm:hidden absolute top-full left-0 right-0 bg-[#0A1628] border-b border-white/[0.12] z-50 shadow-lg">
-              {(["library","submittals","rfis","changeorders","punch","daily","drawings","commitments","closeout"] as const).map(mod => {
-                const labels: Record<string, string> = { library: "Library", submittals: "Submittal Log", rfis: "RFIs", changeorders: "Change Orders", punch: "Punch List", daily: "Daily Reports", drawings: "Drawing Log", commitments: "Commitments", closeout: "Closeout" }
+              {(["library","submittals","rfis","changeorders","punch","daily","drawings","specbooks","commitments","closeout"] as const).map(mod => {
+                const labels: Record<string, string> = { library: "Library", submittals: "Submittal Log", rfis: "RFIs", changeorders: "Change Orders", punch: "Punch List", daily: "Daily Reports", drawings: "Drawing Log", specbooks: "Spec Books", commitments: "Commitments", closeout: "Closeout" }
                 const isActive = activeModule === mod
                 return (
                   <button key={mod}
@@ -2339,12 +2543,23 @@ export default function Home() {
         {activeModule === "submittals" && (
         <div className="flex-shrink-0 border-b border-[#E2E8F0] bg-white">
           <div className="flex items-center justify-between px-4 py-2.5 gap-2 min-w-0">
-            <p className="text-[13px] font-semibold text-[#0F172A] truncate min-w-0">
-              {isSearchMode
-                ? <><span className="text-[#64748B] font-normal">Search results</span>{searchResults !== null && <span className="text-[#64748B] font-normal ml-1">({searchResults.length})</span>}</>
-                : <>Submittal Log <span className="text-[#64748B] font-normal ml-1">({logSubmittals.length})</span></>
-              }
-            </p>
+            <div className="flex items-center gap-2 min-w-0">
+              <div className="flex rounded-md border border-[#E2E8F0] overflow-hidden flex-shrink-0">
+                {(["log", "pending"] as const).map(v => (
+                  <button key={v} onClick={() => setSubmittalsView(v)}
+                    className={`h-7 px-3 text-[12px] font-medium transition-colors ${submittalsView === v ? "bg-[#7B9BB5] text-white" : "bg-white text-[#64748B] hover:bg-[#F8F9FA]"}`}>
+                    {v === "log" ? "Submittal Log" : `Pending Review${pendingStaged.length > 0 ? ` (${pendingStaged.length})` : ""}`}
+                  </button>
+                ))}
+              </div>
+              <p className="text-[12px] text-[#64748B] truncate hidden sm:block">
+                {submittalsView === "log"
+                  ? (isSearchMode
+                      ? `Search results${searchResults !== null ? ` (${searchResults.length})` : ""}`
+                      : `${logSubmittals.length} submittal${logSubmittals.length === 1 ? "" : "s"}`)
+                  : "Staged from spec book — review and commit"}
+              </p>
+            </div>
             <button
               onClick={() => setActiveModule("library")}
               className="h-8 px-3 rounded-md border border-[#E2E8F0] text-[12px] text-[#7B9BB5] hover:bg-[#0F172A]/[0.04] transition-colors flex items-center gap-1.5 whitespace-nowrap flex-shrink-0"
@@ -2352,6 +2567,7 @@ export default function Home() {
               <PlusIcon /> Upload to Library
             </button>
           </div>
+          {submittalsView === "log" && (<>
           <form onSubmit={handleSearch} className="flex items-center gap-2 px-4 pb-2.5">
             <div className="relative flex-1">
               <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[#94A3B8] pointer-events-none"><SearchIcon /></span>
@@ -2379,6 +2595,7 @@ export default function Home() {
           {searchError && (
             <p className="px-4 pb-2 text-[12px] text-red-500">{searchError}</p>
           )}
+          </>)}
         </div>
         )}
 
@@ -2445,6 +2662,21 @@ export default function Home() {
               className="h-8 px-4 rounded-md bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors flex items-center gap-1.5 flex-shrink-0 whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <PlusIcon /> New Commitment
+            </button>
+          </div>
+        )}
+
+        {/* Spec Books action bar */}
+        {activeModule === "specbooks" && (
+          <div className="flex-shrink-0 border-b border-[#E2E8F0] bg-white flex items-center justify-between px-4 py-2.5 gap-2 min-w-0">
+            <p className="text-[13px] font-semibold text-[#0F172A] truncate min-w-0">Spec Books <span className="text-[#64748B] font-normal ml-1">({specDocs.length})</span></p>
+            <button
+              onClick={() => { setSpecUploadFile(null); setSpecUploadError(null); setShowSpecUpload(true) }}
+              disabled={!globalProjectId}
+              title={globalProjectId ? "" : "Select a project first"}
+              className="h-8 px-4 rounded-md bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors flex items-center gap-1.5 flex-shrink-0 whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <PlusIcon /> Upload Spec Book
             </button>
           </div>
         )}
@@ -2597,7 +2829,163 @@ export default function Home() {
 
           {/* Submittal log */}
           {activeModule === "submittals" && (<>
-          {searching ? (
+          {submittalsView === "pending" ? (
+            !globalProjectId ? (
+              <div className="flex flex-col items-center justify-center h-full py-24 text-center">
+                <p className="text-[15px] font-bold text-[#0F172A]">Select a project to review staged submittals</p>
+                <p className="text-[13px] text-[#64748B] mt-1.5">Use the Project filter above to choose a project.</p>
+              </div>
+            ) : pendingLoading ? (
+              <div className="flex items-center justify-center h-40 gap-2 text-[13px] text-[#64748B]">
+                <SpinnerIcon className="h-4 w-4" /> Loading staged submittals…
+              </div>
+            ) : pendingStaged.length === 0 ? (() => {
+              // Surface the most recent parse's telemetry so an empty Pending
+              // Review explains itself instead of looking broken.
+              const summary = pendingDocuments.find(d => d.parse_status === "parsed" && d.parse_summary)?.parse_summary ?? null
+              return (
+                <div className="flex flex-col items-center justify-center h-full py-24 text-center">
+                  <div className="w-14 h-14 rounded-2xl bg-[#7B9BB5]/10 border border-[#7B9BB5]/20 flex items-center justify-center mb-4">
+                    <svg className="w-7 h-7 text-[#7B9BB5]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+                  </div>
+                  <p className="text-[15px] font-bold text-[#0F172A]">Nothing pending review</p>
+                  {summary ? (
+                    <div className="mt-2 max-w-md space-y-2">
+                      <p className="text-[13px] text-[#64748B]">
+                        Parsing completed: {summary.sectionsScoped} section{summary.sectionsScoped === 1 ? "" : "s"} scoped, {summary.sectionsWithSubmittals} contained SUBMITTALS articles.
+                      </p>
+                      {summary.sectionsFound < summary.sectionsScoped && (
+                        <p className="text-[13px] text-[#64748B]">
+                          This likely means the section bodies are in another volume of the spec book. Upload additional volumes from the Spec Books module.
+                        </p>
+                      )}
+                    </div>
+                  ) : (
+                    <p className="text-[13px] text-[#64748B] mt-1.5">Upload a spec book to auto-extract submittals for review.</p>
+                  )}
+                  <button onClick={() => setActiveModule("specbooks")} className="mt-5 h-9 px-5 rounded-lg bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors inline-flex items-center gap-2">
+                    Go to Spec Books
+                  </button>
+                </div>
+              )
+            })() : (() => {
+              const typeLabels: Record<string, string> = {
+                "Product Data": "Product Data", "Shop Drawing": "Shop Drawings", "Sample": "Samples",
+                "Certification": "Certifications & Qualifications", "Warranty": "Warranty",
+                "O&M Manual": "O&M / Maintenance Data", "Lab Test": "Test Reports",
+                "Attic Stock": "Attic Stock", "Other": "Other Submittals",
+              }
+              const sectionMap = new Map(pendingSections.map(s => [s.id, s]))
+              const staged = pendingStaged
+              const sectionIds = [...new Set(staged.map(s => s.spec_section_id))]
+                .sort((a, b) => (sectionMap.get(a)?.spec_number ?? "").localeCompare(sectionMap.get(b)?.spec_number ?? ""))
+              let commitCount = 0
+              if (specMode === "detailed") {
+                commitCount = staged.filter(s => s.is_selected).length
+              } else {
+                const g = new Set<string>()
+                for (const s of staged) if (s.is_selected) g.add(`${s.spec_section_id}|${s.submittal_type}`)
+                commitCount = g.size
+              }
+              return (
+                <div className="flex flex-col min-h-full">
+                  {/* Pending Review header */}
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 px-4 py-3 border-b border-[#E2E8F0] flex-shrink-0">
+                    <p className="text-[13px] font-semibold text-[#0F172A]">Pending Review <span className="text-[#64748B] font-normal ml-1">({staged.length} staged)</span></p>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <div className="flex rounded-md border border-[#E2E8F0] overflow-hidden">
+                        {(["consolidated", "detailed"] as const).map(m => (
+                          <button key={m} onClick={() => setSpecMode(m)}
+                            className={`h-8 px-3 text-[12px] font-medium capitalize transition-colors ${specMode === m ? "bg-[#7B9BB5] text-white" : "bg-white text-[#64748B] hover:bg-[#F8F9FA]"}`}>
+                            {m}
+                          </button>
+                        ))}
+                      </div>
+                      <button onClick={commitStaged} disabled={pendingCommitting || commitCount === 0}
+                        className="h-8 px-4 rounded-md bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed">
+                        {pendingCommitting && <SpinnerIcon className="h-3 w-3" />}
+                        {pendingCommitting ? "Adding…" : `Add ${commitCount} to Submittal Log`}
+                      </button>
+                    </div>
+                  </div>
+                  <div className="px-4 py-4 space-y-4">
+                    {sectionIds.map(secId => {
+                      const sec  = sectionMap.get(secId)
+                      const rows = staged.filter(s => s.spec_section_id === secId)
+                      return (
+                        <div key={secId} className="rounded-xl border border-[#E2E8F0] overflow-clip bg-white">
+                          <div className="bg-[#F8F9FA] border-b border-[#E2E8F0] px-4 py-2">
+                            <p className="text-[12px] font-bold text-[#0F172A]">{sec?.spec_number} <span className="font-medium text-[#64748B]">— {sec?.spec_title}</span></p>
+                          </div>
+                          <table className="w-full text-[13px] border-collapse">
+                            <tbody>
+                              {specMode === "detailed" ? rows.map(r => (
+                                <tr key={r.id} className="border-b border-[#E2E8F0]/60 last:border-0 hover:bg-[#F8F9FA] transition-colors">
+                                  <td className="px-3 py-2 w-8 align-top">
+                                    <input type="checkbox" checked={r.is_selected}
+                                      onChange={() => patchStaged([r.id], { is_selected: !r.is_selected })}
+                                      className="accent-[#7B9BB5] mt-0.5" />
+                                  </td>
+                                  <td className="px-2 py-2 w-8 align-top text-[12px] font-semibold text-[#64748B]">{r.letter ?? ""}</td>
+                                  <td className="px-2 py-2 w-56 align-top">
+                                    <input type="text" value={r.project_item_name}
+                                      onChange={e => updateStagedLocal([r.id], { project_item_name: e.target.value })}
+                                      onBlur={e => patchStaged([r.id], { project_item_name: e.target.value })}
+                                      className="w-full h-7 px-2 rounded border border-[#E2E8F0] text-[12px] text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40" />
+                                  </td>
+                                  <td className="px-2 py-2 w-40 align-top">
+                                    <select value={r.submittal_type}
+                                      onChange={e => patchStaged([r.id], { submittal_type: e.target.value })}
+                                      className="w-full h-7 px-1 rounded border border-[#E2E8F0] text-[12px] text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40">
+                                      {SUBMITTAL_TYPE_OPTIONS.map(t => <option key={t} value={t}>{t}</option>)}
+                                    </select>
+                                  </td>
+                                  <td className="px-2 py-2 align-top text-[12px] text-[#64748B]">{r.description}</td>
+                                </tr>
+                              )) : SUBMITTAL_TYPE_OPTIONS.flatMap(type => {
+                                const group = rows.filter(r => r.submittal_type === type)
+                                if (group.length === 0) return []
+                                const ids = group.map(g => g.id)
+                                const allSelected = group.every(g => g.is_selected)
+                                return [(
+                                  <tr key={`${secId}-${type}`} className="border-b border-[#E2E8F0]/60 last:border-0 hover:bg-[#F8F9FA] transition-colors">
+                                    <td className="px-3 py-2 w-8 align-top">
+                                      <input type="checkbox" checked={allSelected}
+                                        onChange={() => patchStaged(ids, { is_selected: !allSelected })}
+                                        className="accent-[#7B9BB5] mt-0.5" />
+                                    </td>
+                                    <td className="px-2 py-2 w-64 align-top">
+                                      <input type="text" value={group[0].project_item_name}
+                                        onChange={e => updateStagedLocal(ids, { project_item_name: e.target.value })}
+                                        onBlur={e => patchStaged(ids, { project_item_name: e.target.value })}
+                                        className="w-full h-7 px-2 rounded border border-[#E2E8F0] text-[12px] text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40" />
+                                    </td>
+                                    <td className="px-2 py-2 align-top text-[12px] text-[#0F172A] font-medium">{typeLabels[type] ?? type}</td>
+                                    <td className="px-2 py-2 w-20 align-top text-[11px] text-[#64748B]">{group.length} item{group.length === 1 ? "" : "s"}</td>
+                                  </tr>
+                                )]
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              )
+            })()
+          ) : appProjects.length === 0 ? (
+            <div className="flex flex-col items-center justify-center h-full py-24 text-center">
+              <div className="w-14 h-14 rounded-2xl bg-[#7B9BB5]/10 border border-[#7B9BB5]/20 flex items-center justify-center mb-4">
+                <svg className="w-7 h-7 text-[#7B9BB5]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" /></svg>
+              </div>
+              <p className="text-[15px] font-bold text-[#0F172A]">Welcome to TuttoHQ</p>
+              <p className="text-[13px] text-[#64748B] mt-1.5 max-w-sm">Create your first project to get started. Upload its spec book during setup and TuttoHQ builds the submittal log for you.</p>
+              <a href="/settings?tab=projects" className="mt-5 h-9 px-5 rounded-lg bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors inline-flex items-center gap-2">
+                Create your first project
+              </a>
+            </div>
+          ) : searching ? (
             <div className="flex items-center justify-center h-40 gap-2 text-[13px] text-[#64748B]">
               <SpinnerIcon className="h-4 w-4" /> Searching…
             </div>
@@ -2676,10 +3064,12 @@ export default function Home() {
                     <td className="px-4 py-2.5"><StatusBadge status={s.review_status ?? "Received"} /></td>
                     <td className="px-4 py-2.5">
                       <div className="flex items-center gap-1">
-                        <button
-                          onClick={() => window.open(`/api/download/${s.id}`, "_blank")}
-                          className="text-[11px] text-[#64748B] hover:text-[#0F172A] px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors"
-                        >Open</button>
+                        {s.storage_path && (
+                          <button
+                            onClick={() => window.open(`/api/download/${s.id}`, "_blank")}
+                            className="text-[11px] text-[#64748B] hover:text-[#0F172A] px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors"
+                          >Open</button>
+                        )}
                         <button
                           onClick={() => openEditModal(s)}
                           className="text-[11px] text-[#64748B] hover:text-[#0F172A] px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors"
@@ -2726,7 +3116,9 @@ export default function Home() {
                   <p className="text-[11px] text-[#64748B] mb-1">{s.section_name ?? s.csi_section ?? "—"} {s.division_name ? `· ${s.division_name}` : ""}</p>
                   <p className="text-[11px] text-[#64748B] mb-2">{fmtDate(s.received_at ?? s.created_at)}</p>
                   <div className="flex items-center gap-1 flex-wrap">
-                    <button onClick={() => window.open(`/api/download/${s.id}`, "_blank")} className="text-[11px] text-[#64748B] hover:text-[#0F172A] px-2 py-1 rounded border border-[#E2E8F0] bg-[#F8F9FA] transition-colors">Open</button>
+                    {s.storage_path && (
+                      <button onClick={() => window.open(`/api/download/${s.id}`, "_blank")} className="text-[11px] text-[#64748B] hover:text-[#0F172A] px-2 py-1 rounded border border-[#E2E8F0] bg-[#F8F9FA] transition-colors">Open</button>
+                    )}
                     <button onClick={() => openEditModal(s)} className="text-[11px] text-[#64748B] hover:text-[#0F172A] px-2 py-1 rounded border border-[#E2E8F0] bg-[#F8F9FA] transition-colors">Edit</button>
                     {s.project_id ? (
                       <button onClick={() => openEditCoverSheet(s)} className="text-[11px] text-[#7B9BB5] px-2 py-1 rounded border border-[#E2E8F0] bg-[#F8F9FA] transition-colors">Cover</button>
@@ -3276,6 +3668,99 @@ export default function Home() {
               </div>
             )
           })()}
+
+          {/* ── Spec Books module (thin document repository) ──────────────── */}
+          {activeModule === "specbooks" && (
+            !globalProjectId ? (
+              <div className="flex flex-col items-center justify-center h-full py-24 text-center">
+                <div className="w-14 h-14 rounded-2xl bg-[#7B9BB5]/10 border border-[#7B9BB5]/20 flex items-center justify-center mb-4">
+                  <svg className="w-7 h-7 text-[#7B9BB5]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" /></svg>
+                </div>
+                <p className="text-[15px] font-bold text-[#0F172A]">Select a project to manage spec books</p>
+                <p className="text-[13px] text-[#64748B] mt-1.5">Use the Project filter above to choose a project.</p>
+              </div>
+            ) : specDocsLoading ? (
+              <div className="flex items-center justify-center h-40 gap-2 text-[13px] text-[#64748B]">
+                <SpinnerIcon className="h-4 w-4" /> Loading…
+              </div>
+            ) : specDocs.length === 0 ? (
+              <div className="flex flex-col items-center justify-center flex-1 py-24 text-center">
+                <div className="w-14 h-14 rounded-2xl bg-[#7B9BB5]/10 border border-[#7B9BB5]/20 flex items-center justify-center mb-4">
+                  <svg className="w-7 h-7 text-[#7B9BB5]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" /></svg>
+                </div>
+                <p className="text-[15px] font-bold text-[#0F172A]">No spec books yet</p>
+                <p className="text-[13px] text-[#64748B] mt-1.5">Upload a project spec book PDF. Extracted submittals appear in the Submittals module under Pending Review.</p>
+                <button onClick={() => { setSpecUploadFile(null); setSpecUploadError(null); setShowSpecUpload(true) }} className="mt-5 h-9 px-5 rounded-lg bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors inline-flex items-center gap-2">
+                  <PlusIcon /> Upload Spec Book
+                </button>
+              </div>
+            ) : (
+              <div className="mx-4 my-4 rounded-xl border border-[#E2E8F0] overflow-clip bg-white">
+                <table className="w-full text-[13px] border-collapse">
+                  <thead className="bg-[#F8F9FA]">
+                    <tr className="border-b border-[#E2E8F0]">
+                      <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest">File</th>
+                      <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-24">Pages</th>
+                      <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-56">Status</th>
+                      <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-48">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {specDocs.map(doc => {
+                      const isParsing = specParsingId === doc.id || doc.parse_status === "extracting" || doc.parse_status === "classifying"
+                      return (
+                        <tr key={doc.id} className="border-b border-[#E2E8F0]/60 last:border-0 hover:bg-[#F8F9FA] transition-colors">
+                          <td className="px-4 py-2.5 max-w-0">
+                            <p className="text-[#0F172A] font-medium truncate" title={doc.file_name}>{doc.file_name}</p>
+                            <p className="text-[11px] text-[#64748B]">{doc.file_size_bytes ? `${(doc.file_size_bytes / 1024 / 1024).toFixed(1)} MB · ` : ""}{fmtDateOnly(doc.uploaded_at)}</p>
+                          </td>
+                          <td className="px-4 py-2.5 text-[#64748B] text-[12px]">{doc.page_count ?? "—"}</td>
+                          <td className="px-4 py-2.5">
+                            {isParsing ? (
+                              <div className="flex items-center gap-2">
+                                <div className="h-1.5 w-24 rounded-full bg-[#E2E8F0] overflow-hidden">
+                                  <div className="h-full bg-[#7B9BB5] transition-all" style={{ width: `${specParsingId === doc.id ? specParseProgress : doc.parse_progress}%` }} />
+                                </div>
+                                <span className="text-[11px] text-[#64748B]">Parsing…</span>
+                              </div>
+                            ) : doc.parse_status === "parsed" ? (
+                              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-green-100 text-green-700">Parsed</span>
+                            ) : doc.parse_status === "failed" ? (
+                              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-red-100 text-red-700" title={doc.parse_error ?? ""}>Failed</span>
+                            ) : (
+                              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-[#E2E8F0] text-[#64748B]">Not parsed</span>
+                            )}
+                            {doc.parse_status === "failed" && doc.parse_error && (
+                              <p className="text-[11px] text-red-500 mt-1">{doc.parse_error}</p>
+                            )}
+                          </td>
+                          <td className="px-4 py-2.5">
+                            <div className="flex items-center gap-1">
+                              <button
+                                onClick={async () => {
+                                  const r = await fetch(`/api/spec-books/${doc.id}/file`)
+                                  const d = await r.json()
+                                  if (d.url) window.open(d.url, "_blank")
+                                }}
+                                className="text-[11px] font-semibold text-[#64748B] hover:text-[#0F172A] px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors">
+                                View PDF
+                              </button>
+                              {!isParsing && (
+                                <button onClick={() => runSpecParse(doc.id)} className="text-[11px] font-semibold text-[#7B9BB5] hover:text-[#5A7A94] px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors">
+                                  {doc.parse_status === "parsed" ? "Re-parse" : doc.parse_status === "failed" ? "Retry" : "Parse"}
+                                </button>
+                              )}
+                              <button onClick={() => deleteSpecDoc(doc.id)} className="text-[11px] text-red-400/60 hover:text-red-400 px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors">Del</button>
+                            </div>
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )
+          )}
 
           {/* ── Commitments module ────────────────────────────────────────── */}
           {activeModule === "commitments" && (
@@ -6258,6 +6743,53 @@ export default function Home() {
               <button type="button" onClick={() => { setViewCommitment(null); setViewCommitmentUrl(null) }}
                 className="h-8 px-4 rounded-md border border-[#E2E8F0] text-[13px] text-[#64748B] hover:bg-[#0F172A]/[0.04] transition-colors">Close</button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Upload Spec Book modal ────────────────────────────────────────── */}
+      {showSpecUpload && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4"
+          onClick={e => { if (e.target === e.currentTarget) setShowSpecUpload(false) }}>
+          <div className="bg-white rounded-xl border border-[#E2E8F0] shadow-2xl w-full sm:w-[480px] mx-4 sm:mx-0 flex flex-col max-h-[90vh]">
+            <div className="flex items-center justify-between px-6 pt-5 pb-4 border-b border-[#E2E8F0] flex-shrink-0">
+              <h2 className="text-[15px] font-bold text-[#0F172A]">Upload Spec Book</h2>
+              <button onClick={() => setShowSpecUpload(false)} className="text-[#64748B] hover:text-[#64748B] transition-colors">
+                <XIcon className="h-4 w-4" />
+              </button>
+            </div>
+            <form onSubmit={uploadSpecBook} className="flex flex-col min-h-0">
+              <div className="px-6 py-4 space-y-4 overflow-y-auto">
+                <p className="text-[12px] text-[#64748B]">
+                  Uploading to <span className="font-semibold text-[#0F172A]">{appProjects.find(p => p.id === globalProjectId)?.name ?? "this project"}</span>.
+                  The PDF is split into spec sections, SUBMITTALS articles are extracted and classified with AI, then staged for your review before anything reaches the submittal log.
+                </p>
+                <div>
+                  <label className={labelCls}>Spec Book PDF <span className="text-red-400">*</span></label>
+                  <input
+                    type="file"
+                    accept=".pdf,application/pdf"
+                    onChange={e => setSpecUploadFile(e.target.files?.[0] ?? null)}
+                    className="w-full text-[13px] text-[#64748B] file:mr-3 file:py-1 file:px-3 file:rounded file:border-0 file:text-[12px] file:bg-[#E2E8F0] file:text-[#0F172A] hover:file:bg-[#CBD5E1]"
+                  />
+                  {specUploadFile && (
+                    <p className="mt-1.5 text-[11px] text-[#64748B]">{specUploadFile.name} ({(specUploadFile.size / 1024 / 1024).toFixed(2)} MB)</p>
+                  )}
+                </div>
+                {specUploadError && (
+                  <div className="rounded-md bg-red-50 border border-red-200 px-3 py-2 text-[12px] text-red-600">{specUploadError}</div>
+                )}
+              </div>
+              <div className="flex justify-end gap-2 px-6 py-4 border-t border-[#E2E8F0] flex-shrink-0">
+                <button type="button" onClick={() => setShowSpecUpload(false)}
+                  className="h-8 px-4 rounded-md border border-[#E2E8F0] text-[13px] text-[#64748B] hover:bg-[#0F172A]/[0.04] transition-colors">Cancel</button>
+                <button type="submit" disabled={specUploadSaving || !specUploadFile}
+                  className="h-8 px-4 rounded-md bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors disabled:opacity-50 flex items-center gap-2">
+                  {specUploadSaving && <SpinnerIcon className="h-3 w-3" />}
+                  {specUploadSaving ? "Uploading…" : "Upload & parse"}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

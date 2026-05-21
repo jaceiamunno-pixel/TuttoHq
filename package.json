@@ -21,7 +21,8 @@
     "pdf-lib": "^1.17.1",
     "puppeteer-core": "^23.11.1",
     "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "react-dom": "^19.0.0",
+    "unpdf": "^1.6.2"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
