@@ -10,6 +10,29 @@ import { uploadFileToSignedUrl } from "@/lib/storage-upload"
 
 type Tab = "company" | "team" | "projects" | "subcontractors" | "suppliers" | "cms" | "gmail"
 
+interface Toc { sections: TocEntry[]; divisions: TocDivision[] }
+
+/**
+ * Merges the tables of contents of every spec book volume on a project into one
+ * section list (deduped by spec number) with recomputed division counts. A
+ * project routinely carries 2–4 volumes, each with its own TOC.
+ */
+function mergeTocs(tocs: Toc[]): Toc {
+  const sectionByNumber = new Map<string, TocEntry>()
+  const nameByCode = new Map<string, string>()
+  for (const t of tocs) {
+    for (const d of t.divisions) if (!nameByCode.has(d.code)) nameByCode.set(d.code, d.name)
+    for (const s of t.sections) if (!sectionByNumber.has(s.specNumber)) sectionByNumber.set(s.specNumber, s)
+  }
+  const sections = [...sectionByNumber.values()].sort((a, b) => a.specNumber.localeCompare(b.specNumber))
+  const counts = new Map<string, number>()
+  for (const s of sections) counts.set(s.divisionCode, (counts.get(s.divisionCode) ?? 0) + 1)
+  const divisions: TocDivision[] = [...counts.entries()]
+    .map(([code, sectionCount]) => ({ code, name: nameByCode.get(code) ?? `Division ${code}`, sectionCount }))
+    .sort((a, b) => a.code.localeCompare(b.code))
+  return { sections, divisions }
+}
+
 interface ConstructionManager {
   id: string; company_name: string; contact_name: string | null
   phone: string | null; email: string | null; address: string | null; notes: string | null; created_at: string
@@ -132,6 +155,8 @@ export default function SettingsPage() {
   const [scopeSections, setScopeSections]     = useState<Set<string>>(new Set())
   const [scopeSaving, setScopeSaving]         = useState(false)
   const [wizardScopeOnly, setWizardScopeOnly] = useState(false)   // set scope on an existing project
+  const [scopeChecking, setScopeChecking]     = useState(false)   // probing for an already-uploaded book
+  const [scopeExistingDocIds, setScopeExistingDocIds] = useState<string[]>([])
   const [wizardProjectName, setWizardProjectName] = useState("")
   const [scopedProjectIds, setScopedProjectIds]   = useState<Set<string>>(new Set())
 
@@ -458,11 +483,13 @@ export default function SettingsPage() {
     setScopeDivisions(new Set()); setScopeSections(new Set())
     setScopeSaving(false)
     setWizardScopeOnly(false); setWizardProjectName("")
+    setScopeChecking(false); setScopeExistingDocIds([])
   }
 
-  // Launch the wizard at the spec-book step for an existing project — used by
-  // the "Set scope" action on projects created without a spec book (e.g. CSV).
-  function openScopeWizard(p: Project) {
+  // Launch the wizard for an existing project's "Set scope" action. If the
+  // project already has spec books uploaded, scope is read straight from their
+  // tables of contents — the user is not asked to upload again.
+  async function openScopeWizard(p: Project) {
     resetWizard()
     setEditingProject(null)
     setProjectForm({ name: "", number: "", location: "", gc_name: "", architect: "" })
@@ -472,6 +499,43 @@ export default function SettingsPage() {
     setWizardScopeOnly(true)
     setWizardStep(1)
     setShowProjectForm(true)
+    setScopeChecking(true)
+    await loadScopeFromExistingBooks(p.id)
+    setScopeChecking(false)
+  }
+
+  // Reads scope from spec books already uploaded to the project. Advances to
+  // the division step and returns true on success; returns false (leaving the
+  // wizard on the upload step) when there is no readable book to reuse.
+  async function loadScopeFromExistingBooks(projectId: string): Promise<boolean> {
+    try {
+      const r = await fetch(`/api/spec-books?project_id=${encodeURIComponent(projectId)}`)
+      if (!r.ok) return false
+      const d = await r.json()
+      const docs: { id: string }[] = d.documents ?? []
+      if (docs.length === 0) return false
+
+      // Parse every volume's TOC in parallel, then merge.
+      const results = await Promise.all(docs.map(async doc => {
+        try {
+          const tocRes = await fetch(`/api/spec-books/${doc.id}/toc`, { method: "POST" })
+          if (!tocRes.ok) return null
+          const tocData = await tocRes.json()
+          return { sections: tocData.sections ?? [], divisions: tocData.divisions ?? [] } as Toc
+        } catch { return null }
+      }))
+      const merged = mergeTocs(results.filter((t): t is Toc => t !== null))
+      if (merged.sections.length === 0) return false
+
+      setScopeExistingDocIds(docs.map(doc => doc.id))
+      setTocSections(merged.sections)
+      setTocDivisions(merged.divisions)
+      setScopeDivisions(new Set(merged.divisions.filter(dv => isDefaultInScopeDivision(dv.code)).map(dv => dv.code)))
+      setWizardStep(2)
+      return true
+    } catch {
+      return false
+    }
   }
 
   function cancelProjectForm() {
@@ -617,9 +681,12 @@ export default function SettingsPage() {
       }
       // Fire spec-book ingestion in the background — intentionally not awaited.
       // If it fails the project still has valid scope; the user can retry from
-      // the Spec Books module.
-      if (specBookDocId) {
-        fetch(`/api/spec-books/${specBookDocId}/parse`, { method: "POST" }).catch(() => {})
+      // the Spec Books module. Re-parsing every volume applies the new scope.
+      const parseIds = scopeExistingDocIds.length > 0
+        ? scopeExistingDocIds
+        : specBookDocId ? [specBookDocId] : []
+      for (const id of parseIds) {
+        fetch(`/api/spec-books/${id}/parse`, { method: "POST" }).catch(() => {})
       }
       flashProject("Project scope saved — spec book is parsing in the background")
       loadScopeStatus()
@@ -1497,8 +1564,19 @@ export default function SettingsPage() {
                   </form>
                   )}
 
-                  {/* Spec book upload — scope-only entry point, or new-project spec retry */}
-                  {!editingProject && wizardStep === 1 && !!wizardProjectId && (
+                  {/* Probing for an already-uploaded spec book */}
+                  {!editingProject && wizardStep === 1 && !!wizardProjectId && scopeChecking && (
+                    <div className="flex items-center gap-2 py-6 text-[13px] text-[#64748B]">
+                      <svg className="h-4 w-4 animate-spin text-[#7B9BB5]" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                      </svg>
+                      Checking for an uploaded spec book…
+                    </div>
+                  )}
+
+                  {/* Spec book upload — scope-only fallback when no book is on file, or new-project spec retry */}
+                  {!editingProject && wizardStep === 1 && !!wizardProjectId && !scopeChecking && (
                     <div className="space-y-3">
                       <p className="text-[12px] text-[#64748B]">
                         Upload the project spec book to set scope from its table of contents. Spec Book Ingestion will only process the sections you own. You can skip this and set scope later.
