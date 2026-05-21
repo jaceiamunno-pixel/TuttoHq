@@ -1,9 +1,10 @@
 ﻿"use client"
 
-import { useState, useEffect, useRef } from "react"
+import { useState, useEffect, useRef, Fragment } from "react"
 import Link from "next/link"
 import Papa from "papaparse"
 import { DivisionChecklist, SectionAccordion, isDefaultInScopeDivision } from "@/components/scope-selection"
+import ProjectSpecBooks from "@/components/project-spec-books"
 import type { TocEntry, TocDivision } from "@/lib/scope-types"
 import { uploadFileToSignedUrl } from "@/lib/storage-upload"
 
@@ -113,6 +114,9 @@ export default function SettingsPage() {
   const [projectForm, setProjectForm]   = useState({ name: "", number: "", location: "", gc_name: "", architect: "" })
   const [savingProject, setSavingProject] = useState(false)
   const [projectMessage, setProjectMessage] = useState<{ text: string; ok: boolean } | null>(null)
+  // Spec book management — inline expandable panel per project row.
+  const [expandedSpecBooks, setExpandedSpecBooks] = useState<string | null>(null)
+  const [specBookCounts, setSpecBookCounts]       = useState<Record<string, number>>({})
 
   // Spec-book scope wizard (new-project flow only)
   const [wizardStep, setWizardStep]           = useState<1 | 2 | 3>(1)
@@ -1718,8 +1722,12 @@ export default function SettingsPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {projects.map((p, i) => (
-                      <tr key={p.id} className={`${i < projects.length - 1 ? "border-b border-[#E2E8F0]" : ""} hover:bg-[#F4F5F7]/[0.03] transition-colors group`}>
+                    {projects.map((p, i) => {
+                      const expanded = expandedSpecBooks === p.id
+                      const sbCount  = specBookCounts[p.id]
+                      return (
+                      <Fragment key={p.id}>
+                      <tr className={`${i < projects.length - 1 && !expanded ? "border-b border-[#E2E8F0]" : ""} hover:bg-[#F4F5F7]/[0.03] transition-colors group`}>
                         <td className="px-5 py-3 text-[13px] font-medium text-[#0F172A]">
                           <div className="flex items-center gap-2">
                             <span>{p.name}</span>
@@ -1733,6 +1741,15 @@ export default function SettingsPage() {
                         <td className="px-3 py-3 text-[13px] text-[#64748B]">{p.gc_name ?? <span className="text-[#64748B]">—</span>}</td>
                         <td className="px-3 py-3">
                           <div className="flex items-center gap-1.5 justify-end">
+                            <button
+                              onClick={() => setExpandedSpecBooks(expanded ? null : p.id)}
+                              className={`text-[11px] font-semibold px-2 py-1 rounded hover:bg-[#F4F5F7]/[0.08] transition-colors whitespace-nowrap flex items-center gap-1 ${expanded ? "text-[#0F172A]" : "text-[#64748B] hover:text-[#0F172A]"}`}
+                            >
+                              <svg className={`h-3 w-3 transition-transform ${expanded ? "rotate-90" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                              </svg>
+                              Spec books{sbCount != null ? ` (${sbCount})` : ""}
+                            </button>
                             {!scopedProjectIds.has(p.id) && (
                               <button
                                 onClick={() => openScopeWizard(p)}
@@ -1760,7 +1777,20 @@ export default function SettingsPage() {
                           </div>
                         </td>
                       </tr>
-                    ))}
+                      {expanded && (
+                        <tr>
+                          <td colSpan={5} className="p-0">
+                            <ProjectSpecBooks
+                              projectId={p.id}
+                              projectName={p.name}
+                              onCountChange={n => setSpecBookCounts(c => ({ ...c, [p.id]: n }))}
+                            />
+                          </td>
+                        </tr>
+                      )}
+                      </Fragment>
+                      )
+                    })}
                   </tbody>
                 </table>
               )}

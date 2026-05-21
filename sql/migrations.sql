@@ -638,3 +638,20 @@ CREATE POLICY "project_scope_sections: company select" ON project_scope_sections
 CREATE POLICY "project_scope_sections: company insert" ON project_scope_sections FOR INSERT TO authenticated WITH CHECK (company_id = get_my_company_id());
 CREATE POLICY "project_scope_sections: company update" ON project_scope_sections FOR UPDATE TO authenticated USING     (company_id = get_my_company_id()) WITH CHECK (company_id = get_my_company_id());
 CREATE POLICY "project_scope_sections: company delete" ON project_scope_sections FOR DELETE TO authenticated USING     (company_id = get_my_company_id());
+
+-- =============================================================================
+-- 2026-05-21 — submittals.spec_section_id FK: ON DELETE SET NULL
+-- -----------------------------------------------------------------------------
+-- The column above (added ~line 588) had no ON DELETE clause, so it defaulted
+-- to NO ACTION: deleting a spec_sections row would be blocked while any
+-- submittal still referenced it. Re-parsing a spec book deletes and recreates
+-- spec_sections, so the link must null out instead of blocking. This was fixed
+-- directly in production; this block brings the migration file in sync.
+-- Idempotent — safe to re-run.
+-- =============================================================================
+ALTER TABLE submittals
+  DROP CONSTRAINT IF EXISTS submittals_spec_section_id_fkey;
+ALTER TABLE submittals
+  ADD CONSTRAINT submittals_spec_section_id_fkey
+  FOREIGN KEY (spec_section_id) REFERENCES spec_sections(id)
+  ON DELETE SET NULL;

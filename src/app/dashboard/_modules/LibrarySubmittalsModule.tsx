@@ -17,8 +17,8 @@ import { Combobox, inputCls, labelCls } from "../_shared/ui"
 // Library + Submittals module — extracted from dashboard/page.tsx (Step 9, final).
 // Library and Submittals share the upload/batch/cover/transmittal machinery and
 // Pending Review, so they live in one module that switches on the activeModule
-// prop. submittalsView is owned by the shell (it must survive this module
-// unmounting and feeds the Spec Books parse handoff); navigation uses onNavigate.
+// prop. submittalsView is owned by the shell so it survives this module
+// unmounting (Library ↔ Submittals switch); navigation uses onNavigate.
 
 export default function LibrarySubmittalsModule({ activeModule, globalProjectId, appProjects, teamMembers, userEmail, submittalsView, setSubmittalsView, onNavigate }: {
   activeModule: string
@@ -28,7 +28,7 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
   userEmail: string | null
   submittalsView: "log" | "pending"
   setSubmittalsView: (v: "log" | "pending") => void
-  onNavigate: (module: "library" | "submittals" | "specbooks") => void
+  onNavigate: (module: "library" | "submittals") => void
 }) {
   // Tree state
   const [divisions, setDivisions]     = useState<Division[]>([])
@@ -957,16 +957,16 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                       </p>
                       {summary.sectionsFound < summary.sectionsScoped && (
                         <p className="text-[13px] text-[#64748B]">
-                          This likely means the section bodies are in another volume of the spec book. Upload additional volumes from the Spec Books module.
+                          This likely means the section bodies are in another volume of the spec book. Upload additional volumes from Settings → Projects.
                         </p>
                       )}
                     </div>
                   ) : (
-                    <p className="text-[13px] text-[#64748B] mt-1.5">Upload a spec book to auto-extract submittals for review.</p>
+                    <p className="text-[13px] text-[#64748B] mt-1.5">Upload a spec book from Settings → Projects to auto-extract submittals for review.</p>
                   )}
-                  <button onClick={() => onNavigate("specbooks")} className="mt-5 h-9 px-5 rounded-lg bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors inline-flex items-center gap-2">
-                    Go to Spec Books
-                  </button>
+                  <a href="/settings?tab=projects" className="mt-5 h-9 px-5 rounded-lg bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors inline-flex items-center gap-2">
+                    Manage spec books
+                  </a>
                 </div>
               )
             })() : (() => {

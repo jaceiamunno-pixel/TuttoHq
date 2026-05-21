@@ -120,6 +120,7 @@ export interface SpecBookDoc {
   parse_status: "pending" | "extracting" | "classifying" | "parsed" | "failed"
   parse_progress: number
   parse_error: string | null
+  parse_summary: ParseSummary | null
 }
 export interface SpecSectionRow {
   id: string

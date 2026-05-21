@@ -65,6 +65,23 @@ export function Combobox({ value, onChange, options, placeholder, autoFocus }: {
   )
 }
 
+// Full-area empty state shown by the shell when a project-scoped module is
+// opened with no project selected. Library is the only cross-project module,
+// so every other module routes through this instead of "All Projects" data.
+export function SelectProjectEmptyState({ label }: { label: string }) {
+  return (
+    <div className="flex-1 flex flex-col items-center justify-center min-h-0 py-24 text-center">
+      <div className="w-14 h-14 rounded-2xl bg-[#7B9BB5]/10 border border-[#7B9BB5]/20 flex items-center justify-center mb-4">
+        <svg className="w-7 h-7 text-[#7B9BB5]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+        </svg>
+      </div>
+      <p className="text-[15px] font-bold text-[#0F172A]">Select a project to view {label}</p>
+      <p className="text-[13px] text-[#64748B] mt-1.5">Choose a project from the selector in the sidebar.</p>
+    </div>
+  )
+}
+
 export function SidebarFileRow({ file, indent, onDelete, onOpen }: { file: SubmittalFile; indent: number; onDelete?: () => void; onOpen: () => void }) {
   const dot = getDot(file.mime_type)
   return (

@@ -22,12 +22,19 @@ There are no tests. TypeScript is the primary correctness check — always run `
 
 ## Architecture
 
-### Single-page app
-The entire app UI lives in `src/app/dashboard/page.tsx` (~3950 lines). It is a single `"use client"` component with all state, all modules, and all modals inline. There are no sub-components or separate route pages for the main app.
+### Dashboard shell + modules
+`src/app/dashboard/page.tsx` is a thin (~290-line) `"use client"` **shell**. It owns the horizontal top module nav, the slim left sidebar (project selector, Settings, sign-out), shared state (`activeModule`, `globalProjectId`, auth, projects, team), and renders the active module. On mobile the top nav collapses to a hamburger dropdown; the project selector stays visible.
+
+Module code lives in `src/app/dashboard/_modules/` — one self-contained component each: `LibrarySubmittalsModule` (handles both the cross-project Library and the project-scoped Submittal Log), `RfisModule`, `ChangeOrdersModule`, `PunchModule`, `DailyModule`, `DrawingsModule`, `CommitmentsModule`, `CloseoutModule`. Shared code (types, CSI data, formatters, UI primitives, badges, icons) lives in `src/app/dashboard/_shared/`.
+
+Modules receive `globalProjectId` as a prop. **Library is the only cross-project module**; every other module requires a project to be selected — the shell renders `<SelectProjectEmptyState>` (from `_shared/ui.tsx`) when none is.
 
 `src/app/page.tsx` is a **marketing landing page** (Framer Motion, Lucide icons) — not the app.
 
-Modules toggled by `activeModule` state: `submittals | rfis | changeorders | punch | daily | drawings`
+Modules toggled by `activeModule` state: `library | submittals | rfis | changeorders | punch | daily | drawings | commitments | closeout`
+
+### Spec books
+Spec book management is **per-project setup**, not a dashboard module. It lives in **Settings → Projects** as an inline expandable panel on each project row (`src/components/project-spec-books.tsx`): list uploaded volumes, "Upload another volume" (presigned-URL flow — projects routinely carry 2–4 volumes), re-parse, delete. Parsed submittals land in the dashboard's Submittals → Pending Review. Projects without `project_scope_sections` rows show an amber "Scope not set" badge with a one-click scope wizard.
 
 ### API routes (`src/app/api/`)
 All data mutations go through Next.js API routes that use the **server-side Supabase client** (`@/lib/supabase/server`) so auth cookies are read server-side. The client (`@/lib/supabase/client`) is only used in `dashboard/page.tsx` for auth state.
