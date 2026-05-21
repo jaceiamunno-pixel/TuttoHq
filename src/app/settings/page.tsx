@@ -5,6 +5,7 @@ import Link from "next/link"
 import Papa from "papaparse"
 import { DivisionChecklist, SectionAccordion, isDefaultInScopeDivision } from "@/components/scope-selection"
 import type { TocEntry, TocDivision } from "@/lib/scope-types"
+import { uploadFileToSignedUrl } from "@/lib/storage-upload"
 
 type Tab = "company" | "team" | "projects" | "subcontractors" | "suppliers" | "cms" | "gmail"
 
@@ -114,7 +115,7 @@ export default function SettingsPage() {
   const [projectMessage, setProjectMessage] = useState<{ text: string; ok: boolean } | null>(null)
 
   // Spec-book scope wizard (new-project flow only)
-  const [wizardStep, setWizardStep]           = useState<1 | 2 | 3 | 4>(1)
+  const [wizardStep, setWizardStep]           = useState<1 | 2 | 3>(1)
   const [wizardProjectId, setWizardProjectId] = useState<string | null>(null)
   const [specBookFile, setSpecBookFile]       = useState<File | null>(null)
   const [specBookDocId, setSpecBookDocId]     = useState<string | null>(null)
@@ -122,6 +123,7 @@ export default function SettingsPage() {
   const [tocDivisions, setTocDivisions]       = useState<TocDivision[]>([])
   const [tocBusy, setTocBusy]                 = useState(false)
   const [tocError, setTocError]               = useState<string | null>(null)
+  const [scopeUploadProgress, setScopeUploadProgress] = useState(0)
   const [scopeDivisions, setScopeDivisions]   = useState<Set<string>>(new Set())
   const [scopeSections, setScopeSections]     = useState<Set<string>>(new Set())
   const [scopeSaving, setScopeSaving]         = useState(false)
@@ -464,7 +466,7 @@ export default function SettingsPage() {
     setWizardProjectId(p.id)
     setWizardProjectName(p.name)
     setWizardScopeOnly(true)
-    setWizardStep(2)
+    setWizardStep(1)
     setShowProjectForm(true)
   }
 
@@ -477,20 +479,49 @@ export default function SettingsPage() {
   }
 
   // ── Scope wizard ────────────────────────────────────────────────────────────
-  async function uploadSpecBookForScope() {
-    if (!specBookFile || !wizardProjectId) return
+  async function uploadSpecBookForScope(projectIdArg?: string) {
+    const projectId = projectIdArg ?? wizardProjectId
+    if (!specBookFile || !projectId) return
     setTocBusy(true)
     setTocError(null)
+    setScopeUploadProgress(0)
+
+    // The row is reserved before the file lands; track its id so a failed
+    // upload (or unreadable PDF) can be rolled back rather than leaving a
+    // stuck "pending" spec book behind.
+    let docId: string | null = null
     try {
-      const fd = new FormData()
-      fd.append("file", specBookFile)
-      fd.append("project_id", wizardProjectId)
-      const upRes  = await fetch("/api/spec-books/upload", { method: "POST", body: fd })
-      const upData = await upRes.json()
-      if (!upRes.ok) throw new Error(upData.error ?? "Upload failed")
-      const docId = upData.document.id as string
+      // 1. Reserve a project_documents row + a Supabase signed upload URL.
+      const presignRes = await fetch("/api/spec-books/presigned-url", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          project_id: projectId,
+          file_name:  specBookFile.name,
+          file_size:  specBookFile.size,
+        }),
+      })
+      const presign = await presignRes.json()
+      if (!presignRes.ok) throw new Error(presign.error ?? "Could not start the upload")
+      docId = presign.document_id as string
+
+      // 2. Send the file straight to storage — bypasses Vercel's 4.5 MB limit.
+      await uploadFileToSignedUrl(presign.signed_url, specBookFile, p =>
+        setScopeUploadProgress(p.percent),
+      )
+
+      // 3. Confirm the upload landed and record the real byte size.
+      const finalizeRes = await fetch("/api/spec-books/finalize", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ document_id: docId }),
+      })
+      const finalize = await finalizeRes.json()
+      if (!finalizeRes.ok) throw new Error(finalize.error ?? "Could not finalize the upload")
+
       setSpecBookDocId(docId)
 
+      // 4. Read the table of contents to drive the scope picker.
       const tocRes = await fetch(`/api/spec-books/${docId}/toc`, { method: "POST" })
       if (tocRes.status === 422) {
         throw new Error("This PDF has no readable text (likely a scan). Skip scope for now and upload a digital copy later.")
@@ -503,8 +534,15 @@ export default function SettingsPage() {
       setTocSections(sections)
       setTocDivisions(divisions)
       setScopeDivisions(new Set(divisions.filter(d => isDefaultInScopeDivision(d.code)).map(d => d.code)))
-      setWizardStep(3)
+      setWizardStep(2)
     } catch (err) {
+      // Drop the reserved row if anything after row creation failed (failed
+      // upload, or an unreadable PDF), so no stuck "pending" spec book lingers.
+      if (docId) {
+        fetch(`/api/spec-books/${docId}`, { method: "DELETE" }).catch(() => {})
+        setSpecBookDocId(null)
+      }
+      setScopeUploadProgress(0)
       setTocError(err instanceof Error ? err.message : "Upload failed")
     } finally {
       setTocBusy(false)
@@ -530,7 +568,7 @@ export default function SettingsPage() {
     setScopeSections(new Set(
       tocSections.filter(s => scopeDivisions.has(s.divisionCode)).map(s => s.specNumber),
     ))
-    setWizardStep(4)
+    setWizardStep(3)
   }
 
   function toggleScopeSection(specNumber: string) {
@@ -620,10 +658,16 @@ export default function SettingsPage() {
         flashProject("Project updated")
         cancelProjectForm()
       } else {
-        // New project: keep the form open and advance into the scope wizard.
+        // New project. Add it to the list, then either launch the spec-book
+        // scope wizard (a book was attached) or close the form (skip path).
         setProjects(prev => [...prev, data.project])
         setWizardProjectId(projectId)
-        setWizardStep(2)
+        if (specBookFile) {
+          await uploadSpecBookForScope(projectId)
+        } else {
+          flashProject("Project added — scope can be set later")
+          cancelProjectForm()
+        }
       }
     } catch {
       flashProject("Save failed", false)
@@ -1269,10 +1313,10 @@ export default function SettingsPage() {
                       : wizardScopeOnly
                         ? `Set project scope — ${wizardProjectName}`
                         : wizardStep > 1
-                          ? `New project — Step ${wizardStep} of 4`
+                          ? `New project — Step ${wizardStep} of 3`
                           : "New project"}
                   </p>
-                  {(editingProject || wizardStep === 1) && (
+                  {(editingProject || (wizardStep === 1 && !wizardProjectId)) && (
                   <form onSubmit={saveProject} className="space-y-3">
                     <div className="grid grid-cols-3 gap-3">
                       <div className="col-span-2">
@@ -1411,6 +1455,25 @@ export default function SettingsPage() {
                       </div>
                     </div>
 
+                    {/* Spec book — optional; attaching one launches the scope wizard on Continue */}
+                    {!editingProject && (
+                      <div>
+                        <label className={labelCls}>Spec Book PDF <span className="font-normal text-[#94A3B8]">(optional)</span></label>
+                        <input
+                          type="file"
+                          accept=".pdf,application/pdf"
+                          onChange={e => setSpecBookFile(e.target.files?.[0] ?? null)}
+                          className="w-full text-[13px] text-[#64748B] file:mr-3 file:py-1 file:px-3 file:rounded file:border-0 file:text-[12px] file:bg-[#E2E8F0] file:text-[#0F172A] hover:file:bg-[#CBD5E1]"
+                        />
+                        {specBookFile && (
+                          <p className="mt-1.5 text-[11px] text-[#64748B]">{specBookFile.name} ({(specBookFile.size / 1024 / 1024).toFixed(2)} MB)</p>
+                        )}
+                        <p className="mt-1.5 text-[11px] text-[#64748B]">
+                          Attach the spec book to set project scope from its table of contents. Leave empty to skip — you can set scope later.
+                        </p>
+                      </div>
+                    )}
+
                     <div className="flex justify-end gap-2 pt-1">
                       <button
                         type="button"
@@ -1430,8 +1493,8 @@ export default function SettingsPage() {
                   </form>
                   )}
 
-                  {/* Wizard step 2 — spec book upload */}
-                  {!editingProject && wizardStep === 2 && (
+                  {/* Spec book upload — scope-only entry point, or new-project spec retry */}
+                  {!editingProject && wizardStep === 1 && !!wizardProjectId && (
                     <div className="space-y-3">
                       <p className="text-[12px] text-[#64748B]">
                         Upload the project spec book to set scope from its table of contents. Spec Book Ingestion will only process the sections you own. You can skip this and set scope later.
@@ -1448,6 +1511,19 @@ export default function SettingsPage() {
                           <p className="mt-1.5 text-[11px] text-[#64748B]">{specBookFile.name} ({(specBookFile.size / 1024 / 1024).toFixed(2)} MB)</p>
                         )}
                       </div>
+                      {tocBusy && (
+                        <div className="space-y-1">
+                          <div className="h-1.5 rounded-full bg-[#E2E8F0] overflow-hidden">
+                            <div
+                              className="h-full bg-[#7B9BB5] transition-all duration-200"
+                              style={{ width: `${scopeUploadProgress}%` }}
+                            />
+                          </div>
+                          <p className="text-[11px] text-[#64748B]">
+                            {scopeUploadProgress < 100 ? `Uploading… ${scopeUploadProgress}%` : "Reading table of contents…"}
+                          </p>
+                        </div>
+                      )}
                       {tocError && (
                         <div className="rounded-md bg-red-50 border border-red-200 px-3 py-2 text-[12px] text-red-600">{tocError}</div>
                       )}
@@ -1462,18 +1538,18 @@ export default function SettingsPage() {
                         </button>
                         <button
                           type="button"
-                          onClick={uploadSpecBookForScope}
+                          onClick={() => uploadSpecBookForScope()}
                           disabled={tocBusy || !specBookFile}
                           className="h-8 px-4 rounded-md bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors disabled:opacity-50"
                         >
-                          {tocBusy ? "Reading table of contents…" : "Upload & set scope"}
+                          {tocBusy ? "Working…" : "Upload & set scope"}
                         </button>
                       </div>
                     </div>
                   )}
 
-                  {/* Wizard step 3 — divisions */}
-                  {!editingProject && wizardStep === 3 && (
+                  {/* Wizard step 2 — divisions */}
+                  {!editingProject && wizardStep === 2 && (
                     <div className="space-y-3">
                       <p className="text-[12px] text-[#64748B]">
                         Check the divisions this project owns — {tocDivisions.length} found in the spec book. Divisions 01–12 and 14 are pre-selected.
@@ -1499,8 +1575,8 @@ export default function SettingsPage() {
                     </div>
                   )}
 
-                  {/* Wizard step 4 — section refinement */}
-                  {!editingProject && wizardStep === 4 && (
+                  {/* Wizard step 3 — section refinement */}
+                  {!editingProject && wizardStep === 3 && (
                     <div className="space-y-3">
                       <p className="text-[12px] text-[#64748B]">
                         Uncheck any sections outside this project&apos;s scope. All sections in the selected divisions are checked by default.
@@ -1518,7 +1594,7 @@ export default function SettingsPage() {
                       <div className="flex justify-end gap-2 pt-1">
                         <button
                           type="button"
-                          onClick={() => setWizardStep(3)}
+                          onClick={() => setWizardStep(2)}
                           disabled={scopeSaving}
                           className="h-8 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#64748B] hover:text-[#0F172A] hover:bg-[#F4F5F7]/[0.05] transition-colors disabled:opacity-50"
                         >

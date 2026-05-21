@@ -1,0 +1,62 @@
+import { NextRequest, NextResponse } from "next/server"
+import { createClient } from "@/lib/supabase/server"
+
+// POST /api/spec-books/finalize — confirms a direct-to-storage spec book upload
+// landed, then records the real byte size.
+//
+// Parsing is deliberately NOT kicked off here: the Spec Books module triggers
+// /parse while the scope wizard triggers /toc first (parsing before scope is
+// set would AI-classify the whole book and ignore the scope filter). Each
+// frontend caller owns its own next step.
+export async function POST(req: NextRequest) {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+
+  const body = await req.json().catch(() => null)
+  const documentId = typeof body?.document_id === "string" ? body.document_id.trim() : ""
+  if (!documentId) return NextResponse.json({ error: "document_id is required" }, { status: 400 })
+
+  const { data: doc, error: docError } = await supabase
+    .from("project_documents")
+    .select("id, file_path")
+    .eq("id", documentId)
+    .single()
+  if (docError || !doc?.file_path) {
+    return NextResponse.json({ error: "Document not found" }, { status: 404 })
+  }
+
+  // Verify the object actually landed at the expected path.
+  const slash    = doc.file_path.lastIndexOf("/")
+  const folder   = doc.file_path.slice(0, slash)
+  const baseName = doc.file_path.slice(slash + 1)
+
+  const { data: listed, error: listError } = await supabase.storage
+    .from("submittals")
+    .list(folder, { search: baseName, limit: 100 })
+  if (listError) {
+    return NextResponse.json({ error: listError.message }, { status: 500 })
+  }
+
+  const object = (listed ?? []).find(o => o.name === baseName)
+  if (!object) {
+    return NextResponse.json(
+      { error: "The upload did not complete — no file was found in storage." },
+      { status: 400 },
+    )
+  }
+
+  const fileSize = (object.metadata?.size as number | undefined) ?? null
+
+  const { data: updated, error: updateError } = await supabase
+    .from("project_documents")
+    .update({ file_size_bytes: fileSize })
+    .eq("id", documentId)
+    .select()
+    .single()
+  if (updateError) {
+    return NextResponse.json({ error: updateError.message }, { status: 500 })
+  }
+
+  return NextResponse.json({ ok: true, document: updated })
+}
