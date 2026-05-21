@@ -1,0 +1,515 @@
+"use client"
+
+import { useState, useEffect } from "react"
+import type { ChangeOrder, Project } from "../_shared/types"
+import { fmtDateOnly } from "../_shared/format"
+import { PlusIcon, SpinnerIcon } from "../_shared/icons"
+
+// Change Orders module — extracted verbatim from dashboard/page.tsx (Step 6 of the split).
+// State, handlers, action bar, content, and both modals are unchanged; the load
+// effect keys on globalProjectId (the module mounts only when Change Orders is
+// active, so the activeModule guard is no longer needed).
+
+export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
+  globalProjectId: string
+  appProjects: Project[]
+}) {
+  // Change Orders
+  const [changeOrders, setChangeOrders]               = useState<ChangeOrder[]>([])
+  const [coLoading, setCoLoading]                     = useState(false)
+  const [showNewCo, setShowNewCo]                     = useState(false)
+  const [viewCo, setViewCo]                           = useState<ChangeOrder | null>(null)
+  const [coProjectId, setCoProjectId]                 = useState("")
+  const [coDate, setCoDate]                           = useState(() => new Date().toISOString().slice(0, 10))
+  const [coProposal, setCoProposal]                   = useState("")
+  const [coQualifications, setCoQualifications]       = useState("")
+  const [coPricingSum, setCoPricingSum]               = useState("")
+  const [coScheduleImpact, setCoScheduleImpact]       = useState("TBD")
+  const [coScheduleDays, setCoScheduleDays]           = useState("")
+  const [coSubmittedBy, setCoSubmittedBy]             = useState("")
+  const [coAssignedTo, setCoAssignedTo]               = useState("")
+  const [coStatus, setCoStatus]                       = useState("Draft")
+  const [coFile, setCoFile]                           = useState<File | null>(null)
+  const [coSaving, setCoSaving]                       = useState(false)
+  const [coRespondSaving, setCoRespondSaving]         = useState(false)
+  const [coResponseStatus, setCoResponseStatus]       = useState("")
+  const [coGeneratingPdf, setCoGeneratingPdf]         = useState(false)
+
+  function loadChangeOrders(pid = globalProjectId) {
+    setCoLoading(true)
+    const qs = pid ? `?project_id=${encodeURIComponent(pid)}` : ""
+    fetch(`/api/change-orders${qs}`)
+      .then(r => r.json())
+      .then(d => setChangeOrders(d.changeOrders ?? []))
+      .catch(() => setChangeOrders([]))
+      .finally(() => setCoLoading(false))
+  }
+
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { loadChangeOrders() }, [globalProjectId])
+
+  async function createCo(e: React.FormEvent) {
+    e.preventDefault()
+    setCoSaving(true)
+    try {
+      const fd = new FormData()
+      fd.append("project_id", coProjectId)
+      fd.append("date", coDate)
+      fd.append("proposal", coProposal)
+      fd.append("qualifications", coQualifications)
+      fd.append("pricing_sum", coPricingSum)
+      fd.append("schedule_impact", coScheduleImpact)
+      fd.append("schedule_impact_days", coScheduleDays)
+      fd.append("submitted_by", coSubmittedBy)
+      fd.append("assigned_to", coAssignedTo)
+      fd.append("status", coStatus)
+      if (coFile) fd.append("file", coFile)
+      const res = await fetch("/api/change-orders", { method: "POST", body: fd })
+      if (res.ok) {
+        setShowNewCo(false)
+        setCoProjectId(""); setCoProposal(""); setCoQualifications(""); setCoPricingSum("")
+        setCoScheduleImpact("TBD"); setCoScheduleDays(""); setCoSubmittedBy(""); setCoAssignedTo("")
+        setCoStatus("Draft"); setCoFile(null)
+        setCoDate(new Date().toISOString().slice(0, 10))
+        loadChangeOrders()
+      }
+    } finally { setCoSaving(false) }
+  }
+
+  async function deleteCo(coId: string) {
+    if (!confirm("Delete this change order? This cannot be undone.")) return
+    await fetch(`/api/change-orders/${coId}`, { method: "DELETE" })
+    setViewCo(null)
+    loadChangeOrders()
+  }
+
+  async function generateCoPdf(coId: string) {
+    setCoGeneratingPdf(true)
+    try {
+      const res  = await fetch(`/api/change-orders/${coId}/pdf`, { method: "POST" })
+      const data = await res.json()
+      if (res.ok && data.url) {
+        window.open(data.url, "_blank")
+        loadChangeOrders()
+      }
+    } finally { setCoGeneratingPdf(false) }
+  }
+
+  async function saveCoStatus() {
+    if (!viewCo) return
+    setCoRespondSaving(true)
+    try {
+      const res = await fetch(`/api/change-orders/${viewCo.id}`, {
+        method: "PATCH", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: coResponseStatus, assigned_to: coAssignedTo }),
+      })
+      if (res.ok) { setViewCo(null); loadChangeOrders() }
+    } finally { setCoRespondSaving(false) }
+  }
+
+  return (
+    <>
+      {/* Change Orders action bar */}
+      <div className="flex-shrink-0 border-b border-[#E2E8F0] bg-white flex items-center justify-between px-4 py-2.5 gap-2 min-w-0">
+        <p className="text-[13px] font-semibold text-[#0F172A] truncate min-w-0">Change Orders <span className="text-[#64748B] font-normal ml-1">({changeOrders.length})</span></p>
+        <button onClick={() => setShowNewCo(true)} className="h-8 px-4 rounded-md bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors flex items-center gap-1.5 flex-shrink-0 whitespace-nowrap">
+          <PlusIcon /> New CO
+        </button>
+      </div>
+
+      {/* Change Orders */}
+      <div className="flex-1 overflow-y-auto min-h-0">
+          {(
+            coLoading ? (
+              <div className="flex items-center justify-center h-40 gap-2 text-[13px] text-[#64748B]">
+                <SpinnerIcon className="h-4 w-4" /> Loading…
+              </div>
+            ) : (
+              <div className="flex flex-col min-h-full">
+                {/* Running totals */}
+                {changeOrders.length > 0 && (() => {
+                  const approved = changeOrders.filter(c => c.status === "Approved")
+                  const pending  = changeOrders.filter(c => ["Draft","Submitted","Under Review"].includes(c.status))
+                  const open     = changeOrders.filter(c => !["Approved","Rejected","Void"].includes(c.status))
+                  const sumApproved = approved.reduce((s, c) => s + (c.pricing_sum ?? 0), 0)
+                  const sumPending  = pending.reduce((s,  c) => s + (c.pricing_sum ?? 0), 0)
+                  const fmt = (n: number) => new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(n)
+                  return (
+                    <div className="flex items-stretch gap-3 px-4 py-3 border-b border-[#E2E8F0] flex-shrink-0">
+                      {[
+                        { label: "Total COs", value: String(changeOrders.length), muted: false },
+                        { label: "Approved", value: fmt(sumApproved), muted: false, green: true },
+                        { label: "Pending", value: fmt(sumPending), muted: true },
+                        { label: "Open", value: String(open.length), muted: open.length > 0 },
+                      ].map(({ label, value, green }) => (
+                        <div key={label} className="flex-1 rounded-lg bg-[#F4F5F7] border border-[#E2E8F0] px-3 py-2">
+                          <p className="text-[10px] font-bold text-[#64748B] uppercase tracking-widest mb-1">{label}</p>
+                          <p className={`text-[15px] font-bold tabular-nums ${green ? "text-green-400" : "text-[#0F172A]"}`}>{value}</p>
+                        </div>
+                      ))}
+                    </div>
+                  )
+                })()}
+                {changeOrders.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center flex-1 py-24 text-center">
+                    <div className="w-14 h-14 rounded-2xl bg-[#7B9BB5]/10 border border-[#7B9BB5]/20 flex items-center justify-center mb-4">
+                      <svg className="w-7 h-7 text-[#7B9BB5]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 14l6-6m-5.5.5h.01m4.99 5h.01M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16l3.5-2 3.5 2 3.5-2 3.5 2z" />
+                      </svg>
+                    </div>
+                    <p className="text-[15px] font-bold text-[#0F172A]">No change orders yet</p>
+                    <p className="text-[13px] text-[#64748B] mt-1.5">Create your first change order to track scope changes.</p>
+                    <button onClick={() => setShowNewCo(true)} className="mt-5 h-9 px-5 rounded-lg bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors inline-flex items-center gap-2">
+                      <PlusIcon /> New CO
+                    </button>
+                  </div>
+                ) : (
+                  <>
+                  {/* Desktop table */}
+                  <div className="hidden sm:block mx-4 my-4 rounded-xl border border-[#E2E8F0] overflow-clip bg-white">
+            <table className="w-full text-[13px] border-collapse">
+                    <thead className="sticky top-0 bg-[#F8F9FA] z-10">
+                      <tr className="border-b border-[#E2E8F0]">
+                        <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-20">CO #</th>
+                        <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-32">Project</th>
+                        <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest">Proposal</th>
+                        <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-28">Pricing</th>
+                        <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-20">Sched.</th>
+                        <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-24">Date</th>
+                        <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-28">Status</th>
+                        <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-28">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {changeOrders.map(c => {
+                        const proj = appProjects.find(p => p.id === c.project_id)
+                        const statusColor: Record<string, string> = {
+                          Draft:          "bg-gray-100 text-gray-500",
+                          Submitted:      "bg-blue-100 text-blue-700",
+                          "Under Review": "bg-amber-100 text-amber-700",
+                          Approved:       "bg-green-100 text-green-700",
+                          Rejected:       "bg-red-100 text-red-700",
+                          Void:           "bg-gray-100 text-gray-500",
+                        }
+                        const badgeCls = statusColor[c.status] ?? "bg-gray-100 text-gray-500"
+                        return (
+                          <tr key={c.id} className="border-b border-[#E2E8F0]/60 hover:bg-[#F8F9FA] transition-colors">
+                            <td className="px-4 py-2.5 text-[12px] font-mono text-[#7B9BB5]">{c.co_number}</td>
+                            <td className="px-4 py-2.5 text-[#64748B] text-[12px] truncate">{proj?.name ?? "—"}</td>
+                            <td className="px-4 py-2.5 max-w-0"><p className="text-[#0F172A] truncate">{c.proposal ?? "—"}</p></td>
+                            <td className="px-4 py-2.5 text-[#0F172A] text-[12px] tabular-nums font-medium">
+                              {c.pricing_sum != null ? new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(c.pricing_sum) : "—"}
+                            </td>
+                            <td className="px-4 py-2.5 text-[12px]">
+                              <span className={c.schedule_impact === "Yes" ? "text-amber-400" : c.schedule_impact === "No" ? "text-green-400" : "text-[#64748B]"}>{c.schedule_impact ?? "TBD"}</span>
+                            </td>
+                            <td className="px-4 py-2.5 text-[#64748B] text-[12px] whitespace-nowrap">{c.date ? fmtDateOnly(c.date) : "—"}</td>
+                            <td className="px-4 py-2.5">
+                              <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold ${badgeCls}`}>{c.status}</span>
+                            </td>
+                            <td className="px-4 py-2.5">
+                              <div className="flex items-center gap-1">
+                                <button onClick={() => { setViewCo(c); setCoResponseStatus(c.status); setCoAssignedTo(c.assigned_to ?? "") }}
+                                  className="text-[11px] text-[#64748B] hover:text-[#0F172A] px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors">View</button>
+                                <button onClick={() => generateCoPdf(c.id)} disabled={coGeneratingPdf}
+                                  className="text-[11px] text-[#7B9BB5] hover:text-[#7B9BB5] px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors disabled:opacity-50">PDF</button>
+                                <button onClick={() => deleteCo(c.id)}
+                                  className="text-[11px] text-red-400/60 hover:text-red-400 px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors">Del</button>
+                              </div>
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                  </div>
+                  {/* Mobile card list */}
+                  <div className="sm:hidden px-3 py-3 space-y-2">
+                    {changeOrders.map(c => {
+                      const proj = appProjects.find(p => p.id === c.project_id)
+                      const statusColor: Record<string, string> = { Draft: "bg-gray-100 text-gray-500", Submitted: "bg-blue-100 text-blue-700", "Under Review": "bg-amber-100 text-amber-700", Approved: "bg-green-100 text-green-700", Rejected: "bg-red-100 text-red-700", Void: "bg-gray-100 text-gray-500" }
+                      const badgeCls = statusColor[c.status] ?? "bg-gray-100 text-gray-500"
+                      return (
+                        <div key={c.id} className="bg-white rounded-xl border border-[#E2E8F0] p-3 shadow-sm">
+                          <div className="flex items-start justify-between gap-2 mb-1">
+                            <span className="text-[11px] font-mono text-[#7B9BB5]">{c.co_number}</span>
+                            <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold ${badgeCls}`}>{c.status}</span>
+                          </div>
+                          <p className="text-[13px] font-medium text-[#0F172A] mb-1 truncate">{c.proposal ?? "—"}</p>
+                          {proj && <p className="text-[11px] text-[#64748B] mb-1">{proj.name}</p>}
+                          <div className="flex items-center justify-between mb-2">
+                            <span className="text-[12px] font-semibold text-[#0F172A]">{c.pricing_sum != null ? new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(c.pricing_sum) : "—"}</span>
+                            <span className="text-[11px] text-[#64748B]">{c.date ? fmtDateOnly(c.date) : ""}</span>
+                          </div>
+                          <div className="flex items-center gap-1">
+                            <button onClick={() => { setViewCo(c); setCoResponseStatus(c.status); setCoAssignedTo(c.assigned_to ?? "") }} className="text-[11px] text-[#64748B] px-2 py-1 rounded border border-[#E2E8F0] bg-[#F8F9FA]">View</button>
+                            <button onClick={() => generateCoPdf(c.id)} disabled={coGeneratingPdf} className="text-[11px] text-[#7B9BB5] px-2 py-1 rounded border border-[#E2E8F0] bg-[#F8F9FA] disabled:opacity-50">PDF</button>
+                            <button onClick={() => deleteCo(c.id)} className="text-[11px] text-red-400 px-2 py-1 rounded border border-[#E2E8F0] bg-[#F8F9FA]">Del</button>
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                  </>
+                )}
+              </div>
+            )
+          )}
+      </div>
+
+      {/* ── New Change Order modal ────────────────────────────────────────── */}
+      {showNewCo && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4"
+          onClick={e => { if (e.target === e.currentTarget) setShowNewCo(false) }}>
+          <div className="bg-white border border-[#E2E8F0] rounded-xl w-full max-w-2xl mx-4 sm:mx-0 flex flex-col max-h-[90vh]">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-[#E2E8F0] flex-shrink-0">
+              <h2 className="text-[16px] font-bold text-[#0F172A]">New Change Order</h2>
+              <button onClick={() => setShowNewCo(false)} className="text-[#64748B] hover:text-[#0F172A] transition-colors">
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+              </button>
+            </div>
+            <form onSubmit={createCo} className="overflow-y-auto flex-1 px-6 py-4 space-y-4">
+              {(() => {
+                const labelCls2 = "block text-[11px] font-semibold text-[#64748B] uppercase tracking-widest mb-1"
+                const inputCls2 = "w-full h-9 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40 placeholder:text-[#64748B]"
+                const selCls2   = "w-full h-9 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40"
+                const coProj = appProjects.find(p => p.id === coProjectId)
+                return (<>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className={labelCls2}>Project</label>
+                      <select value={coProjectId} onChange={e => setCoProjectId(e.target.value)} className={selCls2}>
+                        <option value="">— Select project —</option>
+                        {appProjects.map(p => <option key={p.id} value={p.id}>{p.name}{p.number ? ` (${p.number})` : ""}</option>)}
+                      </select>
+                      {coProj && (
+                        <p className="text-[11px] text-[#64748B] mt-1">{[coProj.gc_name, coProj.location].filter(Boolean).join(" · ")}</p>
+                      )}
+                    </div>
+                    <div>
+                      <label className={labelCls2}>Date</label>
+                      <input type="date" value={coDate} onChange={e => setCoDate(e.target.value)} className={inputCls2} />
+                    </div>
+                  </div>
+                  <div>
+                    <label className={labelCls2}>Proposal <span className="text-red-400">*</span></label>
+                    <textarea required value={coProposal} onChange={e => setCoProposal(e.target.value)} rows={4}
+                      placeholder="Describe the scope of work for this change order…"
+                      className="w-full px-3 py-2 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40 resize-none placeholder:text-[#64748B]" />
+                  </div>
+                  <div>
+                    <label className={labelCls2}>Qualifications / Exclusions</label>
+                    <textarea value={coQualifications} onChange={e => setCoQualifications(e.target.value)} rows={3}
+                      placeholder="List any qualifications or exclusions…"
+                      className="w-full px-3 py-2 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40 resize-none placeholder:text-[#64748B]" />
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className={labelCls2}>Pricing Sum ($)</label>
+                      <input type="number" step="0.01" min="0" value={coPricingSum} onChange={e => setCoPricingSum(e.target.value)}
+                        placeholder="0.00" className={inputCls2} />
+                    </div>
+                    <div>
+                      <label className={labelCls2}>Status</label>
+                      <select value={coStatus} onChange={e => setCoStatus(e.target.value)} className={selCls2}>
+                        {["Draft","Submitted","Under Review","Approved","Rejected","Void"].map(s => <option key={s} value={s}>{s}</option>)}
+                      </select>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className={labelCls2}>Schedule Impact</label>
+                      <select value={coScheduleImpact} onChange={e => setCoScheduleImpact(e.target.value)} className={selCls2}>
+                        {["TBD","Yes","No"].map(s => <option key={s} value={s}>{s}</option>)}
+                      </select>
+                    </div>
+                    {coScheduleImpact === "Yes" && (
+                      <div>
+                        <label className={labelCls2}>Days Impact</label>
+                        <input type="number" min="0" value={coScheduleDays} onChange={e => setCoScheduleDays(e.target.value)}
+                          placeholder="0" className={inputCls2} />
+                      </div>
+                    )}
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className={labelCls2}>Submitted By</label>
+                      <input type="text" value={coSubmittedBy} onChange={e => setCoSubmittedBy(e.target.value)}
+                        placeholder="Name or company" className={inputCls2} />
+                    </div>
+                    <div>
+                      <label className={labelCls2}>Assigned To</label>
+                      <input type="text" value={coAssignedTo} onChange={e => setCoAssignedTo(e.target.value)}
+                        placeholder="Reviewer name" className={inputCls2} />
+                    </div>
+                  </div>
+                  <div>
+                    <label className={labelCls2}>Attach File</label>
+                    <input type="file" accept=".pdf,.doc,.docx,.xlsx,.xls,.png,.jpg,.jpeg"
+                      onChange={e => setCoFile(e.target.files?.[0] ?? null)}
+                      className="w-full text-[13px] text-[#64748B] file:mr-3 file:py-1.5 file:px-3 file:rounded file:border-0 file:bg-[#E2E8F0] file:text-[#0F172A] file:text-[12px] file:cursor-pointer hover:file:bg-[#CBD5E1] cursor-pointer" />
+                  </div>
+                </>)
+              })()}
+            </form>
+            <div className="flex justify-end gap-2 px-6 py-4 border-t border-[#E2E8F0] flex-shrink-0">
+              <button type="button" onClick={() => setShowNewCo(false)}
+                className="h-8 px-4 rounded-md border border-[#E2E8F0] text-[13px] text-[#64748B] hover:bg-[#0F172A]/[0.04] transition-colors">Cancel</button>
+              <button type="submit" form="" onClick={createCo} disabled={coSaving || !coProposal.trim()}
+                className="h-8 px-4 rounded-md bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors disabled:opacity-50 flex items-center gap-2">
+                {coSaving && <SpinnerIcon className="h-3 w-3" />}
+                {coSaving ? "Creating…" : "Create CO"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── View Change Order modal ───────────────────────────────────────── */}
+      {viewCo && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4"
+          onClick={e => { if (e.target === e.currentTarget) setViewCo(null) }}>
+          <div className="bg-white border border-[#E2E8F0] rounded-xl w-full max-w-2xl mx-4 sm:mx-0 flex flex-col max-h-[90vh]">
+            {/* Header */}
+            <div className="flex items-start justify-between px-6 py-4 border-b border-[#E2E8F0] flex-shrink-0">
+              <div>
+                <div className="flex items-center gap-3">
+                  <h2 className="text-[16px] font-bold text-[#0F172A]">{viewCo.co_number}</h2>
+                  {(() => {
+                    const statusColor: Record<string, string> = {
+                      Draft:          "bg-gray-100 text-gray-500",
+                      Submitted:      "bg-blue-100 text-blue-700",
+                      "Under Review": "bg-amber-100 text-amber-700",
+                      Approved:       "bg-green-100 text-green-700",
+                      Rejected:       "bg-red-100 text-red-700",
+                      Void:           "bg-gray-100 text-gray-500",
+                    }
+                    return <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-semibold ${statusColor[viewCo.status] ?? "bg-gray-100 text-gray-500"}`}>{viewCo.status}</span>
+                  })()}
+                </div>
+                <p className="text-[12px] text-[#64748B] mt-0.5">{viewCo.date ? fmtDateOnly(viewCo.date) : "No date"}</p>
+              </div>
+              <button onClick={() => setViewCo(null)} className="text-[#64748B] hover:text-[#0F172A] transition-colors mt-0.5">
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+              </button>
+            </div>
+
+            <div className="overflow-y-auto flex-1 px-6 py-4 space-y-5">
+              {/* Project info */}
+              {viewCo.project_id && (() => {
+                const proj = appProjects.find(p => p.id === viewCo.project_id)
+                if (!proj) return null
+                return (
+                  <div className="rounded-lg bg-[#F4F5F7] border border-[#E2E8F0] px-4 py-3 grid grid-cols-2 gap-x-6 gap-y-1.5 text-[12px]">
+                    {proj.name    && <div><span className="text-[#64748B]">Project: </span><span className="text-[#0F172A] font-medium">{proj.name}</span></div>}
+                    {proj.number  && <div><span className="text-[#64748B]">No.: </span><span className="text-[#0F172A]">{proj.number}</span></div>}
+                    {proj.gc_name && <div><span className="text-[#64748B]">GC: </span><span className="text-[#0F172A]">{proj.gc_name}</span></div>}
+                    {proj.architect && <div><span className="text-[#64748B]">Architect: </span><span className="text-[#0F172A]">{proj.architect}</span></div>}
+                    {proj.location && <div className="col-span-2"><span className="text-[#64748B]">Location: </span><span className="text-[#0F172A]">{proj.location}</span></div>}
+                  </div>
+                )
+              })()}
+
+              {/* Meta grid */}
+              <div className="grid grid-cols-3 gap-3 text-[12px]">
+                {[
+                  { label: "Submitted By", value: viewCo.submitted_by ?? "—" },
+                  { label: "Assigned To",  value: viewCo.assigned_to  ?? "—" },
+                  { label: "Schedule Impact", value: viewCo.schedule_impact ?? "TBD" },
+                  { label: "Days Impact", value: viewCo.schedule_impact_days != null ? String(viewCo.schedule_impact_days) : "—" },
+                  { label: "Approved At", value: viewCo.approved_at ? fmtDateOnly(viewCo.approved_at) : "—" },
+                  { label: "Created",     value: fmtDateOnly(viewCo.created_at) },
+                ].map(({ label, value }) => (
+                  <div key={label}>
+                    <p className="text-[10px] font-bold text-[#64748B] uppercase tracking-widest mb-0.5">{label}</p>
+                    <p className="text-[#0F172A]">{value}</p>
+                  </div>
+                ))}
+              </div>
+
+              {/* Pricing */}
+              <div className="rounded-lg bg-[#F4F5F7] border border-[#E2E8F0] px-4 py-3">
+                <p className="text-[10px] font-bold text-[#64748B] uppercase tracking-widest mb-1">Total Change Order Amount</p>
+                <p className={`text-[22px] font-bold tabular-nums ${viewCo.status === "Approved" ? "text-green-400" : "text-[#0F172A]"}`}>
+                  {viewCo.pricing_sum != null
+                    ? new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(viewCo.pricing_sum)
+                    : "—"}
+                </p>
+              </div>
+
+              {/* Proposal */}
+              {viewCo.proposal && (
+                <div>
+                  <p className="text-[11px] font-bold text-[#64748B] uppercase tracking-widest mb-2">Proposal</p>
+                  <p className="text-[13px] text-[#0F172A] whitespace-pre-wrap leading-relaxed">{viewCo.proposal}</p>
+                </div>
+              )}
+
+              {/* Qualifications */}
+              {viewCo.qualifications && (
+                <div>
+                  <p className="text-[11px] font-bold text-[#64748B] uppercase tracking-widest mb-2">Qualifications / Exclusions</p>
+                  <p className="text-[13px] text-[#0F172A] whitespace-pre-wrap leading-relaxed">{viewCo.qualifications}</p>
+                </div>
+              )}
+
+              {/* Attachment + PDF */}
+              {viewCo.file_name && (
+                <div className="flex items-center gap-2 text-[12px]">
+                  <svg className="w-4 h-4 text-[#64748B]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" /></svg>
+                  <span className="text-[#64748B]">{viewCo.file_name}</span>
+                </div>
+              )}
+              {viewCo.generated_pdf_path && (
+                <div className="flex items-center gap-2 text-[12px]">
+                  <svg className="w-4 h-4 text-[#7B9BB5]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" /></svg>
+                  <button onClick={() => generateCoPdf(viewCo.id)} className="text-[#7B9BB5] hover:text-[#7B9BB5] transition-colors">View / Regenerate PDF</button>
+                </div>
+              )}
+
+              {/* Status update */}
+              <div className="border-t border-[#E2E8F0] pt-4 space-y-3">
+                <p className="text-[11px] font-bold text-[#64748B] uppercase tracking-widest">Update</p>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[11px] font-semibold text-[#64748B] uppercase tracking-widest mb-1">Status</label>
+                    <select value={coResponseStatus} onChange={e => setCoResponseStatus(e.target.value)}
+                      className="w-full h-9 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40">
+                      {["Draft","Submitted","Under Review","Approved","Rejected","Void"].map(s => <option key={s} value={s}>{s}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-semibold text-[#64748B] uppercase tracking-widest mb-1">Assigned To</label>
+                    <input type="text" value={coAssignedTo} onChange={e => setCoAssignedTo(e.target.value)}
+                      placeholder="Reviewer name"
+                      className="w-full h-9 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40 placeholder:text-[#64748B]" />
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex justify-between px-6 py-4 border-t border-[#E2E8F0] flex-shrink-0">
+              <div className="flex gap-2">
+                <button onClick={() => generateCoPdf(viewCo.id)} disabled={coGeneratingPdf}
+                  className="h-8 px-4 rounded-md border border-[#E2E8F0] text-[13px] text-[#64748B] hover:bg-[#0F172A]/[0.04] transition-colors disabled:opacity-50 flex items-center gap-2">
+                  {coGeneratingPdf ? <><SpinnerIcon className="h-3 w-3" /> Generating…</> : "Generate PDF"}
+                </button>
+                <button onClick={() => deleteCo(viewCo.id)}
+                  className="h-8 px-4 rounded-md border border-red-500/30 text-[13px] text-red-400 hover:bg-red-500/10 transition-colors">Delete</button>
+              </div>
+              <div className="flex gap-2">
+                <button onClick={() => setViewCo(null)}
+                  className="h-8 px-4 rounded-md border border-[#E2E8F0] text-[13px] text-[#64748B] hover:bg-[#0F172A]/[0.04] transition-colors">Close</button>
+                <button onClick={saveCoStatus} disabled={coRespondSaving}
+                  className="h-8 px-4 rounded-md bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors disabled:opacity-50 flex items-center gap-2">
+                  {coRespondSaving && <SpinnerIcon className="h-3 w-3" />}
+                  {coRespondSaving ? "Saving…" : "Save Changes"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  )
+}
