@@ -70,7 +70,29 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ do
       .update({ parse_progress: 25, page_count: result.pageCount })
       .eq("id", documentId)
 
-    const sectionRows = result.sections.map(s => ({
+    // ── Scope filter ─────────────────────────────────────────────────────────
+    // A project with project_scope_sections rows restricts ingestion to its
+    // in-scope sections.
+    //
+    // LEGACY BEHAVIOR — DO NOT BREAK: a project with ZERO project_scope_sections
+    // rows is treated as "not yet scoped" and EVERY section is ingested, so
+    // projects created before spec-book scoping keep working unchanged. Because
+    // any single row flips the project into filtered mode (hiding every section
+    // that lacks a row), never insert a marker/placeholder scope row for an
+    // existing project.
+    const { data: scopeRows } = await supabase
+      .from("project_scope_sections")
+      .select("spec_number, in_scope")
+      .eq("project_id", doc.project_id)
+    const hasScope = (scopeRows ?? []).length > 0
+    const inScope = new Set(
+      (scopeRows ?? []).filter(r => r.in_scope).map(r => r.spec_number as string),
+    )
+    const sectionsToIngest = hasScope
+      ? result.sections.filter(s => inScope.has(s.specNumber))
+      : result.sections
+
+    const sectionRows = sectionsToIngest.map(s => ({
       project_document_id: documentId,
       project_id:          doc.project_id,
       spec_number:         s.specNumber,
@@ -90,6 +112,18 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ do
         .select("id, spec_number, spec_title, submittals_text")
       if (secError) throw new Error(`Failed to save spec sections: ${secError.message}`)
       insertedSections = data ?? []
+    }
+
+    // Backfill project_scope_sections.spec_section_id for the sections just
+    // created (matched by spec_number).
+    if (hasScope) {
+      for (const sec of insertedSections) {
+        await supabase
+          .from("project_scope_sections")
+          .update({ spec_section_id: sec.id })
+          .eq("project_id", doc.project_id)
+          .eq("spec_number", sec.spec_number)
+      }
     }
 
     await supabase
@@ -162,8 +196,8 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ do
     //  sectionsFound          — scoped sections with a real body in THIS PDF
     //  sectionsWithSubmittals — of those, how many had a SUBMITTALS article
     const parseSummary = {
-      sectionsScoped:         result.sections.length,
-      sectionsFound:          result.sections.length,
+      sectionsScoped:         hasScope ? inScope.size : result.sections.length,
+      sectionsFound:          sectionsToIngest.length,
       sectionsWithSubmittals: toClassify.length,
       staged:                 staged.length,
     }

@@ -1,4 +1,7 @@
 import { extractText, getDocumentProxy } from "unpdf"
+import type { TocEntry, TocDivision } from "@/lib/scope-types"
+
+export type { TocEntry, TocDivision }
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -293,4 +296,73 @@ function detectTocRegion(
   closeRun(searchLimit)
 
   return bestStart !== -1 ? { start: bestStart, end: bestEnd } : null
+}
+
+/**
+ * Extracts the flat list of spec sections from a spec book's table of contents.
+ * If no dense TOC run exists (book has no TOC), every section-number line in the
+ * document is used, deduped to the first occurrence of each number.
+ *
+ * This is the inverse of parseSpecBook's body-length dedupe, which discards the
+ * dense TOC cluster — different goal, hence a separate function.
+ */
+export function extractSpecToc(pages: string[]): TocEntry[] {
+  const perPage = pages.map((p, i) => findCandidatesInPage(p, i + 1, 0))
+  const toc = detectTocRegion(perPage, pages.length)
+
+  const collected = toc
+    ? perPage.slice(toc.start, toc.end + 1).flat()
+    : perPage.flat()
+
+  const seen = new Set<string>()
+  const entries: TocEntry[] = []
+  for (const c of collected) {
+    if (seen.has(c.specNumber)) continue
+    seen.add(c.specNumber)
+    entries.push({
+      specNumber: c.specNumber,
+      specTitle: c.specTitle,
+      divisionCode: c.specNumber.slice(0, 2),
+    })
+  }
+  entries.sort((a, b) => a.specNumber.localeCompare(b.specNumber))
+  return entries
+}
+
+/** Rolls a TOC section list up into the divisions present, with section counts. */
+export function divisionsFromToc(entries: TocEntry[]): TocDivision[] {
+  const counts = new Map<string, number>()
+  for (const e of entries) counts.set(e.divisionCode, (counts.get(e.divisionCode) ?? 0) + 1)
+  return [...counts.entries()]
+    .map(([code, sectionCount]) => ({
+      code,
+      name: DIVISION_NAMES[code] ?? `Division ${code}`,
+      sectionCount,
+    }))
+    .sort((a, b) => a.code.localeCompare(b.code))
+}
+
+export interface TocParseResult {
+  pageCount: number
+  needsOcr: boolean
+  sections: TocEntry[]
+  divisions: TocDivision[]
+}
+
+/** Top-level: extract a spec book PDF's TOC into sections + divisions. */
+export async function parseTableOfContents(buffer: Buffer): Promise<TocParseResult> {
+  const pages = await extractPdfPages(buffer)
+  const totalChars = pages.reduce((sum, p) => sum + p.length, 0)
+
+  if (pages.length > 0 && totalChars / pages.length < 100) {
+    return { pageCount: pages.length, needsOcr: true, sections: [], divisions: [] }
+  }
+
+  const sections = extractSpecToc(pages)
+  return {
+    pageCount: pages.length,
+    needsOcr: false,
+    sections,
+    divisions: divisionsFromToc(sections),
+  }
 }

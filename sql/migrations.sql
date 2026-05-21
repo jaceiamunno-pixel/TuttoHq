@@ -601,3 +601,40 @@ ALTER TABLE submittals ALTER COLUMN storage_path DROP NOT NULL;
 -- bodies for the scoped divisions live in a different volume.
 -- Shape: { sectionsScoped, sectionsFound, sectionsWithSubmittals, staged }
 ALTER TABLE project_documents ADD COLUMN IF NOT EXISTS parse_summary JSONB;
+
+-- =============================================================================
+-- PROJECT SCOPE SECTIONS
+-- The set of spec sections a project owns, captured from the spec book's table
+-- of contents at project creation. Spec Book Ingestion only classifies sections
+-- marked in_scope = true.
+--
+-- IMPORTANT — legacy behavior: a project with ZERO rows here is treated as
+-- "not yet scoped" and ingestion processes ALL sections (see parse/route.ts).
+-- Never insert a single marker row for an existing project — one row flips the
+-- project into filtered mode and hides every section that lacks a row.
+-- =============================================================================
+
+CREATE TABLE IF NOT EXISTS project_scope_sections (
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  project_id      UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  -- Backfilled by Spec Book Ingestion once the real spec_sections row exists.
+  -- ON DELETE SET NULL so a re-parse (which deletes spec_sections) keeps scope.
+  spec_section_id UUID REFERENCES spec_sections(id) ON DELETE SET NULL,
+  spec_number     TEXT NOT NULL,   -- "03 30 00"
+  spec_title      TEXT NOT NULL,   -- denormalized for fast queries
+  division_code   TEXT NOT NULL,   -- "03"
+  in_scope        BOOLEAN NOT NULL DEFAULT true,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+  company_id      UUID REFERENCES companies(id) DEFAULT get_my_company_id(),
+  UNIQUE (project_id, spec_number)
+);
+
+CREATE INDEX IF NOT EXISTS idx_project_scope_sections_project  ON project_scope_sections(project_id);
+CREATE INDEX IF NOT EXISTS idx_project_scope_sections_inscope  ON project_scope_sections(project_id, in_scope);
+CREATE INDEX IF NOT EXISTS idx_project_scope_sections_company  ON project_scope_sections(company_id);
+
+ALTER TABLE project_scope_sections ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "project_scope_sections: company select" ON project_scope_sections FOR SELECT TO authenticated USING     (company_id = get_my_company_id());
+CREATE POLICY "project_scope_sections: company insert" ON project_scope_sections FOR INSERT TO authenticated WITH CHECK (company_id = get_my_company_id());
+CREATE POLICY "project_scope_sections: company update" ON project_scope_sections FOR UPDATE TO authenticated USING     (company_id = get_my_company_id()) WITH CHECK (company_id = get_my_company_id());
+CREATE POLICY "project_scope_sections: company delete" ON project_scope_sections FOR DELETE TO authenticated USING     (company_id = get_my_company_id());

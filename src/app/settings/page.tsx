@@ -3,6 +3,8 @@
 import { useState, useEffect, useRef } from "react"
 import Link from "next/link"
 import Papa from "papaparse"
+import { DivisionChecklist, SectionAccordion, isDefaultInScopeDivision } from "@/components/scope-selection"
+import type { TocEntry, TocDivision } from "@/lib/scope-types"
 
 type Tab = "company" | "team" | "projects" | "subcontractors" | "suppliers" | "cms" | "gmail"
 
@@ -111,6 +113,22 @@ export default function SettingsPage() {
   const [savingProject, setSavingProject] = useState(false)
   const [projectMessage, setProjectMessage] = useState<{ text: string; ok: boolean } | null>(null)
 
+  // Spec-book scope wizard (new-project flow only)
+  const [wizardStep, setWizardStep]           = useState<1 | 2 | 3 | 4>(1)
+  const [wizardProjectId, setWizardProjectId] = useState<string | null>(null)
+  const [specBookFile, setSpecBookFile]       = useState<File | null>(null)
+  const [specBookDocId, setSpecBookDocId]     = useState<string | null>(null)
+  const [tocSections, setTocSections]         = useState<TocEntry[]>([])
+  const [tocDivisions, setTocDivisions]       = useState<TocDivision[]>([])
+  const [tocBusy, setTocBusy]                 = useState(false)
+  const [tocError, setTocError]               = useState<string | null>(null)
+  const [scopeDivisions, setScopeDivisions]   = useState<Set<string>>(new Set())
+  const [scopeSections, setScopeSections]     = useState<Set<string>>(new Set())
+  const [scopeSaving, setScopeSaving]         = useState(false)
+  const [wizardScopeOnly, setWizardScopeOnly] = useState(false)   // set scope on an existing project
+  const [wizardProjectName, setWizardProjectName] = useState("")
+  const [scopedProjectIds, setScopedProjectIds]   = useState<Set<string>>(new Set())
+
   const [subcontractors, setSubcontractors] = useState<Subcontractor[]>([])
   const [subsLoading, setSubsLoading]       = useState(false)
   const [subsLoaded, setSubsLoaded]         = useState(false)
@@ -173,9 +191,11 @@ export default function SettingsPage() {
       .then(d => { setLogoUrl(d.logo_url); setHasCoverPage(d.has_cover_page) })
       .finally(() => setLoadingCompany(false))
 
-    // Handle OAuth callback redirect params (?tab=gmail&connected=1 or &error=...)
+    // Handle redirect params: OAuth callback (?tab=gmail&connected=1) or a
+    // direct deep-link to a specific tab (e.g. ?tab=projects from the dashboard).
     const params = new URLSearchParams(window.location.search)
-    if (params.get("tab") === "gmail") {
+    const tabParam = params.get("tab")
+    if (tabParam === "gmail") {
       setActiveTab("gmail")
       const connected = params.get("connected")
       const err = params.get("error")
@@ -187,6 +207,8 @@ export default function SettingsPage() {
         setTimeout(() => setGmailMessage(null), 8000)
       }
       window.history.replaceState({}, "", "/settings?tab=gmail")
+    } else if (tabParam && ["company", "team", "projects", "subcontractors", "suppliers", "cms"].includes(tabParam)) {
+      setActiveTab(tabParam as Tab)
     }
   }, [])
 
@@ -215,6 +237,14 @@ export default function SettingsPage() {
       .then(d => { setProjects(d.projects ?? []); setProjectsLoaded(true) })
       .catch(() => {})
       .finally(() => setProjectsLoading(false))
+    loadScopeStatus()
+  }
+
+  function loadScopeStatus() {
+    fetch("/api/projects/scope-status")
+      .then(r => r.json())
+      .then(d => setScopedProjectIds(new Set<string>(d.scoped ?? [])))
+      .catch(() => {})
   }
 
   function flashCompany(text: string, ok = true) {
@@ -389,6 +419,7 @@ export default function SettingsPage() {
     setProjectSupIds([])
     if (!subsLoaded) loadSubs()
     if (!supplLoaded) loadSuppliers()
+    resetWizard()
     setShowProjectForm(true)
   }
 
@@ -411,11 +442,151 @@ export default function SettingsPage() {
     setShowProjectForm(true)
   }
 
+  function resetWizard() {
+    setWizardStep(1)
+    setWizardProjectId(null)
+    setSpecBookFile(null)
+    setSpecBookDocId(null)
+    setTocSections([]); setTocDivisions([])
+    setTocBusy(false); setTocError(null)
+    setScopeDivisions(new Set()); setScopeSections(new Set())
+    setScopeSaving(false)
+    setWizardScopeOnly(false); setWizardProjectName("")
+  }
+
+  // Launch the wizard at the spec-book step for an existing project — used by
+  // the "Set scope" action on projects created without a spec book (e.g. CSV).
+  function openScopeWizard(p: Project) {
+    resetWizard()
+    setEditingProject(null)
+    setProjectForm({ name: "", number: "", location: "", gc_name: "", architect: "" })
+    setProjectSubIds([]); setProjectSupIds([]); setProjectCmIds([])
+    setWizardProjectId(p.id)
+    setWizardProjectName(p.name)
+    setWizardScopeOnly(true)
+    setWizardStep(2)
+    setShowProjectForm(true)
+  }
+
   function cancelProjectForm() {
     setShowProjectForm(false)
     setEditingProject(null)
     setProjectForm({ name: "", number: "", location: "", gc_name: "", architect: "" })
     setProjectSubIds([]); setProjectSupIds([]); setProjectCmIds([])
+    resetWizard()
+  }
+
+  // ── Scope wizard ────────────────────────────────────────────────────────────
+  async function uploadSpecBookForScope() {
+    if (!specBookFile || !wizardProjectId) return
+    setTocBusy(true)
+    setTocError(null)
+    try {
+      const fd = new FormData()
+      fd.append("file", specBookFile)
+      fd.append("project_id", wizardProjectId)
+      const upRes  = await fetch("/api/spec-books/upload", { method: "POST", body: fd })
+      const upData = await upRes.json()
+      if (!upRes.ok) throw new Error(upData.error ?? "Upload failed")
+      const docId = upData.document.id as string
+      setSpecBookDocId(docId)
+
+      const tocRes = await fetch(`/api/spec-books/${docId}/toc`, { method: "POST" })
+      if (tocRes.status === 422) {
+        throw new Error("This PDF has no readable text (likely a scan). Skip scope for now and upload a digital copy later.")
+      }
+      const tocData = await tocRes.json()
+      if (!tocRes.ok) throw new Error(tocData.error ?? "Could not read the table of contents")
+
+      const sections: TocEntry[]    = tocData.sections ?? []
+      const divisions: TocDivision[] = tocData.divisions ?? []
+      setTocSections(sections)
+      setTocDivisions(divisions)
+      setScopeDivisions(new Set(divisions.filter(d => isDefaultInScopeDivision(d.code)).map(d => d.code)))
+      setWizardStep(3)
+    } catch (err) {
+      setTocError(err instanceof Error ? err.message : "Upload failed")
+    } finally {
+      setTocBusy(false)
+    }
+  }
+
+  function skipSpecBook() {
+    flashProject(wizardScopeOnly ? "Closed — scope unchanged" : "Project added — scope can be set later")
+    cancelProjectForm()
+  }
+
+  function toggleScopeDivision(code: string) {
+    setScopeDivisions(prev => {
+      const next = new Set(prev)
+      if (next.has(code)) next.delete(code)
+      else next.add(code)
+      return next
+    })
+  }
+
+  function goToSectionStep() {
+    // Pre-check every section under a selected division.
+    setScopeSections(new Set(
+      tocSections.filter(s => scopeDivisions.has(s.divisionCode)).map(s => s.specNumber),
+    ))
+    setWizardStep(4)
+  }
+
+  function toggleScopeSection(specNumber: string) {
+    setScopeSections(prev => {
+      const next = new Set(prev)
+      if (next.has(specNumber)) next.delete(specNumber)
+      else next.add(specNumber)
+      return next
+    })
+  }
+
+  function setScopeSectionsBulk(specNumbers: string[], checked: boolean) {
+    setScopeSections(prev => {
+      const next = new Set(prev)
+      for (const n of specNumbers) {
+        if (checked) next.add(n)
+        else next.delete(n)
+      }
+      return next
+    })
+  }
+
+  async function finishScope() {
+    if (!wizardProjectId) return
+    setScopeSaving(true)
+    setTocError(null)
+    try {
+      const payload = tocSections.map(s => ({
+        spec_number:   s.specNumber,
+        spec_title:    s.specTitle,
+        division_code: s.divisionCode,
+        in_scope:      scopeDivisions.has(s.divisionCode) && scopeSections.has(s.specNumber),
+      }))
+      const res = await fetch(`/api/projects/${wizardProjectId}/scope`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sections: payload }),
+      })
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}))
+        throw new Error(d.error ?? "Failed to save scope")
+      }
+      // Fire spec-book ingestion in the background — intentionally not awaited.
+      // If it fails the project still has valid scope; the user can retry from
+      // the Spec Books module.
+      if (specBookDocId) {
+        fetch(`/api/spec-books/${specBookDocId}/parse`, { method: "POST" }).catch(() => {})
+      }
+      flashProject("Project scope saved — spec book is parsing in the background")
+      loadScopeStatus()
+      cancelProjectForm()
+    } catch (err) {
+      setTocError(err instanceof Error ? err.message : "Failed to save scope")
+    } finally {
+      setScopeSaving(false)
+    }
   }
 
   async function saveProject(e: React.FormEvent) {
@@ -447,11 +618,13 @@ export default function SettingsPage() {
       if (editingProject) {
         setProjects(prev => prev.map(p => p.id === editingProject.id ? data.project : p))
         flashProject("Project updated")
+        cancelProjectForm()
       } else {
+        // New project: keep the form open and advance into the scope wizard.
         setProjects(prev => [...prev, data.project])
-        flashProject("Project added")
+        setWizardProjectId(projectId)
+        setWizardStep(2)
       }
-      cancelProjectForm()
     } catch {
       flashProject("Save failed", false)
     } finally {
@@ -1091,8 +1264,15 @@ export default function SettingsPage() {
               {showProjectForm && (
                 <div className="px-5 py-4 border-b border-[#E2E8F0] bg-[#F4F5F7]/50">
                   <p className="text-[13px] font-semibold text-[#0F172A] mb-3">
-                    {editingProject ? "Edit project" : "New project"}
+                    {editingProject
+                      ? "Edit project"
+                      : wizardScopeOnly
+                        ? `Set project scope — ${wizardProjectName}`
+                        : wizardStep > 1
+                          ? `New project — Step ${wizardStep} of 4`
+                          : "New project"}
                   </p>
+                  {(editingProject || wizardStep === 1) && (
                   <form onSubmit={saveProject} className="space-y-3">
                     <div className="grid grid-cols-3 gap-3">
                       <div className="col-span-2">
@@ -1244,10 +1424,117 @@ export default function SettingsPage() {
                         disabled={savingProject || !projectForm.name.trim()}
                         className="h-8 px-4 rounded-md bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors disabled:opacity-50"
                       >
-                        {savingProject ? "Saving…" : editingProject ? "Save changes" : "Add project"}
+                        {savingProject ? "Saving…" : editingProject ? "Save changes" : "Continue"}
                       </button>
                     </div>
                   </form>
+                  )}
+
+                  {/* Wizard step 2 — spec book upload */}
+                  {!editingProject && wizardStep === 2 && (
+                    <div className="space-y-3">
+                      <p className="text-[12px] text-[#64748B]">
+                        Upload the project spec book to set scope from its table of contents. Spec Book Ingestion will only process the sections you own. You can skip this and set scope later.
+                      </p>
+                      <div>
+                        <label className={labelCls}>Spec Book PDF</label>
+                        <input
+                          type="file"
+                          accept=".pdf,application/pdf"
+                          onChange={e => setSpecBookFile(e.target.files?.[0] ?? null)}
+                          className="w-full text-[13px] text-[#64748B] file:mr-3 file:py-1 file:px-3 file:rounded file:border-0 file:text-[12px] file:bg-[#E2E8F0] file:text-[#0F172A] hover:file:bg-[#CBD5E1]"
+                        />
+                        {specBookFile && (
+                          <p className="mt-1.5 text-[11px] text-[#64748B]">{specBookFile.name} ({(specBookFile.size / 1024 / 1024).toFixed(2)} MB)</p>
+                        )}
+                      </div>
+                      {tocError && (
+                        <div className="rounded-md bg-red-50 border border-red-200 px-3 py-2 text-[12px] text-red-600">{tocError}</div>
+                      )}
+                      <div className="flex justify-end gap-2 pt-1">
+                        <button
+                          type="button"
+                          onClick={skipSpecBook}
+                          disabled={tocBusy}
+                          className="h-8 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#64748B] hover:text-[#0F172A] hover:bg-[#F4F5F7]/[0.05] transition-colors disabled:opacity-50"
+                        >
+                          Skip for now
+                        </button>
+                        <button
+                          type="button"
+                          onClick={uploadSpecBookForScope}
+                          disabled={tocBusy || !specBookFile}
+                          className="h-8 px-4 rounded-md bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors disabled:opacity-50"
+                        >
+                          {tocBusy ? "Reading table of contents…" : "Upload & set scope"}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Wizard step 3 — divisions */}
+                  {!editingProject && wizardStep === 3 && (
+                    <div className="space-y-3">
+                      <p className="text-[12px] text-[#64748B]">
+                        Check the divisions this project owns — {tocDivisions.length} found in the spec book. Divisions 01–12 and 14 are pre-selected.
+                      </p>
+                      <DivisionChecklist divisions={tocDivisions} checked={scopeDivisions} onToggle={toggleScopeDivision} />
+                      <div className="flex justify-end gap-2 pt-1">
+                        <button
+                          type="button"
+                          onClick={cancelProjectForm}
+                          className="h-8 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#64748B] hover:text-[#0F172A] hover:bg-[#F4F5F7]/[0.05] transition-colors"
+                        >
+                          Close
+                        </button>
+                        <button
+                          type="button"
+                          onClick={goToSectionStep}
+                          disabled={scopeDivisions.size === 0}
+                          className="h-8 px-4 rounded-md bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors disabled:opacity-50"
+                        >
+                          Next: refine sections
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Wizard step 4 — section refinement */}
+                  {!editingProject && wizardStep === 4 && (
+                    <div className="space-y-3">
+                      <p className="text-[12px] text-[#64748B]">
+                        Uncheck any sections outside this project&apos;s scope. All sections in the selected divisions are checked by default.
+                      </p>
+                      <SectionAccordion
+                        divisions={tocDivisions.filter(d => scopeDivisions.has(d.code))}
+                        sections={tocSections}
+                        checkedSections={scopeSections}
+                        onToggleSection={toggleScopeSection}
+                        onSetDivision={setScopeSectionsBulk}
+                      />
+                      {tocError && (
+                        <div className="rounded-md bg-red-50 border border-red-200 px-3 py-2 text-[12px] text-red-600">{tocError}</div>
+                      )}
+                      <div className="flex justify-end gap-2 pt-1">
+                        <button
+                          type="button"
+                          onClick={() => setWizardStep(3)}
+                          disabled={scopeSaving}
+                          className="h-8 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#64748B] hover:text-[#0F172A] hover:bg-[#F4F5F7]/[0.05] transition-colors disabled:opacity-50"
+                        >
+                          ← Back
+                        </button>
+                        <button
+                          type="button"
+                          onClick={finishScope}
+                          disabled={scopeSaving}
+                          className="h-8 px-4 rounded-md bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors disabled:opacity-50"
+                        >
+                          {scopeSaving ? "Saving…" : `Finish — ${scopeSections.size} section${scopeSections.size === 1 ? "" : "s"} in scope`}
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -1357,26 +1644,43 @@ export default function SettingsPage() {
                   <tbody>
                     {projects.map((p, i) => (
                       <tr key={p.id} className={`${i < projects.length - 1 ? "border-b border-[#E2E8F0]" : ""} hover:bg-[#F4F5F7]/[0.03] transition-colors group`}>
-                        <td className="px-5 py-3 text-[13px] font-medium text-[#0F172A]">{p.name}</td>
+                        <td className="px-5 py-3 text-[13px] font-medium text-[#0F172A]">
+                          <div className="flex items-center gap-2">
+                            <span>{p.name}</span>
+                            {!scopedProjectIds.has(p.id) && (
+                              <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-amber-100 text-amber-700 flex-shrink-0">Scope not set</span>
+                            )}
+                          </div>
+                        </td>
                         <td className="px-3 py-3 text-[13px] text-[#64748B]">{p.number ?? <span className="text-[#64748B]">—</span>}</td>
                         <td className="px-3 py-3 text-[13px] text-[#64748B]">{p.location ?? <span className="text-[#64748B]">—</span>}</td>
                         <td className="px-3 py-3 text-[13px] text-[#64748B]">{p.gc_name ?? <span className="text-[#64748B]">—</span>}</td>
                         <td className="px-3 py-3">
-                          <div className="flex items-center gap-1.5 justify-end opacity-0 group-hover:opacity-100 transition-opacity">
-                            <button
-                              onClick={() => openEditProject(p)}
-                              className="p-1 rounded text-[#64748B] hover:text-[#0F172A] hover:bg-[#F4F5F7]/[0.08] transition-colors"
-                              title="Edit"
-                            >
-                              <PencilIcon />
-                            </button>
-                            <button
-                              onClick={() => deleteProject(p)}
-                              className="p-1 rounded text-[#64748B] hover:text-red-400 hover:bg-[#F4F5F7]/[0.08] transition-colors"
-                              title="Delete"
-                            >
-                              <XIcon className="h-3 w-3" />
-                            </button>
+                          <div className="flex items-center gap-1.5 justify-end">
+                            {!scopedProjectIds.has(p.id) && (
+                              <button
+                                onClick={() => openScopeWizard(p)}
+                                className="text-[11px] font-semibold text-[#7B9BB5] hover:text-[#6A8AA4] px-2 py-1 rounded hover:bg-[#F4F5F7]/[0.08] transition-colors whitespace-nowrap"
+                              >
+                                Set scope
+                              </button>
+                            )}
+                            <div className="flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                              <button
+                                onClick={() => openEditProject(p)}
+                                className="p-1 rounded text-[#64748B] hover:text-[#0F172A] hover:bg-[#F4F5F7]/[0.08] transition-colors"
+                                title="Edit"
+                              >
+                                <PencilIcon />
+                              </button>
+                              <button
+                                onClick={() => deleteProject(p)}
+                                className="p-1 rounded text-[#64748B] hover:text-red-400 hover:bg-[#F4F5F7]/[0.08] transition-colors"
+                                title="Delete"
+                              >
+                                <XIcon className="h-3 w-3" />
+                              </button>
+                            </div>
                           </div>
                         </td>
                       </tr>
