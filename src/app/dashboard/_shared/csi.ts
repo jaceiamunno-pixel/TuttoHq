@@ -216,3 +216,30 @@ export const CSI_SECTIONS: Record<string, { code: string; name: string }[]> = {
     { code: "33 80 00", name: "Communications Utilities" },
   ],
 }
+
+// ─── Submittal log section colour palette ────────────────────────────────────
+// Eight pastel triples that visually band the submittal log by spec section.
+// Class strings are literal so Tailwind's JIT keeps them in the build.
+export interface SectionColor { bg: string; border: string; chip: string }
+
+export const SECTION_PALETTE: SectionColor[] = [
+  { bg: "bg-slate-50",   border: "border-l-slate-300",   chip: "bg-slate-100 text-slate-700"     },
+  { bg: "bg-blue-50",    border: "border-l-blue-300",    chip: "bg-blue-100 text-blue-700"       },
+  { bg: "bg-emerald-50", border: "border-l-emerald-300", chip: "bg-emerald-100 text-emerald-700" },
+  { bg: "bg-amber-50",   border: "border-l-amber-300",   chip: "bg-amber-100 text-amber-700"     },
+  { bg: "bg-violet-50",  border: "border-l-violet-300",  chip: "bg-violet-100 text-violet-700"   },
+  { bg: "bg-rose-50",    border: "border-l-rose-300",    chip: "bg-rose-100 text-rose-700"       },
+  { bg: "bg-cyan-50",    border: "border-l-cyan-300",    chip: "bg-cyan-100 text-cyan-700"       },
+  { bg: "bg-lime-50",    border: "border-l-lime-300",    chip: "bg-lime-100 text-lime-700"       },
+]
+
+/**
+ * Maps each distinct spec section to a palette index by sorted order, so the
+ * colours cycle (0,1,2,…) and adjacent sections in the log never share one.
+ */
+export function sectionColorMap(sectionCodes: (string | null | undefined)[]): Map<string, number> {
+  const distinct = [...new Set(sectionCodes.map(c => c ?? "—"))].sort()
+  const map = new Map<string, number>()
+  distinct.forEach((code, i) => map.set(code, i % SECTION_PALETTE.length))
+  return map
+}

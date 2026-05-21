@@ -178,10 +178,25 @@ function dedupeByBodyLength(all: Candidate[], totalChars: number): Candidate[] {
 // next (non-submittal) article begins.
 const ARTICLE_HEADING = /(?:^|\n)[ \t]*(\d{1,2}\.\d{1,2})[ \t]+([A-Z][A-Z0-9 ,/&'’.\-]{2,60})/g
 
+// Hard boundaries that end a SUBMITTALS article even when no numbered article
+// heading follows it (e.g. SUBMITTALS is the last article in PART 1): the next
+// PART, or the section terminator. Without this the extracted text runs to the
+// end of the section and sweeps in PART 2/3 product and execution language.
+const PART_OR_END = /(?:^|\n)[ \t]*(?:PART[ \t]+\d|END[ \t]+OF[ \t]+SECTION)\b/gi
+
+/** First PART/END-OF-SECTION boundary at or after `from`, else text length. */
+function firstHardStopAfter(text: string, from: number): number {
+  PART_OR_END.lastIndex = Math.max(0, from)
+  const m = PART_OR_END.exec(text)
+  return m ? m.index : text.length
+}
+
 /**
  * Extracts every SUBMITTALS-type article (SUBMITTALS, ACTION SUBMITTALS,
- * INFORMATIONAL SUBMITTALS, CLOSEOUT SUBMITTALS) from a section's text, each
- * running until the next article heading. Returns "" when none are present.
+ * INFORMATIONAL SUBMITTALS, CLOSEOUT SUBMITTALS) from a section's text. Each
+ * article runs until the FIRST of: the next article heading, the next PART
+ * heading, or END OF SECTION — so it never reads past its natural end.
+ * Returns "" when none are present.
  */
 export function extractSubmittalsText(sectionText: string): string {
   const headings: { index: number; title: string }[] = []
@@ -195,8 +210,9 @@ export function extractSubmittalsText(sectionText: string): string {
   for (let i = 0; i < headings.length; i++) {
     if (!/SUBMITTAL/i.test(headings[i].title)) continue
     const start = headings[i].index
-    const end = i + 1 < headings.length ? headings[i + 1].index : sectionText.length
-    blocks.push(sectionText.slice(start, end).trim())
+    const nextArticle = i + 1 < headings.length ? headings[i + 1].index : sectionText.length
+    const hardStop = firstHardStopAfter(sectionText, start + 1)
+    blocks.push(sectionText.slice(start, Math.min(nextArticle, hardStop)).trim())
   }
   return blocks.join("\n\n")
 }
@@ -236,11 +252,22 @@ export async function parseSpecBook(buffer: Buffer): Promise<SpecParseResult> {
 
   const headers = dedupeByBodyLength(candidates, totalChars)
 
+  // Whole-document text in the same coordinate space as Candidate.globalOffset
+  // (pageStartOffsets advance by page length + 1, matching a "\n" join).
+  const docText = pages.join("\n")
+
   const sections: ParsedSection[] = headers.map((h, i) => {
     const startPage = h.page
     const endPage =
       i + 1 < headers.length ? Math.max(startPage, headers[i + 1].page - 1) : pageCount
-    const fullText = pages.slice(startPage - 1, endPage).join("\n")
+    // Slice by global char offset rather than whole pages: when the next
+    // section starts mid-page that page belongs to both, and page-slicing
+    // bleeds the next section's body into this one (and the previous
+    // section's tail onto the top of this one). Offsets hard-stop the text
+    // exactly at each section header.
+    const startOff = h.globalOffset
+    const endOff = i + 1 < headers.length ? headers[i + 1].globalOffset : docText.length
+    const fullText = docText.slice(startOff, endOff)
     return {
       specNumber: h.specNumber,
       specTitle: h.specTitle,

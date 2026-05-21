@@ -655,3 +655,101 @@ ALTER TABLE submittals
   ADD CONSTRAINT submittals_spec_section_id_fkey
   FOREIGN KEY (spec_section_id) REFERENCES spec_sections(id)
   ON DELETE SET NULL;
+
+-- =============================================================================
+-- 2026-05-21 — SUBMITTAL LOG OVERHAUL
+-- 12-column tracker columns, per-project sequential number, A/E review dates,
+-- vendor links, and a race-safe per-project number allocator.
+-- Idempotent — safe to re-run.
+-- =============================================================================
+
+-- --- New tracker columns -----------------------------------------------------
+-- NOTE: submittal_number already exists as TEXT (the optional cover-sheet
+-- number). The per-project sequential tracker number is a distinct column.
+ALTER TABLE submittals ADD COLUMN IF NOT EXISTS submittal_seq           INT;
+ALTER TABLE submittals ADD COLUMN IF NOT EXISTS received_date           DATE;
+ALTER TABLE submittals ADD COLUMN IF NOT EXISTS sent_to_ae_date         DATE;
+ALTER TABLE submittals ADD COLUMN IF NOT EXISTS returned_from_ae_date   DATE;
+ALTER TABLE submittals ADD COLUMN IF NOT EXISTS returned_to_sub_date    DATE;
+ALTER TABLE submittals ADD COLUMN IF NOT EXISTS submittal_type          TEXT;
+ALTER TABLE submittals ADD COLUMN IF NOT EXISTS vendor_subcontractor_id UUID REFERENCES subcontractors(id) ON DELETE SET NULL;
+ALTER TABLE submittals ADD COLUMN IF NOT EXISTS vendor_supplier_id      UUID REFERENCES suppliers(id)      ON DELETE SET NULL;
+
+CREATE INDEX IF NOT EXISTS idx_submittals_vendor_sub      ON submittals(vendor_subcontractor_id);
+CREATE INDEX IF NOT EXISTS idx_submittals_vendor_supplier ON submittals(vendor_supplier_id);
+
+-- Per-project uniqueness of the sequential number. NULLs are allowed and never
+-- conflict, so library uploads with no project (submittal_seq IS NULL) coexist.
+-- DEFERRABLE so a future renumber could happen inside one transaction.
+ALTER TABLE submittals DROP CONSTRAINT IF EXISTS submittals_project_seq_unique;
+ALTER TABLE submittals ADD  CONSTRAINT submittals_project_seq_unique
+  UNIQUE (project_id, submittal_seq) DEFERRABLE INITIALLY DEFERRED;
+
+-- --- Backfill ----------------------------------------------------------------
+-- Number existing rows per project, ordered by created_at.
+WITH numbered AS (
+  SELECT id, row_number() OVER (PARTITION BY project_id ORDER BY created_at) AS rn
+  FROM submittals
+  WHERE project_id IS NOT NULL
+)
+UPDATE submittals s SET submittal_seq = n.rn
+FROM numbered n
+WHERE s.id = n.id AND s.submittal_seq IS NULL;
+
+-- Recover submittal_type for already-committed spec-ingested submittals (the
+-- old commit route discarded it). In consolidated mode every staged row in a
+-- group shares one type, so any matching staged row is correct.
+UPDATE submittals s SET submittal_type = st.submittal_type
+FROM staged_submittals st
+WHERE st.committed_submittal_id = s.id AND s.submittal_type IS NULL;
+
+-- --- Fix staged_submittals -> submittals FK ----------------------------------
+-- committed_submittal_id had no ON DELETE clause (NO ACTION): a hard delete of
+-- a committed submittal (the Reset Submittal Log feature) would be blocked
+-- while any staged row still pointed at it. SET NULL instead.
+ALTER TABLE staged_submittals
+  DROP CONSTRAINT IF EXISTS staged_submittals_committed_submittal_id_fkey;
+ALTER TABLE staged_submittals
+  ADD CONSTRAINT staged_submittals_committed_submittal_id_fkey
+  FOREIGN KEY (committed_submittal_id) REFERENCES submittals(id)
+  ON DELETE SET NULL;
+
+-- --- Race-safe per-project sequence allocator --------------------------------
+-- A counter row per project. next_submittal_seq() bumps it with a single
+-- INSERT ... ON CONFLICT DO UPDATE statement, which row-locks the counter for
+-- the statement's duration — concurrent commits serialize and receive disjoint
+-- number ranges with no explicit transaction or SELECT ... FOR UPDATE.
+CREATE TABLE IF NOT EXISTS project_submittal_counters (
+  project_id UUID PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
+  last_seq   INT  NOT NULL DEFAULT 0,
+  company_id UUID REFERENCES companies(id) DEFAULT get_my_company_id()
+);
+
+ALTER TABLE project_submittal_counters ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "project_submittal_counters: company select" ON project_submittal_counters FOR SELECT TO authenticated USING     (company_id = get_my_company_id());
+CREATE POLICY "project_submittal_counters: company insert" ON project_submittal_counters FOR INSERT TO authenticated WITH CHECK (company_id = get_my_company_id());
+CREATE POLICY "project_submittal_counters: company update" ON project_submittal_counters FOR UPDATE TO authenticated USING     (company_id = get_my_company_id()) WITH CHECK (company_id = get_my_company_id());
+CREATE POLICY "project_submittal_counters: company delete" ON project_submittal_counters FOR DELETE TO authenticated USING     (company_id = get_my_company_id());
+
+-- Seed counters from existing data. company_id is pulled from the project's
+-- submittals (get_my_company_id() would be NULL when run from the SQL editor).
+-- (array_agg(...))[1] picks any row's company_id — Postgres has no max(uuid).
+INSERT INTO project_submittal_counters (project_id, last_seq, company_id)
+SELECT project_id, COALESCE(MAX(submittal_seq), 0), (array_agg(company_id))[1]
+FROM submittals
+WHERE project_id IS NOT NULL
+GROUP BY project_id
+ON CONFLICT (project_id) DO UPDATE SET last_seq = EXCLUDED.last_seq;
+
+-- Reserves p_count numbers for a project and returns the seq BEFORE the batch:
+-- the caller assigns returned+1 .. returned+p_count.
+CREATE OR REPLACE FUNCTION next_submittal_seq(p_project_id UUID, p_count INT)
+RETURNS INT
+LANGUAGE sql
+AS $$
+  INSERT INTO project_submittal_counters (project_id, last_seq)
+  VALUES (p_project_id, p_count)
+  ON CONFLICT (project_id)
+  DO UPDATE SET last_seq = project_submittal_counters.last_seq + p_count
+  RETURNING last_seq - p_count;
+$$;

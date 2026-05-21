@@ -6,13 +6,57 @@ import type {
   Division, SubmittalFile, SubmittalRecord, AiResult, NameOptions, UploadStep,
   BatchItem, BatchPhase, Project, TeamMember, OpenFileCtx, FileModalStep,
   CoverFormData, CoverContact, StagedSubmittal, SpecSectionRow, PendingDoc,
+  SubcontractorRow, SupplierRow,
 } from "../_shared/types"
 import { SUBMITTAL_TYPE_OPTIONS } from "../_shared/types"
-import { CSI_DIVISIONS, CSI_SECTIONS } from "../_shared/csi"
+import { CSI_DIVISIONS, CSI_SECTIONS, SECTION_PALETTE, sectionColorMap } from "../_shared/csi"
 import { getDot, fmtDate } from "../_shared/format"
 import { SearchIcon, XIcon, PlusIcon, CheckIcon, SpinnerIcon, LayersIcon } from "../_shared/icons"
 import { StatusBadge } from "../_shared/badges"
 import { Combobox, inputCls, labelCls } from "../_shared/ui"
+
+// Status options for the inline Status dropdown in the submittal log.
+const LOG_STATUS_OPTIONS = [
+  "Received", "Under Review", "Approved", "Approved with Comments",
+  "Rejected", "Revise and Resubmit", "Needs Review", "Transmitted",
+] as const
+
+// ─── Submittal-log calculated columns ────────────────────────────────────────
+function daysBetween(a: string, b: string): number | null {
+  const t1 = Date.parse(a), t2 = Date.parse(b)
+  if (Number.isNaN(t1) || Number.isNaN(t2)) return null
+  return Math.round((t2 - t1) / 86_400_000)
+}
+
+/** Approval turnaround: returned-from-A/E minus sent-to-A/E, in days. */
+function approvalDays(s: SubmittalRecord): number | null {
+  if (!s.sent_to_ae_date || !s.returned_from_ae_date) return null
+  return daysBetween(s.sent_to_ae_date, s.returned_from_ae_date)
+}
+
+/**
+ * Late / On-Time state. A submittal is Late when it has been out for A/E
+ * review longer than 14 days — whether it has come back (turnaround > 14) or
+ * is still outstanding (today − sent > 14). Null until it is sent to the A/E.
+ */
+function lateState(s: SubmittalRecord): "late" | "ontime" | null {
+  if (!s.sent_to_ae_date) return null
+  const end = s.returned_from_ae_date ?? new Date().toISOString().slice(0, 10)
+  const d = daysBetween(s.sent_to_ae_date, end)
+  if (d === null) return null
+  return d > 14 ? "late" : "ontime"
+}
+
+// Small inline document icon for the Source column.
+function SourceIcon({ className = "h-4 w-4" }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+        d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 3v6h6" />
+    </svg>
+  )
+}
 
 // Library + Submittals module — extracted from dashboard/page.tsx (Step 9, final).
 // Library and Submittals share the upload/batch/cover/transmittal machinery and
@@ -77,6 +121,22 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
   const [editSec, setEditSec]                   = useState("")
   const [editSecName, setEditSecName]           = useState("")
   const [editSaving, setEditSaving]             = useState(false)
+
+  // Submittal-log tracker — vendors, grouping, inline-save debounce
+  const [vendorSubs, setVendorSubs]             = useState<SubcontractorRow[]>([])
+  const [vendorSuppliers, setVendorSuppliers]   = useState<SupplierRow[]>([])
+  const [groupBySection, setGroupBySection]     = useState(true)
+  const saveTimers     = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
+  const pendingPatches = useRef<Map<string, Record<string, unknown>>>(new Map())
+  // Reset Submittal Log
+  const [resetMenuOpen, setResetMenuOpen]       = useState(false)
+  const [resetScope, setResetScope]             = useState<"all" | "spec_ingestion" | null>(null)
+  const [resetCount, setResetCount]             = useState<number | null>(null)
+  const [resetting, setResetting]               = useState(false)
+  // Source PDF preview
+  const [sourceModal, setSourceModal]           = useState<
+    { url: string; page: number; spec_number: string; spec_title: string; file_name: string } | null>(null)
+  const [sourceLoadingId, setSourceLoadingId]   = useState<string | null>(null)
 
   // Batch upload
   const [showBatch, setShowBatch]     = useState(false)
@@ -398,6 +458,87 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { loadSubmittals(activeProjectId) }, [activeProjectId])
+
+  // ── Submittal-log inline editing ─────────────────────────────────────────────
+  // Vendors for the inline picker — company-wide subcontractors + suppliers.
+  function loadVendors() {
+    fetch("/api/subcontractors").then(r => r.json())
+      .then(d => setVendorSubs(Array.isArray(d) ? d : [])).catch(() => {})
+    fetch("/api/suppliers").then(r => r.json())
+      .then(d => setVendorSuppliers(Array.isArray(d) ? d : [])).catch(() => {})
+  }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { if (activeModule === "submittals") loadVendors() }, [activeModule])
+
+  function vendorLabel(s: SubmittalRecord): string {
+    if (s.vendor_subcontractor_id)
+      return vendorSubs.find(v => v.id === s.vendor_subcontractor_id)?.company_name ?? "—"
+    if (s.vendor_supplier_id)
+      return vendorSuppliers.find(v => v.id === s.vendor_supplier_id)?.company_name ?? "—"
+    return ""
+  }
+
+  // Optimistic local update + 500ms-debounced PATCH, coalescing several field
+  // edits on the same row into one request.
+  function patchSubmittal(id: string, updates: Record<string, unknown>) {
+    setLogSubmittals(prev => prev.map(s => s.id === id ? { ...s, ...updates } as SubmittalRecord : s))
+    setSearchResults(prev => prev ? prev.map(s => s.id === id ? { ...s, ...updates } as SubmittalRecord : s) : prev)
+    pendingPatches.current.set(id, { ...(pendingPatches.current.get(id) ?? {}), ...updates })
+    const existing = saveTimers.current.get(id)
+    if (existing) clearTimeout(existing)
+    saveTimers.current.set(id, setTimeout(() => {
+      const body = pendingPatches.current.get(id) ?? {}
+      pendingPatches.current.delete(id)
+      saveTimers.current.delete(id)
+      fetch(`/api/submittals/${id}`, {
+        method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+      }).catch(() => { /* optimistic — reconciles on next load */ })
+    }, 500))
+  }
+
+  // ── Reset Submittal Log ──────────────────────────────────────────────────────
+  async function openResetConfirm(scope: "all" | "spec_ingestion") {
+    setResetMenuOpen(false)
+    if (!activeProjectId) return
+    setResetScope(scope)
+    setResetCount(null)
+    try {
+      const r = await fetch(`/api/submittals/reset?project_id=${encodeURIComponent(activeProjectId)}&scope=${scope}`)
+      const d = await r.json()
+      setResetCount(r.ok ? (d.count ?? 0) : 0)
+    } catch { setResetCount(0) }
+  }
+
+  async function doReset() {
+    if (!activeProjectId || !resetScope) return
+    setResetting(true)
+    try {
+      const r = await fetch("/api/submittals/reset", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ project_id: activeProjectId, scope: resetScope }),
+      })
+      const d = await r.json()
+      if (!r.ok) throw new Error(d.error ?? "Reset failed")
+      setResetScope(null)
+      loadSubmittals(activeProjectId)
+      loadTree()
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Reset failed")
+    } finally { setResetting(false) }
+  }
+
+  // ── Source spec PDF ──────────────────────────────────────────────────────────
+  async function openSource(s: SubmittalRecord) {
+    setSourceLoadingId(s.id)
+    try {
+      const r = await fetch(`/api/submittals/${s.id}/source`)
+      const d = await r.json()
+      if (!r.ok) throw new Error(d.error ?? "No source available")
+      setSourceModal(d)
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Could not open source")
+    } finally { setSourceLoadingId(null) }
+  }
 
   // ── Pending Review (staged submittals) ───────────────────────────────────────
   function loadPending(pid = globalProjectId) {
@@ -807,12 +948,52 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                   : "Staged from spec book — review and commit"}
               </p>
             </div>
-            <button
-              onClick={() => onNavigate("library")}
-              className="h-8 px-3 rounded-md border border-[#E2E8F0] text-[12px] text-[#7B9BB5] hover:bg-[#0F172A]/[0.04] transition-colors flex items-center gap-1.5 whitespace-nowrap flex-shrink-0"
-            >
-              <PlusIcon /> Upload to Library
-            </button>
+            <div className="flex items-center gap-2 flex-shrink-0">
+              {submittalsView === "log" && !isSearchMode && (
+                <label className="flex items-center gap-1.5 text-[12px] text-[#64748B] cursor-pointer select-none whitespace-nowrap">
+                  <input type="checkbox" checked={groupBySection}
+                    onChange={e => setGroupBySection(e.target.checked)}
+                    className="accent-[#7B9BB5]" />
+                  <span className="hidden sm:inline">Group by section</span>
+                </label>
+              )}
+              {submittalsView === "log" && activeProjectId && (
+                <div className="relative">
+                  <button
+                    onClick={() => setResetMenuOpen(o => !o)}
+                    className="h-8 px-3 rounded-md border border-[#E2E8F0] text-[12px] text-[#64748B] hover:bg-[#0F172A]/[0.04] transition-colors flex items-center gap-1.5 whitespace-nowrap"
+                  >
+                    Reset
+                    <svg className={`w-3 h-3 transition-transform ${resetMenuOpen ? "rotate-180" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                    </svg>
+                  </button>
+                  {resetMenuOpen && (
+                    <>
+                      <div className="fixed inset-0 z-40" onClick={() => setResetMenuOpen(false)} />
+                      <div className="absolute right-0 top-full mt-1 z-50 w-64 bg-white border border-[#E2E8F0] rounded-lg shadow-xl overflow-hidden">
+                        <button onClick={() => openResetConfirm("spec_ingestion")}
+                          className="w-full text-left px-3 py-2.5 hover:bg-[#F8F9FA] transition-colors">
+                          <span className="block text-[12px] font-semibold text-[#0F172A]">Reset spec-ingested only</span>
+                          <span className="block text-[11px] text-[#64748B]">Removes AI-extracted rows; keeps manual &amp; email entries.</span>
+                        </button>
+                        <button onClick={() => openResetConfirm("all")}
+                          className="w-full text-left px-3 py-2.5 hover:bg-red-50 transition-colors border-t border-[#E2E8F0]">
+                          <span className="block text-[12px] font-semibold text-red-600">Reset all submittals</span>
+                          <span className="block text-[11px] text-red-400">Deletes every submittal in this project.</span>
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
+              <button
+                onClick={() => onNavigate("library")}
+                className="h-8 px-3 rounded-md border border-[#E2E8F0] text-[12px] text-[#7B9BB5] hover:bg-[#0F172A]/[0.04] transition-colors flex items-center gap-1.5 whitespace-nowrap"
+              >
+                <PlusIcon /> <span className="hidden sm:inline">Upload to Library</span>
+              </button>
+            </div>
           </div>
           {submittalsView === "log" && (<>
           <form onSubmit={handleSearch} className="flex items-center gap-2 px-4 pb-2.5">
@@ -1107,142 +1288,232 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                 Go to Library
               </button>
             </div>
-          ) : (
+          ) : (() => {
+            // Sort + colour-band the rows. Grouped: spec section, then type,
+            // then number. Ungrouped: per-project submittal number.
+            const rows = [...displaySubmittals]
+            if (groupBySection) {
+              rows.sort((a, b) =>
+                (a.csi_section ?? "").localeCompare(b.csi_section ?? "") ||
+                (a.submittal_type ?? "").localeCompare(b.submittal_type ?? "") ||
+                (a.submittal_seq ?? 0) - (b.submittal_seq ?? 0))
+            } else {
+              rows.sort((a, b) => (a.submittal_seq ?? 0) - (b.submittal_seq ?? 0))
+            }
+            const colorIdx = sectionColorMap(rows.map(r => r.csi_section))
+            const colorFor = (sec: string | null) => SECTION_PALETTE[colorIdx.get(sec ?? "—") ?? 0]
+            const HEADERS = ["Subm. #", "Spec #", "Description", "Type of Subm.", "Vendor",
+              "Received", "To A/E", "Returned A/E", "Returned to Sub", "Approval (Days)",
+              "Status", "Late / On Time", "Source", "Actions"]
+            return (
             <>
-            {/* Desktop table */}
-            <div className="hidden sm:block mx-4 my-4 rounded-xl border border-[#E2E8F0] overflow-clip bg-white">
-            <table className="w-full text-[13px] border-collapse">
+            {/* Desktop tracker table — horizontal scroll on the outer pane,
+                frozen header sticks against it. */}
+            <div className="hidden sm:block">
+            <table className="w-full min-w-max text-[12px] border-collapse border-b border-[#E2E8F0]">
               <thead className="sticky top-0 bg-[#F8F9FA] z-10">
                 <tr className="border-b border-[#E2E8F0]">
-                  <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-10">#</th>
-                  <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest">Title</th>
-                  <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-32">Division</th>
-                  <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-48">Section</th>
-                  <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-24">Date</th>
-                  <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-36">Status</th>
-                  <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-40">Actions</th>
+                  {HEADERS.map(h => (
+                    <th key={h} className="text-left px-3 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-wider whitespace-nowrap">{h}</th>
+                  ))}
                 </tr>
               </thead>
               <tbody>
-                {displaySubmittals.map((s, i) => (
-                  <tr key={s.id} className="border-b border-[#E2E8F0]/60 hover:bg-[#F8F9FA] transition-colors group">
-                    <td className="px-4 py-2.5 text-[#64748B] tabular-nums text-[12px]">{displaySubmittals.length - i}</td>
-                    <td className="px-4 py-2.5 max-w-0">
-                      <div className="flex items-center gap-1.5">
-                        <p className="text-[#0F172A] font-medium truncate" title={s.file_name}>{s.file_name}</p>
+                {rows.map(s => {
+                  const c = colorFor(s.csi_section)
+                  const appr = approvalDays(s)
+                  const late = lateState(s)
+                  const hasSource = s.source === "spec_ingestion" && !!s.spec_section_id
+                  return (
+                  <tr key={s.id} className={`border-b border-[#E2E8F0]/60 ${c.bg}`}>
+                    <td className={`px-3 py-1.5 tabular-nums text-[#0F172A] font-semibold border-l-4 ${c.border} whitespace-nowrap`}>{s.submittal_seq ?? "—"}</td>
+                    <td className="px-3 py-1.5 whitespace-nowrap">
+                      <span className={`inline-block px-1.5 py-0.5 rounded font-mono text-[11px] font-semibold ${c.chip}`}>{s.csi_section ?? "—"}</span>
+                    </td>
+                    <td className="px-3 py-1.5">
+                      <div className="flex items-center gap-1.5 max-w-[280px]">
+                        <span className="text-[#0F172A] truncate" title={s.file_name}>{s.file_name}</span>
                         {s.sender_email && (
-                          <span title={`Received from ${s.sender_email}`} className="flex-shrink-0 text-[#64748B] hover:text-[#64748B] transition-colors">
-                            <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
-                            </svg>
+                          <span title={`Received from ${s.sender_email}`} className="flex-shrink-0 text-[#94A3B8]">
+                            <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" /></svg>
                           </span>
                         )}
                       </div>
-                      <div className="flex items-center gap-2 mt-0.5">
-                        {s.ai_confidence != null && s.ai_confidence < 70 && (
-                          <span className="text-[10px] text-amber-400">⚠ Low confidence</span>
-                        )}
-                        {s.manually_overridden && (
-                          <span className="text-[10px] text-[#7B9BB5]">✎ Overridden</span>
-                        )}
-                        {s.transmittal_sent_at ? (
-                          <span className="text-[10px] text-purple-600" title={`Transmitted on ${fmtDate(s.transmittal_sent_at)}${s.transmittal_recipient ? ` to ${s.transmittal_recipient}` : ""}`}>
-                            ✉ Sent {fmtDate(s.transmittal_sent_at)}
-                          </span>
-                        ) : s.send_to_company ? (
-                          <span className="text-[10px] text-emerald-600" title={`Transmitted to: ${s.send_to_company}${s.send_to_contact ? ` — ${s.send_to_contact}` : ""}${s.send_to_email ? ` · ${s.send_to_email}` : ""}`}>
-                            ↗ {s.send_to_company}{s.send_to_contact ? ` (${s.send_to_contact})` : ""}
-                          </span>
-                        ) : null}
-                      </div>
                     </td>
-                    <td className="px-4 py-2.5 text-[#64748B] text-[12px] whitespace-nowrap">
-                      {s.csi_division && <span className="font-mono text-[#64748B] mr-1">{s.csi_division}</span>}
-                      {s.division_name}
+                    <td className="px-3 py-1.5 text-[#64748B] whitespace-nowrap">{s.submittal_type ?? "—"}</td>
+                    <td className="px-2 py-1.5">
+                      <VendorCell subId={s.vendor_subcontractor_id} supplierId={s.vendor_supplier_id}
+                        subs={vendorSubs} suppliers={vendorSuppliers}
+                        onChange={(subId, supId) => patchSubmittal(s.id, { vendor_subcontractor_id: subId, vendor_supplier_id: supId })} />
                     </td>
-                    <td className="px-4 py-2.5 text-[#64748B] text-[12px]">{s.section_name ?? s.csi_section ?? "—"}</td>
-                    <td className="px-4 py-2.5 text-[#64748B] text-[12px] whitespace-nowrap">{fmtDate(s.received_at ?? s.created_at)}</td>
-                    <td className="px-4 py-2.5"><StatusBadge status={s.review_status ?? "Received"} /></td>
-                    <td className="px-4 py-2.5">
-                      <div className="flex items-center gap-1">
-                        {s.storage_path && (
-                          <button
-                            onClick={() => window.open(`/api/download/${s.id}`, "_blank")}
-                            className="text-[11px] text-[#64748B] hover:text-[#0F172A] px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors"
-                          >Open</button>
-                        )}
-                        <button
-                          onClick={() => openEditModal(s)}
-                          className="text-[11px] text-[#64748B] hover:text-[#0F172A] px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors"
-                        >Edit</button>
-                        {s.project_id ? (
-                          <button
-                            onClick={() => openEditCoverSheet(s)}
-                            className="text-[11px] text-[#7B9BB5] hover:text-[#7B9BB5] px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors"
-                          >Cover</button>
-                        ) : (
-                          <button
-                            onClick={() => openTransmittal(s)}
-                            className="text-[11px] text-[#7B9BB5] hover:text-[#7B9BB5] px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors"
-                          >Cover</button>
-                        )}
-                        <button
-                          onClick={() => handleTransmittal(s, displaySubmittals.length - i)}
-                          disabled={transmittalLoading && transmittalSub?.id === s.id}
-                          className="text-[11px] text-emerald-700 hover:text-emerald-800 px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors disabled:opacity-50 flex items-center gap-1 whitespace-nowrap"
-                        >
-                          {transmittalLoading && transmittalSub?.id === s.id ? <SpinnerIcon className="h-3 w-3" /> : null}
-                          Transmit
+                    <td className="px-2 py-1.5"><DateCell value={s.received_date} onChange={v => patchSubmittal(s.id, { received_date: v })} /></td>
+                    <td className="px-2 py-1.5"><DateCell value={s.sent_to_ae_date} onChange={v => patchSubmittal(s.id, { sent_to_ae_date: v })} /></td>
+                    <td className="px-2 py-1.5"><DateCell value={s.returned_from_ae_date} onChange={v => patchSubmittal(s.id, { returned_from_ae_date: v })} /></td>
+                    <td className="px-2 py-1.5"><DateCell value={s.returned_to_sub_date} onChange={v => patchSubmittal(s.id, { returned_to_sub_date: v })} /></td>
+                    <td className="px-3 py-1.5 text-center tabular-nums text-[#64748B]">{appr ?? "—"}</td>
+                    <td className="px-2 py-1.5">
+                      <select value={s.review_status ?? "Received"}
+                        onChange={e => patchSubmittal(s.id, { review_status: e.target.value })}
+                        className="h-7 px-1.5 rounded border border-[#E2E8F0] text-[12px] text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40">
+                        {LOG_STATUS_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
+                      </select>
+                    </td>
+                    <td className="px-3 py-1.5 whitespace-nowrap">
+                      {late === "late"
+                        ? <span className="inline-flex px-2 py-0.5 rounded-full text-[11px] font-semibold bg-red-100 text-red-700">Late</span>
+                        : late === "ontime"
+                        ? <span className="inline-flex px-2 py-0.5 rounded-full text-[11px] font-semibold bg-green-100 text-green-700">On Time</span>
+                        : <span className="text-[#94A3B8]">—</span>}
+                    </td>
+                    <td className="px-3 py-1.5 text-center">
+                      {hasSource ? (
+                        <button onClick={() => openSource(s)} disabled={sourceLoadingId === s.id}
+                          title="View source spec section" className="text-[#7B9BB5] hover:text-[#5A7A94] disabled:opacity-50 align-middle">
+                          {sourceLoadingId === s.id ? <SpinnerIcon className="h-4 w-4" /> : <SourceIcon />}
                         </button>
-                        <button
-                          onClick={() => deleteSubmittal(s)}
-                          className="text-[11px] text-[#64748B] hover:text-red-400 px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors"
-                          title="Delete submittal"
-                        >Delete</button>
+                      ) : (
+                        <span className="text-[#CBD5E1] inline-block align-middle" title="No source — manual or email entry"><SourceIcon /></span>
+                      )}
+                    </td>
+                    <td className="px-3 py-1.5 whitespace-nowrap">
+                      <div className="flex items-center gap-0.5">
+                        {s.storage_path && (
+                          <button onClick={() => window.open(`/api/download/${s.id}`, "_blank")} className="text-[11px] text-[#64748B] hover:text-[#0F172A] px-1.5 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors">Open</button>
+                        )}
+                        <button onClick={() => openEditModal(s)} className="text-[11px] text-[#64748B] hover:text-[#0F172A] px-1.5 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors">Edit</button>
+                        <button onClick={() => s.project_id ? openEditCoverSheet(s) : openTransmittal(s)} className="text-[11px] text-[#7B9BB5] px-1.5 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors">Cover</button>
+                        <button onClick={() => handleTransmittal(s, s.submittal_seq ?? 0)} disabled={transmittalLoading && transmittalSub?.id === s.id}
+                          className="text-[11px] text-emerald-700 hover:text-emerald-800 px-1.5 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors disabled:opacity-50 flex items-center gap-1">
+                          {transmittalLoading && transmittalSub?.id === s.id ? <SpinnerIcon className="h-3 w-3" /> : null}Transmit
+                        </button>
+                        <button onClick={() => deleteSubmittal(s)} className="text-[11px] text-[#64748B] hover:text-red-400 px-1.5 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors" title="Delete submittal">Delete</button>
                       </div>
                     </td>
                   </tr>
-                ))}
+                  )
+                })}
               </tbody>
             </table>
             </div>
             {/* Mobile card list */}
             <div className="sm:hidden px-3 py-3 space-y-2">
-              {displaySubmittals.map((s, i) => (
-                <div key={s.id} className="bg-white rounded-xl border border-[#E2E8F0] p-3 shadow-sm">
+              {rows.map(s => {
+                const c = colorFor(s.csi_section)
+                const late = lateState(s)
+                const vendor = vendorLabel(s)
+                return (
+                <div key={s.id} className={`rounded-xl border border-[#E2E8F0] border-l-4 ${c.border} p-3 shadow-sm ${c.bg}`}>
                   <div className="flex items-start justify-between gap-2 mb-1.5">
-                    <p className="text-[13px] font-medium text-[#0F172A] leading-tight flex-1 min-w-0 truncate" title={s.file_name}>{s.file_name}</p>
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      <span className="text-[11px] font-bold tabular-nums text-[#64748B] flex-shrink-0">#{s.submittal_seq ?? "—"}</span>
+                      <p className="text-[13px] font-medium text-[#0F172A] leading-tight truncate" title={s.file_name}>{s.file_name}</p>
+                    </div>
                     <StatusBadge status={s.review_status ?? "Received"} />
                   </div>
-                  <p className="text-[11px] text-[#64748B] mb-1">{s.section_name ?? s.csi_section ?? "—"} {s.division_name ? `· ${s.division_name}` : ""}</p>
-                  <p className="text-[11px] text-[#64748B] mb-2">{fmtDate(s.received_at ?? s.created_at)}</p>
+                  <p className="text-[11px] text-[#64748B] mb-1">
+                    <span className={`inline-block px-1.5 rounded font-mono font-semibold ${c.chip}`}>{s.csi_section ?? "—"}</span>
+                    {s.submittal_type ? ` · ${s.submittal_type}` : ""}
+                    {vendor ? ` · ${vendor}` : ""}
+                  </p>
+                  {late && (
+                    <p className={`text-[11px] mb-1.5 font-semibold ${late === "late" ? "text-red-600" : "text-green-700"}`}>
+                      {late === "late" ? "Late" : "On Time"}
+                    </p>
+                  )}
                   <div className="flex items-center gap-1 flex-wrap">
+                    {(s.source === "spec_ingestion" && s.spec_section_id) && (
+                      <button onClick={() => openSource(s)} className="text-[11px] text-[#7B9BB5] px-2 py-1 rounded border border-[#E2E8F0] bg-white transition-colors">Source</button>
+                    )}
                     {s.storage_path && (
-                      <button onClick={() => window.open(`/api/download/${s.id}`, "_blank")} className="text-[11px] text-[#64748B] hover:text-[#0F172A] px-2 py-1 rounded border border-[#E2E8F0] bg-[#F8F9FA] transition-colors">Open</button>
+                      <button onClick={() => window.open(`/api/download/${s.id}`, "_blank")} className="text-[11px] text-[#64748B] px-2 py-1 rounded border border-[#E2E8F0] bg-white transition-colors">Open</button>
                     )}
-                    <button onClick={() => openEditModal(s)} className="text-[11px] text-[#64748B] hover:text-[#0F172A] px-2 py-1 rounded border border-[#E2E8F0] bg-[#F8F9FA] transition-colors">Edit</button>
-                    {s.project_id ? (
-                      <button onClick={() => openEditCoverSheet(s)} className="text-[11px] text-[#7B9BB5] px-2 py-1 rounded border border-[#E2E8F0] bg-[#F8F9FA] transition-colors">Cover</button>
-                    ) : (
-                      <button onClick={() => openTransmittal(s)} className="text-[11px] text-[#7B9BB5] px-2 py-1 rounded border border-[#E2E8F0] bg-[#F8F9FA] transition-colors">Cover</button>
-                    )}
+                    <button onClick={() => openEditModal(s)} className="text-[11px] text-[#64748B] px-2 py-1 rounded border border-[#E2E8F0] bg-white transition-colors">Edit</button>
+                    <button onClick={() => s.project_id ? openEditCoverSheet(s) : openTransmittal(s)} className="text-[11px] text-[#7B9BB5] px-2 py-1 rounded border border-[#E2E8F0] bg-white transition-colors">Cover</button>
                     <button
-                      onClick={() => handleTransmittal(s, displaySubmittals.length - i)}
+                      onClick={() => handleTransmittal(s, s.submittal_seq ?? 0)}
                       disabled={transmittalLoading && transmittalSub?.id === s.id}
-                      className="text-[11px] text-emerald-700 px-2 py-1 rounded border border-[#E2E8F0] bg-[#F8F9FA] transition-colors disabled:opacity-50 flex items-center gap-1">
+                      className="text-[11px] text-emerald-700 px-2 py-1 rounded border border-[#E2E8F0] bg-white transition-colors disabled:opacity-50 flex items-center gap-1">
                       {transmittalLoading && transmittalSub?.id === s.id ? <SpinnerIcon className="h-3 w-3" /> : null}
                       Transmit
                     </button>
-                    <button onClick={() => deleteSubmittal(s)} className="text-[11px] text-red-400 px-2 py-1 rounded border border-[#E2E8F0] bg-[#F8F9FA] transition-colors">Delete</button>
+                    <button onClick={() => deleteSubmittal(s)} className="text-[11px] text-red-400 px-2 py-1 rounded border border-[#E2E8F0] bg-white transition-colors">Delete</button>
                   </div>
                 </div>
-              ))}
+                )
+              })}
             </div>
             </>
-          )}
+            )
+          })()}
           </>)}
 
         </div>
+
+      {/* ── Source spec PDF preview ─────────────────────────────────────── */}
+      {sourceModal && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4"
+          onClick={e => { if (e.target === e.currentTarget) setSourceModal(null) }}>
+          <div className="bg-white rounded-xl border border-[#E2E8F0] shadow-2xl w-full sm:w-[860px] mx-4 sm:mx-0 flex flex-col" style={{ height: "88vh" }}>
+            <div className="flex items-center justify-between px-5 py-3 border-b border-[#E2E8F0] flex-shrink-0">
+              <div className="min-w-0">
+                <h2 className="text-[14px] font-bold text-[#0F172A] truncate">
+                  {sourceModal.spec_number} <span className="font-medium text-[#64748B]">— {sourceModal.spec_title}</span>
+                </h2>
+                <p className="text-[11px] text-[#64748B] truncate">{sourceModal.file_name} · opened at page {sourceModal.page}</p>
+              </div>
+              <div className="flex items-center gap-2 flex-shrink-0">
+                <a href={sourceModal.url} target="_blank" rel="noopener noreferrer"
+                  className="h-8 px-3 rounded-md border border-[#E2E8F0] text-[12px] font-semibold text-[#7B9BB5] hover:bg-[#0F172A]/[0.04] transition-colors whitespace-nowrap">
+                  Open full PDF in new tab
+                </a>
+                <button onClick={() => setSourceModal(null)} className="text-[#64748B] hover:text-[#0F172A] transition-colors">
+                  <XIcon className="h-4 w-4" />
+                </button>
+              </div>
+            </div>
+            <iframe
+              src={`${sourceModal.url}#page=${sourceModal.page}`}
+              title="Source spec section"
+              className="flex-1 min-h-0 w-full rounded-b-xl"
+            />
+          </div>
+        </div>
+      )}
+
+      {/* ── Reset Submittal Log confirmation ────────────────────────────── */}
+      {resetScope && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl border border-[#E2E8F0] shadow-2xl w-full sm:w-[440px] mx-4 sm:mx-0 p-6">
+            <h2 className="text-[16px] font-bold text-[#0F172A] mb-2">
+              {resetScope === "all" ? "Reset all submittals?" : "Reset spec-ingested submittals?"}
+            </h2>
+            <p className="text-[13px] text-[#64748B] mb-3">
+              {resetScope === "all"
+                ? "Every submittal in this project will be permanently deleted, including manual and email-intake entries."
+                : "Every AI-extracted submittal (from spec book ingestion) will be permanently deleted. Manual and email-intake entries are kept."}
+            </p>
+            <div className="rounded-md bg-red-50 border border-red-200 px-3 py-2 mb-5">
+              <p className="text-[13px] text-red-700 font-semibold">
+                {resetCount === null
+                  ? "Counting affected rows…"
+                  : `${resetCount} submittal${resetCount === 1 ? "" : "s"} will be deleted. This cannot be undone.`}
+              </p>
+            </div>
+            <div className="flex gap-3 justify-end">
+              <button onClick={() => setResetScope(null)} disabled={resetting}
+                className="h-9 px-5 rounded-md border border-[#E2E8F0] text-[13px] text-[#64748B] hover:bg-[#0F172A]/[0.04] transition-colors disabled:opacity-50">
+                Cancel
+              </button>
+              <button onClick={doReset} disabled={resetting || resetCount === null || resetCount === 0}
+                className="h-9 px-5 rounded-md bg-red-600 text-white text-[13px] font-semibold hover:bg-red-700 transition-colors disabled:opacity-50 flex items-center gap-1.5">
+                {resetting && <SpinnerIcon className="h-3.5 w-3.5" />}
+                {resetting ? "Deleting…" : "Delete permanently"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ── Transmittal confirmation dialog ─────────────────────────────── */}
       {showTransmittalConfirm && (
         <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center">
@@ -2178,5 +2449,128 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
         </div>
       )}
     </>
+  )
+}
+
+// ─── Inline submittal-log cell editors ───────────────────────────────────────
+
+/** A bare date input — emits null when cleared. */
+function DateCell({ value, onChange }: {
+  value: string | null
+  onChange: (v: string | null) => void
+}) {
+  return (
+    <input
+      type="date"
+      value={value ?? ""}
+      onChange={e => onChange(e.target.value || null)}
+      className="w-[124px] h-7 px-1.5 rounded border border-[#E2E8F0] text-[12px] text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40"
+    />
+  )
+}
+
+/**
+ * Searchable vendor picker over subcontractors + suppliers. The dropdown is
+ * fixed-positioned (anchored to the trigger via getBoundingClientRect) so it
+ * is never clipped by the horizontally-scrolling table.
+ */
+function VendorCell({ subId, supplierId, subs, suppliers, onChange }: {
+  subId: string | null
+  supplierId: string | null
+  subs: SubcontractorRow[]
+  suppliers: SupplierRow[]
+  onChange: (subId: string | null, supplierId: string | null) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const [q, setQ]       = useState("")
+  const [pos, setPos]   = useState<{ top: number; left: number } | null>(null)
+  const ref    = useRef<HTMLDivElement>(null)
+  const btnRef = useRef<HTMLButtonElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    function onDown(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener("mousedown", onDown)
+    return () => document.removeEventListener("mousedown", onDown)
+  }, [open])
+
+  function toggle() {
+    if (open) { setOpen(false); return }
+    const r = btnRef.current?.getBoundingClientRect()
+    if (r) setPos({ top: r.bottom + 4, left: r.left })
+    setQ("")
+    setOpen(true)
+  }
+
+  function pick(nextSub: string | null, nextSup: string | null) {
+    onChange(nextSub, nextSup)
+    setOpen(false)
+  }
+
+  const current =
+    subId ? subs.find(v => v.id === subId)?.company_name :
+    supplierId ? suppliers.find(v => v.id === supplierId)?.company_name : null
+
+  const ql = q.trim().toLowerCase()
+  const subMatches = subs.filter(v => !ql || v.company_name.toLowerCase().includes(ql))
+  const supMatches = suppliers.filter(v => !ql || v.company_name.toLowerCase().includes(ql))
+
+  return (
+    <div ref={ref}>
+      <button
+        ref={btnRef}
+        onClick={toggle}
+        className={`w-[150px] h-7 px-2 rounded border text-[12px] text-left truncate bg-white transition-colors hover:border-[#7B9BB5]/60 ${open ? "border-[#7B9BB5]" : "border-[#E2E8F0]"} ${current ? "text-[#0F172A]" : "text-[#94A3B8]"}`}
+      >
+        {current ?? "Set vendor…"}
+      </button>
+      {open && pos && (
+        <div
+          style={{ position: "fixed", top: pos.top, left: pos.left }}
+          className="z-50 w-[240px] bg-white border border-[#E2E8F0] rounded-lg shadow-xl"
+        >
+          <div className="p-1.5 border-b border-[#E2E8F0]">
+            <input
+              autoFocus
+              value={q}
+              onChange={e => setQ(e.target.value)}
+              placeholder="Search vendors…"
+              className="w-full h-7 px-2 rounded border border-[#E2E8F0] text-[12px] focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40"
+            />
+          </div>
+          <div className="max-h-60 overflow-y-auto py-1">
+            {(subId || supplierId) && (
+              <button onClick={() => pick(null, null)}
+                className="w-full text-left px-2.5 py-1.5 text-[12px] text-[#94A3B8] hover:bg-[#F8F9FA]">
+                Clear vendor
+              </button>
+            )}
+            {subMatches.length > 0 && (
+              <p className="px-2.5 pt-1 pb-0.5 text-[10px] font-bold uppercase tracking-wide text-[#94A3B8]">Subcontractors</p>
+            )}
+            {subMatches.map(v => (
+              <button key={v.id} onClick={() => pick(v.id, null)}
+                className={`w-full text-left px-2.5 py-1.5 text-[12px] hover:bg-[#F8F9FA] ${v.id === subId ? "text-[#7B9BB5] font-semibold" : "text-[#0F172A]"}`}>
+                {v.company_name}{v.trade ? <span className="text-[#94A3B8]"> · {v.trade}</span> : null}
+              </button>
+            ))}
+            {supMatches.length > 0 && (
+              <p className="px-2.5 pt-1.5 pb-0.5 text-[10px] font-bold uppercase tracking-wide text-[#94A3B8]">Suppliers</p>
+            )}
+            {supMatches.map(v => (
+              <button key={v.id} onClick={() => pick(null, v.id)}
+                className={`w-full text-left px-2.5 py-1.5 text-[12px] hover:bg-[#F8F9FA] ${v.id === supplierId ? "text-[#7B9BB5] font-semibold" : "text-[#0F172A]"}`}>
+                {v.company_name}{v.specialty ? <span className="text-[#94A3B8]"> · {v.specialty}</span> : null}
+              </button>
+            ))}
+            {subMatches.length === 0 && supMatches.length === 0 && (
+              <p className="px-2.5 py-2 text-[12px] text-[#94A3B8]">No vendors match.</p>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
   )
 }

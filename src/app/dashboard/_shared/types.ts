@@ -62,6 +62,17 @@ export interface SubmittalRecord {
   is_critical: boolean | null
   party_required: boolean | null
   copy_to: string | null
+  // Submittal-log tracker columns (2026-05-21 overhaul)
+  submittal_seq: number | null
+  received_date: string | null
+  sent_to_ae_date: string | null
+  returned_from_ae_date: string | null
+  returned_to_sub_date: string | null
+  submittal_type: string | null
+  vendor_subcontractor_id: string | null
+  vendor_supplier_id: string | null
+  source: string | null
+  spec_section_id: string | null
 }
 
 export type BatchStatus = "pending" | "classifying" | "ready" | "error" | "uploading" | "done" | "upload-error"

@@ -28,6 +28,10 @@ export default function ProjectSpecBooks({ projectId, projectName, onCountChange
   const [uploadProgress, setUploadProgress] = useState(0)
   const [parsingId, setParsingId]     = useState<string | null>(null)
   const [parseProgress, setParseProgress] = useState(0)
+  // Delete confirmation — the targeted doc, plus a count of what it cascades to.
+  const [pendingDelete, setPendingDelete] = useState<SpecBookDoc | null>(null)
+  const [deleteCounts, setDeleteCounts]   = useState<{ sections: number; uncommitted: number; committed: number } | null>(null)
+  const [deleting, setDeleting]           = useState(false)
 
   function load() {
     setLoading(true)
@@ -120,10 +124,38 @@ export default function ProjectSpecBooks({ projectId, projectName, onCountChange
     load()
   }
 
-  async function deleteDoc(docId: string) {
-    if (!confirm("Delete this spec book and all its extracted sections and staged rows?")) return
-    await fetch(`/api/spec-books/${docId}`, { method: "DELETE" })
-    load()
+  // Open the delete confirmation, fetching what the cascade will affect:
+  // spec sections + uncommitted staged rows are removed; committed submittals
+  // survive in the log (their spec_section_id is nulled by the FK).
+  async function requestDelete(doc: SpecBookDoc) {
+    setPendingDelete(doc)
+    setDeleteCounts(null)
+    try {
+      const r = await fetch(`/api/spec-books/${doc.id}`)
+      const d = await r.json()
+      const sections: unknown[] = d.sections ?? []
+      const staged: { committed_at: string | null; committed_submittal_id: string | null }[] = d.staged ?? []
+      const uncommitted = staged.filter(s => !s.committed_at).length
+      const committed = new Set(
+        staged.filter(s => s.committed_at && s.committed_submittal_id).map(s => s.committed_submittal_id),
+      ).size
+      setDeleteCounts({ sections: sections.length, uncommitted, committed })
+    } catch {
+      setDeleteCounts({ sections: 0, uncommitted: 0, committed: 0 })
+    }
+  }
+
+  async function confirmDelete() {
+    if (!pendingDelete) return
+    setDeleting(true)
+    try {
+      await fetch(`/api/spec-books/${pendingDelete.id}`, { method: "DELETE" })
+      setPendingDelete(null)
+      setDeleteCounts(null)
+      load()
+    } finally {
+      setDeleting(false)
+    }
   }
 
   return (
@@ -214,7 +246,7 @@ export default function ProjectSpecBooks({ projectId, projectName, onCountChange
                             {doc.parse_status === "parsed" ? "Re-parse" : doc.parse_status === "failed" ? "Retry" : "Parse"}
                           </button>
                         )}
-                        <button onClick={() => deleteDoc(doc.id)} className="text-[11px] text-red-400/70 hover:text-red-500 px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors">Delete</button>
+                        <button onClick={() => requestDelete(doc)} className="text-[11px] text-red-400/70 hover:text-red-500 px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors">Delete</button>
                       </div>
                     </td>
                   </tr>
@@ -222,6 +254,46 @@ export default function ProjectSpecBooks({ projectId, projectName, onCountChange
               })}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {/* ── Delete spec book confirmation ───────────────────────────────── */}
+      {pendingDelete && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4"
+          onClick={e => { if (e.target === e.currentTarget && !deleting) { setPendingDelete(null); setDeleteCounts(null) } }}>
+          <div className="bg-white rounded-xl border border-[#E2E8F0] shadow-2xl w-full sm:w-[460px] mx-4 sm:mx-0 p-6">
+            <h2 className="text-[15px] font-bold text-[#0F172A] mb-1">Delete spec book?</h2>
+            <p className="text-[12px] text-[#64748B] mb-3 truncate" title={pendingDelete.file_name}>{pendingDelete.file_name}</p>
+            {deleteCounts === null ? (
+              <p className="text-[12px] text-[#64748B] py-3">Checking what will be affected…</p>
+            ) : (
+              <ul className="space-y-1.5 mb-4 text-[12px]">
+                <li className="flex items-start gap-2 text-[#0F172A]">
+                  <span className="text-red-500">✕</span>
+                  <span><span className="font-semibold">{deleteCounts.sections}</span> spec section{deleteCounts.sections === 1 ? "" : "s"} will be removed.</span>
+                </li>
+                <li className="flex items-start gap-2 text-[#0F172A]">
+                  <span className="text-red-500">✕</span>
+                  <span><span className="font-semibold">{deleteCounts.uncommitted}</span> uncommitted staged row{deleteCounts.uncommitted === 1 ? "" : "s"} will be discarded.</span>
+                </li>
+                <li className="flex items-start gap-2 text-[#0F172A]">
+                  <span className="text-emerald-600">✓</span>
+                  <span><span className="font-semibold">{deleteCounts.committed}</span> committed submittal{deleteCounts.committed === 1 ? "" : "s"} will remain in the log, with the source link removed.</span>
+                </li>
+              </ul>
+            )}
+            <p className="text-[12px] text-red-600 mb-5">The PDF file is also deleted. This cannot be undone.</p>
+            <div className="flex justify-end gap-2">
+              <button type="button" disabled={deleting}
+                onClick={() => { setPendingDelete(null); setDeleteCounts(null) }}
+                className="h-8 px-4 rounded-md border border-[#E2E8F0] text-[13px] text-[#64748B] hover:bg-[#0F172A]/[0.04] transition-colors disabled:opacity-50">Cancel</button>
+              <button type="button" disabled={deleting || deleteCounts === null}
+                onClick={confirmDelete}
+                className="h-8 px-4 rounded-md bg-red-600 text-white text-[13px] font-semibold hover:bg-red-700 transition-colors disabled:opacity-50">
+                {deleting ? "Deleting…" : "Delete spec book"}
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

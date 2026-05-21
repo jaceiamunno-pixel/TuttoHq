@@ -66,6 +66,7 @@ export async function POST(req: NextRequest) {
     csi_section:     s.spec_number,
     section_name:    titleById.get(s.spec_section_id) ?? s.project_item_name,
     material_name:   s.project_item_name,
+    submittal_type:  s.submittal_type,
     review_status:   "Received",
     project_id:      s.project_id,
     status:          "active",
@@ -97,6 +98,19 @@ export async function POST(req: NextRequest) {
       stagedIdsPerRow.push(group.map(g => g.id))
     }
   }
+
+  // Reserve a contiguous block of per-project submittal numbers. next_submittal_seq
+  // bumps the project's counter atomically (single INSERT ... ON CONFLICT
+  // statement), so two simultaneous commits get disjoint ranges — no collision.
+  const { data: seqBase, error: seqError } = await supabase
+    .rpc("next_submittal_seq", { p_project_id: projectId, p_count: submittalRows.length })
+  if (seqError || typeof seqBase !== "number") {
+    return NextResponse.json(
+      { error: `Could not allocate submittal numbers: ${seqError?.message ?? "unknown error"}` },
+      { status: 500 },
+    )
+  }
+  submittalRows.forEach((row, i) => { row.submittal_seq = seqBase + 1 + i })
 
   const { data: inserted, error: insertError } = await supabase
     .from("submittals")

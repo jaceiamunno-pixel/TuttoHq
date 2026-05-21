@@ -58,10 +58,27 @@ Choose exactly ONE per item:
 ==== WHAT COUNTS AS A SUBMITTAL ====
 - Each lettered item (A, B, C…) under a SUBMITTALS, ACTION SUBMITTALS, INFORMATIONAL
   SUBMITTALS, or CLOSEOUT SUBMITTALS article is ONE submittal row.
-- Skip non-submittal headers that appear inline (e.g. "QUALITY ASSURANCE",
-  "DELIVERY, STORAGE AND HANDLING", "PROJECT CONDITIONS", "WARRANTY" as a section
-  about warranty terms rather than a submitted document). These are NOT submittals.
 - INFORMATIONAL SUBMITTALS and CLOSEOUT SUBMITTALS articles DO count — include them.
+
+==== WHAT TO SKIP — NEVER emit a row for these ====
+The text you receive may include neighbouring articles that are NOT submittal
+articles. Their lettered items describe process or product requirements, not
+documents to be submitted. If an ARTICLE HEADING matches any pattern below,
+skip the ENTIRE article and every lettered item under it — even when those
+items look like submittals:
+- "QUALITY ASSURANCE", "QUALITY CONTROL", "CONTRACTOR QUALITY CONTROL",
+  "QA/QC", "QC", "QUALITY ASSURANCE/CONTROL", "QUALITY ASSURANCE AND CONTROL"
+  — and any heading containing the words QUALITY ASSURANCE or QUALITY CONTROL.
+- "DELIVERY, STORAGE AND HANDLING" / "DELIVERY, STORAGE, AND HANDLING"
+- "PROJECT CONDITIONS", "SITE CONDITIONS", "FIELD CONDITIONS"
+- "EXAMINATION", "PREPARATION", "INSTALLATION", "EXECUTION"
+- "FIELD QUALITY CONTROL"
+- "WARRANTY" when the article describes warranty terms/duration rather than a
+  document to be submitted (a single "Submit executed warranty" line under a
+  SUBMITTALS article still counts).
+A heading that is itself one of these names is never a submittal, regardless of
+how its sub-items are worded. Only lettered items that sit UNDER a genuine
+SUBMITTALS-type article (per the list above) may become rows.
 
 ==== SUB-ITEM CONDENSING (sub_bullets) ====
 - If a lettered item has numbered sub-items (1, 2, 3 or a, b, c), capture them as
