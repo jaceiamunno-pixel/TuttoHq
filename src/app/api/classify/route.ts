@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import Anthropic from "@anthropic-ai/sdk"
+import { createClient } from "@/lib/supabase/server"
 
 const CSI_LIST = `
 03: Concrete — 03 10 00 Concrete Forming & Accessories, 03 20 00 Concrete Reinforcing, 03 30 00 Cast-in-Place Concrete, 03 40 00 Precast Concrete, 03 50 00 Cast Decks & Underlayment, 03 60 00 Grouting, 03 70 00 Mass Concrete, 03 80 00 Concrete Cutting & Boring
@@ -73,28 +74,46 @@ Respond with ONLY a compact JSON object — no markdown, no explanation:
 
 const MAX_PDF_BYTES = 20 * 1024 * 1024 // 20 MB
 
+// POST /api/classify — classifies an already-uploaded submittal.
+//
+// The file is PUT straight to the `submittals` bucket from the browser via a
+// signed upload URL, so this route receives only `storage_path`. It downloads
+// the bytes server-side (not subject to Vercel's 4.5 MB request-body limit)
+// before sending them to Claude.
 export async function POST(req: NextRequest) {
   if (!process.env.ANTHROPIC_API_KEY) {
     return NextResponse.json({ error: "ANTHROPIC_API_KEY not set" }, { status: 500 })
   }
 
-  const formData = await req.formData()
-  const file = formData.get("file") as File | null
-  if (!file) {
-    return NextResponse.json({ error: "No file provided" }, { status: 400 })
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+
+  const body = await req.json().catch(() => null)
+  const storagePath = typeof body?.storage_path === "string" ? body.storage_path.trim() : ""
+  const fileName    = typeof body?.file_name    === "string" ? body.file_name.trim()    : ""
+  if (!storagePath || !fileName) {
+    return NextResponse.json({ error: "storage_path and file_name are required" }, { status: 400 })
+  }
+
+  const { data: blob, error: dlError } = await supabase.storage
+    .from("submittals")
+    .download(storagePath)
+  if (dlError || !blob) {
+    return NextResponse.json({ error: "Could not read the uploaded file" }, { status: 400 })
   }
 
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
   try {
-    const isPdf = file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf")
-    const withinSizeLimit = file.size <= MAX_PDF_BYTES
+    const isPdf = blob.type === "application/pdf" || fileName.toLowerCase().endsWith(".pdf")
+    const withinSizeLimit = blob.size <= MAX_PDF_BYTES
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let userContent: any
 
     if (isPdf && withinSizeLimit) {
-      const bytes = await file.arrayBuffer()
+      const bytes = await blob.arrayBuffer()
       const base64 = Buffer.from(bytes).toString("base64")
       userContent = [
         {
@@ -103,11 +122,11 @@ export async function POST(req: NextRequest) {
         },
         {
           type: "text",
-          text: `Filename: "${file.name}"\n\nClassify this construction submittal into the correct CSI division and section.`,
+          text: `Filename: "${fileName}"\n\nClassify this construction submittal into the correct CSI division and section.`,
         },
       ]
     } else {
-      userContent = `Filename: "${file.name}"\n\nClassify this construction submittal into the correct CSI division and section based on the filename.`
+      userContent = `Filename: "${fileName}"\n\nClassify this construction submittal into the correct CSI division and section based on the filename.`
     }
 
     const message = await client.messages.create({

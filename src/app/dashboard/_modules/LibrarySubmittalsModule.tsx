@@ -14,6 +14,7 @@ import { getDot, fmtDate } from "../_shared/format"
 import { SearchIcon, XIcon, PlusIcon, CheckIcon, SpinnerIcon, LayersIcon } from "../_shared/icons"
 import { StatusBadge } from "../_shared/badges"
 import { Combobox, inputCls, labelCls } from "../_shared/ui"
+import { presignAndUpload } from "@/lib/storage-upload"
 import PackageCreateModal, { type VendorPreset } from "@/components/packages/PackageCreateModal"
 import PackagesView from "@/components/packages/PackagesView"
 
@@ -100,6 +101,10 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
   // Upload modal
   const [showUpload, setShowUpload]         = useState(false)
   const [uploadFile, setUploadFile]         = useState<File | null>(null)
+  // Storage path of the file once it has been PUT straight to storage (presigned
+  // URL flow). Both /api/classify and /api/upload reference this — the file is
+  // never streamed through a Vercel function.
+  const [uploadFilePath, setUploadFilePath] = useState<string | null>(null)
   const [uploadDiv, setUploadDiv]           = useState("")
   const [uploadDivName, setUploadDivName]   = useState("")
   const [uploadSec, setUploadSec]           = useState("")
@@ -223,6 +228,7 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
   function closeModal() {
     setShowUpload(false)
     setUploadFile(null)
+    setUploadFilePath(null)
     setUploadDiv("")
     setUploadDivName("")
     setUploadSec("")
@@ -832,9 +838,15 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
     async function classifyOne(item: BatchItem) {
       updateBatchItem(item.id, { status: "classifying" })
       try {
-        const fd = new FormData()
-        fd.append("file", item.file)
-        const res  = await fetch("/api/classify", { method: "POST", body: fd })
+        // PUT the file straight to storage once — its path then feeds both
+        // /api/classify here and /api/upload in uploadBatch.
+        const { path } = await presignAndUpload("submittals", "uploads", item.file)
+        updateBatchItem(item.id, { storagePath: path })
+        const res  = await fetch("/api/classify", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ storage_path: path, file_name: item.file.name }),
+        })
         const data = await res.json()
         if (res.ok && data.division_num && data.section_code) {
           const nameMatl = data.material_name ?? ""
@@ -869,19 +881,32 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
 
     async function uploadOne(item: BatchItem) {
       updateBatchItem(item.id, { status: "uploading" })
+      if (!item.storagePath) {
+        // classifyBatch PUTs the file before classifying; a missing path means
+        // that upload failed, so there is nothing in storage to record.
+        updateBatchItem(item.id, { status: "upload-error", errorMsg: "File was not uploaded — re-add it" })
+        return
+      }
       try {
-        const fd = new FormData()
-        fd.append("file",          item.file)
-        fd.append("division_num",  item.divNum)
-        fd.append("division_name", item.divName)
-        fd.append("section_code",  item.secCode)
-        fd.append("section_name",  item.secName)
-        if (item.nameMatl)    fd.append("material_name", item.nameMatl)
-        if (item.nameMfr)     fd.append("manufacturer",  item.nameMfr)
-        if (item.nameDims)    fd.append("dimensions",    item.nameDims)
-        if (item.customName)  fd.append("display_name",  item.customName)
-        if (globalProjectId)  fd.append("project_id",   globalProjectId)
-        const res = await fetch("/api/upload", { method: "POST", body: fd })
+        const res = await fetch("/api/upload", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            file_path:     item.storagePath,
+            file_name:     item.file.name,
+            file_size:     item.file.size,
+            mime_type:     item.file.type || null,
+            division_num:  item.divNum,
+            division_name: item.divName,
+            section_code:  item.secCode,
+            section_name:  item.secName,
+            material_name: item.nameMatl || null,
+            manufacturer:  item.nameMfr  || null,
+            dimensions:    item.nameDims || null,
+            display_name:  item.customName || null,
+            project_id:    globalProjectId || null,
+          }),
+        })
         updateBatchItem(item.id, { status: res.ok ? "done" : "upload-error", errorMsg: res.ok ? undefined : "Upload failed" })
       } catch {
         updateBatchItem(item.id, { status: "upload-error", errorMsg: "Network error" })
@@ -898,25 +923,35 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
 
   async function handleUpload(e: React.FormEvent) {
     e.preventDefault()
-    if (!uploadFile || !uploadDiv || !uploadSec) return
+    if (!uploadFile || !uploadFilePath || !uploadDiv || !uploadSec) return
     setUploading(true)
     setUploadError(null)
 
-    const fd = new FormData()
-    fd.append("file",          uploadFile)
-    fd.append("division_num",  uploadDiv)
-    fd.append("division_name", uploadDivName)
-    fd.append("section_code",  uploadSec)
-    fd.append("section_name",  uploadSecName)
-    fd.append("material_name", nameMatl)
-    fd.append("manufacturer",  nameMfr)
-    fd.append("dimensions",    nameDims)
-    if (globalProjectId)                 fd.append("project_id",   globalProjectId)
-    if (aiResult?.confidence != null)    fd.append("ai_confidence", String(aiResult.confidence))
-    if (aiResult?.reasoning)             fd.append("ai_reasoning",  aiResult.reasoning)
+    // The file was already PUT to storage when it was picked (see the file
+    // input's onChange) — only metadata travels through the API route here.
+    const payload: Record<string, unknown> = {
+      file_path:     uploadFilePath,
+      file_name:     uploadFile.name,
+      file_size:     uploadFile.size,
+      mime_type:     uploadFile.type || null,
+      division_num:  uploadDiv,
+      division_name: uploadDivName,
+      section_code:  uploadSec,
+      section_name:  uploadSecName,
+      material_name: nameMatl,
+      manufacturer:  nameMfr,
+      dimensions:    nameDims,
+    }
+    if (globalProjectId)              payload.project_id    = globalProjectId
+    if (aiResult?.confidence != null) payload.ai_confidence = aiResult.confidence
+    if (aiResult?.reasoning)          payload.ai_reasoning  = aiResult.reasoning
 
     try {
-      const res  = await fetch("/api/upload", { method: "POST", body: fd })
+      const res  = await fetch("/api/upload", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error ?? "Upload failed")
 
@@ -2127,13 +2162,29 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                   onChange={async e => {
                     const f = e.target.files?.[0] ?? null
                     setUploadFile(f)
+                    setUploadFilePath(null)
                     setAiResult(null)
+                    setUploadError(null)
                     if (!f) { setUploadStep("file"); return }
                     setUploadStep("classifying")
+                    // PUT the file straight to storage first; its path then
+                    // feeds both /api/classify and /api/upload.
+                    let path: string
                     try {
-                      const fd = new FormData()
-                      fd.append("file", f)
-                      const res = await fetch("/api/classify", { method: "POST", body: fd })
+                      ;({ path } = await presignAndUpload("submittals", "uploads", f))
+                      setUploadFilePath(path)
+                    } catch {
+                      setUploadError("Upload failed. Please try again.")
+                      setUploadFile(null)
+                      setUploadStep("file")
+                      return
+                    }
+                    try {
+                      const res = await fetch("/api/classify", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ storage_path: path, file_name: f.name }),
+                      })
                       if (res.ok) {
                         const data = await res.json()
                         if (data.division_num && data.section_code) {

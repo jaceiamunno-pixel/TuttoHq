@@ -6,6 +6,7 @@ import { fmtDate, nextRevision } from "../_shared/format"
 import { PlusIcon, SpinnerIcon, XIcon } from "../_shared/icons"
 import { DrawingStatusBadge } from "../_shared/badges"
 import { inputCls, labelCls } from "../_shared/ui"
+import { presignAndUpload } from "@/lib/storage-upload"
 
 // Drawing Log module — extracted verbatim from dashboard/page.tsx (Step 1 of the split).
 // State, handlers, action bar, content, and modal are unchanged; the only
@@ -73,11 +74,18 @@ export default function DrawingsModule({ globalProjectId, appProjects }: {
     e.preventDefault()
     setDwgSaving(true)
     try {
-      const dwgFd = new FormData()
-      const dwgFields: Record<string, string> = { drawing_number: dwgNumber, sheet_title: dwgTitle, discipline: dwgDiscipline, revision: dwgRevision, revision_date: dwgRevDate, status: dwgStatus, scale: dwgScale, notes: dwgNotes, project_id: dwgProjectId }
-      Object.entries(dwgFields).forEach(([k, v]) => { if (v) dwgFd.append(k, v) })
-      if (dwgFileRef.current?.files?.[0]) dwgFd.append("file", dwgFileRef.current.files[0])
-      const res = await fetch("/api/drawings", { method: "POST", body: dwgFd })
+      const fields: Record<string, string> = { drawing_number: dwgNumber, sheet_title: dwgTitle, discipline: dwgDiscipline, revision: dwgRevision, revision_date: dwgRevDate, status: dwgStatus, scale: dwgScale, notes: dwgNotes, project_id: dwgProjectId }
+      const dwgFile = dwgFileRef.current?.files?.[0]
+      if (dwgFile) {
+        const { path } = await presignAndUpload("submittals", "drawings", dwgFile)
+        fields.file_path = path
+        fields.file_name = dwgFile.name
+      }
+      const res = await fetch("/api/drawings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(fields),
+      })
       if (res.ok) {
         setShowNewDrawing(false); setAddRevisionFor(null); resetDwgForm(); loadDrawings()
         // Collapse revision history so updated row is visible

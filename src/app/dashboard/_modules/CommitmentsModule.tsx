@@ -5,6 +5,7 @@ import type { Commitment, SubcontractorRow, SupplierRow } from "../_shared/types
 import { fmtDateOnly } from "../_shared/format"
 import { PlusIcon, SpinnerIcon, XIcon } from "../_shared/icons"
 import { inputCls, labelCls } from "../_shared/ui"
+import { presignAndUpload } from "@/lib/storage-upload"
 
 // Commitments module — extracted verbatim from dashboard/page.tsx (Step 2 of the split).
 // State, handlers, action bar, content, and both modals are unchanged; the only
@@ -115,17 +116,24 @@ export default function CommitmentsModule({ globalProjectId }: {
         setCmtPartyId(created)
       }
 
-      const fd = new FormData()
-      fd.append("project_id", globalProjectId)
-      fd.append("type", cmtType)
-      if (cmtType === "subcontract") fd.append("to_subcontractor_id", partyId)
-      else                            fd.append("to_supplier_id", partyId)
-      fd.append("to_company_name", name)
-      fd.append("executed_at", cmtExecutedAt)
-      fd.append("contract_value", cmtContractValue)
-      fd.append("notes", cmtNotes)
-      fd.append("file", cmtFile)
-      const res = await fetch("/api/commitments", { method: "POST", body: fd })
+      const { path } = await presignAndUpload("submittals", "commitments", cmtFile)
+      const fields: Record<string, string> = {
+        project_id: globalProjectId,
+        type: cmtType,
+        to_company_name: name,
+        executed_at: cmtExecutedAt,
+        contract_value: cmtContractValue,
+        notes: cmtNotes,
+        file_path: path,
+        file_name: cmtFile.name,
+      }
+      if (cmtType === "subcontract") fields.to_subcontractor_id = partyId
+      else                            fields.to_supplier_id = partyId
+      const res = await fetch("/api/commitments", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(fields),
+      })
       if (!res.ok) {
         const d = await res.json().catch(() => ({}))
         setCmtError(d.error ?? "Failed to create commitment")

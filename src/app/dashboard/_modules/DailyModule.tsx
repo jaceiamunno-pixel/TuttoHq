@@ -5,6 +5,7 @@ import type { DailyReport, Project, TeamMember } from "../_shared/types"
 import { fmtDateOnly } from "../_shared/format"
 import { PlusIcon, SpinnerIcon, XIcon } from "../_shared/icons"
 import { inputCls, labelCls } from "../_shared/ui"
+import { presignAndUpload } from "@/lib/storage-upload"
 
 // Daily Reports module — extracted verbatim from dashboard/page.tsx (Step 4 of the split).
 // State, handlers, photo sub-system, action bar, content, and both modals are
@@ -93,13 +94,17 @@ export default function DailyModule({ globalProjectId, appProjects, teamMembers 
   async function uploadDailyPhoto(file: File) {
     if (!viewDaily) return
     setDailyPhotoUploading(true)
-    const fd = new FormData()
-    fd.append("entity_type", "daily_report")
-    fd.append("entity_id", viewDaily.id)
-    fd.append("file", file)
-    const res = await fetch("/api/photos", { method: "POST", body: fd })
-    if (res.ok) await loadDailyPhotos(viewDaily.id)
-    setDailyPhotoUploading(false)
+    try {
+      const { path } = await presignAndUpload("photos", `daily_report/${viewDaily.id}`, file)
+      const res = await fetch("/api/photos", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ entity_type: "daily_report", entity_id: viewDaily.id, file_path: path, file_name: file.name }),
+      })
+      if (res.ok) await loadDailyPhotos(viewDaily.id)
+    } finally {
+      setDailyPhotoUploading(false)
+    }
   }
 
   async function deleteDailyPhoto(photoId: string) {
@@ -111,12 +116,13 @@ export default function DailyModule({ globalProjectId, appProjects, teamMembers 
     const CONCURRENCY = 4
     for (let i = 0; i < files.length; i += CONCURRENCY) {
       const batch = files.slice(i, i + CONCURRENCY)
-      const promises = batch.map(file => {
-        const fd = new FormData()
-        fd.append("entity_type", "daily_report")
-        fd.append("entity_id", reportId)
-        fd.append("file", file)
-        return fetch("/api/photos", { method: "POST", body: fd })
+      const promises = batch.map(async file => {
+        const { path } = await presignAndUpload("photos", `daily_report/${reportId}`, file)
+        return fetch("/api/photos", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ entity_type: "daily_report", entity_id: reportId, file_path: path, file_name: file.name }),
+        })
       })
       await Promise.all(promises)
     }
@@ -145,11 +151,20 @@ export default function DailyModule({ globalProjectId, appProjects, teamMembers 
     setDailySaveError("")
     setDailyPhotoUploadError("")
     try {
-      const dailyFd = new FormData()
       const dailyFields: Record<string, string> = { report_date: dailyDate, project_id: dailyProjectId, prepared_by: dailyPreparedBy, weather_conditions: dailyWeather, temperature: dailyTemp, manpower_count: dailyManpower, work_performed: dailyWorkPerformed, equipment: dailyEquipment, materials_delivered: dailyMaterials, visitors: dailyVisitors, issues_delays: dailyIssues, safety_notes: dailySafety }
-      Object.entries(dailyFields).forEach(([k, v]) => { if (v) dailyFd.append(k, v) })
-      if (dailyFileRef.current?.files?.[0]) dailyFd.append("file", dailyFileRef.current.files[0])
-      const res = await fetch("/api/daily-reports", { method: "POST", body: dailyFd })
+      const fields: Record<string, string> = {}
+      Object.entries(dailyFields).forEach(([k, v]) => { if (v) fields[k] = v })
+      const dailyFile = dailyFileRef.current?.files?.[0]
+      if (dailyFile) {
+        const { path } = await presignAndUpload("submittals", "daily-reports", dailyFile)
+        fields.file_path = path
+        fields.file_name = dailyFile.name
+      }
+      const res = await fetch("/api/daily-reports", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(fields),
+      })
       if (res.ok) {
         const { id: reportId } = await res.json()
         if (dailyPhotosToAdd.length > 0) {

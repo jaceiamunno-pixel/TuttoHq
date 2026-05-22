@@ -6,6 +6,7 @@ import { fmtDateOnly } from "../_shared/format"
 import { PlusIcon, SpinnerIcon, XIcon } from "../_shared/icons"
 import { RfiStatusBadge } from "../_shared/badges"
 import { inputCls, labelCls } from "../_shared/ui"
+import { presignAndUpload } from "@/lib/storage-upload"
 
 // RFI Log module — extracted verbatim from dashboard/page.tsx (Step 5 of the split).
 // State, handlers, action bar, content, and both modals are unchanged; the load
@@ -64,20 +65,23 @@ export default function RfisModule({ globalProjectId, appProjects, teamMembers }
     setRfiSaving(true)
     try {
       const receivedFrom = rfiReceivedFrom === "__other__" ? rfiReceivedFromCustom : rfiReceivedFrom
-      const fd = new FormData()
-      fd.append("subject", rfiSubject)
-      fd.append("question", rfiQuestion)
-      fd.append("received_from", receivedFrom)
-      fd.append("specification_section", rfiSpecSection)
-      fd.append("location", rfiLocation)
-      fd.append("schedule_impact", rfiScheduleImpact)
-      fd.append("cost_impact", rfiCostImpact)
-      fd.append("assigned_to", rfiAssignedTo)
-      fd.append("date_issued", rfiDateIssued)
-      fd.append("due_date", rfiDueDate)
-      fd.append("project_id", rfiProjectId)
-      if (rfiFile) fd.append("file", rfiFile)
-      const res = await fetch("/api/rfis", { method: "POST", body: fd })
+      const fields: Record<string, string> = {
+        subject: rfiSubject, question: rfiQuestion, received_from: receivedFrom,
+        specification_section: rfiSpecSection, location: rfiLocation,
+        schedule_impact: rfiScheduleImpact, cost_impact: rfiCostImpact,
+        assigned_to: rfiAssignedTo, date_issued: rfiDateIssued,
+        due_date: rfiDueDate, project_id: rfiProjectId,
+      }
+      if (rfiFile) {
+        const { path } = await presignAndUpload("submittals", "rfis", rfiFile)
+        fields.file_path = path
+        fields.file_name = rfiFile.name
+      }
+      const res = await fetch("/api/rfis", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(fields),
+      })
       if (res.ok) {
         setShowNewRfi(false)
         setRfiSubject(""); setRfiQuestion(""); setRfiReceivedFrom(""); setRfiReceivedFromCustom("")

@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 
+// POST /api/upload — records a manually uploaded submittal.
+//
+// The file itself is PUT straight to Supabase Storage from the browser via a
+// signed upload URL (see /api/storage/presigned-url), so this route only
+// receives JSON metadata: `file_path` already points at the stored object.
 export async function POST(req: NextRequest) {
   const supabase = await createClient()
 
@@ -9,58 +14,43 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
   }
 
-  const formData     = await req.formData()
-  const file         = formData.get("file") as File | null
-  const divisionNum  = formData.get("division_num") as string | null
-  const divisionName = formData.get("division_name") as string | null
-  const sectionCode  = (formData.get("section_code") as string | null)?.trim() || null
-  const sectionName  = (formData.get("section_name") as string | null)?.trim() || null
-  const materialName  = (formData.get("material_name")  as string | null)?.trim() || null
-  const manufacturer  = (formData.get("manufacturer")   as string | null)?.trim() || null
-  const dimensions    = (formData.get("dimensions")     as string | null)?.trim() || null
-  const aiConfidence  = formData.get("ai_confidence")   ? parseInt(formData.get("ai_confidence") as string) : null
-  const aiReasoning   = (formData.get("ai_reasoning")  as string | null)?.trim() || null
-  const projectId     = (formData.get("project_id")    as string | null)?.trim() || null
-  const customName    = (formData.get("display_name")  as string | null)?.trim() || null
+  const body = await req.json().catch(() => null)
+  if (!body) return NextResponse.json({ error: "Invalid request body" }, { status: 400 })
+
+  const filePath      = typeof body.file_path === "string" ? body.file_path.trim() : ""
+  const fileName      = typeof body.file_name === "string" ? body.file_name.trim() : ""
+  const fileSize      = typeof body.file_size === "number" ? body.file_size : null
+  const mimeType      = typeof body.mime_type === "string" ? body.mime_type : null
+  const divisionNum   = typeof body.division_num  === "string" ? body.division_num  : null
+  const divisionName  = typeof body.division_name === "string" ? body.division_name : null
+  const sectionCode   = (typeof body.section_code === "string" ? body.section_code : "").trim() || null
+  const sectionName   = (typeof body.section_name === "string" ? body.section_name : "").trim() || null
+  const materialName  = (typeof body.material_name === "string" ? body.material_name : "").trim() || null
+  const manufacturer  = (typeof body.manufacturer  === "string" ? body.manufacturer  : "").trim() || null
+  const dimensions    = (typeof body.dimensions    === "string" ? body.dimensions    : "").trim() || null
+  const aiConfidence  = typeof body.ai_confidence === "number" ? body.ai_confidence : null
+  const aiReasoning   = (typeof body.ai_reasoning === "string" ? body.ai_reasoning : "").trim() || null
+  const projectId     = (typeof body.project_id   === "string" ? body.project_id   : "").trim() || null
+  const customName    = (typeof body.display_name === "string" ? body.display_name : "").trim() || null
   const reviewStatus  = (aiConfidence !== null && aiConfidence < 70) ? "Needs Review" : "Received"
 
-  if (!file || !divisionNum || !divisionName) {
+  if (!filePath || !fileName || !divisionNum || !divisionName) {
     return NextResponse.json(
-      { error: "file, division_num, and division_name are required" },
+      { error: "file_path, file_name, division_num, and division_name are required" },
       { status: 400 },
     )
   }
 
   // Use explicit custom name if provided, otherwise build from structured fields, fall back to filename
   const nameParts   = [materialName, manufacturer, dimensions].filter(Boolean)
-  const displayName = customName ?? (nameParts.length > 0 ? nameParts.join(" — ") : file.name)
-
-  // Build a clean storage path: division/section/timestamp_filename
-  const safeName    = file.name.replace(/[^a-zA-Z0-9._-]/g, "_")
-  const ts          = Date.now()
-  const sectionSlug = sectionCode ? sectionCode.replace(/\s+/g, "") : "general"
-  const storagePath = `${divisionNum}/${sectionSlug}/${ts}_${safeName}`
-
-  // Upload bytes to storage
-  const bytes = await file.arrayBuffer()
-  const { error: storageError } = await supabase.storage
-    .from("submittals")
-    .upload(storagePath, bytes, {
-      contentType: file.type || "application/octet-stream",
-      upsert: false,
-    })
-
-  if (storageError) {
-    console.error("Storage upload failed:", storageError)
-    return NextResponse.json({ error: "Storage upload failed" }, { status: 500 })
-  }
+  const displayName = customName ?? (nameParts.length > 0 ? nameParts.join(" — ") : fileName)
 
   // Insert DB row
   const { data: inserted, error: dbError } = await supabase.from("submittals").insert({
     file_name:     displayName,
-    storage_path:  storagePath,
-    mime_type:     file.type || null,
-    file_size:     file.size,
+    storage_path:  filePath,
+    mime_type:     mimeType,
+    file_size:     fileSize,
     csi_division:  divisionNum,
     division_name: divisionName,
     csi_section:   sectionCode,
@@ -79,7 +69,7 @@ export async function POST(req: NextRequest) {
   if (dbError) {
     console.error("DB insert failed:", dbError)
     // Clean up the orphaned storage file
-    await supabase.storage.from("submittals").remove([storagePath])
+    await supabase.storage.from("submittals").remove([filePath])
     return NextResponse.json({ error: "Failed to save file record" }, { status: 500 })
   }
 

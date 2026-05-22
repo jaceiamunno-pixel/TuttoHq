@@ -47,3 +47,31 @@ export function uploadFileToSignedUrl(
     xhr.send(file)
   })
 }
+
+/**
+ * Requests a signed upload URL from /api/storage/presigned-url, then PUTs `file`
+ * straight to Supabase Storage. Resolves with the stored object path, which the
+ * caller hands to the feature's own POST route (in place of the raw file).
+ *
+ * This is the standard way to upload a user file: the bytes never transit a
+ * Vercel function, so the 4.5 MB serverless body limit never applies.
+ */
+export async function presignAndUpload(
+  bucket: string,
+  prefix: string,
+  file: File,
+  onProgress?: (p: UploadProgress) => void,
+): Promise<{ path: string }> {
+  const res = await fetch("/api/storage/presigned-url", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ bucket, prefix, file_name: file.name }),
+  })
+  const data = await res.json().catch(() => null)
+  if (!res.ok || !data?.signed_url || !data?.path) {
+    throw new Error(data?.error ?? "Could not start the upload")
+  }
+
+  await uploadFileToSignedUrl(data.signed_url, file, onProgress)
+  return { path: data.path as string }
+}

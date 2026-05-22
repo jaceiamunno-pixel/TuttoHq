@@ -20,26 +20,9 @@ export async function POST(req: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
-  let fields: Record<string, string | null> = {}
-  let fileBytes: ArrayBuffer | null = null
-  let fileType = ""
-  let origFileName = ""
-
-  const contentType = req.headers.get("content-type") ?? ""
-  if (contentType.includes("multipart/form-data")) {
-    const fd = await req.formData()
-    for (const [k, v] of fd.entries()) {
-      if (typeof v === "string") fields[k] = v || null
-    }
-    const f = fd.get("file") as File | null
-    if (f && f.size > 0) {
-      fileBytes = await f.arrayBuffer()
-      fileType = f.type || "application/octet-stream"
-      origFileName = f.name
-    }
-  } else {
-    fields = await req.json()
-  }
+  // The attachment (if any) was already PUT straight to storage from the
+  // browser via a signed upload URL, so this route receives only JSON metadata.
+  const fields: Record<string, string | null> = await req.json().catch(() => ({}))
 
   const {
     report_date, project_id, prepared_by,
@@ -53,14 +36,8 @@ export async function POST(req: NextRequest) {
   const { data: profile } = await supabase.from("user_profiles").select("company_id").maybeSingle()
   const company_id = profile?.company_id ?? null
 
-  let file_path: string | null = null
-  let file_name: string | null = null
-  if (fileBytes && origFileName) {
-    const safeName = origFileName.replace(/[^a-zA-Z0-9._-]/g, "_")
-    file_path = `daily-reports/${Date.now()}_${safeName}`
-    file_name = origFileName
-    await supabase.storage.from("submittals").upload(file_path, fileBytes, { contentType: fileType, upsert: false })
-  }
+  const file_path = typeof fields.file_path === "string" ? fields.file_path.trim() || null : null
+  const file_name = typeof fields.file_name === "string" ? fields.file_name.trim() || null : null
 
   const { data, error } = await supabase.from("daily_reports").insert({
     report_date,

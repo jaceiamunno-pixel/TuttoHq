@@ -6,7 +6,7 @@ import Papa from "papaparse"
 import { DivisionChecklist, SectionAccordion, isDefaultInScopeDivision } from "@/components/scope-selection"
 import ProjectSpecBooks from "@/components/project-spec-books"
 import type { TocEntry, TocDivision } from "@/lib/scope-types"
-import { uploadFileToSignedUrl } from "@/lib/storage-upload"
+import { uploadFileToSignedUrl, presignAndUpload } from "@/lib/storage-upload"
 
 type Tab = "company" | "team" | "projects" | "subcontractors" | "suppliers" | "cms" | "gmail"
 
@@ -339,10 +339,12 @@ export default function SettingsPage() {
   }
 
   async function uploadAsset(type: "logo" | "cover_page", file: File) {
-    const fd = new FormData()
-    fd.append("type", type)
-    fd.append("file", file)
-    const res  = await fetch("/api/settings", { method: "POST", body: fd })
+    const { path } = await presignAndUpload("company-assets", type === "logo" ? "logos" : "covers", file)
+    const res  = await fetch("/api/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type, file_path: path, file_name: file.name }),
+    })
     const data = await res.json()
     if (!res.ok) throw new Error(data.error ?? "Upload failed")
     return data

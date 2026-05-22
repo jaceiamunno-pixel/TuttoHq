@@ -20,26 +20,11 @@ export async function POST(req: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
-  let fields: Record<string, string | null> = {}
-  let fileBytes: ArrayBuffer | null = null
-  let fileType = ""
-  let origFileName = ""
-
-  const contentType = req.headers.get("content-type") ?? ""
-  if (contentType.includes("multipart/form-data")) {
-    const fd = await req.formData()
-    for (const [k, v] of fd.entries()) {
-      if (typeof v === "string") fields[k] = v || null
-    }
-    const f = fd.get("file") as File | null
-    if (f && f.size > 0) {
-      fileBytes    = await f.arrayBuffer()
-      fileType     = f.type || "application/octet-stream"
-      origFileName = f.name
-    }
-  } else {
-    fields = await req.json()
-  }
+  // The executed-contract file (if any) was already PUT straight to storage from
+  // the browser via a signed upload URL, so this route receives only JSON.
+  const fields: Record<string, string | null> = await req.json().catch(() => ({}))
+  const filePath = typeof fields.file_path === "string" ? fields.file_path.trim() || null : null
+  const fileName = typeof fields.file_name === "string" ? fields.file_name.trim() || null : null
 
   const {
     project_id,
@@ -76,7 +61,6 @@ export async function POST(req: NextRequest) {
     parsedValue = n
   }
 
-  // 1. Insert row (without file path) — get the id back
   const { data: row, error: insertError } = await supabase
     .from("commitments")
     .insert({
@@ -89,6 +73,8 @@ export async function POST(req: NextRequest) {
       executed_at:         executed_at || null,
       contract_value:      parsedValue,
       notes:               notes?.trim() || null,
+      executed_file_path:  filePath,
+      executed_file_name:  fileName,
       uploaded_by:         user.id,
     })
     .select()
@@ -96,33 +82,6 @@ export async function POST(req: NextRequest) {
 
   if (insertError || !row) {
     return NextResponse.json({ error: insertError?.message ?? "Insert failed" }, { status: 500 })
-  }
-
-  // 2. Upload the executed file (if any) and patch the row with the path
-  if (fileBytes && origFileName) {
-    const safeName = origFileName.replace(/[^a-zA-Z0-9._-]/g, "_")
-    const filePath = `commitments/${row.id}/${Date.now()}_${safeName}`
-
-    const { error: uploadError } = await supabase.storage
-      .from("submittals")
-      .upload(filePath, fileBytes, { contentType: fileType, upsert: false })
-
-    if (uploadError) {
-      await supabase.from("commitments").delete().eq("id", row.id)
-      return NextResponse.json({ error: `File upload failed: ${uploadError.message}` }, { status: 500 })
-    }
-
-    const { error: updateError } = await supabase
-      .from("commitments")
-      .update({ executed_file_path: filePath, executed_file_name: origFileName })
-      .eq("id", row.id)
-
-    if (updateError) {
-      return NextResponse.json({ error: `Failed to attach file: ${updateError.message}` }, { status: 500 })
-    }
-
-    row.executed_file_path = filePath
-    row.executed_file_name = origFileName
   }
 
   return NextResponse.json({ commitment: row }, { status: 201 })

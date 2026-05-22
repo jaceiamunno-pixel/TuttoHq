@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from "react"
 import type { CloseoutItem, SubmittalRecord, RFI, ChangeOrder, DrawingRecord, PunchItem, TeamMember } from "../_shared/types"
 import { PlusIcon, SpinnerIcon, XIcon } from "../_shared/icons"
 import { inputCls, labelCls } from "../_shared/ui"
+import { presignAndUpload } from "@/lib/storage-upload"
 
 // Closeout module — extracted verbatim from dashboard/page.tsx (Step 8 of the split).
 // Two differences from the inline original:
@@ -154,16 +155,17 @@ export default function CloseoutModule({ globalProjectId, teamMembers, onProgres
 
   async function uploadCloseoutFile(itemId: string, file: File) {
     setCloseoutUploadingId(itemId)
-    const fd = new FormData()
-    fd.append("file", file)
-    fd.append("item_id", itemId)
-    const res = await fetch("/api/closeout/upload", { method: "POST", body: fd })
-    const d = await res.json()
-    if (d.file_url) {
-      await fetch(`/api/closeout/${itemId}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ file_url: d.file_url, file_name: d.file_name }) })
+    try {
+      const { path } = await presignAndUpload("submittals", `closeout/${itemId}`, file)
+      await fetch(`/api/closeout/${itemId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ file_url: path, file_name: file.name }),
+      })
       loadCloseout()
+    } finally {
+      setCloseoutUploadingId(null)
     }
-    setCloseoutUploadingId(null)
   }
 
   return (

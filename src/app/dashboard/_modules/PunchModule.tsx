@@ -6,6 +6,7 @@ import { fmtDateOnly } from "../_shared/format"
 import { PlusIcon, SpinnerIcon, XIcon } from "../_shared/icons"
 import { PunchStatusBadge, PunchPriorityBadge } from "../_shared/badges"
 import { inputCls, labelCls } from "../_shared/ui"
+import { presignAndUpload } from "@/lib/storage-upload"
 
 // Punch List module — extracted verbatim from dashboard/page.tsx (Step 3 of the split).
 // State, handlers, photo sub-system, action bar, content, and both modals are
@@ -63,11 +64,20 @@ export default function PunchModule({ globalProjectId, appProjects }: {
     e.preventDefault()
     setPunchSaving(true)
     try {
-      const punchFd = new FormData()
       const punchFields: Record<string, string> = { description: punchDesc, location: punchLocation, assigned_to: punchAssignedTo, due_date: punchDueDate, priority: punchPriority, project_id: punchProjectId, notes: punchNotes }
-      Object.entries(punchFields).forEach(([k, v]) => { if (v) punchFd.append(k, v) })
-      if (punchFileRef.current?.files?.[0]) punchFd.append("file", punchFileRef.current.files[0])
-      const res = await fetch("/api/punch", { method: "POST", body: punchFd })
+      const fields: Record<string, string> = {}
+      Object.entries(punchFields).forEach(([k, v]) => { if (v) fields[k] = v })
+      const punchFile = punchFileRef.current?.files?.[0]
+      if (punchFile) {
+        const { path } = await presignAndUpload("submittals", "punch", punchFile)
+        fields.file_path = path
+        fields.file_name = punchFile.name
+      }
+      const res = await fetch("/api/punch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(fields),
+      })
       if (res.ok) {
         setShowNewPunch(false)
         setPunchDesc(""); setPunchLocation(""); setPunchAssignedTo(""); setPunchDueDate(""); setPunchPriority("Medium"); setPunchProjectId(""); setPunchNotes("")
@@ -115,13 +125,17 @@ export default function PunchModule({ globalProjectId, appProjects }: {
   async function uploadPunchPhoto(file: File) {
     if (!viewPunch) return
     setPunchPhotoUploading(true)
-    const fd = new FormData()
-    fd.append("entity_type", "punch_item")
-    fd.append("entity_id", viewPunch.id)
-    fd.append("file", file)
-    const res = await fetch("/api/photos", { method: "POST", body: fd })
-    if (res.ok) await loadPunchPhotos(viewPunch.id)
-    setPunchPhotoUploading(false)
+    try {
+      const { path } = await presignAndUpload("photos", `punch_item/${viewPunch.id}`, file)
+      const res = await fetch("/api/photos", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ entity_type: "punch_item", entity_id: viewPunch.id, file_path: path, file_name: file.name }),
+      })
+      if (res.ok) await loadPunchPhotos(viewPunch.id)
+    } finally {
+      setPunchPhotoUploading(false)
+    }
   }
 
   async function deletePunchPhoto(photoId: string) {

@@ -35,40 +35,17 @@ export async function POST(req: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
-  let fields: Record<string, string | null> = {}
-  let fileBytes: ArrayBuffer | null = null
-  let fileType = ""
-  let origFileName = ""
-
-  const contentType = req.headers.get("content-type") ?? ""
-  if (contentType.includes("multipart/form-data")) {
-    const fd = await req.formData()
-    for (const [k, v] of fd.entries()) {
-      if (typeof v === "string") fields[k] = v || null
-    }
-    const f = fd.get("file") as File | null
-    if (f && f.size > 0) {
-      fileBytes = await f.arrayBuffer()
-      fileType = f.type || "application/octet-stream"
-      origFileName = f.name
-    }
-  } else {
-    fields = await req.json()
-  }
+  // The drawing file (if any) was already PUT straight to storage from the
+  // browser via a signed upload URL, so this route receives only JSON metadata.
+  const fields: Record<string, string | null> = await req.json().catch(() => ({}))
 
   const { drawing_number, sheet_title, discipline, revision, revision_date, status, scale, notes, project_id } = fields
 
   if (!drawing_number?.trim()) return NextResponse.json({ error: "drawing_number is required" }, { status: 400 })
   if (!sheet_title?.trim())   return NextResponse.json({ error: "sheet_title is required" }, { status: 400 })
 
-  let file_path: string | null = null
-  let file_name: string | null = null
-  if (fileBytes && origFileName) {
-    const safeName = origFileName.replace(/[^a-zA-Z0-9._-]/g, "_")
-    file_path = `drawings/${Date.now()}_${safeName}`
-    file_name = origFileName
-    await supabase.storage.from("submittals").upload(file_path, fileBytes, { contentType: fileType, upsert: false })
-  }
+  const file_path = typeof fields.file_path === "string" ? fields.file_path.trim() || null : null
+  const file_name = typeof fields.file_name === "string" ? fields.file_name.trim() || null : null
 
   // Supersede any existing current revision for this drawing number
   await supabase

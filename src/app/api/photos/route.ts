@@ -29,40 +29,33 @@ export async function GET(req: NextRequest) {
   return NextResponse.json(withUrls)
 }
 
+// The photo was already PUT straight to the `photos` bucket from the browser
+// via a signed upload URL, so this route receives only JSON metadata.
 export async function POST(req: NextRequest) {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
-  const formData = await req.formData()
-  const entity_type = formData.get("entity_type") as string
-  const entity_id = formData.get("entity_id") as string
-  const file = formData.get("file") as File | null
-  if (!entity_type || !entity_id || !file) return NextResponse.json({ error: "Missing fields" }, { status: 400 })
+  const body = await req.json().catch(() => null)
+  const entity_type = typeof body?.entity_type === "string" ? body.entity_type : ""
+  const entity_id   = typeof body?.entity_id   === "string" ? body.entity_id   : ""
+  const file_path   = typeof body?.file_path   === "string" ? body.file_path.trim() : ""
+  const file_name   = typeof body?.file_name   === "string" ? body.file_name : ""
+  if (!entity_type || !entity_id || !file_path) {
+    return NextResponse.json({ error: "Missing fields" }, { status: 400 })
+  }
 
   const { data: profile } = await supabase.from("user_profiles").select("company_id").maybeSingle()
   const company_id = profile?.company_id ?? null
 
-  const ext = file.name.split(".").pop() ?? "jpg"
-  const path = `${entity_type}/${entity_id}/${Date.now()}.${ext}`
-
-  const { error: uploadError } = await supabase.storage
-    .from("photos")
-    .upload(path, file, { contentType: file.type })
-
-  if (uploadError) {
-    console.error("Photo upload failed:", uploadError)
-    return NextResponse.json({ error: "Upload failed" }, { status: 500 })
-  }
-
   const { data: photo } = await supabase
     .from("item_photos")
-    .insert({ entity_type, entity_id, storage_path: path, file_name: file.name, company_id, uploaded_by: user.id })
+    .insert({ entity_type, entity_id, storage_path: file_path, file_name, company_id, uploaded_by: user.id })
     .select()
     .single()
 
-  const { data: urlData } = await supabase.storage.from("photos").createSignedUrl(path, 3600)
-  return NextResponse.json({ id: photo?.id, url: urlData?.signedUrl ?? "", file_name: file.name })
+  const { data: urlData } = await supabase.storage.from("photos").createSignedUrl(file_path, 3600)
+  return NextResponse.json({ id: photo?.id, url: urlData?.signedUrl ?? "", file_name })
 }
 
 export async function DELETE(req: NextRequest) {

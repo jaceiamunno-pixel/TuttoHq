@@ -4,6 +4,7 @@ import { useState, useEffect } from "react"
 import type { ChangeOrder, Project } from "../_shared/types"
 import { fmtDateOnly } from "../_shared/format"
 import { PlusIcon, SpinnerIcon } from "../_shared/icons"
+import { presignAndUpload } from "@/lib/storage-upload"
 
 // Change Orders module — extracted verbatim from dashboard/page.tsx (Step 6 of the split).
 // State, handlers, action bar, content, and both modals are unchanged; the load
@@ -55,19 +56,22 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
     e.preventDefault()
     setCoSaving(true)
     try {
-      const fd = new FormData()
-      fd.append("project_id", coProjectId)
-      fd.append("date", coDate)
-      fd.append("proposal", coProposal)
-      fd.append("qualifications", coQualifications)
-      fd.append("pricing_sum", coPricingSum)
-      fd.append("schedule_impact", coScheduleImpact)
-      fd.append("schedule_impact_days", coScheduleDays)
-      fd.append("submitted_by", coSubmittedBy)
-      fd.append("assigned_to", coAssignedTo)
-      fd.append("status", coStatus)
-      if (coFile) fd.append("file", coFile)
-      const res = await fetch("/api/change-orders", { method: "POST", body: fd })
+      const fields: Record<string, string> = {
+        project_id: coProjectId, date: coDate, proposal: coProposal,
+        qualifications: coQualifications, pricing_sum: coPricingSum,
+        schedule_impact: coScheduleImpact, schedule_impact_days: coScheduleDays,
+        submitted_by: coSubmittedBy, assigned_to: coAssignedTo, status: coStatus,
+      }
+      if (coFile) {
+        const { path } = await presignAndUpload("submittals", "change-orders", coFile)
+        fields.file_path = path
+        fields.file_name = coFile.name
+      }
+      const res = await fetch("/api/change-orders", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(fields),
+      })
       if (res.ok) {
         setShowNewCo(false)
         setCoProjectId(""); setCoProposal(""); setCoQualifications(""); setCoPricingSum("")
