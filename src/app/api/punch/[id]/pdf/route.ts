@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
-import { PDFBuilder } from "@/lib/pdf-builder"
+import { PDFBuilder, type FieldCell } from "@/lib/pdf-builder"
 
 export async function POST(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const supabase = await createClient()
@@ -26,32 +26,37 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
     if (blob) logoBytes = await blob.arrayBuffer()
   }
 
-  const b = await PDFBuilder.create("PUNCH LIST ITEM", logoBytes)
+  const pdf = await PDFBuilder.create({
+    documentType: "Punch List Item",
+    documentNumber: item.item_number,
+    logoBytes,
+  })
 
   if (project.name || project.number) {
-    b.sectionHeader("PROJECT INFORMATION")
-    b.twoCol("Project Name", project.name ?? "—", 65, "Project No.", project.number ?? "—", 35)
-    if (project.gc_name || project.architect)
-      b.twoCol("General Contractor", project.gc_name ?? "—", 50, "Architect", project.architect ?? "—", 50)
-    if (project.location) b.oneCol("Location", project.location)
-    b.gap()
+    pdf.projectBlock({
+      name: project.name, number: project.number, location: project.location,
+      gc_name: project.gc_name, architect: project.architect,
+    })
   }
 
-  b.sectionHeader("ITEM DETAILS")
-  b.twoColStatus("Item Number", item.item_number ?? "—", 30, "Status", item.status ?? "Open", 70)
-  b.twoColStatus("Priority", item.priority ?? "Medium", 30, "Assigned To", item.assigned_to ?? "—", 70)
-  b.twoCol("Due Date", item.due_date ? new Date(item.due_date).toLocaleDateString("en-US") : "—", 50,
-           "Created",  new Date(item.created_at).toLocaleDateString("en-US"), 50)
-  if (item.location) b.oneCol("Location", item.location)
-  b.gap()
+  pdf.sectionDivider("Item Details")
+  const details: FieldCell[][] = [
+    [{ label: "Item Number", value: item.item_number }, { label: "Status", status: item.status ?? "Open" }],
+    [{ label: "Priority", status: item.priority ?? "Medium" }, { label: "Assigned To", value: item.assigned_to }],
+    [{ label: "Due Date", value: item.due_date ? new Date(item.due_date).toLocaleDateString("en-US") : null },
+     { label: "Created", value: new Date(item.created_at).toLocaleDateString("en-US") }],
+  ]
+  if (item.location) details.push([{ label: "Location", value: item.location }])
+  pdf.fieldGrid(details)
 
-  b.textBlock("DESCRIPTION", item.description ?? "")
-  if (item.notes) b.textBlock("NOTES", item.notes)
+  pdf.textBlock("Description", item.description)
+  if (item.notes) pdf.textBlock("Notes", item.notes)
 
-  b.signatureLines("Inspected By / Date", "Corrective Action By / Date")
+  pdf.signatureBlock("Inspected By / Date", "Corrective Action By / Date")
 
-  const pdfBytes = await b.save()
-  const pdfPath = `punch/${id}/punch_${item.item_number?.replace(/\s+/g, "_") ?? id}.pdf`
+  const pdfBytes = await pdf.save()
+  // Unique path per generation — avoids Supabase's CDN serving a stale cached copy.
+  const pdfPath = `punch/${id}/punch_${item.item_number?.replace(/\s+/g, "_") ?? id}_${Date.now()}.pdf`
   await supabase.storage.from("submittals").upload(pdfPath, Buffer.from(pdfBytes), { contentType: "application/pdf", upsert: true })
   await supabase.from("punch_items").update({ generated_pdf_path: pdfPath }).eq("id", id)
   const { data: signed } = await supabase.storage.from("submittals").createSignedUrl(pdfPath, 604800)

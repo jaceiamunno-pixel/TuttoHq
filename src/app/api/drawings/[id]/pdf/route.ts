@@ -30,35 +30,38 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
     if (blob) logoBytes = await blob.arrayBuffer()
   }
 
-  const b = await PDFBuilder.create("DRAWING TRANSMITTAL", logoBytes)
+  const pdf = await PDFBuilder.create({
+    documentType: "Drawing Transmittal",
+    documentNumber: dwg.drawing_number,
+    logoBytes,
+  })
 
   if (project.name || project.number) {
-    b.sectionHeader("PROJECT INFORMATION")
-    b.twoCol("Project Name", project.name ?? "—", 65, "Project No.", project.number ?? "—", 35)
-    if (project.gc_name || project.architect)
-      b.twoCol("General Contractor", project.gc_name ?? "—", 50, "Architect", project.architect ?? "—", 50)
-    if (project.location) b.oneCol("Location", project.location)
-    b.gap()
+    pdf.projectBlock({
+      name: project.name, number: project.number, location: project.location,
+      gc_name: project.gc_name, architect: project.architect,
+    })
   }
 
-  b.sectionHeader("DRAWING INFORMATION")
-  b.twoCol("Drawing Number", dwg.drawing_number ?? "—", 35, "Sheet Title", dwg.sheet_title ?? "—", 65)
-  b.twoCol("Discipline", dwg.discipline ?? "—", 40, "Scale", dwg.scale ?? "—", 60)
-  b.twoColStatus("Revision", dwg.revision ?? "0", 25, "Status", dwg.status ?? "—", 75)
-  b.twoCol("Revision Date", dwg.revision_date ? new Date(dwg.revision_date).toLocaleDateString("en-US") : "—", 50, " ", " ", 50)
-  if (dwg.notes) {
-    b.gap()
-    b.textBlock("NOTES", dwg.notes)
-  }
+  pdf.sectionDivider("Drawing Information")
+  pdf.fieldGrid([
+    [{ label: "Drawing Number", value: dwg.drawing_number }, { label: "Sheet Title", value: dwg.sheet_title }],
+    [{ label: "Discipline", value: dwg.discipline }, { label: "Scale", value: dwg.scale }],
+    [{ label: "Revision", value: dwg.revision ?? "0" }, { label: "Status", status: dwg.status }],
+    [{ label: "Revision Date", value: dwg.revision_date ? new Date(dwg.revision_date).toLocaleDateString("en-US") : null }],
+  ])
+
+  if (dwg.notes) pdf.textBlock("Notes", dwg.notes)
 
   if (history && history.length > 1) {
-    b.gap()
-    b.sectionHeader("REVISION HISTORY")
+    pdf.sectionDivider("Revision History")
     const colW = [48, 90, 110, 216, 88]
-    b.tableHeader(["Rev", "Date", "Status", "Sheet Title", "Note"], colW)
+    pdf.tableHeader(["Rev", "Date", "Status", "Sheet Title", "Note"], colW)
     for (const row of history.slice(0, 10)) {
-      const note = row.is_current ? "Current" : row.superseded_at ? new Date(row.superseded_at).toLocaleDateString("en-US") : "—"
-      b.tableRow([
+      const note = row.is_current
+        ? "Current"
+        : row.superseded_at ? new Date(row.superseded_at).toLocaleDateString("en-US") : "—"
+      pdf.tableRow([
         row.revision ?? "0",
         row.revision_date ? new Date(row.revision_date).toLocaleDateString("en-US") : "—",
         row.status ?? "—",
@@ -66,14 +69,14 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
         note,
       ], colW, !!row.is_current)
     }
-    b.gap(6)
   }
 
-  b.signatureLines("Issued By / Date", "Reviewed By / Date")
+  pdf.signatureBlock("Issued By / Date", "Reviewed By / Date")
 
-  const pdfBytes = await b.save()
+  const pdfBytes = await pdf.save()
   const safeDwg = dwg.drawing_number?.replace(/[^a-zA-Z0-9._-]/g, "_") ?? id
-  const pdfPath = `drawings/${id}/drawing_${safeDwg}_rev${dwg.revision ?? "0"}.pdf`
+  // Unique path per generation — avoids Supabase's CDN serving a stale cached copy.
+  const pdfPath = `drawings/${id}/drawing_${safeDwg}_rev${dwg.revision ?? "0"}_${Date.now()}.pdf`
   await supabase.storage.from("submittals").upload(pdfPath, Buffer.from(pdfBytes), { contentType: "application/pdf", upsert: true })
   await supabase.from("drawing_log").update({ generated_pdf_path: pdfPath }).eq("id", id)
   const { data: signed } = await supabase.storage.from("submittals").createSignedUrl(pdfPath, 604800)

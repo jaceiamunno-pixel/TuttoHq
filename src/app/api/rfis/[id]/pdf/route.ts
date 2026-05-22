@@ -26,38 +26,43 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
     if (blob) logoBytes = await blob.arrayBuffer()
   }
 
-  const b = await PDFBuilder.create("REQUEST FOR INFORMATION", logoBytes)
+  const fmtDate = (d: string | null): string | null => d ? new Date(d).toLocaleDateString("en-US") : null
+
+  const pdf = await PDFBuilder.create({
+    documentType: "Request for Information",
+    documentNumber: rfi.rfi_number,
+    logoBytes,
+  })
 
   if (project.name || project.number) {
-    b.sectionHeader("PROJECT INFORMATION")
-    b.twoCol("Project Name", project.name ?? "—", 65, "Project No.", project.number ?? "—", 35)
-    if (project.gc_name || project.architect)
-      b.twoCol("General Contractor", project.gc_name ?? "—", 50, "Architect", project.architect ?? "—", 50)
-    if (project.location) b.oneCol("Project Location", project.location)
-    b.gap()
+    pdf.projectBlock({
+      name: project.name, number: project.number, location: project.location,
+      gc_name: project.gc_name, architect: project.architect,
+    })
   }
 
-  b.sectionHeader("RFI DETAILS")
-  b.twoColStatus("RFI Number", rfi.rfi_number ?? "—", 25, "Status", rfi.status ?? "Open", 75)
-  b.twoCol("Date Issued", rfi.date_issued ? new Date(rfi.date_issued).toLocaleDateString("en-US") : "—", 50,
-           "Due Date",   rfi.due_date    ? new Date(rfi.due_date).toLocaleDateString("en-US")    : "—", 50)
-  b.twoCol("Schedule Impact", rfi.schedule_impact ?? "TBD", 50, "Cost Impact", rfi.cost_impact ?? "TBD", 50)
-  b.twoCol("Spec Section", rfi.specification_section ?? "—", 50, "Location", rfi.location ?? "—", 50)
-  b.twoCol("Received From", rfi.received_from ?? rfi.submitted_by ?? "—", 50, "Assigned To", rfi.assigned_to ?? "—", 50)
-  b.gap()
+  pdf.sectionDivider("RFI Details")
+  pdf.fieldGrid([
+    [{ label: "RFI Number", value: rfi.rfi_number }, { label: "Status", status: rfi.status ?? "Open" }],
+    [{ label: "Date Issued", value: fmtDate(rfi.date_issued) }, { label: "Due Date", value: fmtDate(rfi.due_date) }],
+    [{ label: "Schedule Impact", value: rfi.schedule_impact ?? "TBD" }, { label: "Cost Impact", value: rfi.cost_impact ?? "TBD" }],
+    [{ label: "Spec Section", value: rfi.specification_section }, { label: "Location", value: rfi.location }],
+    [{ label: "Received From", value: rfi.received_from ?? rfi.submitted_by }, { label: "Assigned To", value: rfi.assigned_to }],
+  ])
 
-  b.textBlock("QUESTION", rfi.description ?? "")
-  b.textBlock("RESPONSE", rfi.response ?? "")
+  pdf.textBlock("Question", rfi.description)
+  pdf.textBlock("Response", rfi.response)
 
   if (rfi.file_name) {
-    b.sectionHeader("ATTACHED FILE")
-    b.oneCol("File Name", rfi.file_name)
+    pdf.sectionDivider("Attached File")
+    pdf.fieldGrid([[{ label: "File Name", value: rfi.file_name }]])
   }
 
-  b.signatureLines("Prepared By / Date", "Reviewed By / Date")
+  pdf.signatureBlock("Prepared By / Date", "Reviewed By / Date")
 
-  const pdfBytes = await b.save()
-  const pdfPath = `rfis/${id}/rfi_${rfi.rfi_number?.replace(/\s+/g, "_") ?? id}.pdf`
+  const pdfBytes = await pdf.save()
+  // Unique path per generation — avoids Supabase's CDN serving a stale cached copy.
+  const pdfPath = `rfis/${id}/rfi_${rfi.rfi_number?.replace(/\s+/g, "_") ?? id}_${Date.now()}.pdf`
   await supabase.storage.from("submittals").upload(pdfPath, Buffer.from(pdfBytes), { contentType: "application/pdf", upsert: true })
   await supabase.from("rfis").update({ generated_pdf_path: pdfPath }).eq("id", id)
   const { data: signed } = await supabase.storage.from("submittals").createSignedUrl(pdfPath, 604800)

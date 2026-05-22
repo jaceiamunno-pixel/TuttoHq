@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
-import { PDFBuilder } from "@/lib/pdf-builder"
+import { PDFBuilder, type FieldCell } from "@/lib/pdf-builder"
 
 function formatCurrency(n: number | null): string {
   if (n == null) return "—"
@@ -31,40 +31,46 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
     if (blob) logoBytes = await blob.arrayBuffer()
   }
 
-  const b = await PDFBuilder.create("CHANGE ORDER", logoBytes)
+  const pdf = await PDFBuilder.create({
+    documentType: "Change Order",
+    documentNumber: co.co_number,
+    logoBytes,
+  })
 
   if (project.name || project.number) {
-    b.sectionHeader("PROJECT INFORMATION")
-    b.twoCol("Project Name", project.name ?? "—", 65, "Project No.", project.number ?? "—", 35)
-    if (project.gc_name || project.architect)
-      b.twoCol("General Contractor", project.gc_name ?? "—", 50, "Architect", project.architect ?? "—", 50)
-    if (project.location) b.oneCol("Project Location", project.location)
-    b.gap()
+    pdf.projectBlock({
+      name: project.name, number: project.number, location: project.location,
+      gc_name: project.gc_name, architect: project.architect,
+    })
   }
 
-  b.sectionHeader("CHANGE ORDER DETAILS")
-  b.twoColStatus("CO Number", co.co_number ?? "—", 25, "Status", co.status ?? "Draft", 75)
-  b.twoCol("Date", co.date ? new Date(co.date).toLocaleDateString("en-US") : "—", 50, "Assigned To", co.assigned_to ?? "—", 50)
-  b.twoCol("Schedule Impact", co.schedule_impact ?? "TBD", 50,
-           "Days Impact", co.schedule_impact_days != null ? String(co.schedule_impact_days) : "—", 50)
-  if (co.submitted_by) b.oneCol("Submitted By", co.submitted_by)
-  b.gap()
+  pdf.sectionDivider("Change Order Details")
+  const details: FieldCell[][] = [
+    [{ label: "CO Number", value: co.co_number }, { label: "Status", status: co.status ?? "Draft" }],
+    [{ label: "Date", value: co.date ? new Date(co.date).toLocaleDateString("en-US") : null },
+     { label: "Assigned To", value: co.assigned_to }],
+    [{ label: "Schedule Impact", value: co.schedule_impact ?? "TBD" },
+     { label: "Days Impact", value: co.schedule_impact_days != null ? String(co.schedule_impact_days) : null }],
+  ]
+  if (co.submitted_by) details.push([{ label: "Submitted By", value: co.submitted_by }])
+  pdf.fieldGrid(details)
 
-  b.textBlock("PROPOSAL", co.proposal ?? "")
-  b.textBlock("QUALIFICATIONS / EXCLUSIONS", co.qualifications ?? "")
+  pdf.textBlock("Proposal", co.proposal)
+  pdf.textBlock("Qualifications / Exclusions", co.qualifications)
 
-  b.sectionHeader("PRICING")
-  b.pricingBlock(formatCurrency(co.pricing_sum), co.status === "Approved")
+  pdf.sectionDivider("Pricing")
+  pdf.pricingBlock(formatCurrency(co.pricing_sum), co.status === "Approved")
 
   if (co.file_name) {
-    b.sectionHeader("ATTACHED FILE")
-    b.oneCol("File Name", co.file_name)
+    pdf.sectionDivider("Attached File")
+    pdf.fieldGrid([[{ label: "File Name", value: co.file_name }]])
   }
 
-  b.signatureLines("Submitted By / Date", "Owner / Architect Approval / Date")
+  pdf.signatureBlock("Submitted By / Date", "Owner / Architect Approval / Date")
 
-  const pdfBytes = await b.save()
-  const pdfPath = `change-orders/${id}/co_${co.co_number?.replace(/\s+/g, "_") ?? id}.pdf`
+  const pdfBytes = await pdf.save()
+  // Unique path per generation — avoids Supabase's CDN serving a stale cached copy.
+  const pdfPath = `change-orders/${id}/co_${co.co_number?.replace(/\s+/g, "_") ?? id}_${Date.now()}.pdf`
   await supabase.storage.from("submittals").upload(pdfPath, Buffer.from(pdfBytes), { contentType: "application/pdf", upsert: true })
   await supabase.from("change_orders").update({ generated_pdf_path: pdfPath }).eq("id", id)
   const { data: signed } = await supabase.storage.from("submittals").createSignedUrl(pdfPath, 604800)
