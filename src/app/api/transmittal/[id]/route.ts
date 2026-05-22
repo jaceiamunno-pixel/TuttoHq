@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import { PDFDocument } from "pdf-lib"
-import { PDFBuilder } from "@/lib/pdf-builder"
+import { PDFBuilder, type FieldCell } from "@/lib/pdf-builder"
 
 export async function POST(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const supabase = await createClient()
@@ -38,49 +38,68 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
     project = data
   }
 
-  // Build cover sheet
-  const b = await PDFBuilder.create("SUBMITTAL TRANSMITTAL", logoBytes)
+  // ── Cover ─────────────────────────────────────────────────────────────────
+  const pdf = await PDFBuilder.create({
+    documentType: "Submittal Transmittal",
+    documentNumber: sub.submittal_number,
+    logoBytes,
+  })
 
   if (project) {
-    b.sectionHeader("PROJECT INFORMATION")
-    b.twoCol("Project Name", project.name, 65, "Project No.", project.number ?? "—", 35)
-    if (project.location) b.oneCol("Project Location", project.location)
-    if (project.gc_name || project.architect)
-      b.twoCol("General Contractor", project.gc_name ?? "—", 50, "Architect", project.architect ?? "—", 50)
-    b.gap()
+    pdf.projectBlock({
+      name: project.name,
+      number: project.number,
+      location: project.location,
+      gc_name: project.gc_name,
+      architect: project.architect,
+    })
   }
 
   if (sub.transmitted_by || sub.transmitted_by_company) {
-    b.sectionHeader("TRANSMITTED BY")
-    b.twoCol("Name", sub.transmitted_by ?? "—", 50, "Company", sub.transmitted_by_company ?? "—", 50)
-    b.gap()
+    pdf.sectionDivider("Transmitted By")
+    pdf.fieldGrid([[
+      { label: "Name", value: sub.transmitted_by },
+      { label: "Company", value: sub.transmitted_by_company },
+    ]])
   }
 
   if (sub.send_to_type) {
     const typeLabel = sub.send_to_type === "cm" ? "Construction Manager"
       : sub.send_to_type === "subcontractor" ? "Subcontractor" : "Supplier"
-    b.sectionHeader("TRANSMITTED TO")
-    b.twoCol("Company", sub.send_to_company ?? "—", 60, "Type", typeLabel, 40)
-    if (sub.send_to_contact || sub.send_to_email)
-      b.twoCol("Contact", sub.send_to_contact ?? "—", 50, "Email", sub.send_to_email ?? "—", 50)
-    if (sub.send_to_phone) b.oneCol("Phone", sub.send_to_phone)
-    if (sub.send_to_address) b.oneCol("Address", sub.send_to_address)
-    b.gap()
+    pdf.sectionDivider("Transmitted To")
+    const rows: FieldCell[][] = [[
+      { label: "Company", value: sub.send_to_company },
+      { label: "Type", value: typeLabel },
+    ]]
+    if (sub.send_to_contact || sub.send_to_email) {
+      rows.push([
+        { label: "Contact", value: sub.send_to_contact },
+        { label: "Email", value: sub.send_to_email },
+      ])
+    }
+    if (sub.send_to_phone) rows.push([{ label: "Phone", value: sub.send_to_phone }])
+    if (sub.send_to_address) rows.push([{ label: "Address", value: sub.send_to_address }])
+    pdf.fieldGrid(rows)
   }
 
-  b.sectionHeader("SUBMITTAL INFORMATION")
-  b.twoCol("Spec Section No.", sub.csi_section ?? "—", 30, "Spec Section Title", sub.section_name ?? "—", 70)
-  b.oneCol("Submittal Description", sub.file_name.replace(/\.[^.]+$/, ""))
-  const today = new Date().toLocaleDateString("en-US")
-  b.twoCol("Date Submitted", today, 50, "Submittal No.", sub.submittal_number ?? "—", 50)
-  b.gap()
+  pdf.sectionDivider("Submittal Information")
+  pdf.fieldGrid([
+    [{ label: "Spec Section No.", value: sub.csi_section },
+     { label: "Spec Section Title", value: sub.section_name }],
+    [{ label: "Submittal Description", value: sub.file_name.replace(/\.[^.]+$/, "") }],
+    [{ label: "Date Submitted", value: new Date().toLocaleDateString("en-US") },
+     { label: "Submittal No.", value: sub.submittal_number }],
+  ])
 
-  b.sectionHeader("REVIEW / CERTIFICATION")
-  b.twoCol("Reviewed By", "—", 50, "Certified by CQM", "—", 50)
-  b.gap()
-  b.signatureLines("Reviewed By / Date", "Approved By / Date")
+  pdf.sectionDivider("Review / Certification")
+  pdf.fieldGrid([[
+    { label: "Reviewed By", value: "" },
+    { label: "Certified by CQM", value: "" },
+  ]])
 
-  const coverBytes = await b.save()
+  pdf.signatureBlock("Reviewed By / Date", "Approved By / Date")
+
+  const coverBytes = await pdf.save()
 
   // Merge cover with original PDF
   const mergedDoc = await PDFDocument.create()
