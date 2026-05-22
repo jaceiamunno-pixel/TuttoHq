@@ -16,8 +16,10 @@ export async function GET() {
 
   const params = new URLSearchParams({
     client_id: process.env.GOOGLE_CLIENT_ID!,
-    // GOOGLE_REDIRECT_URI must exactly match the URI registered in Google Cloud Console
-    redirect_uri: process.env.GOOGLE_REDIRECT_URI!,
+    // Must exactly match both the URI registered in Google Cloud Console and the
+    // redirect_uri used in the /api/auth/gmail/callback token exchange — all
+    // three are now derived from NEXT_PUBLIC_APP_URL.
+    redirect_uri: `${process.env.NEXT_PUBLIC_APP_URL}/api/auth/gmail/callback`,
     response_type: "code",
     scope: [
       "https://www.googleapis.com/auth/gmail.readonly",
