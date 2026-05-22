@@ -7,7 +7,7 @@ import { classifySubmittals, mapWithConcurrency } from "@/lib/spec-classifier"
 // Section split + 60-odd Haiku calls can take 30-60s — raise the function ceiling.
 export const maxDuration = 300
 
-const CLASSIFY_CONCURRENCY = 5
+const CLASSIFY_CONCURRENCY = 3
 const PROGRESS_CHUNK = 10
 
 // POST /api/spec-books/[documentId]/parse — runs the full pipeline synchronously:
