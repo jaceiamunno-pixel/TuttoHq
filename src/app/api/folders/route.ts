@@ -283,7 +283,7 @@ export async function GET() {
 
   const { data, error } = await supabase
     .from("submittals")
-    .select("csi_division, csi_section, section_name")
+    .select("csi_division, csi_section, section_name, storage_path")
     .eq("status", "active")
     .order("csi_division")
     .order("csi_section")
@@ -299,6 +299,9 @@ export async function GET() {
   const countsBySec      = new Map<string, number>()
 
   for (const row of data ?? []) {
+    // Skip cover-sheet transmittal copies — they belong to a project's Submittal
+    // Log, not the cross-project Library count (matches the /api/files filter).
+    if (row.storage_path?.startsWith("project-submittals/")) continue
     if (!row.csi_division) continue
     const divNum = row.csi_division.trim().padStart(2, "0")
     countsByDiv.set(divNum, (countsByDiv.get(divNum) ?? 0) + 1)
