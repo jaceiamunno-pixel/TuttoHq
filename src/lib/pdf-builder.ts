@@ -90,6 +90,8 @@ export interface PDFDocMeta {
   generationDate?: Date
   /** Company logo bytes (PNG/JPG), drawn top-right on page 1. */
   logoBytes?: ArrayBuffer | null
+  /** Company name — drawn top-right in place of the logo when no logo is set. */
+  brandName?: string | null
 }
 
 /** Project metadata for the shared PDFProjectBlock. */
@@ -114,6 +116,21 @@ export interface FieldCell {
 export interface PDFPhoto {
   bytes: Uint8Array | null
   caption?: string
+}
+
+/** A checkbox within a PDFFieldGrid checkbox row. */
+export interface PDFCheckbox {
+  label: string
+  checked: boolean
+}
+
+/** A PDFFieldGrid row — either key-value cells, or a row of checkboxes. */
+export type PDFGridRow = FieldCell[] | { checkboxes: PDFCheckbox[] }
+
+/** A review-stamp box for PDFStampGrid. */
+export interface PDFStamp {
+  role: string
+  content?: string | null
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -203,14 +220,23 @@ export class PDFBuilder {
       this.page.drawText(metaParts.join("   ·   "), {
         x: this.M, y: top - 30, size: PDF.size.footer, font: this.reg, color: PDF.color.muted,
       })
-      // Logo — right-aligned, top-aligned with the title
+      // Logo — right-aligned, top-aligned with the title. When no logo is
+      // available, the company name is drawn there instead.
+      let logoDrawn = false
       if (this.meta.logoBytes) {
         const img = await this.embedImage(this.meta.logoBytes)
         if (img) {
           const scale = Math.min(34 / img.height, 150 / img.width, 1)
           const dw = img.width * scale, dh = img.height * scale
           this.page.drawImage(img, { x: this.M + this.CW - dw, y: top - dh, width: dw, height: dh })
+          logoDrawn = true
         }
+      }
+      if (!logoDrawn && this.meta.brandName) {
+        const nw = this.bold.widthOfTextAtSize(this.meta.brandName, 13)
+        this.page.drawText(this.meta.brandName, {
+          x: this.M + this.CW - nw, y: top - 14, size: 13, font: this.bold, color: PDF.color.ink,
+        })
       }
       // Header rule
       this.page.drawLine({
@@ -372,17 +398,47 @@ export class PDFBuilder {
   }
 
   // ── PDFFieldGrid ────────────────────────────────────────────────────────────
-  /** Render rows of key-value cells as a bordered form block. Each inner array
-   *  is one row of 1–3 cells; columns within a row split the width evenly. */
-  fieldGrid(rows: FieldCell[][]) {
+  /** Render rows as a bordered form block. Each row is either an array of 1–3
+   *  key-value cells (columns split the width evenly), or a checkbox row. */
+  fieldGrid(rows: PDFGridRow[]) {
     if (rows.length === 0) return
     this.ensureSpace(rows.length * this.rowH)
     const topY = this.y
     for (const row of rows) {
-      this.drawCellRow(row.map(c => ({ ...c, frac: 1 })))
+      if (Array.isArray(row)) {
+        this.drawCellRow(row.map(c => ({ ...c, frac: 1 })))
+      } else {
+        this.drawCheckboxRow(row.checkboxes)
+      }
     }
     this.blockBorder(topY)
     this.spacer(6)
+  }
+
+  /** Draw a full-width row of evenly-spaced checkboxes. */
+  private drawCheckboxRow(items: PDFCheckbox[]) {
+    const fy = this.y - this.rowH
+    this.page.drawRectangle({ x: this.M, y: fy, width: this.CW, height: this.rowH, color: PDF.color.white })
+    const slotW = this.CW / items.length
+    items.forEach((item, i) => {
+      const bx = this.M + i * slotW + 8
+      const by = fy + (this.rowH - 10) / 2
+      this.page.drawRectangle({
+        x: bx, y: by, width: 10, height: 10,
+        color: PDF.color.white, borderColor: PDF.color.label, borderWidth: 1,
+      })
+      if (item.checked) {
+        this.page.drawText("X", { x: bx + 1.8, y: by + 1.6, size: 9, font: this.bold, color: PDF.color.accent })
+      }
+      this.page.drawText(clip(this.bold, item.label, slotW - 30, PDF.size.label), {
+        x: bx + 16, y: fy + 7, size: PDF.size.label, font: this.bold, color: PDF.color.label,
+      })
+    })
+    this.page.drawLine({
+      start: { x: this.M, y: fy }, end: { x: this.M + this.CW, y: fy },
+      thickness: 0.5, color: PDF.color.rule,
+    })
+    this.y -= this.rowH
   }
 
   // ── Text block ──────────────────────────────────────────────────────────────
@@ -612,6 +668,40 @@ export class PDFBuilder {
         x: x + 6, y: y + 5, size: 7.5, font: this.reg, color: PDF.color.label,
       })
     }
+  }
+
+  // ── PDFStampGrid ─────────────────────────────────────────────────────────────
+  /** Draw a 2×2 grid of review-stamp boxes filling the space down to the footer.
+   *  Each box shows its stamp content, or a "<role> Stamp" placeholder. */
+  stampGrid(stamps?: PDFStamp[]) {
+    const resolved: PDFStamp[] = (stamps ?? [
+      { role: "GC" }, { role: "Architect" }, { role: "Engineer" }, { role: "Subcontractor" },
+    ]).slice(0, 4)
+    this.spacer(10)
+    const gap = 13
+    const cellW = (this.CW - gap) / 2
+    const top = this.y
+    const cellH = (top - this.bottomLimit - gap) / 2
+    resolved.forEach((stamp, i) => {
+      const sx = this.M + (i % 2) * (cellW + gap)
+      const sy = top - Math.floor(i / 2) * (cellH + gap) - cellH
+      this.page.drawRectangle({
+        x: sx, y: sy, width: cellW, height: cellH,
+        color: PDF.color.white, borderColor: PDF.color.ruleStrong, borderWidth: 0.75,
+      })
+      if (stamp.content && stamp.content.trim()) {
+        this.page.drawText(clip(this.reg, stamp.content, cellW - 16, 8.5), {
+          x: sx + 8, y: sy + cellH - 20, size: 8.5, font: this.reg, color: PDF.color.ink,
+        })
+      } else {
+        const placeholder = `${stamp.role} Stamp`
+        const pw = this.reg.widthOfTextAtSize(placeholder, 8)
+        this.page.drawText(placeholder, {
+          x: sx + cellW - pw - 8, y: sy + 8, size: 8, font: this.reg, color: PDF.color.muted,
+        })
+      }
+    })
+    this.y = top - 2 * cellH - gap
   }
 
   // ── Save ────────────────────────────────────────────────────────────────────
