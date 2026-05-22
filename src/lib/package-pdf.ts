@@ -1,5 +1,5 @@
 import { PDFDocument } from "pdf-lib"
-import type { SupabaseClient } from "@supabase/supabase-js"
+import { createClient as createServiceClient, type SupabaseClient } from "@supabase/supabase-js"
 import { PDFBuilder } from "./pdf-builder"
 
 // ─── Submittal-package PDF (Session I) ──────────────────────────────────────
@@ -295,7 +295,16 @@ export async function composePackagePdf(
   })
 
   const storagePath = packagePdfPath(packageId)
-  const { error: uploadErr } = await supabase.storage
+  // The package PDF is a generated artifact. Upload it with the service-role
+  // client so it isn't subject to the submittals bucket's storage RLS, which
+  // whitelists only specific path prefixes — same approach gmail-intake uses
+  // for its own uploads. Every DB read above stays RLS-scoped to the user.
+  const admin = createServiceClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!,
+    { auth: { persistSession: false } },
+  )
+  const { error: uploadErr } = await admin.storage
     .from(PKG_BUCKET)
     .upload(storagePath, bytes, { contentType: "application/pdf", upsert: true })
   if (uploadErr) throw new Error(`Failed to store package PDF: ${uploadErr.message}`)
