@@ -118,7 +118,11 @@ export async function GET(req: NextRequest) {
   const allRows: Row[] = []
   for (const rows of resultArrays) {
     for (const row of rows) {
-      if (!seen.has(row.id)) { seen.add(row.id); allRows.push(row) }
+      if (seen.has(row.id)) continue
+      // Skip project transmittal copies — they belong to a Submittal Log, not the Library.
+      if (typeof row.storage_path === "string" && row.storage_path.startsWith("project-submittals/")) continue
+      seen.add(row.id)
+      allRows.push(row)
     }
   }
 

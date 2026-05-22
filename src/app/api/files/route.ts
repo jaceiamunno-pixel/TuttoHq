@@ -22,7 +22,9 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Failed to load files" }, { status: 500 })
   }
 
-  const rows = data ?? []
+  // Transmittal copies (generate-cover output, stored under "project-submittals/")
+  // belong to a project's Submittal Log — exclude them from the cross-project Library.
+  const rows = (data ?? []).filter(r => !r.storage_path?.startsWith("project-submittals/"))
 
   // Batch-generate signed URLs (7-day expiry)
   const paths = rows.map(r => r.storage_path).filter(Boolean) as string[]
