@@ -19,7 +19,7 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
   const [coLoading, setCoLoading]                     = useState(false)
   const [showNewCo, setShowNewCo]                     = useState(false)
   const [viewCo, setViewCo]                           = useState<ChangeOrder | null>(null)
-  const [coProjectId, setCoProjectId]                 = useState("")
+  const [coProjectId, setCoProjectId]                 = useState(globalProjectId)
   const [coDate, setCoDate]                           = useState(() => new Date().toISOString().slice(0, 10))
   const [coProposal, setCoProposal]                   = useState("")
   const [coQualifications, setCoQualifications]       = useState("")
@@ -47,6 +47,9 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { loadChangeOrders() }, [globalProjectId])
+
+  // Pre-select the current global project whenever the New CO modal opens.
+  useEffect(() => { if (showNewCo) setCoProjectId(globalProjectId) }, [showNewCo, globalProjectId])
 
   async function createCo(e: React.FormEvent) {
     e.preventDefault()

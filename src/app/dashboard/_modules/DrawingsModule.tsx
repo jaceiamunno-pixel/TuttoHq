@@ -30,7 +30,7 @@ export default function DrawingsModule({ globalProjectId, appProjects }: {
   const [dwgStatus, setDwgStatus]                     = useState("Issued for Review")
   const [dwgScale, setDwgScale]                       = useState("")
   const [dwgNotes, setDwgNotes]                       = useState("")
-  const [dwgProjectId, setDwgProjectId]               = useState("")
+  const [dwgProjectId, setDwgProjectId]               = useState(globalProjectId)
   const dwgFileRef    = useRef<HTMLInputElement>(null)
   const [dwgSaving, setDwgSaving]                     = useState(false)
   const [drawingGeneratingPdf, setDrawingGeneratingPdf] = useState(false)
@@ -47,6 +47,9 @@ export default function DrawingsModule({ globalProjectId, appProjects }: {
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { loadDrawings() }, [globalProjectId])
+
+  // Pre-select the current global project whenever the New Drawing modal opens.
+  useEffect(() => { if (showNewDrawing) setDwgProjectId(globalProjectId) }, [showNewDrawing, globalProjectId])
 
   function openAddRevision(d: DrawingRecord) {
     setAddRevisionFor(d)

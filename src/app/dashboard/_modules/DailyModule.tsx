@@ -22,7 +22,7 @@ export default function DailyModule({ globalProjectId, appProjects, teamMembers 
   const [showNewDaily, setShowNewDaily]               = useState(false)
   const [viewDaily, setViewDaily]                     = useState<DailyReport | null>(null)
   const [dailyDate, setDailyDate]                     = useState(() => new Date().toISOString().slice(0, 10))
-  const [dailyProjectId, setDailyProjectId]           = useState("")
+  const [dailyProjectId, setDailyProjectId]           = useState(globalProjectId)
   const [dailyPreparedBy, setDailyPreparedBy]         = useState("")
   const [dailyWeather, setDailyWeather]               = useState("")
   const [dailyTemp, setDailyTemp]                     = useState("")
@@ -59,6 +59,9 @@ export default function DailyModule({ globalProjectId, appProjects, teamMembers 
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { loadDaily() }, [globalProjectId])
+
+  // Pre-select the current global project whenever the New Daily Report modal opens.
+  useEffect(() => { if (showNewDaily) setDailyProjectId(globalProjectId) }, [showNewDaily, globalProjectId])
 
   useEffect(() => {
     if (viewDaily) { setDailyPhotos([]); loadDailyPhotos(viewDaily.id) }

@@ -26,7 +26,7 @@ export default function PunchModule({ globalProjectId, appProjects }: {
   const [punchAssignedTo, setPunchAssignedTo]     = useState("")
   const [punchDueDate, setPunchDueDate]           = useState("")
   const [punchPriority, setPunchPriority]         = useState("Medium")
-  const [punchProjectId, setPunchProjectId]       = useState("")
+  const [punchProjectId, setPunchProjectId]       = useState(globalProjectId)
   const [punchNotes, setPunchNotes]               = useState("")
   const punchFileRef  = useRef<HTMLInputElement>(null)
   const [punchSaving, setPunchSaving]             = useState(false)
@@ -51,6 +51,9 @@ export default function PunchModule({ globalProjectId, appProjects }: {
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { loadPunch() }, [globalProjectId])
+
+  // Pre-select the current global project whenever the New Punch modal opens.
+  useEffect(() => { if (showNewPunch) setPunchProjectId(globalProjectId) }, [showNewPunch, globalProjectId])
 
   useEffect(() => {
     if (viewPunch) { setPunchPhotos([]); loadPunchPhotos(viewPunch.id) }

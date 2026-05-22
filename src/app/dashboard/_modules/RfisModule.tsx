@@ -28,7 +28,7 @@ export default function RfisModule({ globalProjectId, appProjects, teamMembers }
   const [rfiAssignedTo, setRfiAssignedTo]             = useState("")
   const [rfiDateIssued, setRfiDateIssued]             = useState(() => new Date().toISOString().slice(0, 10))
   const [rfiDueDate, setRfiDueDate]                   = useState("")
-  const [rfiProjectId, setRfiProjectId]               = useState("")
+  const [rfiProjectId, setRfiProjectId]               = useState(globalProjectId)
   const [rfiSaving, setRfiSaving]                     = useState(false)
   const [rfiResponse, setRfiResponse]                 = useState("")
   const [rfiResponseStatus, setRfiResponseStatus]     = useState("")
@@ -55,6 +55,9 @@ export default function RfisModule({ globalProjectId, appProjects, teamMembers }
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { loadRfis() }, [globalProjectId])
+
+  // Pre-select the current global project whenever the New RFI modal opens.
+  useEffect(() => { if (showNewRfi) setRfiProjectId(globalProjectId) }, [showNewRfi, globalProjectId])
 
   async function createRfi(e: React.FormEvent) {
     e.preventDefault()
