@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
-import { PDFBuilder, C } from "@/lib/pdf-builder"
-import { rgb } from "pdf-lib"
+import { PDFBuilder, type FieldCell } from "@/lib/pdf-builder"
 
 export async function POST(req: NextRequest) {
   const supabase = await createClient()
@@ -48,111 +47,125 @@ export async function POST(req: NextRequest) {
   const missingAsBuilt = drawings.filter(d => d.status !== "As-Built").length
   const dynamicTotal   = pendingPunch + pendingSubs + openRFIs + unsignedCOs + missingAsBuilt
   const totalItems     = manualTotal + dynamicTotal
-  const totalComplete  = manualComplete
-  const pct            = totalItems > 0 ? Math.round((totalComplete / totalItems) * 100) : 0
+  const pct            = totalItems > 0 ? Math.round((manualComplete / totalItems) * 100) : 0
 
-  const b = await PDFBuilder.create(`Closeout Package — ${project.name}`, logoBytes)
+  const pdf = await PDFBuilder.create({
+    documentType: "Closeout Package",
+    documentNumber: project.name,
+    logoBytes,
+  })
 
   // Project info
-  b.sectionHeader("PROJECT INFORMATION")
-  b.twoCol("PROJECT NAME", project.name ?? "—", 3, "PROJECT NUMBER", project.number ?? "—", 1)
-  b.twoCol("LOCATION", project.location ?? "—", 2, "DATE PREPARED", new Date().toLocaleDateString("en-US"), 1)
-  b.twoCol("GENERAL CONTRACTOR", project.gc_name ?? "—", 1, "ARCHITECT / ENGINEER", project.architect ?? "—", 1)
-  b.gap(8)
+  pdf.projectBlock({
+    name: project.name, number: project.number, location: project.location,
+    gc_name: project.gc_name, architect: project.architect,
+  })
 
-  // Overall progress
-  b.sectionHeader("CLOSEOUT PROGRESS SUMMARY")
-  b.twoCol("MANUAL CHECKLIST", `${manualComplete} of ${manualTotal} complete`, 1, "OVERALL COMPLETION", `${pct}%`, 1)
-  b.twoCol("PENDING SUBMITTALS", String(pendingSubs), 1, "OPEN RFIs", String(openRFIs), 1)
-  b.twoCol("UNSIGNED CHANGE ORDERS", String(unsignedCOs), 1, "OPEN PUNCH ITEMS", String(pendingPunch), 1)
-  b.oneCol("MISSING AS-BUILT DRAWINGS", String(missingAsBuilt))
-  b.gap(8)
+  // Progress summary
+  pdf.sectionDivider("Closeout Progress Summary")
+  pdf.fieldGrid([
+    [{ label: "Manual Checklist", value: `${manualComplete} of ${manualTotal} complete` },
+     { label: "Overall Completion", value: `${pct}%` }],
+    [{ label: "Pending Submittals", value: String(pendingSubs) },
+     { label: "Open RFIs", value: String(openRFIs) }],
+    [{ label: "Unsigned Change Orders", value: String(unsignedCOs) },
+     { label: "Open Punch Items", value: String(pendingPunch) }],
+    [{ label: "Missing As-Built Drawings", value: String(missingAsBuilt) }],
+  ])
 
   // Manual checklist by category
   const CATS: { key: string; label: string }[] = [
-    { key: "documents",   label: "DOCUMENTS"   },
-    { key: "inspections", label: "INSPECTIONS" },
-    { key: "financial",   label: "FINANCIAL"   },
-    { key: "training",    label: "TRAINING"    },
-    { key: "handover",    label: "HANDOVER"    },
+    { key: "documents",   label: "Documents"   },
+    { key: "inspections", label: "Inspections" },
+    { key: "financial",   label: "Financial"   },
+    { key: "training",    label: "Training"    },
+    { key: "handover",    label: "Handover"    },
   ]
 
   for (const cat of CATS) {
     const catItems = items.filter(i => i.category === cat.key)
     if (catItems.length === 0) continue
-    b.gap(4)
-    b.sectionHeader(cat.label)
+    pdf.sectionDivider(cat.label)
     for (const item of catItems) {
       const statusLabel = item.status === "complete" ? "Approved" : item.status === "in_progress" ? "Pending" : "Open"
-      b.twoColStatus("ITEM", item.title, 4, "STATUS", statusLabel, 1)
+      const rows: FieldCell[][] = [
+        [{ label: "Item", value: item.title }, { label: "Status", status: statusLabel }],
+      ]
       if (item.assigned_to || item.due_date) {
-        b.twoCol("ASSIGNED TO", item.assigned_to ?? "—", 1, "DUE DATE", item.due_date ?? "—", 1)
+        rows.push([{ label: "Assigned To", value: item.assigned_to }, { label: "Due Date", value: item.due_date }])
       }
-      if (item.file_name) b.oneCol("DOCUMENT ON FILE", item.file_name)
-      if (item.notes)     b.oneCol("NOTES", item.notes)
+      if (item.file_name) rows.push([{ label: "Document on File", value: item.file_name }])
+      if (item.notes)     rows.push([{ label: "Notes", value: item.notes }])
+      pdf.fieldGrid(rows)
     }
   }
 
   // Submittals
   if (subs.length > 0) {
-    b.gap(6)
-    b.sectionHeader("SUBMITTALS")
-    b.tableHeader(["SUBMITTAL", "CSI SECTION", "REVIEW STATUS"], [320, 120, 112])
-    for (const s of subs) {
-      const status = s.review_status ?? "Pending"
-      b.tableRow([s.file_name ?? "—", s.csi_section ?? "—", status], [320, 120, 112],
-        status === "Approved")
-    }
+    pdf.sectionDivider("Submittals")
+    pdf.table(
+      ["Submittal", "CSI Section", "Review Status"],
+      subs.map(s => [s.file_name ?? "—", s.csi_section ?? "—", s.review_status ?? "Pending"]),
+      [310, 116, 100],
+      r => r[2] === "Approved",
+    )
   }
 
   // RFIs
   if (rfis.length > 0) {
-    b.gap(6)
-    b.sectionHeader("RFIs")
-    b.tableHeader(["RFI #", "SUBJECT", "STATUS"], [80, 360, 112])
-    for (const r of rfis) {
-      b.tableRow([r.rfi_number, r.subject, r.status], [80, 360, 112], r.status === "Closed")
-    }
+    pdf.sectionDivider("RFIs")
+    pdf.table(
+      ["RFI #", "Subject", "Status"],
+      rfis.map(r => [r.rfi_number ?? "—", r.subject ?? "—", r.status ?? "—"]),
+      [76, 340, 110],
+      r => r[2] === "Closed",
+    )
   }
 
   // Change Orders
   if (cos.length > 0) {
-    b.gap(6)
-    b.sectionHeader("CHANGE ORDERS")
-    b.tableHeader(["CO #", "DESCRIPTION", "AMOUNT", "STATUS"], [60, 280, 100, 112])
-    for (const c of cos) {
-      const amt = c.pricing_sum != null ? `$${Number(c.pricing_sum).toLocaleString()}` : "—"
-      b.tableRow([c.co_number, c.proposal ?? "—", amt, c.status], [60, 280, 100, 112],
-        c.status === "Approved")
-    }
+    pdf.sectionDivider("Change Orders")
+    pdf.table(
+      ["CO #", "Description", "Amount", "Status"],
+      cos.map(c => [
+        c.co_number ?? "—",
+        c.proposal ?? "—",
+        c.pricing_sum != null ? `$${Number(c.pricing_sum).toLocaleString()}` : "—",
+        c.status ?? "—",
+      ]),
+      [58, 268, 96, 104],
+      r => r[3] === "Approved",
+    )
   }
 
   // Drawings
   if (drawings.length > 0) {
-    b.gap(6)
-    b.sectionHeader("DRAWING LOG — CURRENT REVISIONS")
-    b.tableHeader(["SHEET #", "TITLE", "DISCIPLINE", "REV", "STATUS"], [80, 230, 100, 50, 92])
-    for (const d of drawings) {
-      b.tableRow([d.drawing_number, d.sheet_title, d.discipline ?? "—", d.revision, d.status],
-        [80, 230, 100, 50, 92], d.status === "As-Built")
-    }
+    pdf.sectionDivider("Drawing Log — Current Revisions")
+    pdf.table(
+      ["Sheet #", "Title", "Discipline", "Rev", "Status"],
+      drawings.map(d => [
+        d.drawing_number ?? "—", d.sheet_title ?? "—", d.discipline ?? "—",
+        d.revision ?? "—", d.status ?? "—",
+      ]),
+      [76, 220, 94, 46, 90],
+      r => r[4] === "As-Built",
+    )
   }
 
   // Punch list
   if (punch.length > 0) {
-    b.gap(6)
-    b.sectionHeader("PUNCH LIST")
-    b.tableHeader(["ITEM #", "DESCRIPTION", "LOCATION", "STATUS"], [60, 270, 120, 102])
-    for (const p of punch) {
-      b.tableRow([p.item_number, p.description, p.location ?? "—", p.status],
-        [60, 270, 120, 102], p.status === "Completed")
-    }
+    pdf.sectionDivider("Punch List")
+    pdf.table(
+      ["Item #", "Description", "Location", "Status"],
+      punch.map(p => [p.item_number ?? "—", p.description ?? "—", p.location ?? "—", p.status ?? "—"]),
+      [58, 258, 114, 96],
+      r => r[3] === "Completed",
+    )
   }
 
-  b.gap(16)
-  b.signatureLines("Owner / Owner's Representative", "General Contractor")
+  pdf.signatureBlock("Owner / Owner's Representative", "General Contractor")
 
-  const pdfBytes = await b.save()
+  const pdfBytes = await pdf.save()
   const buf = Buffer.from(pdfBytes)
 
   const path = `closeout/${project_id}/closeout-package-${Date.now()}.pdf`
