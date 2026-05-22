@@ -73,13 +73,17 @@ export interface SubmittalRecord {
   vendor_supplier_id: string | null
   source: string | null
   spec_section_id: string | null
+  // Sub-package workflow (Session I)
+  sent_to_sub_date: string | null
+  received_via_package_id: string | null
+  received_file_name: string | null
 }
 
 export type BatchStatus = "pending" | "classifying" | "ready" | "error" | "uploading" | "done" | "upload-error"
 export type BatchPhase  = "select" | "classifying" | "review" | "uploading" | "done"
 export interface BatchItem { id: string; file: File; status: BatchStatus; divNum: string; divName: string; secCode: string; secName: string; nameMatl: string; nameMfr: string; nameDims: string; customName: string; expanded: boolean; errorMsg?: string }
 
-export interface Project { id: string; name: string; number: string | null; location: string | null; gc_name: string | null; architect: string | null }
+export interface Project { id: string; name: string; number: string | null; location: string | null; gc_name: string | null; architect: string | null; short_id?: string | null }
 export interface TeamMember { id: string; name: string; title: string | null; email: string | null }
 export interface RFI {
   id: string; rfi_number: string; subject: string; description: string | null;
@@ -170,8 +174,37 @@ export const SUBMITTAL_TYPE_OPTIONS = [
   "Product Data", "Shop Drawing", "Sample", "Certification",
   "Warranty", "O&M Manual", "Lab Test", "Attic Stock", "Other",
 ] as const
-export interface SubcontractorRow { id: string; company_name: string; trade: string | null }
-export interface SupplierRow { id: string; company_name: string; specialty: string | null }
+export interface SubcontractorRow { id: string; company_name: string; trade: string | null; contact_name?: string | null; email?: string | null }
+export interface SupplierRow { id: string; company_name: string; specialty: string | null; contact_name?: string | null; email?: string | null }
+
+// ─── Submittal packages (Session I — outbound dispatch) ──────────────────────
+export type PackageStatus = "draft" | "dispatched" | "partial_received" | "complete"
+export interface SubmittalPackage {
+  id: string
+  project_id: string
+  package_number: string
+  vendor_id: string | null
+  vendor_type: "subcontractor" | "supplier" | null
+  vendor_name_snapshot: string
+  sent_to_email: string
+  dispatched_at: string | null
+  dispatched_by: string | null
+  pdf_file_path: string | null
+  gmail_thread_id: string | null
+  due_date: string | null
+  status: PackageStatus
+  notes: string | null
+  created_at: string
+  // Aggregates supplied by the list/detail API
+  item_count?: number
+  received_count?: number
+  needs_review_count?: number
+}
+/** A package plus its expected items and any inbound replies awaiting PM review. */
+export interface SubmittalPackageDetail extends SubmittalPackage {
+  items: SubmittalRecord[]
+  needs_review: SubmittalRecord[]
+}
 export type FileModalStep = "project" | "coversheet" | "form"
 export interface OpenFileCtx { file: SubmittalFile; divNum: string; divName: string; secCode: string; secName: string }
 export interface CoverFormData { projectName: string; projectNumber: string; projectLocation: string; gcName: string; architect: string; specSectionNo: string; specSectionTitle: string; description: string; dateSubmitted: string; submittalNo: string; revisionNo: string; dueDate: string; isCritical: boolean; partyRequired: boolean; copyTo: string; reviewedBy: string; certifiedBy: string; notes: string; sendToType: "cm" | "subcontractor" | "supplier" | ""; sendToCompany: string; sendToContact: string; sendToEmail: string; sendToPhone: string; sendToAddress: string; transmittedBy: string; transmittedByCompany: string }
