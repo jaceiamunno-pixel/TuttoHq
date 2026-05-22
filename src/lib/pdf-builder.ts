@@ -54,32 +54,6 @@ export const STATUS_COLORS: Record<string, [number, number, number, number, numb
   Superseded: [0.48, 0.52, 0.62,  0.94, 0.95, 0.97],
 }
 
-// ─── Legacy navy palette ──────────────────────────────────────────────────────
-// Retained so existing imports keep resolving during the migration. Routes that
-// still reference `C` are restyled in later phases; this export is removed in the
-// Phase 6 cleanup.
-export const C = {
-  navy:       rgb(0.07, 0.13, 0.28),
-  navyMid:    rgb(0.12, 0.22, 0.44),
-  accent:     rgb(0.18, 0.44, 0.92),
-  dark:       rgb(0.08, 0.08, 0.12),
-  mid:        rgb(0.32, 0.35, 0.44),
-  label:      rgb(0.48, 0.52, 0.62),
-  border:     rgb(0.84, 0.87, 0.92),
-  rowBg:      rgb(0.975, 0.978, 0.984),
-  white:      rgb(1, 1, 1),
-  lgray:      rgb(0.72, 0.75, 0.80),
-  green:      rgb(0.06, 0.46, 0.18),
-  greenLight: rgb(0.88, 0.96, 0.90),
-  red:        rgb(0.68, 0.09, 0.09),
-  redLight:   rgb(0.98, 0.90, 0.90),
-  amber:      rgb(0.62, 0.38, 0.02),
-  amberLight: rgb(0.99, 0.94, 0.84),
-  blue:       rgb(0.18, 0.44, 0.92),
-  blueLight:  rgb(0.88, 0.93, 0.99),
-  footerGray: rgb(0.55, 0.58, 0.64),
-}
-
 // ─── Public types ─────────────────────────────────────────────────────────────
 export interface PDFDocMeta {
   /** Document type label shown in the header, e.g. "Change Order". */
@@ -177,15 +151,8 @@ export class PDFBuilder {
 
   private constructor() {}
 
-  /** Create a builder. Accepts the structured meta object, or the legacy
-   *  `(title, logoBytes)` signature used by not-yet-migrated routes. */
-  static async create(meta: PDFDocMeta): Promise<PDFBuilder>
-  static async create(title: string, logoBytes: ArrayBuffer | null): Promise<PDFBuilder>
-  static async create(a: PDFDocMeta | string, b?: ArrayBuffer | null): Promise<PDFBuilder> {
-    const meta: PDFDocMeta = typeof a === "string"
-      ? { documentType: a, logoBytes: b ?? null }
-      : a
-
+  /** Create a builder for a new document. */
+  static async create(meta: PDFDocMeta): Promise<PDFBuilder> {
     const builder = new PDFBuilder()
     builder.doc = await PDFDocument.create()
     builder.bold = await builder.doc.embedFont(StandardFonts.HelveticaBold)
@@ -730,40 +697,4 @@ export class PDFBuilder {
     return this.doc.save()
   }
 
-  // ── Backward-compat shims ─────────────────────────────────────────────────────
-  // Thin wrappers preserving the pre-overhaul API so not-yet-migrated routes keep
-  // compiling and render in the new skin. Removed in the Phase 6 cleanup.
-
-  /** @deprecated use {@link sectionDivider}. */
-  sectionHeader(label: string) { this.sectionDivider(label) }
-
-  /** @deprecated use {@link spacer}. */
-  gap(n = 10) { this.spacer(n) }
-
-  /** @deprecated use {@link fieldGrid}. */
-  oneCol(label: string, value: string) {
-    this.ensureSpace(this.rowH)
-    const topY = this.y
-    this.drawCellRow([{ label, value, frac: 1 }])
-    this.blockBorder(topY)
-  }
-
-  /** @deprecated use {@link fieldGrid}. */
-  twoCol(l1: string, v1: string, f1: number, l2: string, v2: string, f2: number) {
-    this.ensureSpace(this.rowH)
-    const topY = this.y
-    this.drawCellRow([{ label: l1, value: v1, frac: f1 }, { label: l2, value: v2, frac: f2 }])
-    this.blockBorder(topY)
-  }
-
-  /** @deprecated use {@link fieldGrid} with a `status` cell. */
-  twoColStatus(l1: string, v1: string, f1: number, l2: string, status: string, f2: number) {
-    this.ensureSpace(this.rowH)
-    const topY = this.y
-    this.drawCellRow([{ label: l1, value: v1, frac: f1 }, { label: l2, status, frac: f2 }])
-    this.blockBorder(topY)
-  }
-
-  /** @deprecated use {@link signatureBlock}. */
-  signatureLines(left: string, right: string) { this.signatureBlock(left, right) }
 }
