@@ -14,10 +14,13 @@ import { getDot, fmtDate } from "../_shared/format"
 import { SearchIcon, XIcon, PlusIcon, CheckIcon, SpinnerIcon, LayersIcon } from "../_shared/icons"
 import { StatusBadge } from "../_shared/badges"
 import { Combobox, inputCls, labelCls } from "../_shared/ui"
+import PackageCreateModal, { type VendorPreset } from "@/components/packages/PackageCreateModal"
+import PackagesView from "@/components/packages/PackagesView"
 
 // Status options for the inline Status dropdown in the submittal log.
+// "Sent to Sub" is the outbound-dispatch milestone (Session I).
 const LOG_STATUS_OPTIONS = [
-  "Received", "Under Review", "Approved", "Approved with Comments",
+  "Sent to Sub", "Received", "Under Review", "Approved", "Approved with Comments",
   "Rejected", "Revise and Resubmit", "Needs Review", "Transmitted",
 ] as const
 
@@ -70,8 +73,8 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
   appProjects: Project[]
   teamMembers: TeamMember[]
   userEmail: string | null
-  submittalsView: "log" | "pending"
-  setSubmittalsView: (v: "log" | "pending") => void
+  submittalsView: "log" | "pending" | "packages"
+  setSubmittalsView: (v: "log" | "pending" | "packages") => void
   onNavigate: (module: "library" | "submittals") => void
 }) {
   // Tree state
@@ -126,8 +129,14 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
   const [vendorSubs, setVendorSubs]             = useState<SubcontractorRow[]>([])
   const [vendorSuppliers, setVendorSuppliers]   = useState<SupplierRow[]>([])
   const [groupBySection, setGroupBySection]     = useState(true)
+  // Sub-package selection (Session I) — "Select" mode adds a checkbox column.
+  const [selectMode, setSelectMode]             = useState(false)
+  const [selectedIds, setSelectedIds]           = useState<Set<string>>(new Set())
+  const [showPackageModal, setShowPackageModal] = useState(false)
   const saveTimers     = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
   const pendingPatches = useRef<Map<string, Record<string, unknown>>>(new Map())
+  // Monotonic id so an out-of-order Submittal Log response can't clobber a newer one.
+  const logReqSeq      = useRef(0)
   // Reset Submittal Log
   const [resetMenuOpen, setResetMenuOpen]       = useState(false)
   const [resetScope, setResetScope]             = useState<"all" | "spec_ingestion" | null>(null)
@@ -447,13 +456,22 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
   }
 
   function loadSubmittals(pid = activeProjectId) {
+    // The Submittal Log is strictly scoped to the current project — it must
+    // never run the cross-project query (that is the Library's job). With no
+    // project selected, show nothing rather than every company submittal.
+    if (!pid) {
+      logReqSeq.current++
+      setLogSubmittals([])
+      setLogLoading(false)
+      return
+    }
     setLogLoading(true)
-    const url = pid ? `/api/submittals?project_id=${encodeURIComponent(pid)}` : "/api/submittals"
-    fetch(url)
+    const seq = ++logReqSeq.current
+    fetch(`/api/submittals?project_id=${encodeURIComponent(pid)}`)
       .then(r => r.json())
-      .then(d => setLogSubmittals(d.submittals ?? []))
-      .catch(() => setLogSubmittals([]))
-      .finally(() => setLogLoading(false))
+      .then(d => { if (seq === logReqSeq.current) setLogSubmittals(d.submittals ?? []) })
+      .catch(() => { if (seq === logReqSeq.current) setLogSubmittals([]) })
+      .finally(() => { if (seq === logReqSeq.current) setLogLoading(false) })
   }
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -477,6 +495,43 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
       return vendorSuppliers.find(v => v.id === s.vendor_supplier_id)?.company_name ?? "—"
     return ""
   }
+
+  // ── Sub-package selection (Session I) ────────────────────────────────────────
+  function toggleRowSelected(id: string) {
+    setSelectedIds(prev => {
+      const next = new Set(prev)
+      next.has(id) ? next.delete(id) : next.add(id)
+      return next
+    })
+  }
+  // Add or remove a batch of rows from the selection (used by select-all and
+  // the by-section picker, which is additive).
+  function setRowsSelected(ids: string[], on: boolean) {
+    setSelectedIds(prev => {
+      const next = new Set(prev)
+      for (const id of ids) on ? next.add(id) : next.delete(id)
+      return next
+    })
+  }
+  function exitSelectMode() { setSelectMode(false); setSelectedIds(new Set()) }
+
+  // Derive a vendor preset for the package modal: when every selected submittal
+  // shares one vendor, prefill it; otherwise the PM names the recipient.
+  function computeVendorPreset(picked: SubmittalRecord[]): VendorPreset | null {
+    if (picked.length === 0) return null
+    const subIds = new Set(picked.map(s => s.vendor_subcontractor_id))
+    const supIds = new Set(picked.map(s => s.vendor_supplier_id))
+    if (subIds.size === 1 && !subIds.has(null) && supIds.size === 1 && supIds.has(null)) {
+      const v = vendorSubs.find(x => x.id === [...subIds][0])
+      if (v) return { id: v.id, type: "subcontractor", name: v.company_name, email: v.email ?? null }
+    }
+    if (supIds.size === 1 && !supIds.has(null) && subIds.size === 1 && subIds.has(null)) {
+      const v = vendorSuppliers.find(x => x.id === [...supIds][0])
+      if (v) return { id: v.id, type: "supplier", name: v.company_name, email: v.email ?? null }
+    }
+    return null
+  }
+  const selectedSubmittals = logSubmittals.filter(s => selectedIds.has(s.id))
 
   // Optimistic local update + 500ms-debounced PATCH, coalescing several field
   // edits on the same row into one request.
@@ -933,10 +988,14 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
           <div className="flex items-center justify-between px-4 py-2.5 gap-2 min-w-0">
             <div className="flex items-center gap-2 min-w-0">
               <div className="flex rounded-md border border-[#E2E8F0] overflow-hidden flex-shrink-0">
-                {(["log", "pending"] as const).map(v => (
+                {(["log", "pending", "packages"] as const).map(v => (
                   <button key={v} onClick={() => setSubmittalsView(v)}
                     className={`h-7 px-3 text-[12px] font-medium transition-colors ${submittalsView === v ? "bg-[#7B9BB5] text-white" : "bg-white text-[#64748B] hover:bg-[#F8F9FA]"}`}>
-                    {v === "log" ? "Submittal Log" : `Pending Review${pendingStaged.length > 0 ? ` (${pendingStaged.length})` : ""}`}
+                    {v === "log"
+                      ? "Submittal Log"
+                      : v === "pending"
+                        ? `Pending Review${pendingStaged.length > 0 ? ` (${pendingStaged.length})` : ""}`
+                        : "Packages"}
                   </button>
                 ))}
               </div>
@@ -956,6 +1015,18 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                     className="accent-[#7B9BB5]" />
                   <span className="hidden sm:inline">Group by section</span>
                 </label>
+              )}
+              {submittalsView === "log" && !isSearchMode && activeProjectId && (
+                <button
+                  onClick={() => { if (selectMode) exitSelectMode(); else setSelectMode(true) }}
+                  className={`h-8 px-3 rounded-md border text-[12px] font-semibold transition-colors flex items-center gap-1.5 whitespace-nowrap ${
+                    selectMode
+                      ? "border-[#7B9BB5] bg-[#7B9BB5]/10 text-[#0F172A]"
+                      : "border-[#E2E8F0] text-[#64748B] hover:bg-[#0F172A]/[0.04]"
+                  }`}
+                >
+                  <CheckIcon /> {selectMode ? "Done" : "Select"}
+                </button>
               )}
               {submittalsView === "log" && activeProjectId && (
                 <div className="relative">
@@ -1111,7 +1182,16 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
 
           {/* Submittal log */}
           {activeModule === "submittals" && (<>
-          {submittalsView === "pending" ? (
+          {submittalsView === "packages" ? (
+            !globalProjectId ? (
+              <div className="flex flex-col items-center justify-center h-full py-24 text-center">
+                <p className="text-[15px] font-bold text-[#0F172A]">Select a project to view packages</p>
+                <p className="text-[13px] text-[#64748B] mt-1.5">Use the Project filter above to choose a project.</p>
+              </div>
+            ) : (
+              <PackagesView projectId={globalProjectId} />
+            )
+          ) : submittalsView === "pending" ? (
             !globalProjectId ? (
               <div className="flex flex-col items-center justify-center h-full py-24 text-center">
                 <p className="text-[15px] font-bold text-[#0F172A]">Select a project to review staged submittals</p>
@@ -1305,14 +1385,95 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
             const HEADERS = ["Subm. #", "Spec #", "Description", "Type of Subm.", "Vendor",
               "Received", "To A/E", "Returned A/E", "Returned to Sub", "Approval (Days)",
               "Status", "Late / On Time", "Source", "Actions"]
+            // Select mode (Session I) — adds a leading checkbox column + the
+            // package-selection toolbar. Off during search to avoid ambiguity.
+            const showSelect = selectMode && !isSearchMode
+            const visibleIds = rows.map(r => r.id)
+            const allVisibleSelected = visibleIds.length > 0 && visibleIds.every(id => selectedIds.has(id))
+            const vendorOptionsForToolbar = (() => {
+              const map = new Map<string, { key: string; label: string; count: number }>()
+              for (const s of logSubmittals) {
+                let key: string | null = null, label = "Unknown"
+                if (s.vendor_subcontractor_id) {
+                  key = `sub:${s.vendor_subcontractor_id}`
+                  label = vendorSubs.find(v => v.id === s.vendor_subcontractor_id)?.company_name ?? "Unknown"
+                } else if (s.vendor_supplier_id) {
+                  key = `sup:${s.vendor_supplier_id}`
+                  label = vendorSuppliers.find(v => v.id === s.vendor_supplier_id)?.company_name ?? "Unknown"
+                }
+                if (!key) continue
+                const e = map.get(key) ?? { key, label, count: 0 }
+                e.count++; map.set(key, e)
+              }
+              return [...map.values()].sort((a, b) => a.label.localeCompare(b.label))
+            })()
+            const sectionOptionsForToolbar = (() => {
+              const map = new Map<string, number>()
+              for (const s of logSubmittals) {
+                const sec = s.csi_section ?? "—"
+                map.set(sec, (map.get(sec) ?? 0) + 1)
+              }
+              return [...map.entries()].map(([sec, count]) => ({ sec, count }))
+                .sort((a, b) => a.sec.localeCompare(b.sec))
+            })()
             return (
             <>
+            {/* Package-selection toolbar */}
+            {showSelect && (
+              <div className="flex flex-wrap items-center gap-2 px-4 py-2.5 border-b border-[#E2E8F0] bg-[#F1F5F9]">
+                <span className="text-[12px] font-semibold text-[#0F172A] whitespace-nowrap">
+                  {selectedIds.size} selected
+                </span>
+                <span className="text-[#CBD5E1]">·</span>
+                <select value="" onChange={e => {
+                  const v = e.target.value
+                  if (!v) return
+                  const [kind, id] = v.split(":")
+                  setSelectedIds(new Set(logSubmittals.filter(s =>
+                    kind === "sub" ? s.vendor_subcontractor_id === id : s.vendor_supplier_id === id,
+                  ).map(s => s.id)))
+                }}
+                  className="h-8 px-2 rounded-md border border-[#E2E8F0] text-[12px] text-[#64748B] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40">
+                  <option value="">By vendor…</option>
+                  {vendorOptionsForToolbar.map(o => (
+                    <option key={o.key} value={o.key}>{o.label} ({o.count})</option>
+                  ))}
+                </select>
+                <select value="" onChange={e => {
+                  const sec = e.target.value
+                  if (!sec) return
+                  setRowsSelected(logSubmittals.filter(s => (s.csi_section ?? "—") === sec).map(s => s.id), true)
+                }}
+                  className="h-8 px-2 rounded-md border border-[#E2E8F0] text-[12px] text-[#64748B] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40">
+                  <option value="">Add by section…</option>
+                  {sectionOptionsForToolbar.map(o => (
+                    <option key={o.sec} value={o.sec}>{o.sec} ({o.count})</option>
+                  ))}
+                </select>
+                <button onClick={() => setSelectedIds(new Set())} disabled={selectedIds.size === 0}
+                  className="h-8 px-3 rounded-md border border-[#E2E8F0] text-[12px] text-[#64748B] hover:bg-white transition-colors disabled:opacity-50">
+                  Clear
+                </button>
+                <div className="flex-1 min-w-[8px]" />
+                <button disabled={selectedIds.size === 0} onClick={() => setShowPackageModal(true)}
+                  className="h-8 px-4 rounded-md bg-[#7B9BB5] text-white text-[12px] font-semibold hover:bg-[#6A8AA4] transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5 whitespace-nowrap">
+                  <PlusIcon /> Create Package
+                </button>
+              </div>
+            )}
             {/* Desktop tracker table — horizontal scroll on the outer pane,
                 frozen header sticks against it. */}
             <div className="hidden sm:block">
             <table className="w-full min-w-max text-[12px] border-collapse border-b border-[#E2E8F0]">
               <thead className="sticky top-0 bg-[#F8F9FA] z-10">
                 <tr className="border-b border-[#E2E8F0]">
+                  {showSelect && (
+                    <th className="px-3 py-2.5 w-9">
+                      <input type="checkbox" checked={allVisibleSelected}
+                        onChange={() => setRowsSelected(visibleIds, !allVisibleSelected)}
+                        className="accent-[#7B9BB5] align-middle" />
+                    </th>
+                  )}
                   {HEADERS.map(h => (
                     <th key={h} className="text-left px-3 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-wider whitespace-nowrap">{h}</th>
                   ))}
@@ -1325,7 +1486,14 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                   const late = lateState(s)
                   const hasSource = s.source === "spec_ingestion" && !!s.spec_section_id
                   return (
-                  <tr key={s.id} className={`border-b border-[#E2E8F0]/60 ${c.bg}`}>
+                  <tr key={s.id} className={`border-b border-[#E2E8F0]/60 ${c.bg} ${showSelect && selectedIds.has(s.id) ? "ring-1 ring-inset ring-[#7B9BB5]/40" : ""}`}>
+                    {showSelect && (
+                      <td className="px-3 py-1.5">
+                        <input type="checkbox" checked={selectedIds.has(s.id)}
+                          onChange={() => toggleRowSelected(s.id)}
+                          className="accent-[#7B9BB5] align-middle" />
+                      </td>
+                    )}
                     <td className={`px-3 py-1.5 tabular-nums text-[#0F172A] font-semibold border-l-4 ${c.border} whitespace-nowrap`}>{s.submittal_seq ?? "—"}</td>
                     <td className="px-3 py-1.5 whitespace-nowrap">
                       <span className={`inline-block px-1.5 py-0.5 rounded font-mono text-[11px] font-semibold ${c.chip}`}>{s.csi_section ?? "—"}</span>
@@ -1405,6 +1573,11 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                 <div key={s.id} className={`rounded-xl border border-[#E2E8F0] border-l-4 ${c.border} p-3 shadow-sm ${c.bg}`}>
                   <div className="flex items-start justify-between gap-2 mb-1.5">
                     <div className="flex items-center gap-1.5 min-w-0">
+                      {showSelect && (
+                        <input type="checkbox" checked={selectedIds.has(s.id)}
+                          onChange={() => toggleRowSelected(s.id)}
+                          className="accent-[#7B9BB5] flex-shrink-0" />
+                      )}
                       <span className="text-[11px] font-bold tabular-nums text-[#64748B] flex-shrink-0">#{s.submittal_seq ?? "—"}</span>
                       <p className="text-[13px] font-medium text-[#0F172A] leading-tight truncate" title={s.file_name}>{s.file_name}</p>
                     </div>
@@ -1478,6 +1651,24 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
             />
           </div>
         </div>
+      )}
+
+      {/* ── Submittal package create / dispatch (Session I) ────────────── */}
+      {showPackageModal && globalProjectId && (
+        <PackageCreateModal
+          projectId={globalProjectId}
+          projectName={appProjects.find(p => p.id === globalProjectId)?.name ?? "Project"}
+          submittals={selectedSubmittals}
+          vendorPreset={computeVendorPreset(selectedSubmittals)}
+          subs={vendorSubs}
+          suppliers={vendorSuppliers}
+          onClose={() => setShowPackageModal(false)}
+          onDone={() => {
+            setShowPackageModal(false)
+            exitSelectMode()
+            loadSubmittals()
+          }}
+        />
       )}
 
       {/* ── Reset Submittal Log confirmation ────────────────────────────── */}

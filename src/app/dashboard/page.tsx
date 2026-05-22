@@ -138,7 +138,7 @@ export default function Home() {
 
   // Submittals sub-view — kept in the shell so it survives LibrarySubmittalsModule
   // unmounting (e.g. when switching to Library and back).
-  const [submittalsView, setSubmittalsView] = useState<"log" | "pending">("log")
+  const [submittalsView, setSubmittalsView] = useState<"log" | "pending" | "packages">("log")
 
   // Closeout — top-nav progress badge (the module owns the rest of closeout state)
   const [closeoutPct, setCloseoutPct] = useState<number | null>(null)

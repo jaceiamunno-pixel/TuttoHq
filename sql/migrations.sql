@@ -753,3 +753,262 @@ AS $$
   DO UPDATE SET last_seq = project_submittal_counters.last_seq + p_count
   RETURNING last_seq - p_count;
 $$;
+
+-- =============================================================================
+-- 2026-05-22 — SESSION I: SUBMITTAL PACKAGES (outbound dispatch)
+-- The outbound side of the submittal workflow: a PM groups a sub's submittal
+-- expectations + the relevant spec-section excerpts into one packaged PDF,
+-- dispatches it by email, and inbound replies match back via a [TTQ-…] subject
+-- tag. Idempotent — safe to re-run.
+-- =============================================================================
+
+-- --- projects.short_id — stable per-company code for the tracking ref --------
+-- The tracking ref is TTQ-{short_id}-{package_seq}. short_id only has to be
+-- unique within a company, so the tag never aliases another company's project.
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS short_id TEXT;
+
+-- Assign a short_id to every project that lacks one (BEFORE INSERT, so new
+-- projects get theirs automatically; column defaults are filled before this
+-- fires, so NEW.id / NEW.company_id are available).
+CREATE OR REPLACE FUNCTION projects_set_short_id() RETURNS trigger AS $$
+DECLARE
+  cand TEXT;
+  n    INT := 0;
+BEGIN
+  IF NEW.short_id IS NOT NULL AND NEW.short_id <> '' THEN
+    RETURN NEW;
+  END IF;
+  LOOP
+    -- 4-char window over the project UUID's hex, shifted on each collision
+    cand := UPPER(SUBSTRING(REPLACE(NEW.id::text, '-', '') FROM 1 + n FOR 4));
+    EXIT WHEN cand <> '' AND NOT EXISTS (
+      SELECT 1 FROM projects
+      WHERE short_id = cand
+        AND company_id IS NOT DISTINCT FROM NEW.company_id
+        AND id <> NEW.id
+    );
+    n := n + 1;
+    IF n > 27 THEN
+      cand := UPPER(SUBSTRING(MD5(random()::text) FROM 1 FOR 4));
+      EXIT;
+    END IF;
+  END LOOP;
+  NEW.short_id := cand;
+  RETURN NEW;
+END $$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS projects_set_short_id ON projects;
+CREATE TRIGGER projects_set_short_id
+  BEFORE INSERT ON projects
+  FOR EACH ROW EXECUTE FUNCTION projects_set_short_id();
+
+-- Backfill existing projects.
+DO $$
+DECLARE
+  p    RECORD;
+  cand TEXT;
+  n    INT;
+BEGIN
+  FOR p IN SELECT id, company_id FROM projects WHERE short_id IS NULL OR short_id = '' LOOP
+    n := 0;
+    LOOP
+      cand := UPPER(SUBSTRING(REPLACE(p.id::text, '-', '') FROM 1 + n FOR 4));
+      EXIT WHEN cand <> '' AND NOT EXISTS (
+        SELECT 1 FROM projects
+        WHERE short_id = cand
+          AND company_id IS NOT DISTINCT FROM p.company_id
+          AND id <> p.id
+      );
+      n := n + 1;
+      IF n > 27 THEN
+        cand := UPPER(SUBSTRING(MD5(random()::text) FROM 1 FOR 4));
+        EXIT;
+      END IF;
+    END LOOP;
+    UPDATE projects SET short_id = cand WHERE id = p.id;
+  END LOOP;
+END $$;
+
+-- --- submittal_packages — one dispatched package -----------------------------
+CREATE TABLE IF NOT EXISTS submittal_packages (
+  id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  project_id           UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  package_number       TEXT NOT NULL,                       -- "TTQ-ABCD-7"
+  vendor_id            UUID,                                -- null = manual multi-select
+  vendor_type          TEXT CHECK (vendor_type IN ('subcontractor','supplier')),
+  vendor_name_snapshot TEXT NOT NULL,
+  sent_to_email        TEXT NOT NULL,
+  dispatched_at        TIMESTAMPTZ,
+  dispatched_by        UUID REFERENCES auth.users(id),
+  pdf_file_path        TEXT,                                -- generated package PDF
+  gmail_thread_id      TEXT,                                -- email thread for replies
+  due_date             DATE,
+  status               TEXT NOT NULL DEFAULT 'draft'
+                          CHECK (status IN ('draft','dispatched','partial_received','complete')),
+  notes                TEXT,
+  created_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
+  created_by           UUID REFERENCES auth.users(id),
+  company_id           UUID REFERENCES companies(id) DEFAULT get_my_company_id()
+);
+
+CREATE INDEX IF NOT EXISTS idx_submittal_packages_project ON submittal_packages(project_id);
+CREATE INDEX IF NOT EXISTS idx_submittal_packages_vendor  ON submittal_packages(vendor_id);
+CREATE INDEX IF NOT EXISTS idx_submittal_packages_status  ON submittal_packages(status);
+CREATE INDEX IF NOT EXISTS idx_submittal_packages_company ON submittal_packages(company_id);
+-- package_number is unique within a company so inbound [TTQ-…] tags resolve to
+-- exactly one package.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_submittal_packages_number
+  ON submittal_packages(company_id, package_number);
+
+ALTER TABLE submittal_packages ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "submittal_packages: company select" ON submittal_packages;
+DROP POLICY IF EXISTS "submittal_packages: company insert" ON submittal_packages;
+DROP POLICY IF EXISTS "submittal_packages: company update" ON submittal_packages;
+DROP POLICY IF EXISTS "submittal_packages: company delete" ON submittal_packages;
+CREATE POLICY "submittal_packages: company select" ON submittal_packages FOR SELECT TO authenticated USING     (company_id = get_my_company_id());
+CREATE POLICY "submittal_packages: company insert" ON submittal_packages FOR INSERT TO authenticated WITH CHECK (company_id = get_my_company_id());
+CREATE POLICY "submittal_packages: company update" ON submittal_packages FOR UPDATE TO authenticated USING     (company_id = get_my_company_id()) WITH CHECK (company_id = get_my_company_id());
+CREATE POLICY "submittal_packages: company delete" ON submittal_packages FOR DELETE TO authenticated USING     (company_id = get_my_company_id());
+
+-- --- submittal_package_items — package ↔ submittal junction ------------------
+CREATE TABLE IF NOT EXISTS submittal_package_items (
+  id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  package_id   UUID NOT NULL REFERENCES submittal_packages(id) ON DELETE CASCADE,
+  submittal_id UUID NOT NULL REFERENCES submittals(id) ON DELETE CASCADE,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+  company_id   UUID REFERENCES companies(id) DEFAULT get_my_company_id(),
+  UNIQUE (package_id, submittal_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_submittal_package_items_package   ON submittal_package_items(package_id);
+CREATE INDEX IF NOT EXISTS idx_submittal_package_items_submittal ON submittal_package_items(submittal_id);
+CREATE INDEX IF NOT EXISTS idx_submittal_package_items_company   ON submittal_package_items(company_id);
+
+ALTER TABLE submittal_package_items ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "submittal_package_items: company select" ON submittal_package_items;
+DROP POLICY IF EXISTS "submittal_package_items: company insert" ON submittal_package_items;
+DROP POLICY IF EXISTS "submittal_package_items: company update" ON submittal_package_items;
+DROP POLICY IF EXISTS "submittal_package_items: company delete" ON submittal_package_items;
+CREATE POLICY "submittal_package_items: company select" ON submittal_package_items FOR SELECT TO authenticated USING     (company_id = get_my_company_id());
+CREATE POLICY "submittal_package_items: company insert" ON submittal_package_items FOR INSERT TO authenticated WITH CHECK (company_id = get_my_company_id());
+CREATE POLICY "submittal_package_items: company update" ON submittal_package_items FOR UPDATE TO authenticated USING     (company_id = get_my_company_id()) WITH CHECK (company_id = get_my_company_id());
+CREATE POLICY "submittal_package_items: company delete" ON submittal_package_items FOR DELETE TO authenticated USING     (company_id = get_my_company_id());
+
+-- --- submittals: outbound dispatch + inbound match-back columns --------------
+-- sent_to_sub_date  — set on dispatch; starts the sub's prep clock.
+-- received_via_package_id — tags a submittal to the package whose [TTQ-…] tag
+--   matched an inbound reply. Set on the expected item when match-back auto-
+--   links the reply; set on a new orphan row when it cannot. A row carrying
+--   this id that is NOT one of the package's items is a "needs review" reply.
+-- received_file_name — the filename of the document the sub actually returned,
+--   kept separate from file_name (the expectation's description). Doubles as
+--   the dedup key so a Pub/Sub redelivery never re-applies a match.
+ALTER TABLE submittals ADD COLUMN IF NOT EXISTS sent_to_sub_date        DATE;
+ALTER TABLE submittals ADD COLUMN IF NOT EXISTS received_via_package_id UUID REFERENCES submittal_packages(id) ON DELETE SET NULL;
+ALTER TABLE submittals ADD COLUMN IF NOT EXISTS received_file_name      TEXT;
+CREATE INDEX IF NOT EXISTS idx_submittals_received_via_package ON submittals(received_via_package_id);
+
+-- --- Race-safe per-project package number allocator --------------------------
+-- Mirrors project_submittal_counters / next_submittal_seq().
+CREATE TABLE IF NOT EXISTS project_package_counters (
+  project_id UUID PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
+  last_seq   INT  NOT NULL DEFAULT 0,
+  company_id UUID REFERENCES companies(id) DEFAULT get_my_company_id()
+);
+
+CREATE INDEX IF NOT EXISTS idx_project_package_counters_company ON project_package_counters(company_id);
+
+ALTER TABLE project_package_counters ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "project_package_counters: company select" ON project_package_counters;
+DROP POLICY IF EXISTS "project_package_counters: company insert" ON project_package_counters;
+DROP POLICY IF EXISTS "project_package_counters: company update" ON project_package_counters;
+DROP POLICY IF EXISTS "project_package_counters: company delete" ON project_package_counters;
+CREATE POLICY "project_package_counters: company select" ON project_package_counters FOR SELECT TO authenticated USING     (company_id = get_my_company_id());
+CREATE POLICY "project_package_counters: company insert" ON project_package_counters FOR INSERT TO authenticated WITH CHECK (company_id = get_my_company_id());
+CREATE POLICY "project_package_counters: company update" ON project_package_counters FOR UPDATE TO authenticated USING     (company_id = get_my_company_id()) WITH CHECK (company_id = get_my_company_id());
+CREATE POLICY "project_package_counters: company delete" ON project_package_counters FOR DELETE TO authenticated USING     (company_id = get_my_company_id());
+
+-- Bumps the counter and returns the new sequence number. A single
+-- INSERT … ON CONFLICT DO UPDATE row-locks the counter for the statement, so
+-- concurrent drafts serialize and receive distinct numbers.
+CREATE OR REPLACE FUNCTION next_package_seq(p_project_id UUID)
+RETURNS INT
+LANGUAGE sql
+AS $$
+  INSERT INTO project_package_counters (project_id, last_seq)
+  VALUES (p_project_id, 1)
+  ON CONFLICT (project_id)
+  DO UPDATE SET last_seq = project_package_counters.last_seq + 1
+  RETURNING last_seq;
+$$;
+
+-- --- Package status auto-update ----------------------------------------------
+-- A dispatched package advances dispatched → partial_received → complete based
+-- on how many of its items have a received_date. Drafts are never touched.
+CREATE OR REPLACE FUNCTION recompute_package_status(p_package_id UUID)
+RETURNS void
+LANGUAGE plpgsql AS $$
+DECLARE
+  v_total    INT;
+  v_received INT;
+  v_status   TEXT;
+  v_next     TEXT;
+BEGIN
+  SELECT status INTO v_status FROM submittal_packages WHERE id = p_package_id;
+  -- Leave drafts alone — status only auto-advances once dispatched.
+  IF v_status IS NULL OR v_status = 'draft' THEN
+    RETURN;
+  END IF;
+
+  SELECT count(*),
+         count(*) FILTER (WHERE s.received_date IS NOT NULL)
+    INTO v_total, v_received
+  FROM submittal_package_items i
+  JOIN submittals s ON s.id = i.submittal_id
+  WHERE i.package_id = p_package_id;
+
+  IF v_total = 0 OR v_received = 0 THEN
+    v_next := 'dispatched';
+  ELSIF v_received < v_total THEN
+    v_next := 'partial_received';
+  ELSE
+    v_next := 'complete';
+  END IF;
+
+  UPDATE submittal_packages SET status = v_next
+  WHERE id = p_package_id AND status <> v_next;
+END $$;
+
+-- Recompute every package that contains a submittal whose received_date changed.
+CREATE OR REPLACE FUNCTION submittals_sync_package_status()
+RETURNS trigger
+LANGUAGE plpgsql AS $$
+DECLARE
+  pkg UUID;
+BEGIN
+  FOR pkg IN SELECT package_id FROM submittal_package_items WHERE submittal_id = NEW.id LOOP
+    PERFORM recompute_package_status(pkg);
+  END LOOP;
+  RETURN NULL;
+END $$;
+
+DROP TRIGGER IF EXISTS submittals_sync_package_status ON submittals;
+CREATE TRIGGER submittals_sync_package_status
+  AFTER UPDATE OF received_date ON submittals
+  FOR EACH ROW
+  WHEN (NEW.received_date IS DISTINCT FROM OLD.received_date)
+  EXECUTE FUNCTION submittals_sync_package_status();
+
+-- Recompute when items are added to / removed from a package.
+CREATE OR REPLACE FUNCTION package_items_sync_status()
+RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+  PERFORM recompute_package_status(COALESCE(NEW.package_id, OLD.package_id));
+  RETURN NULL;
+END $$;
+
+DROP TRIGGER IF EXISTS package_items_sync_status ON submittal_package_items;
+CREATE TRIGGER package_items_sync_status
+  AFTER INSERT OR DELETE ON submittal_package_items
+  FOR EACH ROW EXECUTE FUNCTION package_items_sync_status();
