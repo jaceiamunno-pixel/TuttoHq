@@ -24,6 +24,12 @@ interface ClassificationResult {
   reasoning: string | null
 }
 
+// A submittal package resolved from a [TTQ-…] tag in an inbound subject line.
+interface PackageRef {
+  id: string
+  project_id: string
+}
+
 // ─── Logging ──────────────────────────────────────────────────────────────────
 
 function log(step: string, data?: unknown) {
@@ -83,6 +89,44 @@ async function gmailGet(token: string, url: string): Promise<Response> {
   return fetch(url, { headers: { Authorization: `Bearer ${token}` } })
 }
 
+// ─── Submittal-package match-back ───────────────────────────────────────────
+
+// A dispatched package's tracking ref, e.g. "[TTQ-AB12-7]".
+const PACKAGE_TAG_RE = /\[(TTQ-[A-Za-z0-9]+-\d+)\]/i
+
+/** Normalize a CSI section to bare digits ("09 22 16" → "092216") for matching. */
+function normalizeSection(s: string | null | undefined): string {
+  return (s ?? "").replace(/\D/g, "")
+}
+
+/**
+ * Resolve a dispatched package from a [TTQ-…] tag in an inbound subject line.
+ * Scoped to the connection's company so a tag never resolves cross-tenant.
+ */
+async function resolvePackage(
+  supabase: AnySupabase,
+  subject: string,
+  companyId: string | null,
+): Promise<PackageRef | null> {
+  const m = subject.match(PACKAGE_TAG_RE)
+  if (!m) return null
+  const tag = m[1].toUpperCase()
+
+  let query = supabase
+    .from("submittal_packages")
+    .select("id, project_id, company_id")
+    .eq("package_number", tag)
+  if (companyId) query = query.eq("company_id", companyId)
+
+  const { data, error } = await query.limit(1)
+  if (error || !data || data.length === 0) {
+    log("package-match: tag found but no package", { tag, error: error?.message ?? null })
+    return null
+  }
+  log("package-match: resolved", { tag, packageId: data[0].id })
+  return { id: data[0].id as string, project_id: data[0].project_id as string }
+}
+
 // ─── Main entry point ─────────────────────────────────────────────────────────
 
 export async function processGmailNotification(emailAddress: string, historyId: string): Promise<void> {
@@ -107,7 +151,7 @@ export async function processGmailNotification(emailAddress: string, historyId: 
   // ── 1. Look up the stored connection ───────────────────────────────────────
   const { data: conn, error: connErr } = await supabase
     .from("gmail_connections")
-    .select("user_id, access_token, refresh_token, token_expiry, history_id")
+    .select("user_id, company_id, access_token, refresh_token, token_expiry, history_id")
     .eq("gmail_address", emailAddress)
     .single()
 
@@ -186,7 +230,10 @@ export async function processGmailNotification(emailAddress: string, historyId: 
   const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
   for (const msgId of messageIds) {
-    await processMessage(supabase, anthropic, accessToken, msgId, conn.user_id as string)
+    await processMessage(
+      supabase, anthropic, accessToken, msgId,
+      conn.user_id as string, (conn.company_id as string | null) ?? null,
+    )
   }
 
   log("done", { emailAddress, processedMessages: messageIds.size })
@@ -199,7 +246,8 @@ async function processMessage(
   anthropic: Anthropic,
   accessToken: string,
   messageId: string,
-  userId: string
+  userId: string,
+  companyId: string | null,
 ): Promise<void> {
   log("message-fetch", { messageId })
 
@@ -240,10 +288,14 @@ async function processMessage(
     return
   }
 
+  // If the subject carries a [TTQ-…] tag, this is a reply to a dispatched
+  // package — its attachments match back instead of landing as fresh intake.
+  const pkg = await resolvePackage(supabase, subject, companyId)
+
   for (const part of attachments) {
     await processAttachment({
       supabase, anthropic, accessToken, messageId,
-      part, subject, senderName, senderEmail, receivedAt, userId,
+      part, subject, senderName, senderEmail, receivedAt, userId, pkg,
     })
   }
 }
@@ -261,11 +313,13 @@ interface AttachmentCtx {
   senderEmail: string
   receivedAt: string
   userId: string
+  // Set when the message subject carried a [TTQ-…] package tag.
+  pkg: PackageRef | null
 }
 
 async function processAttachment(ctx: AttachmentCtx): Promise<void> {
   const { supabase, anthropic, accessToken, messageId, part,
-          subject, senderName, senderEmail, receivedAt, userId } = ctx
+          subject, senderName, senderEmail, receivedAt, userId, pkg } = ctx
 
   const fileName = part.filename?.trim() || `attachment_${Date.now()}.bin`
   log("attachment-start", { fileName, mimeType: part.mimeType, bodySize: part.body?.size, hasInlineData: !!part.body?.data, hasAttachmentId: !!part.body?.attachmentId })
@@ -314,16 +368,16 @@ async function processAttachment(ctx: AttachmentCtx): Promise<void> {
   })
 
   // ── Deduplication check ────────────────────────────────────────────────────
-  // Check by messageId + fileName across ALL statuses so deleted records still
-  // block re-insertion when Pub/Sub retries the same notification.
+  // Match the messageId + this attachment's name against both file_name (fresh
+  // intake / orphan rows) and received_file_name (an expected item fulfilled in
+  // place by match-back), across ALL statuses, so a Pub/Sub redelivery never
+  // re-applies the same attachment.
   const { data: existing } = await supabase
     .from("submittals")
-    .select("id")
+    .select("id, file_name, received_file_name")
     .eq("gmail_message_id", messageId)
-    .eq("file_name", fileName)
-    .limit(1)
 
-  if (existing && existing.length > 0) {
+  if ((existing ?? []).some(r => r.file_name === fileName || r.received_file_name === fileName)) {
     log("attachment-skip: already processed", { fileName, messageId })
     return
   }
@@ -342,6 +396,17 @@ async function processAttachment(ctx: AttachmentCtx): Promise<void> {
     return
   }
   log("storage-upload-ok", { path: storageData?.path ?? storagePath })
+
+  // ── Package match-back ─────────────────────────────────────────────────────
+  // A tagged reply fulfils an expected item in place, or — if it cannot be
+  // matched unambiguously — lands as an orphan for PM review.
+  if (pkg) {
+    await matchBackAttachment({
+      supabase, pkg, classification, fileName, storagePath, mimeType,
+      fileSize: fileBytes.length, senderEmail, receivedAt, messageId, userId,
+    })
+    return
+  }
 
   // ── Insert database record ─────────────────────────────────────────────────
   const reviewStatus = (classification.confidence_score ?? 0) >= 70 ? "Received" : "Needs Review"
@@ -375,6 +440,115 @@ async function processAttachment(ctx: AttachmentCtx): Promise<void> {
   }
 
   log("db-insert-ok", { fileName, reviewStatus })
+}
+
+// ─── Package match-back ─────────────────────────────────────────────────────
+
+interface MatchBackCtx {
+  supabase: AnySupabase
+  pkg: PackageRef
+  classification: ClassificationResult
+  fileName: string
+  storagePath: string
+  mimeType: string
+  fileSize: number
+  senderEmail: string
+  receivedAt: string
+  messageId: string
+  userId: string
+}
+
+interface PackageItemSubmittal {
+  id: string
+  csi_section: string | null
+  received_date: string | null
+}
+
+/**
+ * Match an inbound attachment to a dispatched package.
+ *
+ * Unambiguous case — exactly one still-unreceived expected item shares the
+ * attachment's classified spec section: the item is fulfilled in place
+ * (file attached, received_date set), and the DB trigger advances the
+ * package's status.
+ *
+ * Ambiguous case — zero or several candidates: the reply is filed as an
+ * orphan submittal tagged to the package, surfaced as "Needs review" in the
+ * package detail view so the PM can place it by hand. Never auto-links a
+ * guess.
+ */
+async function matchBackAttachment(ctx: MatchBackCtx): Promise<void> {
+  const { supabase, pkg, classification, fileName, storagePath, mimeType,
+          fileSize, senderEmail, receivedAt, messageId, userId } = ctx
+
+  const receivedDate = receivedAt.slice(0, 10)
+  const wantSection = normalizeSection(classification.section_number)
+
+  const { data: itemRows } = await supabase
+    .from("submittal_package_items")
+    .select("submittal_id, submittals(id, csi_section, received_date)")
+    .eq("package_id", pkg.id)
+
+  const candidates: PackageItemSubmittal[] = (itemRows ?? [])
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    .map((r: any) => r.submittals as PackageItemSubmittal | null)
+    .filter((s): s is PackageItemSubmittal =>
+      !!s && !s.received_date && !!wantSection && normalizeSection(s.csi_section) === wantSection)
+
+  if (candidates.length === 1) {
+    const target = candidates[0]
+    const { error } = await supabase
+      .from("submittals")
+      .update({
+        storage_path:            storagePath,
+        mime_type:               mimeType,
+        file_size:               fileSize,
+        received_date:           receivedDate,
+        received_file_name:      fileName,
+        received_via_package_id: pkg.id,
+        sender_email:            senderEmail,
+        received_at:             receivedAt,
+        gmail_message_id:        messageId,
+        review_status:           "Received",
+      })
+      .eq("id", target.id)
+    if (error) {
+      log("FAIL package-match-link", { packageId: pkg.id, submittalId: target.id, error: error.message })
+      return
+    }
+    log("package-match-linked", { packageId: pkg.id, submittalId: target.id, section: wantSection })
+    return
+  }
+
+  // Ambiguous — file as an orphan for PM review.
+  const record = {
+    file_name:               fileName,
+    received_file_name:      fileName,
+    storage_path:            storagePath,
+    mime_type:               mimeType,
+    file_size:               fileSize,
+    csi_division:            classification.division_number,
+    division_name:           classification.division_name,
+    csi_section:             classification.section_number,
+    section_name:            classification.section_name,
+    review_status:           "Needs Review",
+    ai_confidence:           classification.confidence_score,
+    ai_reasoning:            classification.reasoning,
+    sender_email:            senderEmail,
+    received_at:             receivedAt,
+    gmail_message_id:        messageId,
+    project_id:              pkg.project_id,
+    received_via_package_id: pkg.id,
+    source:                  "gmail",
+    status:                  "active",
+    uploaded_by:             userId,
+  }
+  const { error } = await supabase.from("submittals").insert(record)
+  if (error) {
+    log("FAIL package-match-orphan", { packageId: pkg.id, error: error.message })
+    return
+  }
+  log("package-match-orphan", { packageId: pkg.id, candidateCount: candidates.length, section: wantSection })
 }
 
 // ─── AI classification ────────────────────────────────────────────────────────
