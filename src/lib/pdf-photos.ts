@@ -33,12 +33,16 @@ export async function loadEntityPhotos(
   entityType: string,
   entityId: string,
 ): Promise<PDFPhoto[]> {
-  const { data: rows } = await supabase
+  const { data: rows, error } = await supabase
     .from("item_photos")
     .select("storage_path, file_name, created_at")
     .eq("entity_type", entityType)
     .eq("entity_id", entityId)
     .order("created_at")
+
+  if (error) {
+    console.error(`[loadEntityPhotos] item_photos query failed for ${entityType}/${entityId}:`, error.message)
+  }
 
   const photoRows = (rows ?? []) as PhotoRow[]
   if (photoRows.length === 0) return []

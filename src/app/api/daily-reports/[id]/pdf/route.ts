@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import { PDFBuilder } from "@/lib/pdf-builder"
+import { loadEntityPhotos } from "@/lib/pdf-photos"
+
+// Downloading + resizing a report's photos can take a while for image-heavy
+// reports — raise the serverless ceiling so long renders don't get cut off.
+export const maxDuration = 300
 
 export async function POST(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const supabase = await createClient()
@@ -26,34 +31,58 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
     if (blob) logoBytes = await blob.arrayBuffer()
   }
 
-  const b = await PDFBuilder.create("DAILY FIELD REPORT", logoBytes)
+  const reportDate = new Date(report.report_date).toLocaleDateString("en-US")
+
+  // ── Cover ─────────────────────────────────────────────────────────────────
+  const pdf = await PDFBuilder.create({
+    documentType: "Daily Field Report",
+    documentNumber: reportDate,
+    logoBytes,
+  })
 
   if (project.name || project.number) {
-    b.sectionHeader("PROJECT INFORMATION")
-    b.twoCol("Project Name", project.name ?? "—", 65, "Project No.", project.number ?? "—", 35)
-    if (project.gc_name || project.architect)
-      b.twoCol("General Contractor", project.gc_name ?? "—", 50, "Architect", project.architect ?? "—", 50)
-    if (project.location) b.oneCol("Location", project.location)
-    b.gap()
+    pdf.projectBlock({
+      name: project.name,
+      number: project.number,
+      location: project.location,
+      gc_name: project.gc_name,
+      architect: project.architect,
+    })
   }
 
-  b.sectionHeader("REPORT SUMMARY")
-  b.twoCol("Report Date", new Date(report.report_date).toLocaleDateString("en-US"), 50, "Prepared By", report.prepared_by ?? "—", 50)
-  b.twoCol("Weather Conditions", report.weather_conditions ?? "—", 50, "Temperature", report.temperature ?? "—", 50)
-  b.twoCol("Manpower on Site", report.manpower_count != null ? `${report.manpower_count} workers` : "—", 50, " ", " ", 50)
-  b.gap()
+  pdf.sectionDivider("Report Summary")
+  pdf.fieldGrid([
+    [{ label: "Report Date", value: reportDate },
+     { label: "Prepared By", value: report.prepared_by }],
+    [{ label: "Weather Conditions", value: report.weather_conditions },
+     { label: "Temperature", value: report.temperature }],
+    [{ label: "Manpower on Site",
+      value: report.manpower_count != null ? `${report.manpower_count} workers` : null }],
+  ])
 
-  b.textBlock("WORK PERFORMED", report.work_performed ?? "")
-  b.textBlock("EQUIPMENT ON SITE", report.equipment ?? "")
-  b.textBlock("MATERIALS DELIVERED", report.materials_delivered ?? "")
-  b.textBlock("VISITORS / INSPECTIONS", report.visitors ?? "")
-  b.textBlock("ISSUES / DELAYS", report.issues_delays ?? "")
-  b.textBlock("SAFETY NOTES", report.safety_notes ?? "")
+  pdf.textBlock("Work Performed", report.work_performed)
+  pdf.textBlock("Equipment on Site", report.equipment)
+  pdf.textBlock("Materials Delivered", report.materials_delivered)
+  pdf.textBlock("Visitors / Inspections", report.visitors)
+  pdf.textBlock("Issues / Delays", report.issues_delays)
+  pdf.textBlock("Safety Notes", report.safety_notes)
 
-  b.signatureLines("Prepared By / Date", "Superintendent / Date")
+  pdf.signatureBlock("Prepared By / Date", "Superintendent / Date")
 
-  const pdfBytes = await b.save()
-  const pdfPath = `daily-reports/${id}/daily_${report.report_date.replace(/-/g, "")}.pdf`
+  // ── Site photos ───────────────────────────────────────────────────────────
+  // The cover stays on page 1; photos follow on their own pages, 4 per page.
+  const photos = await loadEntityPhotos(supabase, "daily_report", id)
+  if (photos.length > 0) {
+    pdf.pageBreak()
+    pdf.sectionDivider(`Site Photos (${photos.length})`)
+    await pdf.photoGrid(photos)
+  }
+
+  const pdfBytes = await pdf.save()
+
+  // Unique path per generation: a fixed path + upsert lets Supabase's CDN keep
+  // serving a stale cached copy after the storage object is overwritten.
+  const pdfPath = `daily-reports/${id}/daily_${report.report_date.replace(/-/g, "")}_${Date.now()}.pdf`
   await supabase.storage.from("submittals").upload(pdfPath, Buffer.from(pdfBytes), { contentType: "application/pdf", upsert: true })
   await supabase.from("daily_reports").update({ generated_pdf_path: pdfPath }).eq("id", id)
   const { data: signed } = await supabase.storage.from("submittals").createSignedUrl(pdfPath, 604800)
