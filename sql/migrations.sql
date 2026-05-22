@@ -861,6 +861,10 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_submittal_packages_number
   ON submittal_packages(company_id, package_number);
 
 ALTER TABLE submittal_packages ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "submittal_packages: company select" ON submittal_packages;
+DROP POLICY IF EXISTS "submittal_packages: company insert" ON submittal_packages;
+DROP POLICY IF EXISTS "submittal_packages: company update" ON submittal_packages;
+DROP POLICY IF EXISTS "submittal_packages: company delete" ON submittal_packages;
 CREATE POLICY "submittal_packages: company select" ON submittal_packages FOR SELECT TO authenticated USING     (company_id = get_my_company_id());
 CREATE POLICY "submittal_packages: company insert" ON submittal_packages FOR INSERT TO authenticated WITH CHECK (company_id = get_my_company_id());
 CREATE POLICY "submittal_packages: company update" ON submittal_packages FOR UPDATE TO authenticated USING     (company_id = get_my_company_id()) WITH CHECK (company_id = get_my_company_id());
@@ -881,6 +885,10 @@ CREATE INDEX IF NOT EXISTS idx_submittal_package_items_submittal ON submittal_pa
 CREATE INDEX IF NOT EXISTS idx_submittal_package_items_company   ON submittal_package_items(company_id);
 
 ALTER TABLE submittal_package_items ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "submittal_package_items: company select" ON submittal_package_items;
+DROP POLICY IF EXISTS "submittal_package_items: company insert" ON submittal_package_items;
+DROP POLICY IF EXISTS "submittal_package_items: company update" ON submittal_package_items;
+DROP POLICY IF EXISTS "submittal_package_items: company delete" ON submittal_package_items;
 CREATE POLICY "submittal_package_items: company select" ON submittal_package_items FOR SELECT TO authenticated USING     (company_id = get_my_company_id());
 CREATE POLICY "submittal_package_items: company insert" ON submittal_package_items FOR INSERT TO authenticated WITH CHECK (company_id = get_my_company_id());
 CREATE POLICY "submittal_package_items: company update" ON submittal_package_items FOR UPDATE TO authenticated USING     (company_id = get_my_company_id()) WITH CHECK (company_id = get_my_company_id());
@@ -911,6 +919,10 @@ CREATE TABLE IF NOT EXISTS project_package_counters (
 CREATE INDEX IF NOT EXISTS idx_project_package_counters_company ON project_package_counters(company_id);
 
 ALTER TABLE project_package_counters ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "project_package_counters: company select" ON project_package_counters;
+DROP POLICY IF EXISTS "project_package_counters: company insert" ON project_package_counters;
+DROP POLICY IF EXISTS "project_package_counters: company update" ON project_package_counters;
+DROP POLICY IF EXISTS "project_package_counters: company delete" ON project_package_counters;
 CREATE POLICY "project_package_counters: company select" ON project_package_counters FOR SELECT TO authenticated USING     (company_id = get_my_company_id());
 CREATE POLICY "project_package_counters: company insert" ON project_package_counters FOR INSERT TO authenticated WITH CHECK (company_id = get_my_company_id());
 CREATE POLICY "project_package_counters: company update" ON project_package_counters FOR UPDATE TO authenticated USING     (company_id = get_my_company_id()) WITH CHECK (company_id = get_my_company_id());
