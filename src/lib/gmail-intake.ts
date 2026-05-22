@@ -295,7 +295,7 @@ async function processMessage(
   for (const part of attachments) {
     await processAttachment({
       supabase, anthropic, accessToken, messageId,
-      part, subject, senderName, senderEmail, receivedAt, userId, pkg,
+      part, subject, senderName, senderEmail, receivedAt, userId, companyId, pkg,
     })
   }
 }
@@ -313,16 +313,29 @@ interface AttachmentCtx {
   senderEmail: string
   receivedAt: string
   userId: string
+  // The gmail connection's company — must be set explicitly on every insert.
+  // The submittals.company_id column DEFAULT (get_my_company_id()) resolves to
+  // NULL under the service-role client, and a NULL company_id makes the row
+  // invisible to every RLS SELECT policy.
+  companyId: string | null
   // Set when the message subject carried a [TTQ-…] package tag.
   pkg: PackageRef | null
 }
 
 async function processAttachment(ctx: AttachmentCtx): Promise<void> {
   const { supabase, anthropic, accessToken, messageId, part,
-          subject, senderName, senderEmail, receivedAt, userId, pkg } = ctx
+          subject, senderName, senderEmail, receivedAt, userId, companyId, pkg } = ctx
 
   const fileName = part.filename?.trim() || `attachment_${Date.now()}.bin`
   log("attachment-start", { fileName, mimeType: part.mimeType, bodySize: part.body?.size, hasInlineData: !!part.body?.data, hasAttachmentId: !!part.body?.attachmentId })
+
+  // Guard: without a company_id every row this function writes would be
+  // invisible to RLS. A missing one means the gmail_connections row itself is
+  // misconfigured — fail loudly here rather than silently dropping the intake.
+  if (!companyId) {
+    log("FAIL company-id-missing: gmail connection has no company_id — skipping", { fileName })
+    return
+  }
 
   // ── Download bytes ─────────────────────────────────────────────────────────
   let base64url: string
@@ -403,7 +416,7 @@ async function processAttachment(ctx: AttachmentCtx): Promise<void> {
   if (pkg) {
     await matchBackAttachment({
       supabase, pkg, classification, fileName, storagePath, mimeType,
-      fileSize: fileBytes.length, senderEmail, receivedAt, messageId, userId,
+      fileSize: fileBytes.length, senderEmail, receivedAt, messageId, userId, companyId,
     })
     return
   }
@@ -427,6 +440,7 @@ async function processAttachment(ctx: AttachmentCtx): Promise<void> {
     received_at:     receivedAt,
     gmail_message_id: messageId,
     project_id:      null,
+    company_id:      companyId,
     status:          "active",
     uploaded_by:     userId,
   }
@@ -456,6 +470,7 @@ interface MatchBackCtx {
   receivedAt: string
   messageId: string
   userId: string
+  companyId: string | null
 }
 
 interface PackageItemSubmittal {
@@ -479,7 +494,7 @@ interface PackageItemSubmittal {
  */
 async function matchBackAttachment(ctx: MatchBackCtx): Promise<void> {
   const { supabase, pkg, classification, fileName, storagePath, mimeType,
-          fileSize, senderEmail, receivedAt, messageId, userId } = ctx
+          fileSize, senderEmail, receivedAt, messageId, userId, companyId } = ctx
 
   const receivedDate = receivedAt.slice(0, 10)
   const wantSection = normalizeSection(classification.section_number)
@@ -539,6 +554,7 @@ async function matchBackAttachment(ctx: MatchBackCtx): Promise<void> {
     gmail_message_id:        messageId,
     project_id:              pkg.project_id,
     received_via_package_id: pkg.id,
+    company_id:              companyId,
     source:                  "gmail",
     status:                  "active",
     uploaded_by:             userId,
