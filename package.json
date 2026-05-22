@@ -22,6 +22,7 @@
     "puppeteer-core": "^23.11.1",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
+    "sharp": "^0.34.5",
     "unpdf": "^1.6.2"
   },
   "devDependencies": {
