@@ -2,6 +2,21 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Knowledge Base — TuttoHQ Vault
+
+A separate Obsidian vault contains all product strategy, feature specs, customer notes, and architecture decisions.
+
+**Location:** `C:\Users\jacei_7431w1\Documents\TuttoHQ_Vault`
+
+**Read the vault when:**
+- Starting any feature work → read `00 - Meta\CLAUDE.md` first for product context
+- Working on a specific feature → read `01 - Features\[feature name].md`
+- Making architectural decisions → check `04 - Decisions\` for existing ADRs
+- A customer is mentioned → check `03 - Customers\[customer].md`
+- Looking for product roadmap or priorities → read `00 - Meta\Roadmap.md`
+
+**Do NOT modify vault files** unless explicitly asked. The vault is canonical product knowledge; code changes happen in this repo only.
+
 ## Commands
 
 ```bash
