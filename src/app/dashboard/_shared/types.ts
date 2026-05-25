@@ -205,6 +205,47 @@ export interface SubmittalPackageDetail extends SubmittalPackage {
   items: SubmittalRecord[]
   needs_review: SubmittalRecord[]
 }
+
+// ─── Closeout packages (Session K1 — outbound dispatch) ─────────────────────
+export interface CloseoutPackage {
+  id: string
+  project_id: string
+  package_number: string
+  vendor_id: string | null
+  vendor_type: "subcontractor" | "supplier" | null
+  vendor_name_snapshot: string
+  sent_to_email: string
+  dispatched_at: string | null
+  dispatched_by: string | null
+  pdf_file_path: string | null
+  gmail_thread_id: string | null
+  due_date: string | null
+  status: PackageStatus
+  notes: string | null
+  created_at: string
+  item_count?: number
+  received_count?: number
+  needs_review_count?: number
+}
+export interface CloseoutPackageInbound {
+  id: string
+  package_id: string
+  file_name: string
+  storage_path: string
+  mime_type: string | null
+  file_size: number | null
+  sender_email: string | null
+  received_at: string | null
+  gmail_message_id: string | null
+  status: "pending" | "placed" | "dismissed"
+  placed_closeout_item_id: string | null
+  placed_at: string | null
+  created_at: string
+}
+export interface CloseoutPackageDetail extends CloseoutPackage {
+  items: CloseoutItem[]
+  needs_review: CloseoutPackageInbound[]
+}
 export type FileModalStep = "project" | "coversheet" | "form"
 export interface OpenFileCtx { file: SubmittalFile; divNum: string; divName: string; secCode: string; secName: string }
 export interface CoverFormData { projectName: string; projectNumber: string; projectLocation: string; gcName: string; architect: string; specSectionNo: string; specSectionTitle: string; description: string; dateSubmitted: string; submittalNo: string; revisionNo: string; dueDate: string; isCritical: boolean; partyRequired: boolean; copyTo: string; reviewedBy: string; certifiedBy: string; notes: string; sendToType: "cm" | "subcontractor" | "supplier" | ""; sendToCompany: string; sendToContact: string; sendToEmail: string; sendToPhone: string; sendToAddress: string; transmittedBy: string; transmittedByCompany: string }

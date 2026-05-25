@@ -1,10 +1,12 @@
 "use client"
 
 import { useState, useEffect, useRef } from "react"
-import type { CloseoutItem, SubmittalRecord, RFI, ChangeOrder, DrawingRecord, PunchItem, TeamMember } from "../_shared/types"
-import { PlusIcon, SpinnerIcon, XIcon } from "../_shared/icons"
+import type { CloseoutItem, SubmittalRecord, RFI, ChangeOrder, DrawingRecord, PunchItem, TeamMember, SubcontractorRow, SupplierRow, Project } from "../_shared/types"
+import { PlusIcon, SpinnerIcon, XIcon, CheckIcon } from "../_shared/icons"
 import { inputCls, labelCls } from "../_shared/ui"
 import { presignAndUpload } from "@/lib/storage-upload"
+import CloseoutPackageCreateModal from "@/components/closeout-packages/CloseoutPackageCreateModal"
+import CloseoutPackagesView from "@/components/closeout-packages/CloseoutPackagesView"
 
 // Closeout module — extracted verbatim from dashboard/page.tsx (Step 8 of the split).
 // Two differences from the inline original:
@@ -12,8 +14,9 @@ import { presignAndUpload } from "@/lib/storage-upload"
 //  - cross-module navigation ("Go to →" buttons) goes through onNavigate, and the
 //    sidebar progress badge is fed via onProgress, since both live in the shell.
 
-export default function CloseoutModule({ globalProjectId, teamMembers, onProgress, onNavigate }: {
+export default function CloseoutModule({ globalProjectId, appProjects, teamMembers, onProgress, onNavigate }: {
   globalProjectId: string
+  appProjects: Project[]
   teamMembers: TeamMember[]
   onProgress: (pct: number | null) => void
   onNavigate: (module: "punch" | "submittals" | "rfis" | "changeorders" | "drawings") => void
@@ -54,6 +57,27 @@ export default function CloseoutModule({ globalProjectId, teamMembers, onProgres
   const closeoutFileRef = useRef<HTMLInputElement>(null)
   const [closeoutUploadingId, setCloseoutUploadingId] = useState<string | null>(null)
 
+  // ─── Closeout packages (Session K1) ────────────────────────────────────────
+  // Items | Packages tab; Select mode on Items adds checkboxes and a Create
+  // Package button that opens CloseoutPackageCreateModal.
+  const [view, setView]                       = useState<"items" | "packages">("items")
+  const [selectMode, setSelectMode]           = useState(false)
+  const [selectedItemIds, setSelectedItemIds] = useState<Set<string>>(new Set())
+  const [showPackageModal, setShowPackageModal] = useState(false)
+  const [subs, setSubs]           = useState<SubcontractorRow[]>([])
+  const [suppliers, setSuppliers] = useState<SupplierRow[]>([])
+  const projectName = appProjects.find(p => p.id === globalProjectId)?.name ?? "Project"
+
+  function toggleItemSelected(id: string) {
+    setSelectedItemIds(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id); else next.add(id)
+      return next
+    })
+  }
+  function exitSelectMode() { setSelectMode(false); setSelectedItemIds(new Set()) }
+  const selectedItems = closeoutItems.filter(i => selectedItemIds.has(i.id))
+
   function loadCloseout() {
     if (!globalProjectId) {
       setCloseoutItems([]); setCloseoutPunch([]); setCloseoutSubmittals([])
@@ -88,6 +112,25 @@ export default function CloseoutModule({ globalProjectId, teamMembers, onProgres
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { loadCloseout() }, [globalProjectId])
+
+  // Load vendor lists once per project — used by the package create modal's
+  // vendor picker. Project name is derived from appProjects prop.
+  useEffect(() => {
+    if (!globalProjectId) {
+      setSubs([]); setSuppliers([])
+      exitSelectMode(); setView("items")
+      return
+    }
+    fetch(`/api/projects/${globalProjectId}/subcontractors`)
+      .then(r => r.ok ? r.json() : [])
+      .then(d => setSubs(Array.isArray(d) ? d : []))
+      .catch(() => {})
+    fetch(`/api/projects/${globalProjectId}/suppliers`)
+      .then(r => r.ok ? r.json() : [])
+      .then(d => setSuppliers(Array.isArray(d) ? d : []))
+      .catch(() => {})
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [globalProjectId])
 
   async function updateCloseoutItem(id: string, updates: Record<string, unknown>) {
     await fetch(`/api/closeout/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(updates) })
@@ -174,14 +217,25 @@ export default function CloseoutModule({ globalProjectId, teamMembers, onProgres
       <div className="flex-shrink-0 border-b border-[#E2E8F0] bg-white px-4 py-2.5 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-center gap-3">
           <p className="text-[13px] font-semibold text-[#0F172A]">Project Closeout</p>
-          {globalProjectId && closeoutItems.length > 0 && (() => {
+          {/* Items | Packages tab (Session K1) */}
+          {globalProjectId && (
+            <div className="inline-flex items-center rounded-md border border-[#E2E8F0] overflow-hidden">
+              {(["items", "packages"] as const).map(v => (
+                <button key={v} onClick={() => { setView(v); if (v === "packages") exitSelectMode() }}
+                  className={`h-7 px-3 text-[12px] font-medium transition-colors ${view === v ? "bg-[#7B9BB5] text-white" : "bg-white text-[#64748B] hover:bg-[#F8F9FA]"}`}>
+                  {v === "items" ? "Items" : "Packages"}
+                </button>
+              ))}
+            </div>
+          )}
+          {globalProjectId && closeoutItems.length > 0 && view === "items" && (() => {
             const total   = closeoutItems.length + closeoutPunch.length + closeoutSubmittals.length + closeoutRFIs.length + closeoutCOs.length + closeoutDrawings.length
             const complete = closeoutItems.filter(i => i.status === "complete").length
             const pct = total > 0 ? Math.round((complete / total) * 100) : 0
             return <span className="text-[11px] text-[#64748B]">{pct}% complete</span>
           })()}
         </div>
-        {globalProjectId && closeoutItems.length > 0 && (
+        {globalProjectId && view === "items" && closeoutItems.length > 0 && (
           closeoutResetConfirm ? (
             <div className="flex items-center gap-2 bg-red-50 border border-red-200 rounded-lg px-3 py-1.5 flex-wrap">
               <span className="text-[12px] text-red-600 font-medium">Reset all closeout items?</span>
@@ -203,6 +257,16 @@ export default function CloseoutModule({ globalProjectId, teamMembers, onProgres
             </div>
           ) : (
             <div className="flex items-center gap-2 flex-wrap">
+              <button
+                onClick={() => { if (selectMode) exitSelectMode(); else setSelectMode(true) }}
+                className={`h-8 px-3 rounded-md border text-[12px] font-semibold transition-colors flex items-center gap-1.5 ${
+                  selectMode
+                    ? "border-[#7B9BB5] bg-[#7B9BB5]/10 text-[#0F172A]"
+                    : "border-[#E2E8F0] text-[#64748B] hover:text-[#0F172A]"
+                }`}
+              >
+                <CheckIcon /> {selectMode ? "Done" : "Select"}
+              </button>
               <button onClick={() => setShowNewCloseout(true)} className="h-8 px-3 rounded-md border border-[#E2E8F0] text-[#64748B] text-[12px] font-semibold hover:text-[#0F172A] transition-colors flex items-center gap-1.5">
                 <PlusIcon /> Add Item
               </button>
@@ -232,7 +296,63 @@ export default function CloseoutModule({ globalProjectId, teamMembers, onProgres
 
       {/* ── Closeout module ───────────────────────────────────────────── */}
       <div className="flex-1 overflow-y-auto min-h-0">
-          {(() => {
+        {/* Packages tab — outbound dispatch + match-back (Session K1) */}
+        {view === "packages" && globalProjectId && (
+          <CloseoutPackagesView projectId={globalProjectId} />
+        )}
+        {/* Select-mode toolbar — only on Items tab */}
+        {view === "items" && selectMode && globalProjectId && closeoutItems.length > 0 && (
+          <div className="flex flex-wrap items-center gap-2 px-4 py-2.5 border-b border-[#E2E8F0] bg-[#F1F5F9]">
+            <span className="text-[12px] font-semibold text-[#0F172A] whitespace-nowrap">
+              {selectedItemIds.size} selected
+            </span>
+            <span className="text-[#CBD5E1]">·</span>
+            <button onClick={() => setSelectedItemIds(new Set(closeoutItems.map(i => i.id)))}
+              className="h-8 px-3 rounded-md border border-[#E2E8F0] text-[12px] text-[#64748B] hover:bg-white transition-colors">
+              Select all
+            </button>
+            <button onClick={() => setSelectedItemIds(new Set())} disabled={selectedItemIds.size === 0}
+              className="h-8 px-3 rounded-md border border-[#E2E8F0] text-[12px] text-[#64748B] hover:bg-white transition-colors disabled:opacity-50">
+              Clear
+            </button>
+            <p className="text-[11px] text-[#64748B] hidden sm:block flex-1 min-w-[8px]">
+              Tick items below to bundle into a closeout package, then click Create Package.
+            </p>
+            <button disabled={selectedItemIds.size === 0} onClick={() => setShowPackageModal(true)}
+              className="h-8 px-4 rounded-md bg-[#7B9BB5] text-white text-[12px] font-semibold hover:bg-[#6A8AA4] transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5 whitespace-nowrap">
+              <PlusIcon /> Create Package
+            </button>
+          </div>
+        )}
+        {/* Select-mode flat picker — overlays a checkbox list of all closeout
+            items above the existing rich UI so the PM can pick across
+            categories without scrolling through the dashboard. */}
+        {view === "items" && selectMode && globalProjectId && closeoutItems.length > 0 && (
+          <div className="px-4 pt-4">
+            <div className="rounded-xl border border-[#E2E8F0] overflow-clip bg-white">
+              <div className="px-4 py-2 bg-[#F8F9FA] border-b border-[#E2E8F0]">
+                <p className="text-[12px] font-bold text-[#0F172A]">Select items for a closeout package</p>
+              </div>
+              <div className="max-h-80 overflow-y-auto divide-y divide-[#E2E8F0]/60">
+                {closeoutItems.map(i => {
+                  const checked = selectedItemIds.has(i.id)
+                  const catLabel = i.folder_name ? `${i.category} · ${i.folder_name}` : i.category
+                  return (
+                    <label key={i.id}
+                      className={`flex items-center gap-3 px-4 py-2 cursor-pointer hover:bg-[#F8F9FA] ${checked ? "bg-[#7B9BB5]/5" : ""}`}>
+                      <input type="checkbox" checked={checked} onChange={() => toggleItemSelected(i.id)}
+                        className="accent-[#7B9BB5]" />
+                      <span className="flex-1 text-[13px] text-[#0F172A] truncate" title={i.title}>{i.title}</span>
+                      <span className="text-[11px] text-[#64748B] hidden sm:inline">{catLabel}</span>
+                      <span className="text-[11px] text-[#64748B] w-20 text-right capitalize">{i.status.replace("_", " ")}</span>
+                    </label>
+                  )
+                })}
+              </div>
+            </div>
+          </div>
+        )}
+        {view === "items" && (() => {
             const cycleStatus  = (s: string) => s === "incomplete" ? "in_progress" : s === "in_progress" ? "complete" : "incomplete"
             const dotColor     = (s: string) => s === "complete" ? "#10b981" : s === "in_progress" ? "#f59e0b" : "#ef4444"
             const labelColor   = (s: string) => s === "complete" ? "text-emerald-400" : s === "in_progress" ? "text-amber-400" : "text-red-400"
@@ -920,6 +1040,20 @@ export default function CloseoutModule({ globalProjectId, teamMembers, onProgres
             </div>
           </div>
         </div>
+      )}
+
+      {/* ── Closeout package create modal (Session K1) ──────────────────── */}
+      {showPackageModal && globalProjectId && selectedItems.length > 0 && (
+        <CloseoutPackageCreateModal
+          projectId={globalProjectId}
+          projectName={projectName}
+          items={selectedItems}
+          vendorPreset={null}
+          subs={subs}
+          suppliers={suppliers}
+          onClose={() => setShowPackageModal(false)}
+          onDone={() => { setShowPackageModal(false); exitSelectMode(); setView("packages") }}
+        />
       )}
     </>
   )

@@ -335,7 +335,7 @@ export default function Home() {
               )}
 
               {activeModule === "closeout" && (
-                <CloseoutModule globalProjectId={globalProjectId} teamMembers={teamMembers} onProgress={setCloseoutPct} onNavigate={setActiveModule} />
+                <CloseoutModule globalProjectId={globalProjectId} appProjects={appProjects} teamMembers={teamMembers} onProgress={setCloseoutPct} onNavigate={setActiveModule} />
               )}
             </>
           )}
