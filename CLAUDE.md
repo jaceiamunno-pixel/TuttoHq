@@ -66,13 +66,12 @@ Key route groups:
 | `/api/punch/[id]/pdf` | POST — generates punch item PDF |
 | `/api/daily-reports/[id]/pdf` | POST — generates daily field report PDF |
 | `/api/drawings/[id]/pdf` | POST — generates drawing transmittal PDF (reads from `drawing_log` table) |
-| `/api/gmail/webhook` | POST — receives Google Pub/Sub push notifications, triggers Gmail intake |
-| `/api/gmail-intake` | POST — processes Gmail history, downloads attachments, auto-classifies and inserts submittals |
+| `/api/gmail-intake` | POST — receives Google Pub/Sub push notifications, decodes the envelope, downloads attachments, auto-classifies, and inserts submittals |
 
 ### Gmail intake flow
-`POST /api/gmail/webhook` → decodes Pub/Sub notification → looks up `gmail_connections` row → calls `src/lib/gmail-intake.ts` which fetches Gmail history, downloads PDF attachments, deduplicates by `gmail_message_id + file_name`, classifies via Claude Haiku, uploads to Supabase storage, inserts into `submittals` table. Auto-renews Gmail watch if expiring within 24 hours.
+`POST /api/gmail-intake?token=$GMAIL_WEBHOOK_SECRET` → validates the shared secret → decodes the Pub/Sub envelope → calls `src/lib/gmail-intake.ts` which looks up the `gmail_connections` row, fetches Gmail history, downloads PDF attachments, deduplicates by `gmail_message_id + file_name`, classifies via Claude Haiku, uploads to Supabase storage, inserts into `submittals` table. Auto-renews Gmail watch if expiring within 24 hours.
 
-Webhook uses `GMAIL_WEBHOOK_SECRET` env var for request validation.
+Webhook uses `GMAIL_WEBHOOK_SECRET` query-param for request validation. Endpoint is allow-listed in `src/middleware.ts` so it bypasses the auth redirect.
 
 ### PDF generation pattern
 All PDF routes follow the same pattern: fetch record + project + company logo → build with `pdf-lib` (navy header, LBLUE section headers, signature lines) → upload to `submittals` bucket → update record's `generated_pdf_path` → return 7-day signed URL.
@@ -80,7 +79,7 @@ All PDF routes follow the same pattern: fetch record + project + company logo �
 ### Supabase client usage
 - `src/lib/supabase/server.ts` — use in all API routes (reads auth cookies)
 - `src/lib/supabase/client.ts` — use only in `dashboard/page.tsx` (browser-side, for `getUser()`)
-- Gmail webhook uses `createClient(url, SERVICE_ROLE_KEY)` directly to bypass RLS (Google calls this endpoint, no user session)
+- `/api/gmail-intake` uses `createClient(url, SERVICE_ROLE_KEY)` directly to bypass RLS (Google calls this endpoint, no user session)
 
 ### RLS pattern
 Every table has RLS enabled. All tables need explicit policies for each operation (SELECT, INSERT, UPDATE, DELETE). Missing DELETE policies cause silent no-ops — the delete appears to succeed but the row persists on refresh. Always add DELETE policies when creating new tables.
