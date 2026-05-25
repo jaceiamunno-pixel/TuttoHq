@@ -5,16 +5,22 @@ export async function DELETE(
   _req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  const { id } = await params
   const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
-  const { data: record } = await supabase
+  const { id } = await params
+
+  // RLS-gated lookup: only returns the row if it belongs to the user's company.
+  const { data: record, error: selErr } = await supabase
     .from("submittals")
     .select("storage_path")
     .eq("id", id)
-    .single()
+    .maybeSingle()
+  if (selErr) return NextResponse.json({ error: "Database error" }, { status: 500 })
+  if (!record) return NextResponse.json({ error: "Not found" }, { status: 404 })
 
-  if (record?.storage_path) {
+  if (record.storage_path) {
     await supabase.storage.from("submittals").remove([record.storage_path])
   }
 
