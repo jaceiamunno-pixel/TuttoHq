@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import Anthropic from "@anthropic-ai/sdk"
 import { createClient } from "@/lib/supabase/server"
+import { createAdminClient } from "@/lib/supabase/admin"
 
 const CSI_LIST = `
 03: Concrete — 03 10 00 Concrete Forming & Accessories, 03 20 00 Concrete Reinforcing, 03 30 00 Cast-in-Place Concrete, 03 40 00 Precast Concrete, 03 50 00 Cast Decks & Underlayment, 03 60 00 Grouting, 03 70 00 Mass Concrete, 03 80 00 Concrete Cutting & Boring
@@ -96,7 +97,17 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "storage_path and file_name are required" }, { status: 400 })
   }
 
-  const { data: blob, error: dlError } = await supabase.storage
+  // Defense-in-depth: only allow reads from the presigned-upload prefix so an
+  // authenticated user can't aim this route at arbitrary objects in the bucket.
+  if (!storagePath.startsWith("uploads/")) {
+    return NextResponse.json({ error: "Invalid storage path" }, { status: 400 })
+  }
+
+  // Use the service-role client for the storage read: presigned uploads land
+  // outside any user-scoped RLS policy on storage.objects, so the cookie-bound
+  // client can't see the freshly-uploaded blob. Auth was already verified above.
+  const admin = createAdminClient()
+  const { data: blob, error: dlError } = await admin.storage
     .from("submittals")
     .download(storagePath)
   if (dlError || !blob) {
