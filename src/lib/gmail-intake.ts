@@ -30,6 +30,14 @@ interface PackageRef {
   project_id: string
 }
 
+// A closeout package resolved from a [TTQ-CO-…] tag (Session K1). Inbound
+// attachments to a closeout package always land as orphans in
+// closeout_package_inbound — never auto-linked — for PM review.
+interface CloseoutPackageRef {
+  id: string
+  project_id: string
+}
+
 // ─── Logging ──────────────────────────────────────────────────────────────────
 
 function log(step: string, data?: unknown) {
@@ -89,10 +97,15 @@ async function gmailGet(token: string, url: string): Promise<Response> {
   return fetch(url, { headers: { Authorization: `Bearer ${token}` } })
 }
 
-// ─── Submittal-package match-back ───────────────────────────────────────────
+// ─── Package match-back (Session I + K1) ────────────────────────────────────
 
-// A dispatched package's tracking ref, e.g. "[TTQ-AB12-7]".
-const PACKAGE_TAG_RE = /\[(TTQ-[A-Za-z0-9]+-\d+)\]/i
+// A dispatched package's tracking ref. The optional non-capturing (?:-CO)?
+// group is the Session K1 discriminator: submittal packages ship as
+// "[TTQ-AB12-7]" and closeout packages as "[TTQ-CO-AB12-7]". The capture
+// keeps the full ref (incl. the "CO-" infix when present) so the resolver
+// can branch on tag.startsWith("TTQ-CO-") to pick the right table —
+// submittal_packages vs closeout_packages — without doing two lookups.
+const PACKAGE_TAG_RE = /\[(TTQ(?:-CO)?-[A-Za-z0-9]+-\d+)\]/i
 
 /** Normalize a CSI section to bare digits ("09 22 16" → "092216") for matching. */
 function normalizeSection(s: string | null | undefined): string {
@@ -102,29 +115,41 @@ function normalizeSection(s: string | null | undefined): string {
 /**
  * Resolve a dispatched package from a [TTQ-…] tag in an inbound subject line.
  * Scoped to the connection's company so a tag never resolves cross-tenant.
+ *
+ * Returns either a submittal-package ref (Session I) or a closeout-package
+ * ref (Session K1), discriminated by the "-CO-" infix in the tag. Caller
+ * branches on the `kind` field.
  */
+type ResolvedPackage =
+  | { kind: "submittal"; ref: PackageRef }
+  | { kind: "closeout";  ref: CloseoutPackageRef }
+
 async function resolvePackage(
   supabase: AnySupabase,
   subject: string,
   companyId: string | null,
-): Promise<PackageRef | null> {
+): Promise<ResolvedPackage | null> {
   const m = subject.match(PACKAGE_TAG_RE)
   if (!m) return null
   const tag = m[1].toUpperCase()
 
+  const table = tag.startsWith("TTQ-CO-") ? "closeout_packages" : "submittal_packages"
   let query = supabase
-    .from("submittal_packages")
+    .from(table)
     .select("id, project_id, company_id")
     .eq("package_number", tag)
   if (companyId) query = query.eq("company_id", companyId)
 
   const { data, error } = await query.limit(1)
   if (error || !data || data.length === 0) {
-    log("package-match: tag found but no package", { tag, error: error?.message ?? null })
+    log("package-match: tag found but no package", { tag, table, error: error?.message ?? null })
     return null
   }
-  log("package-match: resolved", { tag, packageId: data[0].id })
-  return { id: data[0].id as string, project_id: data[0].project_id as string }
+  log("package-match: resolved", { tag, table, packageId: data[0].id })
+  const ref = { id: data[0].id as string, project_id: data[0].project_id as string }
+  return table === "closeout_packages"
+    ? { kind: "closeout",  ref }
+    : { kind: "submittal", ref }
 }
 
 // ─── Main entry point ─────────────────────────────────────────────────────────
@@ -319,7 +344,9 @@ interface AttachmentCtx {
   // invisible to every RLS SELECT policy.
   companyId: string | null
   // Set when the message subject carried a [TTQ-…] package tag.
-  pkg: PackageRef | null
+  // Discriminated union — submittal vs closeout — drives different
+  // match-back behavior (in-place fulfillment vs always-orphan).
+  pkg: ResolvedPackage | null
 }
 
 async function processAttachment(ctx: AttachmentCtx): Promise<void> {
@@ -381,18 +408,31 @@ async function processAttachment(ctx: AttachmentCtx): Promise<void> {
   })
 
   // ── Deduplication check ────────────────────────────────────────────────────
-  // Match the messageId + this attachment's name against both file_name (fresh
-  // intake / orphan rows) and received_file_name (an expected item fulfilled in
-  // place by match-back), across ALL statuses, so a Pub/Sub redelivery never
-  // re-applies the same attachment.
-  const { data: existing } = await supabase
-    .from("submittals")
-    .select("id, file_name, received_file_name")
-    .eq("gmail_message_id", messageId)
+  // Two dedup tables depending on whether this reply belongs to a closeout
+  // package or anything else. In both cases the key is (messageId, fileName)
+  // — so a Pub/Sub redelivery never re-applies the same attachment.
+  if (pkg?.kind === "closeout") {
+    const { data: existingInbound } = await supabase
+      .from("closeout_package_inbound")
+      .select("id, file_name")
+      .eq("gmail_message_id", messageId)
+    if ((existingInbound ?? []).some(r => r.file_name === fileName)) {
+      log("attachment-skip: already processed (closeout inbound)", { fileName, messageId })
+      return
+    }
+  } else {
+    // Match the messageId + filename against both file_name (fresh intake /
+    // orphan rows) and received_file_name (an expected item fulfilled in
+    // place by match-back), across ALL statuses.
+    const { data: existing } = await supabase
+      .from("submittals")
+      .select("id, file_name, received_file_name")
+      .eq("gmail_message_id", messageId)
 
-  if ((existing ?? []).some(r => r.file_name === fileName || r.received_file_name === fileName)) {
-    log("attachment-skip: already processed", { fileName, messageId })
-    return
+    if ((existing ?? []).some(r => r.file_name === fileName || r.received_file_name === fileName)) {
+      log("attachment-skip: already processed", { fileName, messageId })
+      return
+    }
   }
 
   // ── Upload to Supabase storage ─────────────────────────────────────────────
@@ -411,12 +451,23 @@ async function processAttachment(ctx: AttachmentCtx): Promise<void> {
   log("storage-upload-ok", { path: storageData?.path ?? storagePath })
 
   // ── Package match-back ─────────────────────────────────────────────────────
-  // A tagged reply fulfils an expected item in place, or — if it cannot be
-  // matched unambiguously — lands as an orphan for PM review.
-  if (pkg) {
+  // Submittal package (Session I): try to fulfil an expected item in place;
+  //   if ambiguous, file as an orphan submittal tagged to the package.
+  // Closeout package (Session K1): ALWAYS file as an orphan in
+  //   closeout_package_inbound. The PM places it onto an item by hand from
+  //   the package detail view — closeout items have no csi_section analog,
+  //   so auto-linking would be guesswork.
+  if (pkg?.kind === "submittal") {
     await matchBackAttachment({
-      supabase, pkg, classification, fileName, storagePath, mimeType,
+      supabase, pkg: pkg.ref, classification, fileName, storagePath, mimeType,
       fileSize: fileBytes.length, senderEmail, receivedAt, messageId, userId, companyId,
+    })
+    return
+  }
+  if (pkg?.kind === "closeout") {
+    await orphanCloseoutAttachment({
+      supabase, pkg: pkg.ref, fileName, storagePath, mimeType,
+      fileSize: fileBytes.length, senderEmail, receivedAt, messageId, companyId,
     })
     return
   }
@@ -565,6 +616,53 @@ async function matchBackAttachment(ctx: MatchBackCtx): Promise<void> {
     return
   }
   log("package-match-orphan", { packageId: pkg.id, candidateCount: candidates.length, section: wantSection })
+}
+
+// ─── Closeout package orphan (Session K1) ───────────────────────────────────
+
+interface CloseoutOrphanCtx {
+  supabase: AnySupabase
+  pkg: CloseoutPackageRef
+  fileName: string
+  storagePath: string
+  mimeType: string
+  fileSize: number
+  senderEmail: string
+  receivedAt: string
+  messageId: string
+  // The gmail connection's company — must be set explicitly. The
+  // closeout_package_inbound.company_id DEFAULT resolves to NULL under the
+  // service-role client, which would make the row invisible to RLS.
+  companyId: string | null
+}
+
+/**
+ * File an inbound closeout-package attachment as a pending orphan in
+ * closeout_package_inbound. Match-back is intentionally never automatic:
+ * closeout items have no csi_section to compare against, so the PM places
+ * each reply onto an expected item from the package detail view.
+ */
+async function orphanCloseoutAttachment(ctx: CloseoutOrphanCtx): Promise<void> {
+  const { supabase, pkg, fileName, storagePath, mimeType, fileSize,
+          senderEmail, receivedAt, messageId, companyId } = ctx
+
+  const { error } = await supabase.from("closeout_package_inbound").insert({
+    package_id:       pkg.id,
+    file_name:        fileName,
+    storage_path:     storagePath,
+    mime_type:        mimeType,
+    file_size:        fileSize,
+    sender_email:     senderEmail,
+    received_at:      receivedAt,
+    gmail_message_id: messageId,
+    status:           "pending",
+    company_id:       companyId,
+  })
+  if (error) {
+    log("FAIL closeout-orphan-insert", { packageId: pkg.id, error: error.message })
+    return
+  }
+  log("closeout-orphan-filed", { packageId: pkg.id, fileName })
 }
 
 // ─── AI classification ────────────────────────────────────────────────────────
