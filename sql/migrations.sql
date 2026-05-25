@@ -1013,6 +1013,228 @@ CREATE TRIGGER package_items_sync_status
   AFTER INSERT OR DELETE ON submittal_package_items
   FOR EACH ROW EXECUTE FUNCTION package_items_sync_status();
 
+-- ─── Closeout packages (Session K1) ──────────────────────────────────────────
+-- Outbound dispatch of closeout items (warranties, O&M, certifications, etc.)
+-- to subs/suppliers. Mirrors submittal_packages — separate tables on purpose,
+-- so Session I stays stable production code. The tracking-ref discriminator
+-- is the "-CO-" infix in package_number (TTQ-CO-{short_id}-{seq}); inbound
+-- match-back routes on that prefix.
+--
+-- Match-back policy: ALWAYS orphan, never auto-link. Closeout items have no
+-- csi_section analog to match against, so every inbound attachment lands in
+-- closeout_package_inbound for PM review. The PM "places" each orphan onto
+-- an expected item, which copies file metadata onto the closeout_item itself
+-- and marks the inbound row 'placed'. Package status is derived from the
+-- closeout_items.status of the junction's linked items.
+
+CREATE TABLE IF NOT EXISTS closeout_packages (
+  id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  project_id           UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  package_number       TEXT NOT NULL,                       -- "TTQ-CO-ABCD-7"
+  vendor_id            UUID,                                -- null = manual multi-select
+  vendor_type          TEXT CHECK (vendor_type IN ('subcontractor','supplier')),
+  vendor_name_snapshot TEXT NOT NULL,
+  sent_to_email        TEXT NOT NULL,
+  dispatched_at        TIMESTAMPTZ,
+  dispatched_by        UUID REFERENCES auth.users(id),
+  pdf_file_path        TEXT,                                -- generated package PDF
+  gmail_thread_id      TEXT,                                -- email thread for replies
+  due_date             DATE,
+  status               TEXT NOT NULL DEFAULT 'draft'
+                          CHECK (status IN ('draft','dispatched','partial_received','complete')),
+  notes                TEXT,
+  created_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
+  created_by           UUID REFERENCES auth.users(id),
+  company_id           UUID REFERENCES companies(id) DEFAULT get_my_company_id()
+);
+
+CREATE INDEX IF NOT EXISTS idx_closeout_packages_project ON closeout_packages(project_id);
+CREATE INDEX IF NOT EXISTS idx_closeout_packages_vendor  ON closeout_packages(vendor_id);
+CREATE INDEX IF NOT EXISTS idx_closeout_packages_status  ON closeout_packages(status);
+CREATE INDEX IF NOT EXISTS idx_closeout_packages_company ON closeout_packages(company_id);
+-- package_number is unique within a company so inbound [TTQ-CO-…] tags resolve
+-- to exactly one package.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_closeout_packages_number
+  ON closeout_packages(company_id, package_number);
+
+ALTER TABLE closeout_packages ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "closeout_packages: company select" ON closeout_packages;
+DROP POLICY IF EXISTS "closeout_packages: company insert" ON closeout_packages;
+DROP POLICY IF EXISTS "closeout_packages: company update" ON closeout_packages;
+DROP POLICY IF EXISTS "closeout_packages: company delete" ON closeout_packages;
+CREATE POLICY "closeout_packages: company select" ON closeout_packages FOR SELECT TO authenticated USING     (company_id = get_my_company_id());
+CREATE POLICY "closeout_packages: company insert" ON closeout_packages FOR INSERT TO authenticated WITH CHECK (company_id = get_my_company_id());
+CREATE POLICY "closeout_packages: company update" ON closeout_packages FOR UPDATE TO authenticated USING     (company_id = get_my_company_id()) WITH CHECK (company_id = get_my_company_id());
+CREATE POLICY "closeout_packages: company delete" ON closeout_packages FOR DELETE TO authenticated USING     (company_id = get_my_company_id());
+
+-- --- closeout_package_items — package ↔ closeout_item junction --------------
+-- Pure junction. No received_* columns: with always-orphan match-back the
+-- "received" state is the linked closeout_item.status='complete' (set when
+-- the PM places an inbound orphan onto the item).
+CREATE TABLE IF NOT EXISTS closeout_package_items (
+  id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  package_id        UUID NOT NULL REFERENCES closeout_packages(id) ON DELETE CASCADE,
+  closeout_item_id  UUID NOT NULL REFERENCES closeout_items(id) ON DELETE CASCADE,
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+  company_id        UUID REFERENCES companies(id) DEFAULT get_my_company_id(),
+  UNIQUE (package_id, closeout_item_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_closeout_package_items_package ON closeout_package_items(package_id);
+CREATE INDEX IF NOT EXISTS idx_closeout_package_items_item    ON closeout_package_items(closeout_item_id);
+CREATE INDEX IF NOT EXISTS idx_closeout_package_items_company ON closeout_package_items(company_id);
+
+ALTER TABLE closeout_package_items ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "closeout_package_items: company select" ON closeout_package_items;
+DROP POLICY IF EXISTS "closeout_package_items: company insert" ON closeout_package_items;
+DROP POLICY IF EXISTS "closeout_package_items: company update" ON closeout_package_items;
+DROP POLICY IF EXISTS "closeout_package_items: company delete" ON closeout_package_items;
+CREATE POLICY "closeout_package_items: company select" ON closeout_package_items FOR SELECT TO authenticated USING     (company_id = get_my_company_id());
+CREATE POLICY "closeout_package_items: company insert" ON closeout_package_items FOR INSERT TO authenticated WITH CHECK (company_id = get_my_company_id());
+CREATE POLICY "closeout_package_items: company update" ON closeout_package_items FOR UPDATE TO authenticated USING     (company_id = get_my_company_id()) WITH CHECK (company_id = get_my_company_id());
+CREATE POLICY "closeout_package_items: company delete" ON closeout_package_items FOR DELETE TO authenticated USING     (company_id = get_my_company_id());
+
+-- --- closeout_package_inbound — orphans awaiting PM review ------------------
+-- Every inbound attachment to a [TTQ-CO-…] package lands here. The PM either
+-- places it onto an expected closeout_item (status → 'placed') or dismisses
+-- it (status → 'dismissed'). Dedup key is (gmail_message_id, file_name) so
+-- Pub/Sub redeliveries never re-apply.
+CREATE TABLE IF NOT EXISTS closeout_package_inbound (
+  id                       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  package_id               UUID NOT NULL REFERENCES closeout_packages(id) ON DELETE CASCADE,
+  file_name                TEXT NOT NULL,
+  storage_path             TEXT NOT NULL,
+  mime_type                TEXT,
+  file_size                BIGINT,
+  sender_email             TEXT,
+  received_at              TIMESTAMPTZ,
+  gmail_message_id         TEXT,
+  status                   TEXT NOT NULL DEFAULT 'pending'
+                              CHECK (status IN ('pending','placed','dismissed')),
+  placed_closeout_item_id  UUID REFERENCES closeout_items(id) ON DELETE SET NULL,
+  placed_at                TIMESTAMPTZ,
+  created_at               TIMESTAMPTZ NOT NULL DEFAULT now(),
+  company_id               UUID REFERENCES companies(id) DEFAULT get_my_company_id()
+);
+
+CREATE INDEX IF NOT EXISTS idx_closeout_inbound_package ON closeout_package_inbound(package_id);
+CREATE INDEX IF NOT EXISTS idx_closeout_inbound_status  ON closeout_package_inbound(status);
+CREATE INDEX IF NOT EXISTS idx_closeout_inbound_company ON closeout_package_inbound(company_id);
+CREATE INDEX IF NOT EXISTS idx_closeout_inbound_dedup
+  ON closeout_package_inbound(gmail_message_id, file_name);
+
+ALTER TABLE closeout_package_inbound ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "closeout_package_inbound: company select" ON closeout_package_inbound;
+DROP POLICY IF EXISTS "closeout_package_inbound: company insert" ON closeout_package_inbound;
+DROP POLICY IF EXISTS "closeout_package_inbound: company update" ON closeout_package_inbound;
+DROP POLICY IF EXISTS "closeout_package_inbound: company delete" ON closeout_package_inbound;
+CREATE POLICY "closeout_package_inbound: company select" ON closeout_package_inbound FOR SELECT TO authenticated USING     (company_id = get_my_company_id());
+CREATE POLICY "closeout_package_inbound: company insert" ON closeout_package_inbound FOR INSERT TO authenticated WITH CHECK (company_id = get_my_company_id());
+CREATE POLICY "closeout_package_inbound: company update" ON closeout_package_inbound FOR UPDATE TO authenticated USING     (company_id = get_my_company_id()) WITH CHECK (company_id = get_my_company_id());
+CREATE POLICY "closeout_package_inbound: company delete" ON closeout_package_inbound FOR DELETE TO authenticated USING     (company_id = get_my_company_id());
+
+-- --- Race-safe per-project closeout-package number allocator ---------------
+-- Mirror of project_package_counters / next_package_seq.
+CREATE TABLE IF NOT EXISTS project_closeout_package_counters (
+  project_id UUID PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
+  last_seq   INT  NOT NULL DEFAULT 0,
+  company_id UUID REFERENCES companies(id) DEFAULT get_my_company_id()
+);
+
+CREATE INDEX IF NOT EXISTS idx_project_closeout_package_counters_company ON project_closeout_package_counters(company_id);
+
+ALTER TABLE project_closeout_package_counters ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "project_closeout_package_counters: company select" ON project_closeout_package_counters;
+DROP POLICY IF EXISTS "project_closeout_package_counters: company insert" ON project_closeout_package_counters;
+DROP POLICY IF EXISTS "project_closeout_package_counters: company update" ON project_closeout_package_counters;
+DROP POLICY IF EXISTS "project_closeout_package_counters: company delete" ON project_closeout_package_counters;
+CREATE POLICY "project_closeout_package_counters: company select" ON project_closeout_package_counters FOR SELECT TO authenticated USING     (company_id = get_my_company_id());
+CREATE POLICY "project_closeout_package_counters: company insert" ON project_closeout_package_counters FOR INSERT TO authenticated WITH CHECK (company_id = get_my_company_id());
+CREATE POLICY "project_closeout_package_counters: company update" ON project_closeout_package_counters FOR UPDATE TO authenticated USING     (company_id = get_my_company_id()) WITH CHECK (company_id = get_my_company_id());
+CREATE POLICY "project_closeout_package_counters: company delete" ON project_closeout_package_counters FOR DELETE TO authenticated USING     (company_id = get_my_company_id());
+
+CREATE OR REPLACE FUNCTION next_closeout_package_seq(p_project_id UUID)
+RETURNS INT
+LANGUAGE sql
+AS $$
+  INSERT INTO project_closeout_package_counters (project_id, last_seq)
+  VALUES (p_project_id, 1)
+  ON CONFLICT (project_id)
+  DO UPDATE SET last_seq = project_closeout_package_counters.last_seq + 1
+  RETURNING last_seq;
+$$;
+
+-- --- Closeout package status auto-update ------------------------------------
+-- A dispatched closeout package advances dispatched → partial_received →
+-- complete based on how many of its junction's closeout_items have
+-- status='complete'. Drafts are never touched.
+CREATE OR REPLACE FUNCTION recompute_closeout_package_status(p_package_id UUID)
+RETURNS void
+LANGUAGE plpgsql AS $$
+DECLARE
+  v_total    INT;
+  v_received INT;
+  v_status   TEXT;
+  v_next     TEXT;
+BEGIN
+  SELECT status INTO v_status FROM closeout_packages WHERE id = p_package_id;
+  IF v_status IS NULL OR v_status = 'draft' THEN
+    RETURN;
+  END IF;
+
+  SELECT count(*),
+         count(*) FILTER (WHERE c.status = 'complete')
+    INTO v_total, v_received
+  FROM closeout_package_items i
+  JOIN closeout_items c ON c.id = i.closeout_item_id
+  WHERE i.package_id = p_package_id;
+
+  IF v_total = 0 OR v_received = 0 THEN
+    v_next := 'dispatched';
+  ELSIF v_received < v_total THEN
+    v_next := 'partial_received';
+  ELSE
+    v_next := 'complete';
+  END IF;
+
+  UPDATE closeout_packages SET status = v_next
+  WHERE id = p_package_id AND status <> v_next;
+END $$;
+
+-- Recompute every closeout package that contains an item whose status changed.
+CREATE OR REPLACE FUNCTION closeout_items_sync_package_status()
+RETURNS trigger
+LANGUAGE plpgsql AS $$
+DECLARE
+  pkg UUID;
+BEGIN
+  FOR pkg IN SELECT package_id FROM closeout_package_items WHERE closeout_item_id = NEW.id LOOP
+    PERFORM recompute_closeout_package_status(pkg);
+  END LOOP;
+  RETURN NULL;
+END $$;
+
+DROP TRIGGER IF EXISTS closeout_items_sync_package_status ON closeout_items;
+CREATE TRIGGER closeout_items_sync_package_status
+  AFTER UPDATE OF status ON closeout_items
+  FOR EACH ROW
+  WHEN (NEW.status IS DISTINCT FROM OLD.status)
+  EXECUTE FUNCTION closeout_items_sync_package_status();
+
+-- Recompute when items are added to / removed from a closeout package.
+CREATE OR REPLACE FUNCTION closeout_package_items_sync_status()
+RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+  PERFORM recompute_closeout_package_status(COALESCE(NEW.package_id, OLD.package_id));
+  RETURN NULL;
+END $$;
+
+DROP TRIGGER IF EXISTS closeout_package_items_sync_status ON closeout_package_items;
+CREATE TRIGGER closeout_package_items_sync_status
+  AFTER INSERT OR DELETE ON closeout_package_items
+  FOR EACH ROW EXECUTE FUNCTION closeout_package_items_sync_status();
+
 -- ─── FOLLOW-UP (run manually, in order) ──────────────────────────────────────
 -- Guardrail against the RLS-visibility bug fixed in gmail-intake.ts: a row
 -- inserted with company_id = NULL is invisible to every "company select" RLS
