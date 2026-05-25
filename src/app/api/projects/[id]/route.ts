@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
-import { createAdminClient } from "@/lib/supabase/admin"
 
 export async function PATCH(
   req: NextRequest,
@@ -47,21 +46,28 @@ export async function DELETE(
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
   const { id } = await params
-  const admin = createAdminClient()
 
-  // Delete child records first to avoid FK constraint violations
+  // RLS-gated ownership check before the cascade.
+  const { data: project, error: selErr } = await supabase
+    .from("projects").select("id").eq("id", id).maybeSingle()
+  if (selErr) return NextResponse.json({ error: "Database error" }, { status: 500 })
+  if (!project) return NextResponse.json({ error: "Not found" }, { status: 404 })
+
+  // Delete child records first to avoid FK constraint violations. RLS DELETE
+  // policies on every child table scope by company, so the user client only
+  // touches rows in the requester's company.
   await Promise.all([
-    admin.from("submittals").delete().eq("project_id", id),
-    admin.from("rfis").delete().eq("project_id", id),
-    admin.from("change_orders").delete().eq("project_id", id),
-    admin.from("punch_items").delete().eq("project_id", id),
-    admin.from("drawing_log").delete().eq("project_id", id),
-    admin.from("daily_reports").delete().eq("project_id", id),
-    admin.from("closeout_items").delete().eq("project_id", id),
-    admin.from("team_members").delete().eq("project_id", id),
+    supabase.from("submittals").delete().eq("project_id", id),
+    supabase.from("rfis").delete().eq("project_id", id),
+    supabase.from("change_orders").delete().eq("project_id", id),
+    supabase.from("punch_items").delete().eq("project_id", id),
+    supabase.from("drawing_log").delete().eq("project_id", id),
+    supabase.from("daily_reports").delete().eq("project_id", id),
+    supabase.from("closeout_items").delete().eq("project_id", id),
+    supabase.from("team_members").delete().eq("project_id", id),
   ])
 
-  const { error } = await admin.from("projects").delete().eq("id", id)
+  const { error } = await supabase.from("projects").delete().eq("id", id)
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
   return NextResponse.json({ ok: true })
