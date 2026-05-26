@@ -3,6 +3,9 @@ import { createClient } from "@/lib/supabase/server"
 
 export async function POST(req: NextRequest) {
   const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+
   const body = await req.json()
   const projects: Array<{ name: string; number: string; location: string; gc_name: string; architect: string }> = body.projects
 

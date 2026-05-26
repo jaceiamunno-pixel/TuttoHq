@@ -3,12 +3,14 @@ import { createClient } from "@/lib/supabase/server"
 
 // GET /api/files?code=03+10+00
 export async function GET(req: NextRequest) {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+
   const code = req.nextUrl.searchParams.get("code")
   if (!code) {
     return NextResponse.json({ error: "code is required" }, { status: 400 })
   }
-
-  const supabase = await createClient()
 
   const { data, error } = await supabase
     .from("submittals")

@@ -61,10 +61,12 @@ Rules:
 
 // GET /api/search?q=concrete
 export async function GET(req: NextRequest) {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+
   const q = req.nextUrl.searchParams.get("q")?.trim()
   if (!q) return NextResponse.json({ files: [] })
-
-  const supabase = await createClient()
 
   // AI expansion first (Haiku ~200ms), then all DB queries in parallel
   const ai = await aiExpandQuery(q)

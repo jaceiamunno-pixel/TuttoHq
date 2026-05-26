@@ -1235,28 +1235,18 @@ CREATE TRIGGER closeout_package_items_sync_status
   AFTER INSERT OR DELETE ON closeout_package_items
   FOR EACH ROW EXECUTE FUNCTION closeout_package_items_sync_status();
 
--- ─── FOLLOW-UP (run manually, in order) ──────────────────────────────────────
--- Guardrail against the RLS-visibility bug fixed in gmail-intake.ts: a row
+-- ─── submittals.company_id NOT NULL guardrail ───────────────────────────────
+-- Guards against the RLS-visibility bug fixed in gmail-intake.ts: a row
 -- inserted with company_id = NULL is invisible to every "company select" RLS
 -- policy. The submittals.company_id DEFAULT (get_my_company_id()) silently
 -- resolves to NULL for any service-role insert (no auth.uid()), so a forgotten
--- company_id produces rows that exist but can never be seen in the app.
+-- company_id used to produce rows that existed but could never be seen.
 --
--- A NOT NULL constraint turns that silent data loss into a loud INSERT failure.
--- It is SAFE for user-session inserts (the DEFAULT always resolves there) — it
--- only rejects service-role inserts that omit company_id, which is the bug.
---
--- DO NOT run this until BOTH of the following are done, in this order:
---   1. The gmail-intake company_id fix is deployed to production.
---   2. The backfill below has run and STEP 3 returns 0 — the constraint cannot
---      be added while any company_id IS NULL row remains (it would error).
---
+-- NOT NULL turns that silent data loss into a loud INSERT failure. It is SAFE
+-- for user-session inserts (the DEFAULT always resolves there) — it only
+-- rejects service-role inserts that omit company_id, which is the bug.
+
 -- Backfill (idempotent — safe to re-run; mirrors the section-8 backfill above):
---   UPDATE submittals
---   SET company_id = (SELECT company_id FROM user_profiles WHERE user_id = submittals.uploaded_by)
---   WHERE company_id IS NULL AND uploaded_by IS NOT NULL;
---   -- verify — must return 0 before the ALTER below:
---   SELECT count(*) FROM submittals WHERE company_id IS NULL;
---
--- Then enforce:
---   ALTER TABLE submittals ALTER COLUMN company_id SET NOT NULL;
+UPDATE submittals SET company_id = (SELECT company_id FROM user_profiles WHERE user_id = submittals.uploaded_by) WHERE company_id IS NULL AND uploaded_by IS NOT NULL;
+
+ALTER TABLE submittals ALTER COLUMN company_id SET NOT NULL;

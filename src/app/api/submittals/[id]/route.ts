@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
-import { createClient as createServiceClient } from "@supabase/supabase-js"
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const supabase = await createClient()
@@ -50,21 +49,18 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 }
 
 export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  // Verify the user is authenticated first
-  const userClient = await createClient()
-  const { data: { user } } = await userClient.auth.getUser()
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
   const { id } = await params
 
-  // Use service role to bypass RLS for the soft-delete update
-  const admin = createServiceClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!,
-    { auth: { persistSession: false } }
-  )
+  const { data: row, error: selErr } = await supabase
+    .from("submittals").select("id").eq("id", id).maybeSingle()
+  if (selErr) return NextResponse.json({ error: "Database error" }, { status: 500 })
+  if (!row) return NextResponse.json({ error: "Not found" }, { status: 404 })
 
-  const { error } = await admin
+  const { error } = await supabase
     .from("submittals")
     .update({ status: "deleted" })
     .eq("id", id)
