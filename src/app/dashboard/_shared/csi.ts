@@ -220,6 +220,10 @@ export const CSI_SECTIONS: Record<string, { code: string; name: string }[]> = {
 // ─── Submittal log section colour palette ────────────────────────────────────
 // Eight pastel triples that visually band the submittal log by spec section.
 // Class strings are literal so Tailwind's JIT keeps them in the build.
+//
+// Edit all three palettes together — Tailwind classes for UI, ARGB for Excel
+// export. SECTION_PALETTE, SECTION_PALETTE_HEX, and SECTION_CHIP_HEX MUST stay
+// aligned by index.
 export interface SectionColor { bg: string; border: string; chip: string }
 
 export const SECTION_PALETTE: SectionColor[] = [
@@ -231,6 +235,30 @@ export const SECTION_PALETTE: SectionColor[] = [
   { bg: "bg-rose-50",    border: "border-l-rose-300",    chip: "bg-rose-100 text-rose-700"       },
   { bg: "bg-cyan-50",    border: "border-l-cyan-300",    chip: "bg-cyan-100 text-cyan-700"       },
   { bg: "bg-lime-50",    border: "border-l-lime-300",    chip: "bg-lime-100 text-lime-700"       },
+]
+
+// Row tint for the Excel export — Tailwind *-50 shades in ARGB.
+export const SECTION_PALETTE_HEX: string[] = [
+  "FFF8FAFC",  // slate-50
+  "FFEFF6FF",  // blue-50
+  "FFECFDF5",  // emerald-50
+  "FFFFFBEB",  // amber-50
+  "FFF5F3FF",  // violet-50
+  "FFFFF1F2",  // rose-50
+  "FFECFEFF",  // cyan-50
+  "FFF7FEE7",  // lime-50
+]
+
+// Spec # chip tint for the Excel export — Tailwind *-100 shades in ARGB.
+export const SECTION_CHIP_HEX: string[] = [
+  "FFF1F5F9",  // slate-100
+  "FFDBEAFE",  // blue-100
+  "FFD1FAE5",  // emerald-100
+  "FFFEF3C7",  // amber-100
+  "FFEDE9FE",  // violet-100
+  "FFFFE4E6",  // rose-100
+  "FFCFFAFE",  // cyan-100
+  "FFECFCCB",  // lime-100
 ]
 
 /**

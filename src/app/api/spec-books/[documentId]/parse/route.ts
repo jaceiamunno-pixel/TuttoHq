@@ -161,11 +161,6 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ do
 
       for (const { sec, items } of classified) {
         for (const it of items) {
-          const detail = it.sub_bullets.length > 0
-            ? ` – ${it.sub_bullets.join("; ")}`
-            : it.description
-              ? ` – ${it.description}`
-              : ""
           staged.push({
             project_document_id: documentId,
             spec_section_id:     sec.id,
@@ -174,7 +169,9 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ do
             letter:              it.letter || null,
             project_item_name:   sec.spec_title,
             submittal_type:      it.type,
-            description:         `${sec.spec_title} (${it.heading}${detail})`,
+            description:         it.sub_bullets.length > 0
+              ? it.sub_bullets.join("; ")
+              : (it.description || sec.spec_title),
             sub_bullets:         it.sub_bullets,
           })
         }

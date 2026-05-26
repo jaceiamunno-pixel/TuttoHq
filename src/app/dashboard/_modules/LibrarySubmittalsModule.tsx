@@ -15,6 +15,7 @@ import { SearchIcon, XIcon, PlusIcon, CheckIcon, SpinnerIcon, LayersIcon } from 
 import { StatusBadge } from "../_shared/badges"
 import { Combobox, inputCls, labelCls } from "../_shared/ui"
 import { presignAndUpload } from "@/lib/storage-upload"
+import { exportSubmittalLogToExcel } from "../_shared/excel-export"
 import PackageCreateModal, { type VendorPreset } from "@/components/packages/PackageCreateModal"
 import PackagesView from "@/components/packages/PackagesView"
 
@@ -557,6 +558,43 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
     }, 500))
   }
 
+  // ── Excel export ─────────────────────────────────────────────────────────────
+  // Replicates the table's in-render sort so the spreadsheet row order matches
+  // what the user sees on screen. `displaySubmittals` already accounts for the
+  // search filter; `groupBySection` flips between section/type/seq vs seq only.
+  const [exporting, setExporting] = useState(false)
+  async function handleExportLog() {
+    if (!activeProjectId) return
+    const project = appProjects.find(p => p.id === activeProjectId)
+    if (!project) return
+    const exportRows = [...displaySubmittals]
+    if (groupBySection) {
+      exportRows.sort((a, b) =>
+        (a.csi_section ?? "").localeCompare(b.csi_section ?? "") ||
+        (a.submittal_type ?? "").localeCompare(b.submittal_type ?? "") ||
+        (a.submittal_seq ?? 0) - (b.submittal_seq ?? 0))
+    } else {
+      exportRows.sort((a, b) => (a.submittal_seq ?? 0) - (b.submittal_seq ?? 0))
+    }
+    setExporting(true)
+    try {
+      await exportSubmittalLogToExcel({
+        rows: exportRows,
+        projectName: project.name,
+        vendorSubs,
+        vendorSuppliers,
+        appOrigin: window.location.origin,
+        groupedBySection: groupBySection,
+        isSearchMode,
+        searchQuery: query.trim() || null,
+      })
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Export failed")
+    } finally {
+      setExporting(false)
+    }
+  }
+
   // ── Reset Submittal Log ──────────────────────────────────────────────────────
   async function openResetConfirm(scope: "all" | "spec_ingestion") {
     setResetMenuOpen(false)
@@ -1061,6 +1099,21 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                   }`}
                 >
                   <CheckIcon /> {selectMode ? "Done" : "Select"}
+                </button>
+              )}
+              {submittalsView === "log" && activeProjectId && displaySubmittals.length > 0 && (
+                <button
+                  onClick={handleExportLog}
+                  disabled={exporting}
+                  title="Download the current view as an Excel spreadsheet"
+                  className="h-8 px-3 rounded-md border border-[#E2E8F0] text-[12px] font-semibold text-[#64748B] hover:bg-[#0F172A]/[0.04] transition-colors flex items-center gap-1.5 whitespace-nowrap disabled:opacity-60"
+                >
+                  {exporting ? <SpinnerIcon className="h-3.5 w-3.5" /> : (
+                    <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5 5-5M12 15V3" />
+                    </svg>
+                  )}
+                  <span className="hidden sm:inline">{exporting ? "Exporting…" : "Export"}</span>
                 </button>
               )}
               {submittalsView === "log" && activeProjectId && (
