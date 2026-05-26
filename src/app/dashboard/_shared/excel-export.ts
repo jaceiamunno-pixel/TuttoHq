@@ -15,6 +15,17 @@
 import type { SubmittalRecord, SubcontractorRow, SupplierRow } from "./types"
 import { SECTION_PALETTE_HEX_THP } from "./csi"
 
+// Light-gray cell border applied to every header/data/buffer cell in cols A-N.
+// Required because the section-tint and status fills render *over* Excel's
+// default sheet gridlines, hiding them; explicit thin borders restore the
+// visible cell boundary through the fill.
+const THIN_BORDER = {
+  top:    { style: "thin" as const, color: { argb: "FFD0D0D0" } },
+  left:   { style: "thin" as const, color: { argb: "FFD0D0D0" } },
+  bottom: { style: "thin" as const, color: { argb: "FFD0D0D0" } },
+  right:  { style: "thin" as const, color: { argb: "FFD0D0D0" } },
+}
+
 const STATUS_FALLBACK = { bg: "FFF3F4F6", fg: "FF6B7280" }  // gray-100 / gray-500
 const STATUS_FILL: Record<string, { bg: string; fg: string }> = {
   "Received":               { bg: "FFDBEAFE", fg: "FF1D4ED8" },
@@ -64,9 +75,13 @@ const COL_LATE   = 12
 const COL_SOURCE = 13
 const COL_OPEN   = 14
 
-// Helper cell layout — see /scripts/thp-template-report.txt.
-const HELPER_NOW_ROW       = 6   // S6  = NOW()
-const HELPER_CUTOFF_ROW    = 24  // S24 = S6 - 14  (today minus 14 days)
+// Helper cell layout — parks the NOW() / today-minus-14 cells in the wasted
+// space past the merged A1:L2 title (cols P/R/S, rows 1-2) so they can never
+// collide with a data row. Rows 1-2 are inside the frozen header zone and not
+// in the autofilter range, so they're invisible unless the user scrolls
+// horizontally past col N.
+const HELPER_NOW_ROW       = 1   // S1 = NOW()
+const HELPER_CUTOFF_ROW    = 2   // S2 = S1 - 14  (today minus 14 days)
 const HELPER_CUTOFF_REF    = `$S$${HELPER_CUTOFF_ROW}`
 
 // Extra empty rows appended after the last data row, pre-filled with formulas
@@ -167,10 +182,10 @@ export async function exportSubmittalLogToExcel(args: ExportSubmittalLogArgs): P
   ws.mergeCells(1, 1, 2, lastThpCol)
   const titleCell = ws.getCell(1, 1)
   titleCell.value = titleText
-  titleCell.font = { name: "Arial", size: 48 }
+  titleCell.font = { name: "Arial", size: 18 }
   titleCell.alignment = { horizontal: "center", vertical: "middle", wrapText: false }
-  ws.getRow(1).height = 60
-  ws.getRow(2).height = 60
+  ws.getRow(1).height = 24
+  ws.getRow(2).height = 24
 
   // ── 3) Header row (row 3) ───────────────────────────────────────────────
   const headerRow = ws.getRow(3)
@@ -182,6 +197,7 @@ export async function exportSubmittalLogToExcel(args: ExportSubmittalLogArgs): P
     cell.alignment = i === 2 // DESCRIPTION column = left/top in template
       ? { horizontal: "left", vertical: "top", wrapText: true }
       : { horizontal: "center", vertical: "middle", wrapText: true }
+    cell.border = THIN_BORDER
   })
 
   // ── 4) Section-tint colour map (THP palette, by appearance order) ───────
@@ -220,9 +236,12 @@ export async function exportSubmittalLogToExcel(args: ExportSubmittalLogArgs): P
     row.height = 17.4
     row.font = { name: "Calibri", size: 12 }
 
-    // Row tint pass — every cell A..N gets the section pastel.
+    // Row tint + border pass — every cell A..N gets the section pastel and
+    // an explicit thin border (the fill would otherwise mask sheet gridlines).
     for (let c = 1; c <= lastDataCol; c++) {
-      row.getCell(c).fill = { type: "pattern", pattern: "solid", fgColor: { argb: rowBg } }
+      const cell = row.getCell(c)
+      cell.fill   = { type: "pattern", pattern: "solid", fgColor: { argb: rowBg } }
+      cell.border = THIN_BORDER
     }
 
     // Date columns: format mmm d, yyyy (template has no formatted dates yet,
@@ -267,7 +286,11 @@ export async function exportSubmittalLogToExcel(args: ExportSubmittalLogArgs): P
     row.height = 17.4
     row.font = { name: "Calibri", size: 12 }
     // Date column formatting carries forward so manually entered dates render
-    // correctly on first paint.
+    // correctly on first paint. Borders applied to every A..N cell so blank
+    // buffer rows still show a visible grid.
+    for (let c = 1; c <= lastDataCol; c++) {
+      row.getCell(c).border = THIN_BORDER
+    }
     for (let c = COL_REC; c <= COL_RET_SUB; c++) {
       row.getCell(c).numFmt = "mmm d, yyyy"
     }
@@ -293,6 +316,8 @@ export async function exportSubmittalLogToExcel(args: ExportSubmittalLogArgs): P
   ws.getColumn(19).width = 10.7  // S
 
   // ── 8) Frozen panes (A4) + autofilter ──────────────────────────────────
+  // showGridLines is on so the row pastels don't appear to swallow the grid
+  // (fills can otherwise mask Excel's default sheet gridlines).
   ws.views = [{
     state: "frozen",
     xSplit: 0,
@@ -300,6 +325,7 @@ export async function exportSubmittalLogToExcel(args: ExportSubmittalLogArgs): P
     topLeftCell: "A4",
     zoomScale: 88,
     activeCell: "A4",
+    showGridLines: true,
   }]
   ws.autoFilter = {
     from: { row: 3, column: 1 },
