@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import { divisionNameFor, divisionNumberOf } from "@/lib/spec-parser"
-import { TYPE_LABELS, type SubmittalType } from "@/lib/spec-classifier"
 
 interface StagedRow {
   id: string
@@ -93,8 +92,7 @@ export async function POST(req: NextRequest) {
     }
     for (const group of groups.values()) {
       const head = group[0]
-      const label = TYPE_LABELS[head.submittal_type as SubmittalType] ?? head.submittal_type
-      submittalRows.push({ file_name: `${head.project_item_name} – ${label}`, ...baseFields(head) })
+      submittalRows.push({ file_name: head.project_item_name, ...baseFields(head) })
       stagedIdsPerRow.push(group.map(g => g.id))
     }
   }
