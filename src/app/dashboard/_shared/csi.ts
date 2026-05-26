@@ -271,3 +271,15 @@ export function sectionColorMap(sectionCodes: (string | null | undefined)[]): Ma
   distinct.forEach((code, i) => map.set(code, i % SECTION_PALETTE.length))
   return map
 }
+
+// THP-template palette for the Excel export only. Extracted verbatim from the
+// user's reference Submittal_Log.xlsx (22 distinct pastels, in template
+// appearance order). Kept separate from SECTION_PALETTE_HEX so the on-screen
+// log stays on the 8-colour Tailwind palette.
+export const SECTION_PALETTE_HEX_THP: string[] = [
+  "FFFFF2CC", "FFDEEBF7", "FFE2EFDA", "FFFCE4D6", "FFEDEDED",
+  "FFF4CCCC", "FFD9E1F2", "FFFFF4D6", "FFE4DFEC", "FFD0E0E3",
+  "FFFFE2CC", "FFD9EAD3", "FFF9CB9C", "FFCFE2F3", "FFEAD1DC",
+  "FFFFF8B0", "FFD5E8D4", "FFF8CECC", "FFDAE8FC", "FFE1D5E7",
+  "FFF5F5DC", "FFC5E1A5",
+]

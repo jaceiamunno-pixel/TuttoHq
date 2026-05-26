@@ -581,6 +581,7 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
       await exportSubmittalLogToExcel({
         rows: exportRows,
         projectName: project.name,
+        gcName: project.gc_name,
         vendorSubs,
         vendorSuppliers,
         appOrigin: window.location.origin,
