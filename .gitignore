@@ -7,3 +7,6 @@ node_modules/
 
 # TypeScript incremental build cache
 tsconfig.tsbuildinfo
+
+# Local debugging / Excel-export harness
+scripts/
