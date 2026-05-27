@@ -17,6 +17,7 @@ export async function GET(req: NextRequest) {
     .select("id, file_name, storage_path, mime_type, file_size, created_at")
     .eq("csi_section", code)
     .eq("status", "active")
+    .not("storage_path", "is", null)
     .order("file_name")
 
   if (error) {
