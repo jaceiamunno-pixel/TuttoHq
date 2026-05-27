@@ -287,6 +287,7 @@ export async function GET() {
     .from("submittals")
     .select("csi_division, csi_section, section_name, storage_path")
     .eq("status", "active")
+    .not("storage_path", "is", null)
     .order("csi_division")
     .order("csi_section")
 
