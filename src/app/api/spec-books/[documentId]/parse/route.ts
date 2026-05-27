@@ -154,7 +154,8 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ do
         try {
           const items = await classifySubmittals(client, sec.spec_number, sec.spec_title, sec.submittals_text ?? "")
           return { sec, items }
-        } catch {
+        } catch (err) {
+          console.error(`[spec-books/parse] classify failed for section ${sec.spec_number}`, err)
           return { sec, items: [] }
         }
       })

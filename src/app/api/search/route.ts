@@ -56,7 +56,8 @@ Rules:
       sections:  Array.isArray(parsed.sections)  ? parsed.sections  : [],
       summary:   typeof parsed.summary === "string" ? parsed.summary : "",
     }
-  } catch {
+  } catch (err) {
+    console.error("[search] AI query expansion failed, falling back to literal terms", err)
     return { terms: [query], divisions: [], sections: [], summary: "" }
   }
 }

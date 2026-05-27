@@ -348,7 +348,8 @@ export default function SettingsPage() {
       if (!res.ok) throw new Error("Delete failed")
       setGmailConn({ connected: false })
       flashGmail("Gmail account disconnected.")
-    } catch {
+    } catch (err) {
+      console.error("[settings] disconnectGmail failed", err)
       flashGmail("Failed to disconnect. Please try again.", false)
     } finally {
       setDisconnecting(false)
@@ -391,7 +392,8 @@ export default function SettingsPage() {
       const data = await uploadAsset("logo", file)
       if (data.logo_url) setLogoUrl(data.logo_url)
       flashCompany("Logo updated successfully")
-    } catch {
+    } catch (err) {
+      console.error("[settings] logo upload failed", err)
       flashCompany("Logo upload failed", false)
     } finally {
       setUploadingLogo(false)
@@ -412,7 +414,8 @@ export default function SettingsPage() {
       await uploadAsset("cover_page", file)
       setHasCoverPage(true)
       flashCompany("Cover page updated successfully")
-    } catch {
+    } catch (err) {
+      console.error("[settings] cover page upload failed", err)
       flashCompany("Cover page upload failed", false)
     } finally {
       setUploadingCover(false)
@@ -504,7 +507,8 @@ export default function SettingsPage() {
         flashTeam("Member added")
       }
       cancelMemberForm()
-    } catch {
+    } catch (err) {
+      console.error("[settings] team member save failed", err)
       flashTeam("Save failed", false)
     } finally {
       setSavingMember(false)
@@ -601,7 +605,10 @@ export default function SettingsPage() {
           if (!tocRes.ok) return null
           const tocData = await tocRes.json()
           return { sections: tocData.sections ?? [], divisions: tocData.divisions ?? [] } as Toc
-        } catch { return null }
+        } catch (err) {
+          console.error(`[settings] TOC parse failed for doc ${doc.id}`, err)
+          return null
+        }
       }))
       const merged = mergeTocs(results.filter((t): t is Toc => t !== null))
       if (merged.sections.length === 0) return false
@@ -612,7 +619,8 @@ export default function SettingsPage() {
       setScopeDivisions(new Set(merged.divisions.filter(dv => isDefaultInScopeDivision(dv.code)).map(dv => dv.code)))
       setWizardStep(2)
       return true
-    } catch {
+    } catch (err) {
+      console.error("[settings] scope wizard TOC load failed", err)
       return false
     }
   }
@@ -819,7 +827,8 @@ export default function SettingsPage() {
           cancelProjectForm()
         }
       }
-    } catch {
+    } catch (err) {
+      console.error("[settings] project save failed", err)
       flashProject("Save failed", false)
     } finally {
       setSavingProject(false)
@@ -890,7 +899,8 @@ export default function SettingsPage() {
       }
       setTeamImportRows(null)
       flashTeam(`Imported ${data.imported} member${data.imported !== 1 ? "s" : ""} successfully`)
-    } catch {
+    } catch (err) {
+      console.error("[settings] team import failed", err)
       flashTeam("Import failed", false)
     } finally {
       setTeamImporting(false)
@@ -941,7 +951,8 @@ export default function SettingsPage() {
       }
       setProjectImportRows(null)
       flashProject(`Imported ${data.imported} project${data.imported !== 1 ? "s" : ""} successfully`)
-    } catch {
+    } catch (err) {
+      console.error("[settings] project import failed", err)
       flashProject("Import failed", false)
     } finally {
       setProjectImporting(false)
@@ -975,7 +986,7 @@ export default function SettingsPage() {
       if (editingCm) { setCms(prev => prev.map(c => c.id === editingCm.id ? data : c)); flashCm("CM updated") }
       else { setCms(prev => [...prev, data]); flashCm("CM added") }
       cancelCmForm()
-    } catch { flashCm("Save failed", false) } finally { setSavingCm(false) }
+    } catch (err) { console.error("[settings] CM save failed", err); flashCm("Save failed", false) } finally { setSavingCm(false) }
   }
 
   async function deleteCm(c: ConstructionManager) {
@@ -1025,7 +1036,7 @@ export default function SettingsPage() {
       if (editingSub) { setSubcontractors(prev => prev.map(s => s.id === editingSub.id ? data : s)); flashSub("Subcontractor updated") }
       else { setSubcontractors(prev => [...prev, data]); flashSub("Subcontractor added") }
       cancelSubForm()
-    } catch { flashSub("Save failed", false) } finally { setSavingSub(false) }
+    } catch (err) { console.error("[settings] subcontractor save failed", err); flashSub("Save failed", false) } finally { setSavingSub(false) }
   }
 
   async function deleteSub(s: Subcontractor) {
@@ -1052,7 +1063,7 @@ export default function SettingsPage() {
       if (editingSuppl) { setSuppliers(prev => prev.map(s => s.id === editingSuppl.id ? data : s)); flashSuppl("Supplier updated") }
       else { setSuppliers(prev => [...prev, data]); flashSuppl("Supplier added") }
       cancelSupplForm()
-    } catch { flashSuppl("Save failed", false) } finally { setSavingSuppl(false) }
+    } catch (err) { console.error("[settings] supplier save failed", err); flashSuppl("Save failed", false) } finally { setSavingSuppl(false) }
   }
 
   async function deleteSuppl(s: Supplier) {

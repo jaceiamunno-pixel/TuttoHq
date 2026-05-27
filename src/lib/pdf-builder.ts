@@ -230,7 +230,10 @@ export class PDFBuilder {
     try { return await this.doc.embedPng(bytes) }
     catch {
       try { return await this.doc.embedJpg(bytes) }
-      catch { return null }
+      catch (err) {
+        console.error("[pdf-builder] failed to embed image as PNG or JPG", err)
+        return null
+      }
     }
   }
 

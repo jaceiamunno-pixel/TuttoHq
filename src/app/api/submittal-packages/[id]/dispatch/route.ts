@@ -53,7 +53,8 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
   let accessToken: string
   try {
     accessToken = await getValidToken(supabase, user.id)
-  } catch {
+  } catch (err) {
+    console.error(`[submittal-packages/dispatch] getValidToken failed for user ${user.id}`, err)
     return NextResponse.json(
       { error: "Connect a Gmail account in Settings before dispatching packages." },
       { status: 400 },
@@ -75,6 +76,7 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
   try {
     ({ bytes: pdfBytes, storagePath } = await composePackagePdf(supabase, id))
   } catch (err) {
+    console.error(`[submittal-packages/dispatch] composePackagePdf failed for package ${id}`, err)
     return NextResponse.json(
       { error: err instanceof Error ? err.message : "Failed to generate the package PDF" },
       { status: 500 },
@@ -116,6 +118,7 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
       }],
     })
   } catch (err) {
+    console.error(`[submittal-packages/dispatch] sendGmailMessage failed for package ${id}`, err)
     return NextResponse.json(
       { error: err instanceof Error ? err.message : "Failed to send the dispatch email" },
       { status: 502 },

@@ -24,6 +24,7 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
   try {
     ({ storagePath } = await composePackagePdf(supabase, id))
   } catch (err) {
+    console.error(`[submittal-packages/pdf] composePackagePdf failed for package ${id}`, err)
     return NextResponse.json(
       { error: err instanceof Error ? err.message : "Failed to generate package PDF" },
       { status: 500 },

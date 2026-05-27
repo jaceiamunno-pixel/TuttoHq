@@ -24,6 +24,7 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
   try {
     ({ storagePath } = await composeCloseoutPackagePdf(supabase, id))
   } catch (err) {
+    console.error(`[closeout-packages/pdf] composeCloseoutPackagePdf failed for package ${id}`, err)
     return NextResponse.json(
       { error: err instanceof Error ? err.message : "Failed to generate package PDF" },
       { status: 500 },

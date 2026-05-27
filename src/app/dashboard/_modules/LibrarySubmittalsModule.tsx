@@ -206,7 +206,9 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
     try {
       const saved = localStorage.getItem("submittal-hidden-divisions")
       if (saved) setHiddenDivisions(new Set(JSON.parse(saved)))
-    } catch {}
+    } catch (err) {
+      console.error("[library] failed to restore hidden divisions from localStorage", err)
+    }
   }, [])
 
   useEffect(() => {
@@ -214,7 +216,7 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
       fetch("/api/submittal-names")
         .then(r => r.json())
         .then(d => setNameOpts(d))
-        .catch(() => {})
+        .catch(err => console.error("[library] failed to load submittal names", err))
     }
   }, [showUpload, showBatch])
 
@@ -417,7 +419,8 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
       const res  = await fetch(`/api/files?code=${encodeURIComponent(code)}`)
       const data = await res.json()
       setSectionFiles(prev => ({ ...prev, [code]: data.files ?? [] }))
-    } catch {
+    } catch (err) {
+      console.error(`[library] failed to load files for section ${code}`, err)
       setSectionFiles(prev => ({ ...prev, [code]: [] }))
     } finally {
       setLoadingSections(prev => { const n = new Set(prev); n.delete(code); return n })
@@ -606,7 +609,10 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
       const r = await fetch(`/api/submittals/reset?project_id=${encodeURIComponent(activeProjectId)}&scope=${scope}`)
       const d = await r.json()
       setResetCount(r.ok ? (d.count ?? 0) : 0)
-    } catch { setResetCount(0) }
+    } catch (err) {
+      console.error("[library] failed to fetch reset preview count", err)
+      setResetCount(0)
+    }
   }
 
   async function doReset() {
@@ -902,7 +908,8 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
         } else {
           updateBatchItem(item.id, { status: "error", errorMsg: "Could not classify — assign manually" })
         }
-      } catch {
+      } catch (err) {
+        console.error(`[library] classify failed for ${item.file.name}`, err)
         updateBatchItem(item.id, { status: "error", errorMsg: "Network error" })
       }
     }
@@ -947,7 +954,8 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
           }),
         })
         updateBatchItem(item.id, { status: res.ok ? "done" : "upload-error", errorMsg: res.ok ? undefined : "Upload failed" })
-      } catch {
+      } catch (err) {
+        console.error(`[library] upload failed for ${item.file.name}`, err)
         updateBatchItem(item.id, { status: "upload-error", errorMsg: "Network error" })
       }
     }
@@ -2227,7 +2235,8 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                     try {
                       ;({ path } = await presignAndUpload("submittals", "uploads", f))
                       setUploadFilePath(path)
-                    } catch {
+                    } catch (err) {
+                      console.error("[library] presign/upload failed", err)
                       setUploadError("Upload failed. Please try again.")
                       setUploadFile(null)
                       setUploadStep("file")
@@ -2247,7 +2256,9 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                           return
                         }
                       }
-                    } catch {}
+                    } catch (err) {
+                      console.error("[library] classify request failed", err)
+                    }
                     setUploadStep("manual")
                   }}
                   required
