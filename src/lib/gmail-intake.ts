@@ -258,6 +258,7 @@ export async function processGmailNotification(emailAddress: string, historyId: 
     await processMessage(
       supabase, anthropic, accessToken, msgId,
       conn.user_id as string, (conn.company_id as string | null) ?? null,
+      emailAddress,
     )
   }
 
@@ -273,6 +274,11 @@ async function processMessage(
   messageId: string,
   userId: string,
   companyId: string | null,
+  // The connected mailbox's own Gmail address — the From: address on every
+  // outbound TuttoHQ dispatches from this connection. Used by the self-loop
+  // guard below to discriminate our own outbound (skip) from legitimate sub
+  // replies (let match-back handle them).
+  connectedMailbox: string,
 ): Promise<void> {
   log("message-fetch", { messageId })
 
@@ -296,6 +302,62 @@ async function processMessage(
   const senderName  = fromMatch?.[1]?.trim() || fromRaw
   const senderEmail = fromMatch?.[2]?.trim() || fromRaw
   const receivedAt  = dateHeader ? new Date(dateHeader).toISOString() : new Date().toISOString()
+
+  // ── Self-loop guard (K2) ────────────────────────────────────────────────────
+  // Skip only when an inbound message is our OWN outbound looping back through
+  // the connected mailbox's Gmail history: subject carries a TuttoHQ-issued
+  // [TTQ-...] tracking ref AND the sender is the connected mailbox itself.
+  // Comparison is lowercase-vs-lowercase because Gmail addresses are
+  // case-insensitive. A [TTQ-...] subject from any other sender is a
+  // legitimate sub reply and falls through to the Session I/K1 match-back
+  // resolver below.
+  //
+  // Defensive: if connectedMailbox is empty (would indicate an upstream
+  // wiring bug — processGmailNotification uses it as the connection lookup
+  // key), we over-process rather than risk dropping a real reply silently.
+  //
+  // The skip is recorded in gmail_intake_skips for observability. company_id
+  // is set explicitly because its DEFAULT resolves to NULL under the
+  // service-role client, and a NULL company_id would make the row invisible
+  // to the read-only RLS policy. The (gmail_message_id, reason) UNIQUE +
+  // ignoreDuplicates upsert option absorb Pub/Sub redeliveries silently.
+  if (PACKAGE_TAG_RE.test(subject)) {
+    const fromAddr = (senderEmail || "").toLowerCase().trim()
+    const ownAddr  = connectedMailbox.toLowerCase().trim()
+    const isSelfLoop = !!ownAddr && !!fromAddr && fromAddr === ownAddr
+
+    if (!ownAddr) {
+      log("self-loop-check: connectedMailbox unavailable — falling through", { messageId, subject })
+    } else if (isSelfLoop && !companyId) {
+      // Detected self-loop, but cannot satisfy gmail_intake_skips.company_id
+      // NOT NULL — so we cannot audit. Fall through with a warning rather
+      // than silently drop: better to risk re-processing one bogus row (it
+      // hits the same companyId guard in processAttachment and bails) than
+      // to make a self-loop invisible to ops.
+      log("self-loop-check: detected but companyId missing — falling through without audit", { messageId, subject })
+    } else if (isSelfLoop) {
+      const { error: skipErr } = await supabase
+        .from("gmail_intake_skips")
+        .upsert(
+          {
+            gmail_message_id: messageId,
+            subject,
+            sender_email:     senderEmail || null,
+            reason:           "self_loop_skipped",
+            company_id:       companyId,
+          },
+          { onConflict: "gmail_message_id,reason", ignoreDuplicates: true },
+        )
+      if (skipErr) {
+        log("FAIL self-loop-skip-log", { messageId, error: skipErr.message, code: skipErr.code })
+      } else {
+        log("self-loop-skipped", { messageId, subject, senderEmail })
+      }
+      return
+    }
+    // External sender, missing mailbox, or self-loop-without-companyId → fall
+    // through to match-back / normal processing.
+  }
 
   const attachments = collectAttachments(msg.payload ?? {})
 
