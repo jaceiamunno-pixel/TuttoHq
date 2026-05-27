@@ -3,6 +3,8 @@ import { createClient } from "@/lib/supabase/server"
 import { PDFDocument } from "pdf-lib"
 import { PDFBuilder, type FieldCell } from "@/lib/pdf-builder"
 
+export const maxDuration = 60
+
 export async function POST(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()

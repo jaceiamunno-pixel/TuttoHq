@@ -4,6 +4,8 @@ import { getValidToken } from "@/lib/gmail"
 import { sendGmailMessage } from "@/lib/gmail-send"
 import { composePackagePdf } from "@/lib/package-pdf"
 
+export const maxDuration = 60
+
 // POST /api/submittal-packages/[id]/dispatch — generate the package PDF, email
 // it to the vendor through the PM's connected Gmail, and apply the side
 // effects: status → dispatched, every item submittal gets sent_to_sub_date +

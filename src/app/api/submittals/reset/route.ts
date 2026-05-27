@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 
+export const maxDuration = 30
+
 // Reset Submittal Log — hard-deletes submittals for a project.
 //  - scope = "all":            every submittal in the project
 //  - scope = "spec_ingestion": only AI-staged rows (source = 'spec_ingestion'),

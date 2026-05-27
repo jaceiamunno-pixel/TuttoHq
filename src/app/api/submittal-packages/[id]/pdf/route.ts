@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import { composePackagePdf } from "@/lib/package-pdf"
 
+export const maxDuration = 60
+
 // POST /api/submittal-packages/[id]/pdf — (re)generate the package PDF and
 // return a signed URL. Used by the preview-before-dispatch modal.
 export async function POST(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {

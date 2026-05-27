@@ -4,6 +4,8 @@ import { getValidToken } from "@/lib/gmail"
 import { sendGmailMessage } from "@/lib/gmail-send"
 import { composeCloseoutPackagePdf } from "@/lib/closeout-package-pdf"
 
+export const maxDuration = 60
+
 // POST /api/closeout-packages/[id]/dispatch — generate the package PDF, email
 // it to the vendor through the PM's connected Gmail, and flip the package
 // status → dispatched. Closeout items themselves are unchanged on dispatch;
