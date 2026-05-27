@@ -115,15 +115,15 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ do
     }
 
     // Backfill project_scope_sections.spec_section_id for the sections just
-    // created (matched by spec_number).
+    // created (matched by spec_number). Each update is independent.
     if (hasScope) {
-      for (const sec of insertedSections) {
-        await supabase
+      await Promise.all(insertedSections.map(sec =>
+        supabase
           .from("project_scope_sections")
           .update({ spec_section_id: sec.id })
           .eq("project_id", doc.project_id)
           .eq("spec_number", sec.spec_number)
-      }
+      ))
     }
 
     await supabase

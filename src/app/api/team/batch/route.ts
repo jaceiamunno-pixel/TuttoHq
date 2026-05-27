@@ -15,26 +15,23 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "members must be an array" }, { status: 400 })
   }
 
-  const inserted: unknown[] = []
-  const errors: string[] = []
-
-  for (let i = 0; i < members.length; i++) {
-    const { name, title, email } = members[i]
+  type RowResult = { data?: unknown; error?: string }
+  const results: RowResult[] = await Promise.all(members.map(async (m, i): Promise<RowResult> => {
+    const { name, title, email } = m
     if (!name?.trim()) {
-      errors.push(`Row ${i + 1}: Name is required`)
-      continue
+      return { error: `Row ${i + 1}: Name is required` }
     }
     const { data, error } = await supabase
       .from("team_members")
       .insert({ name: name.trim(), title: title?.trim() || null, email: email?.trim() || null })
       .select("id, name, title, email, created_at")
       .single()
-    if (error) {
-      errors.push(`Row ${i + 1} (${name}): ${error.message}`)
-    } else {
-      inserted.push(data)
-    }
-  }
+    if (error) return { error: `Row ${i + 1} (${name}): ${error.message}` }
+    return { data }
+  }))
+
+  const inserted = results.filter(r => r.data !== undefined).map(r => r.data)
+  const errors = results.flatMap(r => (r.error ? [r.error] : []))
 
   return NextResponse.json({ members: inserted, imported: inserted.length, errors })
 }
