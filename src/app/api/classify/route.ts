@@ -3,6 +3,8 @@ import Anthropic from "@anthropic-ai/sdk"
 import { createClient } from "@/lib/supabase/server"
 import { createAdminClient } from "@/lib/supabase/admin"
 
+export const maxDuration = 60
+
 const CSI_LIST = `
 03: Concrete — 03 10 00 Concrete Forming & Accessories, 03 20 00 Concrete Reinforcing, 03 30 00 Cast-in-Place Concrete, 03 40 00 Precast Concrete, 03 50 00 Cast Decks & Underlayment, 03 60 00 Grouting, 03 70 00 Mass Concrete, 03 80 00 Concrete Cutting & Boring
 04: Masonry — 04 20 00 Unit Masonry, 04 40 00 Stone Assemblies, 04 50 00 Refractory Masonry, 04 60 00 Corrosion-Resistant Masonry, 04 70 00 Manufactured Masonry

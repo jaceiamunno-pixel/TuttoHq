@@ -19,6 +19,7 @@ export async function POST() {
 
     return NextResponse.json({ ok: true, watch_expiry })
   } catch (e) {
+    console.error("[gmail/watch] setup failed", e)
     const message = e instanceof Error ? e.message : "Watch setup failed"
     return NextResponse.json({ error: message }, { status: 500 })
   }

@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse, after } from "next/server"
 import { processGmailNotification } from "@/lib/gmail-intake"
 
+export const maxDuration = 60
+
 export async function POST(req: NextRequest) {
   // Validate shared secret
   const token = req.nextUrl.searchParams.get("token")

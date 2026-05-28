@@ -4,6 +4,8 @@ import { getValidToken } from "@/lib/gmail"
 import { sendGmailMessage } from "@/lib/gmail-send"
 import { composeCloseoutPackagePdf } from "@/lib/closeout-package-pdf"
 
+export const maxDuration = 60
+
 // POST /api/closeout-packages/[id]/dispatch — generate the package PDF, email
 // it to the vendor through the PM's connected Gmail, and flip the package
 // status → dispatched. Closeout items themselves are unchanged on dispatch;
@@ -49,7 +51,8 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
   let accessToken: string
   try {
     accessToken = await getValidToken(supabase, user.id)
-  } catch {
+  } catch (err) {
+    console.error(`[closeout-packages/dispatch] getValidToken failed for user ${user.id}`, err)
     return NextResponse.json(
       { error: "Connect a Gmail account in Settings before dispatching packages." },
       { status: 400 },
@@ -69,6 +72,7 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
   try {
     ({ bytes: pdfBytes, storagePath } = await composeCloseoutPackagePdf(supabase, id))
   } catch (err) {
+    console.error(`[closeout-packages/dispatch] composeCloseoutPackagePdf failed for package ${id}`, err)
     return NextResponse.json(
       { error: err instanceof Error ? err.message : "Failed to generate the package PDF" },
       { status: 500 },
@@ -108,6 +112,7 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
       }],
     })
   } catch (err) {
+    console.error(`[closeout-packages/dispatch] sendGmailMessage failed for package ${id}`, err)
     return NextResponse.json(
       { error: err instanceof Error ? err.message : "Failed to send the dispatch email" },
       { status: 502 },

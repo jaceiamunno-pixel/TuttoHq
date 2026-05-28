@@ -160,7 +160,8 @@ export async function classifySubmittals(
   let parsed: unknown
   try {
     parsed = JSON.parse(match[0])
-  } catch {
+  } catch (err) {
+    console.error("[spec-classifier] failed to parse Claude JSON response", err)
     return []
   }
 

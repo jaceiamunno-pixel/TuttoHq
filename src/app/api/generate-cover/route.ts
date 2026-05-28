@@ -4,6 +4,8 @@ import { PDFDocument } from "pdf-lib"
 import { type SubmittalCoversheetProps } from "@/components/submittals/SubmittalCoversheet"
 import { buildCoversheetPdf } from "@/lib/coversheet-pdf"
 
+export const maxDuration = 60
+
 export async function POST(req: NextRequest) {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()

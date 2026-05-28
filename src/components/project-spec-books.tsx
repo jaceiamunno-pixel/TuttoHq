@@ -140,7 +140,8 @@ export default function ProjectSpecBooks({ projectId, projectName, onCountChange
         staged.filter(s => s.committed_at && s.committed_submittal_id).map(s => s.committed_submittal_id),
       ).size
       setDeleteCounts({ sections: sections.length, uncommitted, committed })
-    } catch {
+    } catch (err) {
+      console.error(`[spec-books] failed to fetch delete preview for doc ${doc.id}`, err)
       setDeleteCounts({ sections: 0, uncommitted: 0, committed: 0 })
     }
   }

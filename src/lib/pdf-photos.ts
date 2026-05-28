@@ -69,7 +69,8 @@ async function loadOne(supabase: ServerSupabase, row: PhotoRow): Promise<PDFPhot
       .jpeg({ quality: JPEG_QUALITY })
       .toBuffer()
     return { bytes: new Uint8Array(resized), caption }
-  } catch {
+  } catch (err) {
+    console.error("[pdf-photos] failed to resize/encode photo", err)
     return { bytes: null, caption }
   }
 }
