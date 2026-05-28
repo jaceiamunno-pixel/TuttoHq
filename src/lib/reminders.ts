@@ -21,7 +21,7 @@ import { getValidToken } from "./gmail"
 import { sendGmailMessage } from "./gmail-send"
 import { composePackagePdf } from "./package-pdf"
 import { composeCloseoutPackagePdf } from "./closeout-package-pdf"
-import { resolveEffectiveSettings } from "./reminder-settings"
+import { resolveEffectiveSettings, type CompanyReminderDefaults } from "./reminder-settings"
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnySupabase = SupabaseClient<any, any, any>
@@ -113,10 +113,14 @@ async function fetchCandidates(
 ): Promise<DueCandidateRow[]> {
   const { packagesTable, remindersTable } = KIND[kind]
 
-  // Postgres-side COALESCE keeps the row count small and means the runner
-  // never has to look up company_settings separately. The reminders count
-  // is a correlated subquery — fine at the small row counts we expect
-  // (active dispatched packages per tenant).
+  // Two-step fetch (packages → company_settings) instead of a PostgREST
+  // embed: there is no FK from {packagesTable}.company_id to company_settings
+  // — both reference companies.id, but PostgREST's embed needs a direct FK
+  // between the two embedded tables to build the join. Adding a synthetic
+  // FK would misrepresent the relationship (both belong to a company,
+  // neither owns the other). The two queries return identical data with
+  // negligible overhead at the small row counts we expect (active
+  // dispatched packages per tenant).
   const { data, error } = await supabase
     .from(packagesTable)
     .select(`
@@ -134,12 +138,7 @@ async function fetchCandidates(
       reminder_max_count,
       reminder_attach_pdf,
       reminders_paused,
-      status,
-      company_settings:company_id (
-        reminder_cadence_days,
-        reminder_max_count,
-        reminder_default_attach_pdf
-      )
+      status
     `)
     .in("status", ["dispatched", "partial_received"])
     .eq("reminders_paused", false)
@@ -148,6 +147,39 @@ async function fetchCandidates(
   if (error) {
     log("FAIL candidates-query", { kind, error: error.message })
     return []
+  }
+
+  // Per-tenant company defaults — one row per company_id (enforced by the
+  // idx_company_settings_company unique index). Missing rows fall through
+  // to the hardcoded FALLBACK_* constants in resolveEffectiveSettings.
+  const companyIds = Array.from(new Set(
+    (data ?? []).map(r => (r as { company_id: string }).company_id).filter(Boolean),
+  ))
+  const csMap = new Map<string, CompanyReminderDefaults>()
+  if (companyIds.length > 0) {
+    const { data: csRows, error: csErr } = await supabase
+      .from("company_settings")
+      .select("company_id, reminder_cadence_days, reminder_max_count, reminder_default_attach_pdf")
+      .in("company_id", companyIds)
+    if (csErr) {
+      // Log + continue with an empty map. resolveEffectiveSettings will
+      // hit FALLBACK_* constants for every package this tick — preferable
+      // to dropping the whole run.
+      log("FAIL company-settings-query", { kind, error: csErr.message })
+    } else {
+      for (const row of (csRows ?? []) as Array<{
+        company_id: string
+        reminder_cadence_days: number[] | null
+        reminder_max_count: number | null
+        reminder_default_attach_pdf: boolean | null
+      }>) {
+        csMap.set(row.company_id, {
+          reminder_cadence_days:       row.reminder_cadence_days,
+          reminder_max_count:          row.reminder_max_count,
+          reminder_default_attach_pdf: row.reminder_default_attach_pdf,
+        })
+      }
+    }
   }
 
   // Pull per-package reminder counts in one round-trip and bucket them.
@@ -165,9 +197,9 @@ async function fetchCandidates(
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   return (data ?? []).map((raw: any): DueCandidateRow => {
-    const cs = Array.isArray(raw.company_settings) ? raw.company_settings[0] : raw.company_settings
     // Shared resolver — same code path as the settings GET route, so the
     // cron and UI can never disagree about what's going to run.
+    const cs = csMap.get(raw.company_id) ?? null
     const eff = resolveEffectiveSettings(
       {
         reminder_cadence_days: raw.reminder_cadence_days,
@@ -175,7 +207,7 @@ async function fetchCandidates(
         reminder_attach_pdf:   raw.reminder_attach_pdf,
         reminders_paused:      raw.reminders_paused,
       },
-      cs ?? null,
+      cs,
     )
     return {
       id:                   raw.id,
