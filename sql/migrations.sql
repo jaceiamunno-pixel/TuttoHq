@@ -1587,6 +1587,12 @@ AS $$
 $$;
 
 GRANT EXECUTE ON FUNCTION get_invite_by_token(text) TO anon, authenticated;
+-- Tighten the ACL: Postgres default-grants PUBLIC on new functions, but we
+-- want the grant set to be intentional (anon + authenticated only).
+-- Functionally equivalent — anon already covers unauthenticated callers —
+-- but the explicit REVOKE matches the pattern used by accept_invite_link
+-- and the Phase 5 functions.
+REVOKE EXECUTE ON FUNCTION get_invite_by_token(text) FROM PUBLIC;
 
 -- --- Multi-user accounts: Phase 4 — atomic accept-invite operation ---------
 --
