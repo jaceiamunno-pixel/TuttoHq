@@ -1430,3 +1430,99 @@ CREATE POLICY "gmail_intake_skips: company select" ON gmail_intake_skips
 CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_company_short_id
   ON projects (company_id, short_id)
   WHERE short_id IS NOT NULL;
+
+-- --- Multi-user accounts: Phase 1 schema (no behavior change yet) ----------
+-- Lays the data model for two-role (admin/member) team accounts with an
+-- email-invite join flow built in later phases. Phase 1 adds:
+--   - user_profiles.role with backfill to 'admin' for existing users
+--   - get_my_role() security-definer helper, mirrors get_my_company_id()
+--   - projects.created_by with ON DELETE SET NULL (removing a user
+--     preserves their projects; company_id keeps the project owned)
+--   - company_invites table with admin-only write RLS
+-- No existing routes are role-gated yet. Phase 2 adds gating, Phase 3 the
+-- invite UI/API, Phase 4 the token-based accept flow (which will use a
+-- security-definer function to read invites by token without a session,
+-- not the policies below).
+
+ALTER TABLE user_profiles
+  ADD COLUMN IF NOT EXISTS role text NOT NULL DEFAULT 'member'
+  CHECK (role IN ('admin','member'));
+
+UPDATE user_profiles SET role = 'admin';
+
+CREATE OR REPLACE FUNCTION get_my_role()
+RETURNS text
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT role FROM user_profiles WHERE user_id = auth.uid()
+$$;
+
+ALTER TABLE projects
+  ADD COLUMN IF NOT EXISTS created_by uuid REFERENCES auth.users(id) ON DELETE SET NULL;
+
+UPDATE projects p
+SET created_by = (
+  SELECT up.user_id FROM user_profiles up WHERE up.company_id = p.company_id LIMIT 1
+)
+WHERE p.created_by IS NULL;
+
+CREATE TABLE IF NOT EXISTS company_invites (
+  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  company_id  uuid NOT NULL REFERENCES companies(id),
+  email       text NOT NULL,
+  role        text NOT NULL DEFAULT 'member' CHECK (role IN ('admin','member')),
+  token       text NOT NULL UNIQUE,
+  invited_by  uuid NOT NULL REFERENCES auth.users(id),
+  status      text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','accepted','revoked','expired')),
+  expires_at  timestamptz NOT NULL,
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  accepted_at timestamptz
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_company_invites_pending_unique
+  ON company_invites (company_id, email) WHERE status = 'pending';
+-- token is already uniquely indexed via the inline UNIQUE constraint
+-- (company_invites_token_key); no extra btree needed.
+CREATE INDEX IF NOT EXISTS idx_company_invites_company ON company_invites (company_id);
+
+ALTER TABLE company_invites ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "company_invites: company select" ON company_invites;
+CREATE POLICY "company_invites: company select" ON company_invites
+  FOR SELECT TO authenticated
+  USING (company_id = get_my_company_id());
+
+DROP POLICY IF EXISTS "company_invites: admin insert" ON company_invites;
+CREATE POLICY "company_invites: admin insert" ON company_invites
+  FOR INSERT TO authenticated
+  WITH CHECK (company_id = get_my_company_id() AND get_my_role() = 'admin');
+
+DROP POLICY IF EXISTS "company_invites: admin update" ON company_invites;
+CREATE POLICY "company_invites: admin update" ON company_invites
+  FOR UPDATE TO authenticated
+  USING (company_id = get_my_company_id() AND get_my_role() = 'admin');
+
+DROP POLICY IF EXISTS "company_invites: admin delete" ON company_invites;
+CREATE POLICY "company_invites: admin delete" ON company_invites
+  FOR DELETE TO authenticated
+  USING (company_id = get_my_company_id() AND get_my_role() = 'admin');
+
+-- --- Multi-user accounts: Phase 2 role gating (RLS backstop) ----------------
+-- Tightens the company_settings UPDATE policy to require admin role. Route
+-- handlers (/api/settings POST, /api/settings/reminders PATCH) enforce this
+-- with a clean 403; the policy below is the backstop so any future code path
+-- that reaches the table goes through the same gate. INSERT/SELECT/DELETE
+-- policies left at company scope: SELECT must work for every member so the
+-- Settings page can render the logo + cadence; INSERT only fires on the
+-- first save of a new tenant (the user is implicitly admin); DELETE is not
+-- used by the app. Project DELETE RLS is intentionally NOT tightened — the
+-- creator-or-admin check lives in the route handler only, per the spec.
+
+DROP POLICY IF EXISTS "company_settings: company update" ON company_settings;
+CREATE POLICY "company_settings: company update" ON company_settings
+  FOR UPDATE TO authenticated
+  USING (company_id = get_my_company_id() AND get_my_role() = 'admin')
+  WITH CHECK (company_id = get_my_company_id() AND get_my_role() = 'admin');

@@ -42,9 +42,10 @@ export async function PATCH(req: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
-  // TODO(multi-user): gate to admin role once user_profiles.role exists —
-  // see multi-user spec. This route edits company-wide defaults that affect
-  // every PM in the tenant.
+  const { data: role } = await supabase.rpc("get_my_role")
+  if (role !== "admin") {
+    return NextResponse.json({ error: "Admin role required" }, { status: 403 })
+  }
 
   const body = await req.json().catch(() => ({}))
   const validated = validateCompanyDefaultsBody(body)

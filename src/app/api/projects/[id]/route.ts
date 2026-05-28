@@ -50,11 +50,26 @@ export async function DELETE(
 
   const { id } = await params
 
-  // RLS-gated ownership check before the cascade.
+  // RLS-gated ownership check before the cascade. Also pull created_by for
+  // the role gate below — RLS already scopes the SELECT to the company.
   const { data: project, error: selErr } = await supabase
-    .from("projects").select("id").eq("id", id).maybeSingle()
+    .from("projects").select("id, created_by").eq("id", id).maybeSingle()
   if (selErr) return NextResponse.json({ error: "Database error" }, { status: 500 })
   if (!project) return NextResponse.json({ error: "Not found" }, { status: 404 })
+
+  // Only the project's creator or a company admin may delete. RLS at the
+  // table level still scopes to company; this is the role/ownership gate
+  // on top. RLS on projects DELETE is deliberately left at company scope
+  // per the multi-user spec — no role check at the policy layer.
+  const { data: role } = await supabase.rpc("get_my_role")
+  const isCreator = project.created_by === user.id
+  const isAdmin   = role === "admin"
+  if (!isCreator && !isAdmin) {
+    return NextResponse.json(
+      { error: "Only the project creator or an admin can delete this project" },
+      { status: 403 },
+    )
+  }
 
   // Delete child records first to avoid FK constraint violations. RLS DELETE
   // policies on every child table scope by company, so the user client only

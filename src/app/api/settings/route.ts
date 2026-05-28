@@ -31,6 +31,11 @@ export async function POST(req: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
+  const { data: role } = await supabase.rpc("get_my_role")
+  if (role !== "admin") {
+    return NextResponse.json({ error: "Admin role required" }, { status: 403 })
+  }
+
   const body = await req.json().catch(() => null)
   const type     = body?.type === "logo" || body?.type === "cover_page" ? body.type : null
   const filePath = typeof body?.file_path === "string" ? body.file_path.trim() : ""
