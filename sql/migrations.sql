@@ -1526,3 +1526,345 @@ CREATE POLICY "company_settings: company update" ON company_settings
   FOR UPDATE TO authenticated
   USING (company_id = get_my_company_id() AND get_my_role() = 'admin')
   WITH CHECK (company_id = get_my_company_id() AND get_my_role() = 'admin');
+
+-- --- Multi-user accounts: Phase 3 — tighten user_profiles RLS + invite-lookup
+--
+-- !!!  INVARIANT — READ THIS BEFORE TOUCHING user_profiles  !!!
+-- user_profiles intentionally has NO INSERT/UPDATE/DELETE policy. PostgreSQL
+-- RLS denies any regular-client write as "no policy matches" — which returns
+-- successfully with ZERO rows affected and NO error thrown. This is silent
+-- by design at the RLS layer. ALL writes must use the service-role admin
+-- client (createAdminClient()). If you're adding a user_profiles write,
+-- it goes in a SERVER ROUTE with the admin client — never the cookie/anon
+-- client. Today's admin-client write sites are:
+--   - /api/signup                  (first user creates company + own profile)
+--   - /api/invites/accept (Phase 4) (invitee joins existing company)
+--   - /api/team/members/...  (Phase 5) (admin changes role or removes member)
+-- The cookie-client policy below permits SELECT-own-row only.
+--
+-- Why the prior policy had to change: the previous "user_profiles: own row"
+-- FOR ALL policy with WITH CHECK (user_id = auth.uid()) let a regular client
+-- INSERT user_profiles with ANY company_id (cross-tenant data access via
+-- get_my_company_id() reading the planted row) and UPDATE their own role to
+-- 'admin' (self-promotion). Both are closed by removing all write policies.
+
+DROP POLICY IF EXISTS "user_profiles: own row" ON user_profiles;
+
+CREATE POLICY "user_profiles: select own" ON user_profiles
+  FOR SELECT TO authenticated
+  USING (user_id = auth.uid());
+
+-- get_invite_by_token — used by the public /invite/<token> accept page
+-- before any session exists. Returns one row if the token is recognized
+-- (so the page can render the right state — pending/expired/accepted/
+-- revoked), zero rows if the token is unknown. SECURITY DEFINER + pinned
+-- search_path matches get_my_company_id() and get_my_role(). Tokens are
+-- 32 random bytes (~256 bits); the "metadata exposure" requires guessing
+-- the token first, which is computationally infeasible.
+--
+-- The accept ROUTE (Phase 4) does its OWN validation against company_invites
+-- — this function is for the page's first-render check only.
+CREATE OR REPLACE FUNCTION get_invite_by_token(p_token text)
+RETURNS TABLE (
+  company_name text,
+  email        text,
+  role         text,
+  status       text,
+  expired      boolean
+)
+LANGUAGE sql STABLE SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT
+    c.name                  AS company_name,
+    ci.email                AS email,
+    ci.role                 AS role,
+    ci.status               AS status,
+    (ci.expires_at < now()) AS expired
+  FROM company_invites ci
+  JOIN companies c ON c.id = ci.company_id
+  WHERE ci.token = p_token
+$$;
+
+GRANT EXECUTE ON FUNCTION get_invite_by_token(text) TO anon, authenticated;
+-- Tighten the ACL: Postgres default-grants PUBLIC on new functions, but we
+-- want the grant set to be intentional (anon + authenticated only).
+-- Functionally equivalent — anon already covers unauthenticated callers —
+-- but the explicit REVOKE matches the pattern used by accept_invite_link
+-- and the Phase 5 functions.
+REVOKE EXECUTE ON FUNCTION get_invite_by_token(text) FROM PUBLIC;
+
+-- --- Multi-user accounts: Phase 4 — atomic accept-invite operation ---------
+--
+-- This function is the security boundary for the invite-accept flow. It
+-- validates a 256-bit token, looks up the just-signed-up auth user by the
+-- invite's email (not from a session — the caller has no session since the
+-- project requires email confirmation), runs the full gate stack, and on
+-- success links user_profiles + confirms the email + marks the invite
+-- accepted, all in one transaction.
+--
+-- Why direct UPDATE on auth.users.email_confirmed_at instead of the Auth
+-- Admin API: atomicity. The whole accept runs in one DB transaction; if
+-- any step fails, none of the writes committed. The auth.users generated
+-- column `confirmed_at` = LEAST(email_confirmed_at, phone_confirmed_at)
+-- reflects this set automatically, so GoTrue's sign-in check sees the
+-- user as confirmed correctly.
+--
+-- INVARIANT: user_profiles writes happen via service-role / SECURITY DEFINER
+-- only. The "user_profiles: select own" RLS policy denies regular-client
+-- writes. This function — REVOKEd from anon/authenticated/PUBLIC and
+-- GRANTed only to service_role — is the single legitimate INSERT path for
+-- invitee user_profiles rows. The /api/invites/accept route's admin client
+-- is the only caller.
+
+CREATE OR REPLACE FUNCTION accept_invite_link(p_token text)
+RETURNS TABLE (success boolean, error_code text)
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_invite   RECORD;
+  v_authuser RECORD;
+BEGIN
+  -- Lock the invite row so two concurrent callers can't both succeed.
+  SELECT id, company_id, email, role, status, expires_at, created_at
+    INTO v_invite
+    FROM company_invites
+    WHERE token = p_token
+    FOR UPDATE;
+  IF NOT FOUND THEN
+    RETURN QUERY SELECT false, 'not_found'::text; RETURN;
+  END IF;
+  IF v_invite.status <> 'pending' THEN
+    RETURN QUERY SELECT false, v_invite.status::text; RETURN;
+  END IF;
+  IF v_invite.expires_at <= now() THEN
+    RETURN QUERY SELECT false, 'expired'::text; RETURN;
+  END IF;
+
+  -- Gate 3a — find the auth user by invite email.
+  SELECT id, email_confirmed_at, created_at, banned_until, deleted_at
+    INTO v_authuser
+    FROM auth.users
+    WHERE lower(email) = lower(v_invite.email)
+    ORDER BY created_at DESC
+    LIMIT 1;
+  IF NOT FOUND THEN
+    RETURN QUERY SELECT false, 'no_signup'::text; RETURN;
+  END IF;
+
+  -- Gate 3a.5 — banned or soft-deleted users must not be relinkable.
+  IF v_authuser.banned_until IS NOT NULL OR v_authuser.deleted_at IS NOT NULL THEN
+    RETURN QUERY SELECT false, 'account_unavailable'::text; RETURN;
+  END IF;
+
+  -- Gate 3b — user must still be unconfirmed
+  -- (closes "hijack confirmed account").
+  IF v_authuser.email_confirmed_at IS NOT NULL THEN
+    RETURN QUERY SELECT false, 'pre_existing_confirmed'::text; RETURN;
+  END IF;
+
+  -- Gate 3c — auth user must have been created AT OR AFTER the invite
+  -- (closes "hijack pre-existing unconfirmed orphan").
+  IF v_authuser.created_at < v_invite.created_at THEN
+    RETURN QUERY SELECT false, 'pre_existing_unconfirmed'::text; RETURN;
+  END IF;
+
+  -- Gate 4 — no existing user_profiles row for this auth user.
+  IF EXISTS (SELECT 1 FROM user_profiles WHERE user_id = v_authuser.id) THEN
+    RETURN QUERY SELECT false, 'already_linked'::text; RETURN;
+  END IF;
+
+  -- All gates passed. Atomic link + confirm + mark-accepted.
+  INSERT INTO user_profiles (user_id, company_id, role)
+  VALUES (v_authuser.id, v_invite.company_id, v_invite.role);
+
+  UPDATE auth.users
+     SET email_confirmed_at = now()
+   WHERE id = v_authuser.id;
+
+  UPDATE company_invites
+     SET status = 'accepted', accepted_at = now()
+   WHERE id = v_invite.id;
+
+  RETURN QUERY SELECT true, NULL::text; RETURN;
+END;
+$$;
+
+REVOKE EXECUTE ON FUNCTION accept_invite_link(text) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION accept_invite_link(text) FROM anon, authenticated;
+GRANT  EXECUTE ON FUNCTION accept_invite_link(text) TO service_role;
+
+-- --- Multi-user accounts: Phase 5 — role management + remove user ----------
+--
+-- Two SECURITY DEFINER functions that share a race-safety pattern:
+--   1. Lock all admin rows in the caller's company (FOR UPDATE).
+--   2. Re-validate the caller is STILL admin UNDER the lock (they may have
+--      been demoted by a concurrent call).
+--   3. Read + lock the target row.
+--   4. Cross-company guard.
+--   5. (When relevant) Re-count admins UNDER the lock and reject if the
+--      operation would leave zero admins.
+--
+-- The FOR UPDATE on admin rows serializes any admin-mutating op per
+-- company. Concurrent calls block each other; whichever wins the lock
+-- acts on a consistent snapshot. The at-least-one-admin invariant holds
+-- in every interleaving — including a spurious-last_admin failure mode
+-- if a concurrent accept_invite_link is mid-flight (acceptable).
+--
+-- INVARIANT: user_profiles writes happen via service-role / SECURITY
+-- DEFINER only. The "user_profiles: select own" RLS policy denies
+-- regular-client writes. These two functions — GRANTed to `authenticated`
+-- so the route's cookie client can call them with the caller's JWT
+-- (auth.uid() inside works) — are the sanctioned mutation path for
+-- member role changes and removals.
+
+CREATE OR REPLACE FUNCTION set_user_role(p_target_user_id uuid, p_new_role text)
+RETURNS TABLE (success boolean, error_code text)
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public
+AS $$
+DECLARE
+  v_caller_uid          uuid := auth.uid();
+  v_caller_company_id   uuid;
+  v_target_company_id   uuid;
+  v_target_current_role text;
+  v_admin_count         int;
+BEGIN
+  IF v_caller_uid IS NULL THEN
+    RETURN QUERY SELECT false, 'unauthenticated'::text; RETURN;
+  END IF;
+
+  -- Function-level role validation — fail-fast even though the route
+  -- pre-validates; the function shouldn't trust its caller.
+  IF p_new_role NOT IN ('admin', 'member') THEN
+    RETURN QUERY SELECT false, 'invalid_role'::text; RETURN;
+  END IF;
+
+  SELECT company_id INTO v_caller_company_id
+    FROM user_profiles WHERE user_id = v_caller_uid;
+  IF NOT FOUND THEN
+    RETURN QUERY SELECT false, 'caller_no_company'::text; RETURN;
+  END IF;
+
+  -- Step 1: LOCK all admin rows in the caller's company.
+  PERFORM 1 FROM user_profiles
+    WHERE company_id = v_caller_company_id AND role = 'admin'
+    FOR UPDATE;
+
+  -- Step 2: Re-validate caller is still admin UNDER the lock.
+  IF NOT EXISTS (
+    SELECT 1 FROM user_profiles
+    WHERE user_id = v_caller_uid AND company_id = v_caller_company_id AND role = 'admin'
+  ) THEN
+    RETURN QUERY SELECT false, 'not_admin'::text; RETURN;
+  END IF;
+
+  -- Step 3: Read + lock the target row.
+  SELECT company_id, role INTO v_target_company_id, v_target_current_role
+    FROM user_profiles WHERE user_id = p_target_user_id
+    FOR UPDATE;
+  IF NOT FOUND THEN
+    RETURN QUERY SELECT false, 'target_not_found'::text; RETURN;
+  END IF;
+
+  -- Step 4: Cross-company guard.
+  IF v_target_company_id <> v_caller_company_id THEN
+    RETURN QUERY SELECT false, 'cross_company'::text; RETURN;
+  END IF;
+
+  -- Idempotent no-op if already in the requested role.
+  IF v_target_current_role = p_new_role THEN
+    RETURN QUERY SELECT true, NULL::text; RETURN;
+  END IF;
+
+  -- Step 5: Last-admin guard. Count happens HERE — AFTER the FOR UPDATE
+  -- on admin rows — so the count reflects state observable under our lock.
+  -- Only triggered when DEMOTING an existing admin.
+  IF v_target_current_role = 'admin' AND p_new_role = 'member' THEN
+    SELECT COUNT(*) INTO v_admin_count
+      FROM user_profiles
+      WHERE company_id = v_caller_company_id AND role = 'admin';
+    IF v_admin_count <= 1 THEN
+      RETURN QUERY SELECT false, 'last_admin'::text; RETURN;
+    END IF;
+  END IF;
+
+  UPDATE user_profiles SET role = p_new_role WHERE user_id = p_target_user_id;
+
+  RETURN QUERY SELECT true, NULL::text; RETURN;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION remove_user_from_company(p_target_user_id uuid)
+RETURNS TABLE (success boolean, error_code text)
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public
+AS $$
+DECLARE
+  v_caller_uid          uuid := auth.uid();
+  v_caller_company_id   uuid;
+  v_target_company_id   uuid;
+  v_target_current_role text;
+  v_admin_count         int;
+BEGIN
+  IF v_caller_uid IS NULL THEN
+    RETURN QUERY SELECT false, 'unauthenticated'::text; RETURN;
+  END IF;
+
+  SELECT company_id INTO v_caller_company_id
+    FROM user_profiles WHERE user_id = v_caller_uid;
+  IF NOT FOUND THEN
+    RETURN QUERY SELECT false, 'caller_no_company'::text; RETURN;
+  END IF;
+
+  -- Step 1: LOCK all admin rows in the caller's company.
+  PERFORM 1 FROM user_profiles
+    WHERE company_id = v_caller_company_id AND role = 'admin'
+    FOR UPDATE;
+
+  -- Step 2: Re-validate caller is still admin UNDER the lock — same as
+  -- set_user_role. Closes the caller-demoted-concurrently race for the
+  -- remove path too.
+  IF NOT EXISTS (
+    SELECT 1 FROM user_profiles
+    WHERE user_id = v_caller_uid AND company_id = v_caller_company_id AND role = 'admin'
+  ) THEN
+    RETURN QUERY SELECT false, 'not_admin'::text; RETURN;
+  END IF;
+
+  -- Step 3: Read + lock the target row.
+  SELECT company_id, role INTO v_target_company_id, v_target_current_role
+    FROM user_profiles WHERE user_id = p_target_user_id
+    FOR UPDATE;
+  IF NOT FOUND THEN
+    RETURN QUERY SELECT false, 'target_not_found'::text; RETURN;
+  END IF;
+
+  -- Step 4: Cross-company guard.
+  IF v_target_company_id <> v_caller_company_id THEN
+    RETURN QUERY SELECT false, 'cross_company'::text; RETURN;
+  END IF;
+
+  -- Step 5: Last-admin guard. Count UNDER LOCK. Triggers WHENEVER the
+  -- target is an admin (removing any admin reduces the admin count by 1).
+  IF v_target_current_role = 'admin' THEN
+    SELECT COUNT(*) INTO v_admin_count
+      FROM user_profiles
+      WHERE company_id = v_caller_company_id AND role = 'admin';
+    IF v_admin_count <= 1 THEN
+      RETURN QUERY SELECT false, 'last_admin'::text; RETURN;
+    END IF;
+  END IF;
+
+  DELETE FROM user_profiles WHERE user_id = p_target_user_id;
+
+  RETURN QUERY SELECT true, NULL::text; RETURN;
+END;
+$$;
+
+REVOKE EXECUTE ON FUNCTION set_user_role(uuid, text)      FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION set_user_role(uuid, text)      FROM anon, service_role;
+GRANT  EXECUTE ON FUNCTION set_user_role(uuid, text)      TO authenticated;
+
+REVOKE EXECUTE ON FUNCTION remove_user_from_company(uuid) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION remove_user_from_company(uuid) FROM anon, service_role;
+GRANT  EXECUTE ON FUNCTION remove_user_from_company(uuid) TO authenticated;

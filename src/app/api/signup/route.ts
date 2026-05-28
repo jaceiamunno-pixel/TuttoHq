@@ -45,7 +45,10 @@ export async function POST(req: NextRequest) {
 
   const companyId = companyRow.id
 
-  // Map user → company so get_my_company_id() works for all RLS policies
+  // Map user → company so get_my_company_id() works for all RLS policies.
+  // INVARIANT: user_profiles writes MUST use the admin (service-role) client.
+  // The table's RLS allows SELECT-own-row only; regular-client writes silently
+  // affect 0 rows. See the "user_profiles: select own" policy in migrations.sql.
   await admin.from("user_profiles").insert({ user_id: userId, company_id: companyId })
 
   // Add owner as a team member so they appear in RFI/report dropdowns
