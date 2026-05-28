@@ -1689,7 +1689,7 @@ export default function SettingsPage() {
                   <h2 className="text-[14px] font-semibold text-[#0F172A]">Contacts</h2>
                   <p className="text-[12px] text-[#64748B] mt-0.5">Used to populate Reviewed By / Certified By fields on cover sheets.</p>
                 </div>
-                {!showTeamForm && !teamImportRows && (
+                {currentRole === "admin" && !showTeamForm && !teamImportRows && (
                   <div className="flex items-center gap-2 flex-shrink-0">
                     <button
                       onClick={() => teamCsvInputRef.current?.click()}
@@ -1876,22 +1876,24 @@ export default function SettingsPage() {
                         <td className="px-3 py-3 text-[13px] text-[#64748B]">{m.title ?? <span className="text-[#64748B]">—</span>}</td>
                         <td className="px-3 py-3 text-[13px] text-[#64748B]">{m.email ?? <span className="text-[#64748B]">—</span>}</td>
                         <td className="px-3 py-3">
-                          <div className="flex items-center gap-1.5 justify-end opacity-0 group-hover:opacity-100 transition-opacity">
-                            <button
-                              onClick={() => openEditMember(m)}
-                              className="p-1 rounded text-[#64748B] hover:text-[#0F172A] hover:bg-[#F4F5F7]/[0.08] transition-colors"
-                              title="Edit"
-                            >
-                              <PencilIcon />
-                            </button>
-                            <button
-                              onClick={() => deleteMember(m)}
-                              className="p-1 rounded text-[#64748B] hover:text-red-400 hover:bg-[#F4F5F7]/[0.08] transition-colors"
-                              title="Delete"
-                            >
-                              <XIcon className="h-3 w-3" />
-                            </button>
-                          </div>
+                          {currentRole === "admin" && (
+                            <div className="flex items-center gap-1.5 justify-end opacity-0 group-hover:opacity-100 transition-opacity">
+                              <button
+                                onClick={() => openEditMember(m)}
+                                className="p-1 rounded text-[#64748B] hover:text-[#0F172A] hover:bg-[#F4F5F7]/[0.08] transition-colors"
+                                title="Edit"
+                              >
+                                <PencilIcon />
+                              </button>
+                              <button
+                                onClick={() => deleteMember(m)}
+                                className="p-1 rounded text-[#64748B] hover:text-red-400 hover:bg-[#F4F5F7]/[0.08] transition-colors"
+                                title="Delete"
+                              >
+                                <XIcon className="h-3 w-3" />
+                              </button>
+                            </div>
+                          )}
                         </td>
                       </tr>
                     ))}
