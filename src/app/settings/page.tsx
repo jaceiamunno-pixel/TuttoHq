@@ -15,7 +15,31 @@ import {
   MAX_REMINDER_COUNT,
 } from "@/lib/reminder-settings"
 
-type Tab = "company" | "team" | "projects" | "subcontractors" | "suppliers" | "cms" | "gmail"
+// "team" = the multi-user accounts tab (Phase 3).
+// "contacts" = the legacy team_members directory (renamed from "team").
+type Tab = "company" | "team" | "contacts" | "projects" | "subcontractors" | "suppliers" | "cms" | "gmail"
+
+interface AccountMember {
+  user_id:   string
+  email:     string | null
+  full_name: string | null
+  role:      "admin" | "member"
+  joined_at: string
+  is_self:   boolean
+}
+interface PendingInvite {
+  id:         string
+  email:      string
+  role:       "admin" | "member"
+  expires_at: string
+  created_at: string
+  invite_url: string
+}
+interface InviteResult {
+  email:      string
+  invite_url: string
+  gmail_sent: boolean
+}
 
 interface Toc { sections: TocEntry[]; divisions: TocDivision[] }
 
@@ -147,6 +171,19 @@ export default function SettingsPage() {
   const [showTeamForm, setShowTeamForm] = useState(false)
   const [editingMember, setEditingMember] = useState<TeamMember | null>(null)
   const [memberForm, setMemberForm]     = useState({ name: "", title: "", email: "" })
+
+  // ── Team (multi-user accounts) — Phase 3 ─────────────────────────────────
+  const [accountMembers, setAccountMembers]     = useState<AccountMember[]>([])
+  const [pendingInvites, setPendingInvites]     = useState<PendingInvite[]>([])
+  const [accountsLoaded, setAccountsLoaded]     = useState(false)
+  const [accountsLoading, setAccountsLoading]   = useState(false)
+  const [inviteFormOpen, setInviteFormOpen]     = useState(false)
+  const [inviteEmail, setInviteEmail]           = useState("")
+  const [inviteRole, setInviteRole]             = useState<"admin" | "member">("member")
+  const [inviting, setInviting]                 = useState(false)
+  const [inviteError, setInviteError]           = useState<string | null>(null)
+  const [lastInvite, setLastInvite]             = useState<InviteResult | null>(null)
+  const [copiedInviteId, setCopiedInviteId]     = useState<string | null>(null)
   const [savingMember, setSavingMember] = useState(false)
   const [teamMessage, setTeamMessage]   = useState<{ text: string; ok: boolean } | null>(null)
 
@@ -271,19 +308,77 @@ export default function SettingsPage() {
         setTimeout(() => setGmailMessage(null), 8000)
       }
       window.history.replaceState({}, "", "/settings?tab=gmail")
-    } else if (tabParam && ["company", "team", "projects", "subcontractors", "suppliers", "cms"].includes(tabParam)) {
+    } else if (tabParam && ["company", "team", "contacts", "projects", "subcontractors", "suppliers", "cms"].includes(tabParam)) {
       setActiveTab(tabParam as Tab)
     }
   }, [])
 
   useEffect(() => {
-    if (activeTab === "team" && !teamLoaded) loadTeam()
+    if (activeTab === "team" && !accountsLoaded) loadAccounts()
+    if (activeTab === "contacts" && !teamLoaded) loadTeam()
     if (activeTab === "projects" && !projectsLoaded) loadProjects()
     if (activeTab === "subcontractors" && !subsLoaded) loadSubs()
     if (activeTab === "suppliers" && !supplLoaded) loadSuppliers()
     if (activeTab === "cms" && !cmsLoaded) loadCms()
     if (activeTab === "gmail" && !gmailLoaded) loadGmailConnection()
   }, [activeTab])
+
+  async function loadAccounts() {
+    setAccountsLoading(true)
+    try {
+      const res = await fetch("/api/team/members")
+      if (!res.ok) {
+        // Members will see a 403 here; the page will just render empty
+        // sections. Phase 5 will add proper UI gating once members exist.
+        setAccountsLoaded(true)
+        return
+      }
+      const data = await res.json()
+      setAccountMembers(data.members ?? [])
+      setPendingInvites(data.pending_invites ?? [])
+      setAccountsLoaded(true)
+    } catch {
+      setAccountsLoaded(true)
+    } finally {
+      setAccountsLoading(false)
+    }
+  }
+
+  async function handleInvite(e: React.FormEvent) {
+    e.preventDefault()
+    setInviting(true)
+    setInviteError(null)
+    try {
+      const res = await fetch("/api/invites", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: inviteEmail, role: inviteRole }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error ?? "Failed to send invite")
+      setLastInvite({ email: inviteEmail, invite_url: data.invite_url, gmail_sent: data.gmail_sent })
+      setInviteEmail("")
+      setInviteRole("member")
+      setInviteFormOpen(false)
+      await loadAccounts()
+    } catch (err) {
+      setInviteError(err instanceof Error ? err.message : "Failed to send invite")
+    } finally {
+      setInviting(false)
+    }
+  }
+
+  async function handleRevokeInvite(id: string) {
+    if (!confirm("Revoke this invite?")) return
+    const res = await fetch(`/api/invites/${id}`, { method: "DELETE" })
+    if (res.ok) await loadAccounts()
+  }
+
+  function copyInviteLink(invite: PendingInvite) {
+    navigator.clipboard.writeText(invite.invite_url)
+    setCopiedInviteId(invite.id)
+    setTimeout(() => setCopiedInviteId(prev => prev === invite.id ? null : prev), 1500)
+  }
 
   function loadTeam() {
     setTeamLoading(true)
@@ -1103,6 +1198,7 @@ export default function SettingsPage() {
   const tabs: { key: Tab; label: string }[] = [
     { key: "company",        label: "Company" },
     { key: "team",           label: "Team" },
+    { key: "contacts",       label: "Contacts" },
     { key: "projects",       label: "Projects" },
     { key: "subcontractors", label: "Subcontractors" },
     { key: "suppliers",      label: "Suppliers" },
@@ -1327,7 +1423,166 @@ export default function SettingsPage() {
             <div className="bg-white rounded-xl border border-[#E2E8F0] overflow-hidden">
               <div className="flex items-center justify-between px-5 py-4 border-b border-[#E2E8F0]">
                 <div>
-                  <h2 className="text-[14px] font-semibold text-[#0F172A]">Team Members</h2>
+                  <h2 className="text-[14px] font-semibold text-[#0F172A]">Team</h2>
+                  <p className="text-[12px] text-[#64748B] mt-0.5">Manage who has access to this company in TuttoHQ.</p>
+                </div>
+                <button
+                  onClick={() => { setInviteFormOpen(o => !o); setInviteError(null) }}
+                  className="h-8 px-3 rounded-md bg-[#7B9BB5] text-white text-[13px] font-medium hover:bg-[#6A8AA4] transition-colors"
+                >
+                  {inviteFormOpen ? "Cancel" : "Invite"}
+                </button>
+              </div>
+
+              {inviteFormOpen && (
+                <form onSubmit={handleInvite} className="px-5 py-4 border-b border-[#E2E8F0] bg-[#F8FAFC] flex flex-col gap-3 sm:flex-row sm:items-end">
+                  <div className="flex-1">
+                    <label className={labelCls}>Email</label>
+                    <input
+                      type="email" required value={inviteEmail}
+                      onChange={e => setInviteEmail(e.target.value)}
+                      placeholder="person@company.com"
+                      className={inputCls}
+                    />
+                  </div>
+                  <div className="w-full sm:w-40">
+                    <label className={labelCls}>Role</label>
+                    <select
+                      value={inviteRole}
+                      onChange={e => setInviteRole(e.target.value as "admin" | "member")}
+                      className={inputCls}
+                    >
+                      <option value="member">Member</option>
+                      <option value="admin">Admin</option>
+                    </select>
+                  </div>
+                  <button
+                    type="submit" disabled={inviting}
+                    className="h-9 px-4 rounded-md bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors disabled:opacity-50"
+                  >
+                    {inviting ? "Sending…" : "Send invite"}
+                  </button>
+                </form>
+              )}
+
+              {inviteError && (
+                <div className="px-5 py-3 bg-red-50 border-b border-red-200 text-[12px] text-red-700">{inviteError}</div>
+              )}
+
+              {lastInvite && (
+                <div className={`px-5 py-3 border-b ${lastInvite.gmail_sent ? "bg-green-50 border-green-200" : "bg-amber-50 border-amber-200"}`}>
+                  {lastInvite.gmail_sent ? (
+                    <p className="text-[12px] text-green-800">Invite sent to {lastInvite.email}.</p>
+                  ) : (
+                    <div className="space-y-2">
+                      <p className="text-[12px] text-amber-900">
+                        Couldn&apos;t send via Gmail. Share this link with {lastInvite.email} (expires in 7 days):
+                      </p>
+                      <div className="flex gap-2">
+                        <input
+                          readOnly value={lastInvite.invite_url}
+                          className="flex-1 h-8 px-2 rounded border border-amber-300 bg-white text-[12px] font-mono"
+                          onFocus={e => e.currentTarget.select()}
+                        />
+                        <button
+                          onClick={() => navigator.clipboard.writeText(lastInvite.invite_url)}
+                          className="h-8 px-3 rounded bg-amber-600 text-white text-[12px] font-semibold hover:bg-amber-700"
+                        >
+                          Copy
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              <div className="px-5 py-4">
+                <h3 className="text-[12px] font-semibold uppercase tracking-wider text-[#64748B] mb-2">Members</h3>
+                {accountsLoading ? (
+                  <p className="text-[13px] text-[#64748B]">Loading…</p>
+                ) : accountMembers.length === 0 ? (
+                  <p className="text-[13px] text-[#64748B]">No members yet.</p>
+                ) : (
+                  <table className="w-full text-[13px]">
+                    <thead className="text-[11px] uppercase tracking-wider text-[#64748B] border-b border-[#E2E8F0]">
+                      <tr>
+                        <th className="text-left py-2 font-semibold">Name</th>
+                        <th className="text-left py-2 font-semibold">Email</th>
+                        <th className="text-left py-2 font-semibold">Role</th>
+                        <th className="text-left py-2 font-semibold">Joined</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[#E2E8F0]">
+                      {accountMembers.map(m => (
+                        <tr key={m.user_id}>
+                          <td className="py-2 text-[#0F172A]">
+                            {m.full_name ?? "—"}
+                            {m.is_self && <span className="text-[#64748B] ml-1">(you)</span>}
+                          </td>
+                          <td className="py-2 text-[#0F172A]">{m.email ?? "—"}</td>
+                          <td className="py-2">
+                            <span className={`px-2 py-0.5 rounded-full text-[11px] font-medium ${m.role === "admin" ? "bg-[#7B9BB5]/15 text-[#456A88]" : "bg-[#F4F5F7] text-[#64748B]"}`}>
+                              {m.role}
+                            </span>
+                          </td>
+                          <td className="py-2 text-[#64748B]">{new Date(m.joined_at).toLocaleDateString()}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+
+              <div className="px-5 py-4 border-t border-[#E2E8F0]">
+                <h3 className="text-[12px] font-semibold uppercase tracking-wider text-[#64748B] mb-2">Pending invites</h3>
+                {pendingInvites.length === 0 ? (
+                  <p className="text-[13px] text-[#64748B]">No pending invites.</p>
+                ) : (
+                  <table className="w-full text-[13px]">
+                    <thead className="text-[11px] uppercase tracking-wider text-[#64748B] border-b border-[#E2E8F0]">
+                      <tr>
+                        <th className="text-left py-2 font-semibold">Email</th>
+                        <th className="text-left py-2 font-semibold">Role</th>
+                        <th className="text-left py-2 font-semibold">Expires</th>
+                        <th className="text-right py-2 font-semibold">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[#E2E8F0]">
+                      {pendingInvites.map(inv => (
+                        <tr key={inv.id}>
+                          <td className="py-2 text-[#0F172A]">{inv.email}</td>
+                          <td className="py-2 text-[#0F172A]">{inv.role}</td>
+                          <td className="py-2 text-[#64748B]">{new Date(inv.expires_at).toLocaleDateString()}</td>
+                          <td className="py-2 text-right space-x-3">
+                            <button
+                              onClick={() => copyInviteLink(inv)}
+                              className="text-[12px] text-[#456A88] hover:underline"
+                            >
+                              {copiedInviteId === inv.id ? "Copied!" : "Copy link"}
+                            </button>
+                            <button
+                              onClick={() => handleRevokeInvite(inv.id)}
+                              className="text-[12px] text-red-600 hover:underline"
+                            >
+                              Revoke
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {activeTab === "contacts" && (
+          <div className="space-y-4">
+            <div className="bg-white rounded-xl border border-[#E2E8F0] overflow-hidden">
+              <div className="flex items-center justify-between px-5 py-4 border-b border-[#E2E8F0]">
+                <div>
+                  <h2 className="text-[14px] font-semibold text-[#0F172A]">Contacts</h2>
                   <p className="text-[12px] text-[#64748B] mt-0.5">Used to populate Reviewed By / Certified By fields on cover sheets.</p>
                 </div>
                 {!showTeamForm && !teamImportRows && (

@@ -1526,3 +1526,64 @@ CREATE POLICY "company_settings: company update" ON company_settings
   FOR UPDATE TO authenticated
   USING (company_id = get_my_company_id() AND get_my_role() = 'admin')
   WITH CHECK (company_id = get_my_company_id() AND get_my_role() = 'admin');
+
+-- --- Multi-user accounts: Phase 3 — tighten user_profiles RLS + invite-lookup
+--
+-- !!!  INVARIANT — READ THIS BEFORE TOUCHING user_profiles  !!!
+-- user_profiles intentionally has NO INSERT/UPDATE/DELETE policy. PostgreSQL
+-- RLS denies any regular-client write as "no policy matches" — which returns
+-- successfully with ZERO rows affected and NO error thrown. This is silent
+-- by design at the RLS layer. ALL writes must use the service-role admin
+-- client (createAdminClient()). If you're adding a user_profiles write,
+-- it goes in a SERVER ROUTE with the admin client — never the cookie/anon
+-- client. Today's admin-client write sites are:
+--   - /api/signup                  (first user creates company + own profile)
+--   - /api/invites/accept (Phase 4) (invitee joins existing company)
+--   - /api/team/members/...  (Phase 5) (admin changes role or removes member)
+-- The cookie-client policy below permits SELECT-own-row only.
+--
+-- Why the prior policy had to change: the previous "user_profiles: own row"
+-- FOR ALL policy with WITH CHECK (user_id = auth.uid()) let a regular client
+-- INSERT user_profiles with ANY company_id (cross-tenant data access via
+-- get_my_company_id() reading the planted row) and UPDATE their own role to
+-- 'admin' (self-promotion). Both are closed by removing all write policies.
+
+DROP POLICY IF EXISTS "user_profiles: own row" ON user_profiles;
+
+CREATE POLICY "user_profiles: select own" ON user_profiles
+  FOR SELECT TO authenticated
+  USING (user_id = auth.uid());
+
+-- get_invite_by_token — used by the public /invite/<token> accept page
+-- before any session exists. Returns one row if the token is recognized
+-- (so the page can render the right state — pending/expired/accepted/
+-- revoked), zero rows if the token is unknown. SECURITY DEFINER + pinned
+-- search_path matches get_my_company_id() and get_my_role(). Tokens are
+-- 32 random bytes (~256 bits); the "metadata exposure" requires guessing
+-- the token first, which is computationally infeasible.
+--
+-- The accept ROUTE (Phase 4) does its OWN validation against company_invites
+-- — this function is for the page's first-render check only.
+CREATE OR REPLACE FUNCTION get_invite_by_token(p_token text)
+RETURNS TABLE (
+  company_name text,
+  email        text,
+  role         text,
+  status       text,
+  expired      boolean
+)
+LANGUAGE sql STABLE SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT
+    c.name                  AS company_name,
+    ci.email                AS email,
+    ci.role                 AS role,
+    ci.status               AS status,
+    (ci.expires_at < now()) AS expired
+  FROM company_invites ci
+  JOIN companies c ON c.id = ci.company_id
+  WHERE ci.token = p_token
+$$;
+
+GRANT EXECUTE ON FUNCTION get_invite_by_token(text) TO anon, authenticated;
