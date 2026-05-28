@@ -192,6 +192,88 @@ export function validateSettingsBody(
   return { ok: true, value: out }
 }
 
+// ─── Company-defaults validation (Settings tab → "Reminder Defaults" card) ──
+// Sibling of validateSettingsBody, but with stricter rules: company defaults
+// can't inherit from anywhere (they ARE the inheritance target), so null is
+// rejected for the three override fields, the cadence array must be
+// non-empty, and reminders_paused is not a company-side concern.
+
+export interface ValidatedCompanyDefaultsPatch {
+  reminder_cadence_days?:       number[]
+  reminder_max_count?:          number
+  reminder_default_attach_pdf?: boolean
+}
+
+export function validateCompanyDefaultsBody(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  body: any,
+): ValidationResult<ValidatedCompanyDefaultsPatch> {
+  const out: ValidatedCompanyDefaultsPatch = {}
+
+  if ("reminders_paused" in body) {
+    // reminders_paused lives only on packages — surface a 400 rather than
+    // silently dropping it, so a misconfigured client can't think the field
+    // landed when it didn't.
+    return { ok: false, error: "reminders_paused is a per-package setting and cannot be set as a company default" }
+  }
+
+  if ("reminder_cadence_days" in body) {
+    const raw = body.reminder_cadence_days
+    if (raw === null) {
+      return { ok: false, error: "Cadence must be provided — company defaults cannot be null" }
+    }
+    if (!Array.isArray(raw)) {
+      return { ok: false, error: "reminder_cadence_days must be an array" }
+    }
+    if (raw.length === 0) {
+      return { ok: false, error: "Cadence must contain at least one value" }
+    }
+    const nums: number[] = []
+    let prev = 0
+    for (const v of raw) {
+      if (typeof v !== "number" || !Number.isInteger(v)) {
+        return { ok: false, error: "Cadence values must be whole numbers" }
+      }
+      if (v <= 0) {
+        return { ok: false, error: "Cadence values must be greater than zero" }
+      }
+      if (v > MAX_CADENCE_DAY) {
+        return { ok: false, error: `Cadence values must be ${MAX_CADENCE_DAY} days or fewer` }
+      }
+      if (v <= prev) {
+        return { ok: false, error: "Cadence values must be strictly ascending (no duplicates)" }
+      }
+      nums.push(v)
+      prev = v
+    }
+    out.reminder_cadence_days = nums
+  }
+
+  if ("reminder_max_count" in body) {
+    const raw = body.reminder_max_count
+    if (raw === null) {
+      return { ok: false, error: "Max reminders must be provided — company defaults cannot be null" }
+    }
+    if (typeof raw !== "number" || !Number.isInteger(raw)) {
+      return { ok: false, error: "Max reminders must be a whole number" }
+    }
+    if (raw < 1 || raw > MAX_REMINDER_COUNT) {
+      return { ok: false, error: `Max reminders must be between 1 and ${MAX_REMINDER_COUNT}` }
+    }
+    out.reminder_max_count = raw
+  }
+
+  if ("reminder_default_attach_pdf" in body) {
+    const raw = body.reminder_default_attach_pdf
+    if (typeof raw !== "boolean") {
+      return { ok: false, error: "reminder_default_attach_pdf must be true or false" }
+    }
+    out.reminder_default_attach_pdf = raw
+  }
+
+  return { ok: true, value: out }
+}
+
 // ─── Tiny formatter the UI can reuse so the cadence renders the same way
 //     in inputs, hints, and the right-column display ──────────────────────────
 export function formatCadence(cadence: number[]): string {
