@@ -1417,3 +1417,16 @@ DROP POLICY IF EXISTS "gmail_intake_skips: company select" ON gmail_intake_skips
 CREATE POLICY "gmail_intake_skips: company select" ON gmail_intake_skips
   FOR SELECT TO authenticated
   USING (company_id = get_my_company_id());
+
+-- --- projects.short_id uniqueness ------------------------------------------
+-- The projects_set_short_id BEFORE INSERT trigger walks the project's UUID
+-- to find a 4-char short_id with no peer in the same company. The check is
+-- a NOT EXISTS subquery, which under READ COMMITTED can let two concurrent
+-- inserts in the same company both pass and commit colliding short_ids.
+-- With this unique index in place the colliding insert raises a unique
+-- violation; the caller (e.g. /api/projects/batch's parallel inserts) gets
+-- a per-row error instead of a silent dup. Partial index — NULL short_ids
+-- (theoretical, the trigger always sets one) don't participate.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_company_short_id
+  ON projects (company_id, short_id)
+  WHERE short_id IS NOT NULL;
