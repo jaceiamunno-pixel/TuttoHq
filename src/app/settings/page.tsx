@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef, Fragment } from "react"
 import Link from "next/link"
 import Papa from "papaparse"
+import { createClient } from "@/lib/supabase/client"
 import { DivisionChecklist, SectionAccordion, isDefaultInScopeDivision } from "@/components/scope-selection"
 import ProjectSpecBooks from "@/components/project-spec-books"
 import type { TocEntry, TocDivision } from "@/lib/scope-types"
@@ -184,6 +185,9 @@ export default function SettingsPage() {
   const [inviteError, setInviteError]           = useState<string | null>(null)
   const [lastInvite, setLastInvite]             = useState<InviteResult | null>(null)
   const [copiedInviteId, setCopiedInviteId]     = useState<string | null>(null)
+  const [roleChangingUserId, setRoleChangingUserId] = useState<string | null>(null)
+  const [removingUserId, setRemovingUserId]     = useState<string | null>(null)
+  const [memberActionError, setMemberActionError] = useState<string | null>(null)
   const [savingMember, setSavingMember] = useState(false)
   const [teamMessage, setTeamMessage]   = useState<{ text: string; ok: boolean } | null>(null)
 
@@ -378,6 +382,53 @@ export default function SettingsPage() {
     navigator.clipboard.writeText(invite.invite_url)
     setCopiedInviteId(invite.id)
     setTimeout(() => setCopiedInviteId(prev => prev === invite.id ? null : prev), 1500)
+  }
+
+  async function handleRoleChange(m: AccountMember, newRole: "admin" | "member") {
+    if (m.role === newRole) return
+    const who = m.is_self ? "yourself" : (m.full_name ?? m.email ?? "this member")
+    if (!confirm(`Change ${who}'s role to ${newRole}?`)) return
+    setRoleChangingUserId(m.user_id)
+    setMemberActionError(null)
+    try {
+      const res = await fetch(`/api/team/members/${m.user_id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ role: newRole }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.error ?? "Failed to update role")
+      await loadAccounts()
+    } catch (err) {
+      setMemberActionError(err instanceof Error ? err.message : "Failed to update role")
+    } finally {
+      setRoleChangingUserId(null)
+    }
+  }
+
+  async function handleRemoveMember(m: AccountMember) {
+    const who = m.is_self ? "yourself" : (m.full_name ?? m.email ?? "this member")
+    if (!confirm(`Remove ${who}? They lose access; their work stays.`)) return
+    setRemovingUserId(m.user_id)
+    setMemberActionError(null)
+    try {
+      const res = await fetch(`/api/team/members/${m.user_id}`, { method: "DELETE" })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.error ?? "Failed to remove member")
+      if (m.is_self) {
+        // Self-removed: sign out and hard-redirect to /login. Without
+        // signOut the JWT stays valid client-side but every subsequent
+        // request hits get_my_company_id()=null and breaks.
+        await createClient().auth.signOut()
+        window.location.href = "/login"
+        return
+      }
+      await loadAccounts()
+    } catch (err) {
+      setMemberActionError(err instanceof Error ? err.message : "Failed to remove member")
+    } finally {
+      setRemovingUserId(null)
+    }
   }
 
   function loadTeam() {
@@ -1503,33 +1554,68 @@ export default function SettingsPage() {
                 ) : accountMembers.length === 0 ? (
                   <p className="text-[13px] text-[#64748B]">No members yet.</p>
                 ) : (
-                  <table className="w-full text-[13px]">
-                    <thead className="text-[11px] uppercase tracking-wider text-[#64748B] border-b border-[#E2E8F0]">
-                      <tr>
-                        <th className="text-left py-2 font-semibold">Name</th>
-                        <th className="text-left py-2 font-semibold">Email</th>
-                        <th className="text-left py-2 font-semibold">Role</th>
-                        <th className="text-left py-2 font-semibold">Joined</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-[#E2E8F0]">
-                      {accountMembers.map(m => (
-                        <tr key={m.user_id}>
-                          <td className="py-2 text-[#0F172A]">
-                            {m.full_name ?? "—"}
-                            {m.is_self && <span className="text-[#64748B] ml-1">(you)</span>}
-                          </td>
-                          <td className="py-2 text-[#0F172A]">{m.email ?? "—"}</td>
-                          <td className="py-2">
-                            <span className={`px-2 py-0.5 rounded-full text-[11px] font-medium ${m.role === "admin" ? "bg-[#7B9BB5]/15 text-[#456A88]" : "bg-[#F4F5F7] text-[#64748B]"}`}>
-                              {m.role}
-                            </span>
-                          </td>
-                          <td className="py-2 text-[#64748B]">{new Date(m.joined_at).toLocaleDateString()}</td>
+                  <>
+                    {memberActionError && (
+                      <div className="mb-3 px-3 py-2 bg-red-50 border border-red-200 rounded text-[12px] text-red-700">
+                        {memberActionError}
+                      </div>
+                    )}
+                    {(() => {
+                      const adminCount = accountMembers.filter(x => x.role === "admin").length
+                      return (
+                    <table className="w-full text-[13px]">
+                      <thead className="text-[11px] uppercase tracking-wider text-[#64748B] border-b border-[#E2E8F0]">
+                        <tr>
+                          <th className="text-left py-2 font-semibold">Name</th>
+                          <th className="text-left py-2 font-semibold">Email</th>
+                          <th className="text-left py-2 font-semibold">Role</th>
+                          <th className="text-left py-2 font-semibold">Joined</th>
+                          <th className="text-right py-2 font-semibold">Actions</th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                      </thead>
+                      <tbody className="divide-y divide-[#E2E8F0]">
+                        {accountMembers.map(m => {
+                          const isOnlyAdmin = m.role === "admin" && adminCount === 1
+                          const busy = roleChangingUserId === m.user_id || removingUserId === m.user_id
+                          return (
+                            <tr key={m.user_id}>
+                              <td className="py-2 text-[#0F172A]">
+                                {m.full_name ?? "—"}
+                                {m.is_self && <span className="text-[#64748B] ml-1">(you)</span>}
+                              </td>
+                              <td className="py-2 text-[#0F172A]">{m.email ?? "—"}</td>
+                              <td className="py-2">
+                                <select
+                                  value={m.role}
+                                  disabled={isOnlyAdmin || busy}
+                                  onChange={e => handleRoleChange(m, e.target.value as "admin" | "member")}
+                                  className="h-7 px-2 rounded border border-[#E2E8F0] bg-white text-[12px] text-[#0F172A] disabled:bg-[#F4F5F7] disabled:text-[#64748B] disabled:cursor-not-allowed"
+                                >
+                                  <option value="member">member</option>
+                                  <option value="admin">admin</option>
+                                </select>
+                                {isOnlyAdmin && (
+                                  <div className="text-[10px] text-[#94A3B8] mt-1">Last admin — promote another member first</div>
+                                )}
+                              </td>
+                              <td className="py-2 text-[#64748B]">{new Date(m.joined_at).toLocaleDateString()}</td>
+                              <td className="py-2 text-right">
+                                <button
+                                  onClick={() => handleRemoveMember(m)}
+                                  disabled={isOnlyAdmin || busy}
+                                  className="text-[12px] text-red-600 hover:underline disabled:text-[#94A3B8] disabled:no-underline disabled:cursor-not-allowed"
+                                >
+                                  {removingUserId === m.user_id ? "Removing…" : "Remove"}
+                                </button>
+                              </td>
+                            </tr>
+                          )
+                        })}
+                      </tbody>
+                    </table>
+                      )
+                    })()}
+                  </>
                 )}
               </div>
 

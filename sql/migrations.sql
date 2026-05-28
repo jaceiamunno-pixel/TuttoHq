@@ -1688,3 +1688,177 @@ $$;
 REVOKE EXECUTE ON FUNCTION accept_invite_link(text) FROM PUBLIC;
 REVOKE EXECUTE ON FUNCTION accept_invite_link(text) FROM anon, authenticated;
 GRANT  EXECUTE ON FUNCTION accept_invite_link(text) TO service_role;
+
+-- --- Multi-user accounts: Phase 5 — role management + remove user ----------
+--
+-- Two SECURITY DEFINER functions that share a race-safety pattern:
+--   1. Lock all admin rows in the caller's company (FOR UPDATE).
+--   2. Re-validate the caller is STILL admin UNDER the lock (they may have
+--      been demoted by a concurrent call).
+--   3. Read + lock the target row.
+--   4. Cross-company guard.
+--   5. (When relevant) Re-count admins UNDER the lock and reject if the
+--      operation would leave zero admins.
+--
+-- The FOR UPDATE on admin rows serializes any admin-mutating op per
+-- company. Concurrent calls block each other; whichever wins the lock
+-- acts on a consistent snapshot. The at-least-one-admin invariant holds
+-- in every interleaving — including a spurious-last_admin failure mode
+-- if a concurrent accept_invite_link is mid-flight (acceptable).
+--
+-- INVARIANT: user_profiles writes happen via service-role / SECURITY
+-- DEFINER only. The "user_profiles: select own" RLS policy denies
+-- regular-client writes. These two functions — GRANTed to `authenticated`
+-- so the route's cookie client can call them with the caller's JWT
+-- (auth.uid() inside works) — are the sanctioned mutation path for
+-- member role changes and removals.
+
+CREATE OR REPLACE FUNCTION set_user_role(p_target_user_id uuid, p_new_role text)
+RETURNS TABLE (success boolean, error_code text)
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public
+AS $$
+DECLARE
+  v_caller_uid          uuid := auth.uid();
+  v_caller_company_id   uuid;
+  v_target_company_id   uuid;
+  v_target_current_role text;
+  v_admin_count         int;
+BEGIN
+  IF v_caller_uid IS NULL THEN
+    RETURN QUERY SELECT false, 'unauthenticated'::text; RETURN;
+  END IF;
+
+  -- Function-level role validation — fail-fast even though the route
+  -- pre-validates; the function shouldn't trust its caller.
+  IF p_new_role NOT IN ('admin', 'member') THEN
+    RETURN QUERY SELECT false, 'invalid_role'::text; RETURN;
+  END IF;
+
+  SELECT company_id INTO v_caller_company_id
+    FROM user_profiles WHERE user_id = v_caller_uid;
+  IF NOT FOUND THEN
+    RETURN QUERY SELECT false, 'caller_no_company'::text; RETURN;
+  END IF;
+
+  -- Step 1: LOCK all admin rows in the caller's company.
+  PERFORM 1 FROM user_profiles
+    WHERE company_id = v_caller_company_id AND role = 'admin'
+    FOR UPDATE;
+
+  -- Step 2: Re-validate caller is still admin UNDER the lock.
+  IF NOT EXISTS (
+    SELECT 1 FROM user_profiles
+    WHERE user_id = v_caller_uid AND company_id = v_caller_company_id AND role = 'admin'
+  ) THEN
+    RETURN QUERY SELECT false, 'not_admin'::text; RETURN;
+  END IF;
+
+  -- Step 3: Read + lock the target row.
+  SELECT company_id, role INTO v_target_company_id, v_target_current_role
+    FROM user_profiles WHERE user_id = p_target_user_id
+    FOR UPDATE;
+  IF NOT FOUND THEN
+    RETURN QUERY SELECT false, 'target_not_found'::text; RETURN;
+  END IF;
+
+  -- Step 4: Cross-company guard.
+  IF v_target_company_id <> v_caller_company_id THEN
+    RETURN QUERY SELECT false, 'cross_company'::text; RETURN;
+  END IF;
+
+  -- Idempotent no-op if already in the requested role.
+  IF v_target_current_role = p_new_role THEN
+    RETURN QUERY SELECT true, NULL::text; RETURN;
+  END IF;
+
+  -- Step 5: Last-admin guard. Count happens HERE — AFTER the FOR UPDATE
+  -- on admin rows — so the count reflects state observable under our lock.
+  -- Only triggered when DEMOTING an existing admin.
+  IF v_target_current_role = 'admin' AND p_new_role = 'member' THEN
+    SELECT COUNT(*) INTO v_admin_count
+      FROM user_profiles
+      WHERE company_id = v_caller_company_id AND role = 'admin';
+    IF v_admin_count <= 1 THEN
+      RETURN QUERY SELECT false, 'last_admin'::text; RETURN;
+    END IF;
+  END IF;
+
+  UPDATE user_profiles SET role = p_new_role WHERE user_id = p_target_user_id;
+
+  RETURN QUERY SELECT true, NULL::text; RETURN;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION remove_user_from_company(p_target_user_id uuid)
+RETURNS TABLE (success boolean, error_code text)
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public
+AS $$
+DECLARE
+  v_caller_uid          uuid := auth.uid();
+  v_caller_company_id   uuid;
+  v_target_company_id   uuid;
+  v_target_current_role text;
+  v_admin_count         int;
+BEGIN
+  IF v_caller_uid IS NULL THEN
+    RETURN QUERY SELECT false, 'unauthenticated'::text; RETURN;
+  END IF;
+
+  SELECT company_id INTO v_caller_company_id
+    FROM user_profiles WHERE user_id = v_caller_uid;
+  IF NOT FOUND THEN
+    RETURN QUERY SELECT false, 'caller_no_company'::text; RETURN;
+  END IF;
+
+  -- Step 1: LOCK all admin rows in the caller's company.
+  PERFORM 1 FROM user_profiles
+    WHERE company_id = v_caller_company_id AND role = 'admin'
+    FOR UPDATE;
+
+  -- Step 2: Re-validate caller is still admin UNDER the lock — same as
+  -- set_user_role. Closes the caller-demoted-concurrently race for the
+  -- remove path too.
+  IF NOT EXISTS (
+    SELECT 1 FROM user_profiles
+    WHERE user_id = v_caller_uid AND company_id = v_caller_company_id AND role = 'admin'
+  ) THEN
+    RETURN QUERY SELECT false, 'not_admin'::text; RETURN;
+  END IF;
+
+  -- Step 3: Read + lock the target row.
+  SELECT company_id, role INTO v_target_company_id, v_target_current_role
+    FROM user_profiles WHERE user_id = p_target_user_id
+    FOR UPDATE;
+  IF NOT FOUND THEN
+    RETURN QUERY SELECT false, 'target_not_found'::text; RETURN;
+  END IF;
+
+  -- Step 4: Cross-company guard.
+  IF v_target_company_id <> v_caller_company_id THEN
+    RETURN QUERY SELECT false, 'cross_company'::text; RETURN;
+  END IF;
+
+  -- Step 5: Last-admin guard. Count UNDER LOCK. Triggers WHENEVER the
+  -- target is an admin (removing any admin reduces the admin count by 1).
+  IF v_target_current_role = 'admin' THEN
+    SELECT COUNT(*) INTO v_admin_count
+      FROM user_profiles
+      WHERE company_id = v_caller_company_id AND role = 'admin';
+    IF v_admin_count <= 1 THEN
+      RETURN QUERY SELECT false, 'last_admin'::text; RETURN;
+    END IF;
+  END IF;
+
+  DELETE FROM user_profiles WHERE user_id = p_target_user_id;
+
+  RETURN QUERY SELECT true, NULL::text; RETURN;
+END;
+$$;
+
+REVOKE EXECUTE ON FUNCTION set_user_role(uuid, text)      FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION set_user_role(uuid, text)      FROM anon, service_role;
+GRANT  EXECUTE ON FUNCTION set_user_role(uuid, text)      TO authenticated;
+
+REVOKE EXECUTE ON FUNCTION remove_user_from_company(uuid) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION remove_user_from_company(uuid) FROM anon, service_role;
+GRANT  EXECUTE ON FUNCTION remove_user_from_company(uuid) TO authenticated;
