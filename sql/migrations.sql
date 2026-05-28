@@ -1587,3 +1587,104 @@ AS $$
 $$;
 
 GRANT EXECUTE ON FUNCTION get_invite_by_token(text) TO anon, authenticated;
+
+-- --- Multi-user accounts: Phase 4 — atomic accept-invite operation ---------
+--
+-- This function is the security boundary for the invite-accept flow. It
+-- validates a 256-bit token, looks up the just-signed-up auth user by the
+-- invite's email (not from a session — the caller has no session since the
+-- project requires email confirmation), runs the full gate stack, and on
+-- success links user_profiles + confirms the email + marks the invite
+-- accepted, all in one transaction.
+--
+-- Why direct UPDATE on auth.users.email_confirmed_at instead of the Auth
+-- Admin API: atomicity. The whole accept runs in one DB transaction; if
+-- any step fails, none of the writes committed. The auth.users generated
+-- column `confirmed_at` = LEAST(email_confirmed_at, phone_confirmed_at)
+-- reflects this set automatically, so GoTrue's sign-in check sees the
+-- user as confirmed correctly.
+--
+-- INVARIANT: user_profiles writes happen via service-role / SECURITY DEFINER
+-- only. The "user_profiles: select own" RLS policy denies regular-client
+-- writes. This function — REVOKEd from anon/authenticated/PUBLIC and
+-- GRANTed only to service_role — is the single legitimate INSERT path for
+-- invitee user_profiles rows. The /api/invites/accept route's admin client
+-- is the only caller.
+
+CREATE OR REPLACE FUNCTION accept_invite_link(p_token text)
+RETURNS TABLE (success boolean, error_code text)
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_invite   RECORD;
+  v_authuser RECORD;
+BEGIN
+  -- Lock the invite row so two concurrent callers can't both succeed.
+  SELECT id, company_id, email, role, status, expires_at, created_at
+    INTO v_invite
+    FROM company_invites
+    WHERE token = p_token
+    FOR UPDATE;
+  IF NOT FOUND THEN
+    RETURN QUERY SELECT false, 'not_found'::text; RETURN;
+  END IF;
+  IF v_invite.status <> 'pending' THEN
+    RETURN QUERY SELECT false, v_invite.status::text; RETURN;
+  END IF;
+  IF v_invite.expires_at <= now() THEN
+    RETURN QUERY SELECT false, 'expired'::text; RETURN;
+  END IF;
+
+  -- Gate 3a — find the auth user by invite email.
+  SELECT id, email_confirmed_at, created_at, banned_until, deleted_at
+    INTO v_authuser
+    FROM auth.users
+    WHERE lower(email) = lower(v_invite.email)
+    ORDER BY created_at DESC
+    LIMIT 1;
+  IF NOT FOUND THEN
+    RETURN QUERY SELECT false, 'no_signup'::text; RETURN;
+  END IF;
+
+  -- Gate 3a.5 — banned or soft-deleted users must not be relinkable.
+  IF v_authuser.banned_until IS NOT NULL OR v_authuser.deleted_at IS NOT NULL THEN
+    RETURN QUERY SELECT false, 'account_unavailable'::text; RETURN;
+  END IF;
+
+  -- Gate 3b — user must still be unconfirmed
+  -- (closes "hijack confirmed account").
+  IF v_authuser.email_confirmed_at IS NOT NULL THEN
+    RETURN QUERY SELECT false, 'pre_existing_confirmed'::text; RETURN;
+  END IF;
+
+  -- Gate 3c — auth user must have been created AT OR AFTER the invite
+  -- (closes "hijack pre-existing unconfirmed orphan").
+  IF v_authuser.created_at < v_invite.created_at THEN
+    RETURN QUERY SELECT false, 'pre_existing_unconfirmed'::text; RETURN;
+  END IF;
+
+  -- Gate 4 — no existing user_profiles row for this auth user.
+  IF EXISTS (SELECT 1 FROM user_profiles WHERE user_id = v_authuser.id) THEN
+    RETURN QUERY SELECT false, 'already_linked'::text; RETURN;
+  END IF;
+
+  -- All gates passed. Atomic link + confirm + mark-accepted.
+  INSERT INTO user_profiles (user_id, company_id, role)
+  VALUES (v_authuser.id, v_invite.company_id, v_invite.role);
+
+  UPDATE auth.users
+     SET email_confirmed_at = now()
+   WHERE id = v_authuser.id;
+
+  UPDATE company_invites
+     SET status = 'accepted', accepted_at = now()
+   WHERE id = v_invite.id;
+
+  RETURN QUERY SELECT true, NULL::text; RETURN;
+END;
+$$;
+
+REVOKE EXECUTE ON FUNCTION accept_invite_link(text) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION accept_invite_link(text) FROM anon, authenticated;
+GRANT  EXECUTE ON FUNCTION accept_invite_link(text) TO service_role;
