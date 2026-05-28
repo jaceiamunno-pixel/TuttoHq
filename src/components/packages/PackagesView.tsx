@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react"
 import type { SubmittalPackage, SubmittalPackageDetail, SubmittalRecord } from "@/app/dashboard/_shared/types"
+import ReminderSettingsPanel from "@/components/reminders/ReminderSettingsPanel"
 
 // ─── Packages tab (Session I) ───────────────────────────────────────────────
 // Lists dispatched + draft packages for a project, and a detail panel showing
@@ -231,6 +232,14 @@ function PackageDetail({ packageId, onBack, onChanged }: {
         {pkg.notes && <p className="text-[12px] text-[#64748B] mt-3 whitespace-pre-wrap">{pkg.notes}</p>}
         {error && <div className="rounded-md bg-red-50 border border-red-200 px-3 py-2 text-[12px] text-red-600 mt-3">{error}</div>}
       </div>
+
+      {/* Reminder settings */}
+      <ReminderSettingsPanel
+        pkg={pkg}
+        reminderSettings={pkg.reminder_settings}
+        saveEndpoint={`/api/submittal-packages/${packageId}/settings`}
+        onSaved={load}
+      />
 
       {/* Needs-review inbound replies */}
       {pkg.needs_review.length > 0 && (

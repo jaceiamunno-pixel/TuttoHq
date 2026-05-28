@@ -21,6 +21,7 @@ import { getValidToken } from "./gmail"
 import { sendGmailMessage } from "./gmail-send"
 import { composePackagePdf } from "./package-pdf"
 import { composeCloseoutPackagePdf } from "./closeout-package-pdf"
+import { resolveEffectiveSettings } from "./reminder-settings"
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnySupabase = SupabaseClient<any, any, any>
@@ -63,20 +64,21 @@ const KIND: Record<PackageKind, KindConfig> = {
 // is already COALESCEd against company_settings, and sent_count is the
 // number of reminders already in the reminders table for this package.
 interface DueCandidateRow {
-  id:                   string
-  project_id:           string
-  company_id:           string
-  dispatched_at:        string
-  dispatched_by:        string | null
-  vendor_name_snapshot: string
-  sent_to_email:        string
-  gmail_thread_id:      string | null
-  package_number:       string
-  due_date:             string | null
-  effective_cadence:    number[]
-  effective_max:        number
-  effective_attach:     boolean
-  sent_count:           number
+  id:                      string
+  project_id:              string
+  company_id:              string
+  dispatched_at:           string
+  dispatched_by:           string | null
+  vendor_name_snapshot:    string
+  sent_to_email:           string
+  gmail_thread_id:         string | null
+  package_number:          string
+  due_date:                string | null
+  effective_cadence:       number[]
+  effective_max:           number
+  effective_attach:        boolean
+  effective_max_reminders: number
+  sent_count:              number
 }
 
 interface ProjectMeta {
@@ -164,9 +166,17 @@ async function fetchCandidates(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   return (data ?? []).map((raw: any): DueCandidateRow => {
     const cs = Array.isArray(raw.company_settings) ? raw.company_settings[0] : raw.company_settings
-    const fallbackCadence = (cs?.reminder_cadence_days ?? [7, 14]) as number[]
-    const fallbackMax     = (cs?.reminder_max_count ?? 2) as number
-    const fallbackAttach  = (cs?.reminder_default_attach_pdf ?? false) as boolean
+    // Shared resolver — same code path as the settings GET route, so the
+    // cron and UI can never disagree about what's going to run.
+    const eff = resolveEffectiveSettings(
+      {
+        reminder_cadence_days: raw.reminder_cadence_days,
+        reminder_max_count:    raw.reminder_max_count,
+        reminder_attach_pdf:   raw.reminder_attach_pdf,
+        reminders_paused:      raw.reminders_paused,
+      },
+      cs ?? null,
+    )
     return {
       id:                   raw.id,
       project_id:           raw.project_id,
@@ -178,10 +188,11 @@ async function fetchCandidates(
       gmail_thread_id:      raw.gmail_thread_id,
       package_number:       raw.package_number,
       due_date:             raw.due_date,
-      effective_cadence:    (raw.reminder_cadence_days ?? fallbackCadence) as number[],
-      effective_max:        (raw.reminder_max_count    ?? fallbackMax)     as number,
-      effective_attach:     (raw.reminder_attach_pdf   ?? fallbackAttach)  as boolean,
-      sent_count:           counts.get(raw.id) ?? 0,
+      effective_cadence:       eff.effective_cadence,
+      effective_max:           eff.effective_max,
+      effective_attach:        eff.effective_attach,
+      effective_max_reminders: eff.effective_max_reminders,
+      sent_count:              counts.get(raw.id) ?? 0,
     }
   })
 }
@@ -204,11 +215,11 @@ async function sendOneReminder(
   const cfg = KIND[kind]
   const nextIdx = row.sent_count + 1
 
-  // The cron skips further reminders past the user-configured ceiling. We
-  // bound by both the cadence array length AND the explicit max — whichever
-  // is tighter — so a max=3 with cadence=[7,14] never tries to read day 21.
-  const effectiveMaxReminders = Math.min(row.effective_cadence.length, row.effective_max)
-  if (nextIdx > effectiveMaxReminders) {
+  // The cron skips further reminders past the user-configured ceiling. The
+  // bound is pre-computed by resolveEffectiveSettings as the same value the
+  // UI uses, so a "max reached" decision here can never disagree with the
+  // "no more reminders" badge the PM sees on the package detail page.
+  if (nextIdx > row.effective_max_reminders) {
     return { packageId: row.id, status: "skipped_max_reached" }
   }
 

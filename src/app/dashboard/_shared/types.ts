@@ -195,15 +195,31 @@ export interface SubmittalPackage {
   status: PackageStatus
   notes: string | null
   created_at: string
+  // Reminder overrides (Session K2). null = inherit company default.
+  reminder_cadence_days: number[] | null
+  reminder_max_count:    number   | null
+  reminder_attach_pdf:   boolean  | null
+  reminders_paused:      boolean
   // Aggregates supplied by the list/detail API
   item_count?: number
   received_count?: number
   needs_review_count?: number
 }
+/** Reminder configuration + observability returned by the detail GET routes. */
+export interface PackageReminderSettings {
+  effective_cadence:       number[]
+  effective_max:           number
+  effective_attach:        boolean
+  effective_max_reminders: number
+  sent_count:              number
+  last_sent_at:            string | null
+  next_due_at:             string | null
+}
 /** A package plus its expected items and any inbound replies awaiting PM review. */
 export interface SubmittalPackageDetail extends SubmittalPackage {
   items: SubmittalRecord[]
   needs_review: SubmittalRecord[]
+  reminder_settings: PackageReminderSettings
 }
 
 // ─── Closeout packages (Session K1 — outbound dispatch) ─────────────────────
@@ -223,6 +239,10 @@ export interface CloseoutPackage {
   status: PackageStatus
   notes: string | null
   created_at: string
+  reminder_cadence_days: number[] | null
+  reminder_max_count:    number   | null
+  reminder_attach_pdf:   boolean  | null
+  reminders_paused:      boolean
   item_count?: number
   received_count?: number
   needs_review_count?: number
@@ -245,6 +265,7 @@ export interface CloseoutPackageInbound {
 export interface CloseoutPackageDetail extends CloseoutPackage {
   items: CloseoutItem[]
   needs_review: CloseoutPackageInbound[]
+  reminder_settings: PackageReminderSettings
 }
 export type FileModalStep = "project" | "coversheet" | "form"
 export interface OpenFileCtx { file: SubmittalFile; divNum: string; divName: string; secCode: string; secName: string }
