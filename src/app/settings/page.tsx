@@ -102,6 +102,7 @@ interface Project {
   gc_name: string | null
   architect: string | null
   created_at: string
+  created_by: string | null
 }
 
 interface TeamImportRow {
@@ -188,6 +189,11 @@ export default function SettingsPage() {
   const [roleChangingUserId, setRoleChangingUserId] = useState<string | null>(null)
   const [removingUserId, setRemovingUserId]     = useState<string | null>(null)
   const [memberActionError, setMemberActionError] = useState<string | null>(null)
+  // Current user identity for UI-side admin/creator checks. Server still
+  // enforces; this is purely for affordance hiding (e.g. project Delete
+  // button is hidden from members on projects they didn't create).
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null)
+  const [currentRole, setCurrentRole]     = useState<string | null>(null)
   const [savingMember, setSavingMember] = useState(false)
   const [teamMessage, setTeamMessage]   = useState<{ text: string; ok: boolean } | null>(null)
 
@@ -315,6 +321,18 @@ export default function SettingsPage() {
     } else if (tabParam && ["company", "team", "contacts", "projects", "subcontractors", "suppliers", "cms"].includes(tabParam)) {
       setActiveTab(tabParam as Tab)
     }
+  }, [])
+
+  // Fetch current user's id + role once on mount. Cheap (SELECT-own RLS on
+  // user_profiles), used for affordance gating. Server still enforces.
+  useEffect(() => {
+    (async () => {
+      const sb = createClient()
+      const { data: { user } } = await sb.auth.getUser()
+      if (user) setCurrentUserId(user.id)
+      const { data: profile } = await sb.from("user_profiles").select("role").maybeSingle()
+      setCurrentRole(profile?.role ?? null)
+    })()
   }, [])
 
   useEffect(() => {
@@ -2388,13 +2406,15 @@ export default function SettingsPage() {
                               >
                                 <PencilIcon />
                               </button>
-                              <button
-                                onClick={() => deleteProject(p)}
-                                className="p-1 rounded text-[#64748B] hover:text-red-400 hover:bg-[#F4F5F7]/[0.08] transition-colors"
-                                title="Delete"
-                              >
-                                <XIcon className="h-3 w-3" />
-                              </button>
+                              {(currentRole === "admin" || (currentUserId && p.created_by === currentUserId)) && (
+                                <button
+                                  onClick={() => deleteProject(p)}
+                                  className="p-1 rounded text-[#64748B] hover:text-red-400 hover:bg-[#F4F5F7]/[0.08] transition-colors"
+                                  title="Delete"
+                                >
+                                  <XIcon className="h-3 w-3" />
+                                </button>
+                              )}
                             </div>
                           </div>
                         </td>
