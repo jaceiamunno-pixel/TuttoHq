@@ -1250,3 +1250,170 @@ CREATE TRIGGER closeout_package_items_sync_status
 UPDATE submittals SET company_id = (SELECT company_id FROM user_profiles WHERE user_id = submittals.uploaded_by) WHERE company_id IS NULL AND uploaded_by IS NOT NULL;
 
 ALTER TABLE submittals ALTER COLUMN company_id SET NOT NULL;
+
+-- =============================================================================
+-- 2026-05-26 — SESSION K2: PACKAGE REMINDERS + GMAIL SELF-LOOP FIX (Phase 1)
+-- -----------------------------------------------------------------------------
+-- A daily cron sends reminder emails for dispatched-but-incomplete packages
+-- (both submittal and closeout). Cadence is company-wide (default {7,14}, max
+-- 2 reminders) with per-package overrides + a pause flag.
+--
+-- Auto-stop relies on existing triggers (Session I + K1): once every package
+-- item is fulfilled the package's status flips to 'complete' and the cron's
+-- WHERE clause filters it out. No new status fields needed.
+--
+-- The Gmail self-loop fix (commit 2) intercepts inbound mail whose subject
+-- carries a TuttoHQ-issued [TTQ-...] tracking ref AND whose attachments are
+-- our own dispatch PDFs being looped back to the connected mailbox. The skip
+-- is recorded in gmail_intake_skips so misclassified skips remain auditable.
+--
+-- company_settings is added properly here — it has existed in production since
+-- before this file was written but was never documented in the migration log.
+-- Idempotent — safe to re-run.
+-- =============================================================================
+
+-- --- company_settings (formalized) ------------------------------------------
+-- Pre-existing in production; columns: id, logo_path, cover_page_path,
+-- updated_at. company_id was implicit (single-tenant origin) and is now
+-- backed by RLS. The reminder columns below sit on the same row.
+CREATE TABLE IF NOT EXISTS company_settings (
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  logo_path       TEXT,
+  cover_page_path TEXT,
+  updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+  company_id      UUID REFERENCES companies(id) DEFAULT get_my_company_id()
+);
+
+-- IMPORTANT: company_settings pre-exists in production from before this file
+-- documented it. The CREATE TABLE IF NOT EXISTS above is therefore a NO-OP
+-- on prod — it does not retroactively add company_id (or any other column)
+-- to the existing row. The explicit ALTER below is what actually adds
+-- company_id on a live database. The same column appears in the CREATE so
+-- a fresh setup gets it from the start; both paths converge on the same shape.
+ALTER TABLE company_settings
+  ADD COLUMN IF NOT EXISTS company_id UUID REFERENCES companies(id) DEFAULT get_my_company_id();
+
+-- Backfill: any pre-existing row with NULL company_id inherits the lone
+-- company (single-tenant origin). Safe no-op once every row has one.
+UPDATE company_settings cs
+SET    company_id = (SELECT id FROM companies LIMIT 1)
+WHERE  cs.company_id IS NULL
+  AND  (SELECT count(*) FROM companies) = 1;
+
+-- One settings row per company. Enforced lazily — production may have a single
+-- row with NULL company_id pre-backfill; this index covers the new state.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_company_settings_company
+  ON company_settings(company_id) WHERE company_id IS NOT NULL;
+
+ALTER TABLE company_settings ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "company_settings: company select" ON company_settings;
+DROP POLICY IF EXISTS "company_settings: company insert" ON company_settings;
+DROP POLICY IF EXISTS "company_settings: company update" ON company_settings;
+DROP POLICY IF EXISTS "company_settings: company delete" ON company_settings;
+CREATE POLICY "company_settings: company select" ON company_settings FOR SELECT TO authenticated USING     (company_id = get_my_company_id());
+CREATE POLICY "company_settings: company insert" ON company_settings FOR INSERT TO authenticated WITH CHECK (company_id = get_my_company_id());
+CREATE POLICY "company_settings: company update" ON company_settings FOR UPDATE TO authenticated USING     (company_id = get_my_company_id()) WITH CHECK (company_id = get_my_company_id());
+CREATE POLICY "company_settings: company delete" ON company_settings FOR DELETE TO authenticated USING     (company_id = get_my_company_id());
+
+-- --- Reminder cadence configuration -----------------------------------------
+-- Company-wide defaults: [7,14] days after dispatch, max 2 reminders,
+-- text-only (no PDF re-attach). Per-package overrides on submittal_packages
+-- and closeout_packages are nullable — NULL means "fall back to company".
+ALTER TABLE company_settings
+  ADD COLUMN IF NOT EXISTS reminder_cadence_days       INT[]   NOT NULL DEFAULT '{7,14}',
+  ADD COLUMN IF NOT EXISTS reminder_max_count          INT     NOT NULL DEFAULT 2,
+  ADD COLUMN IF NOT EXISTS reminder_default_attach_pdf BOOLEAN NOT NULL DEFAULT false;
+
+ALTER TABLE submittal_packages
+  ADD COLUMN IF NOT EXISTS reminder_cadence_days INT[],
+  ADD COLUMN IF NOT EXISTS reminder_max_count    INT,
+  ADD COLUMN IF NOT EXISTS reminder_attach_pdf   BOOLEAN,
+  ADD COLUMN IF NOT EXISTS reminders_paused      BOOLEAN NOT NULL DEFAULT false;
+
+ALTER TABLE closeout_packages
+  ADD COLUMN IF NOT EXISTS reminder_cadence_days INT[],
+  ADD COLUMN IF NOT EXISTS reminder_max_count    INT,
+  ADD COLUMN IF NOT EXISTS reminder_attach_pdf   BOOLEAN,
+  ADD COLUMN IF NOT EXISTS reminders_paused      BOOLEAN NOT NULL DEFAULT false;
+
+-- --- submittal_package_reminders --------------------------------------------
+-- One row per reminder sent. reminder_number is the 1-indexed position within
+-- the package's cadence sequence so the cron can compute "next index = count+1"
+-- without consulting clock state. Inserted by the cron under service-role; the
+-- DEFAULT for company_id resolves to NULL there, so the column is NOT NULL
+-- from the start to force callers to set it explicitly (Session I lesson).
+CREATE TABLE IF NOT EXISTS submittal_package_reminders (
+  id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  package_id        UUID NOT NULL REFERENCES submittal_packages(id) ON DELETE CASCADE,
+  sent_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
+  reminder_number   INT NOT NULL CHECK (reminder_number > 0),
+  channel           TEXT NOT NULL DEFAULT 'gmail' CHECK (channel IN ('gmail')),
+  gmail_message_id  TEXT,
+  attached_pdf      BOOLEAN NOT NULL DEFAULT false,
+  company_id        UUID NOT NULL REFERENCES companies(id),
+  UNIQUE (package_id, reminder_number)
+);
+
+CREATE INDEX IF NOT EXISTS idx_submittal_package_reminders_package ON submittal_package_reminders(package_id);
+CREATE INDEX IF NOT EXISTS idx_submittal_package_reminders_company ON submittal_package_reminders(company_id);
+CREATE INDEX IF NOT EXISTS idx_submittal_package_reminders_sent_at ON submittal_package_reminders(sent_at);
+
+ALTER TABLE submittal_package_reminders ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "submittal_package_reminders: company select" ON submittal_package_reminders;
+-- Read scoped to the user's company. No INSERT/UPDATE/DELETE policies are
+-- defined for authenticated — those operations are reserved for the
+-- service-role cron, which bypasses RLS by default. App users cannot forge
+-- reminder rows.
+CREATE POLICY "submittal_package_reminders: company select" ON submittal_package_reminders
+  FOR SELECT TO authenticated
+  USING (company_id = get_my_company_id());
+
+-- --- closeout_package_reminders ---------------------------------------------
+-- Identical shape; separate table on purpose (mirrors the package tables).
+CREATE TABLE IF NOT EXISTS closeout_package_reminders (
+  id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  package_id        UUID NOT NULL REFERENCES closeout_packages(id) ON DELETE CASCADE,
+  sent_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
+  reminder_number   INT NOT NULL CHECK (reminder_number > 0),
+  channel           TEXT NOT NULL DEFAULT 'gmail' CHECK (channel IN ('gmail')),
+  gmail_message_id  TEXT,
+  attached_pdf      BOOLEAN NOT NULL DEFAULT false,
+  company_id        UUID NOT NULL REFERENCES companies(id),
+  UNIQUE (package_id, reminder_number)
+);
+
+CREATE INDEX IF NOT EXISTS idx_closeout_package_reminders_package ON closeout_package_reminders(package_id);
+CREATE INDEX IF NOT EXISTS idx_closeout_package_reminders_company ON closeout_package_reminders(company_id);
+CREATE INDEX IF NOT EXISTS idx_closeout_package_reminders_sent_at ON closeout_package_reminders(sent_at);
+
+ALTER TABLE closeout_package_reminders ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "closeout_package_reminders: company select" ON closeout_package_reminders;
+CREATE POLICY "closeout_package_reminders: company select" ON closeout_package_reminders
+  FOR SELECT TO authenticated
+  USING (company_id = get_my_company_id());
+
+-- --- gmail_intake_skips (self-loop + future skip reasons) --------------------
+-- The Gmail self-loop fix logs every inbound message it intentionally drops.
+-- This gives the team a queryable counter for "how often is our own outbound
+-- coming back at us" without leaving the count buried in console logs.
+-- Service-role inserts only — the table is read-only from the app.
+CREATE TABLE IF NOT EXISTS gmail_intake_skips (
+  id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  gmail_message_id  TEXT NOT NULL,
+  subject           TEXT,
+  sender_email      TEXT,
+  reason            TEXT NOT NULL CHECK (reason IN ('self_loop_skipped')),
+  skipped_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+  company_id        UUID NOT NULL REFERENCES companies(id),
+  UNIQUE (gmail_message_id, reason)
+);
+
+CREATE INDEX IF NOT EXISTS idx_gmail_intake_skips_company    ON gmail_intake_skips(company_id);
+CREATE INDEX IF NOT EXISTS idx_gmail_intake_skips_reason     ON gmail_intake_skips(reason);
+CREATE INDEX IF NOT EXISTS idx_gmail_intake_skips_skipped_at ON gmail_intake_skips(skipped_at);
+
+ALTER TABLE gmail_intake_skips ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "gmail_intake_skips: company select" ON gmail_intake_skips;
+CREATE POLICY "gmail_intake_skips: company select" ON gmail_intake_skips
+  FOR SELECT TO authenticated
+  USING (company_id = get_my_company_id());

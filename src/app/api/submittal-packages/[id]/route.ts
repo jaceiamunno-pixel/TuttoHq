@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
+import { resolveEffectiveSettings, computeNextDueAt } from "@/lib/reminder-settings"
 
 // ─── Submittal package — single resource (Session I) ────────────────────────
 // GET    /api/submittal-packages/[id]  — package + expected items + inbound
@@ -45,6 +46,37 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
     .order("received_at", { ascending: false })
   const needsReview = (inboundRows ?? []).filter((s: { id: string }) => !itemIds.has(s.id))
 
+  // Reminder settings + observability — joins company defaults via the
+  // shared resolver so the UI's "effective" display can never disagree with
+  // the cron's actual behavior (see src/lib/reminder-settings.ts).
+  const [companyRes, remindersRes] = await Promise.all([
+    supabase.from("company_settings")
+      .select("reminder_cadence_days, reminder_max_count, reminder_default_attach_pdf")
+      .maybeSingle(),
+    supabase.from("submittal_package_reminders")
+      .select("sent_at")
+      .eq("package_id", id)
+      .order("sent_at", { ascending: false }),
+  ])
+  const effective = resolveEffectiveSettings(
+    {
+      reminder_cadence_days: pkg.reminder_cadence_days ?? null,
+      reminder_max_count:    pkg.reminder_max_count ?? null,
+      reminder_attach_pdf:   pkg.reminder_attach_pdf ?? null,
+      reminders_paused:      pkg.reminders_paused ?? false,
+    },
+    companyRes.data ?? null,
+  )
+  const reminderRows = (remindersRes.data ?? []) as Array<{ sent_at: string }>
+  const sentCount = reminderRows.length
+  const lastSentAt = reminderRows[0]?.sent_at ?? null
+  const nextDueAt = computeNextDueAt(
+    pkg.dispatched_at ?? null,
+    sentCount,
+    pkg.reminders_paused ?? false,
+    effective,
+  )
+
   return NextResponse.json({
     package: {
       ...pkg,
@@ -53,6 +85,15 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
       needs_review_count: needsReview.length,
       items,
       needs_review: needsReview,
+      reminder_settings: {
+        effective_cadence:        effective.effective_cadence,
+        effective_max:            effective.effective_max,
+        effective_attach:         effective.effective_attach,
+        effective_max_reminders:  effective.effective_max_reminders,
+        sent_count:               sentCount,
+        last_sent_at:             lastSentAt,
+        next_due_at:              nextDueAt,
+      },
     },
   })
 }

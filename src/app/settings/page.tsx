@@ -7,6 +7,13 @@ import { DivisionChecklist, SectionAccordion, isDefaultInScopeDivision } from "@
 import ProjectSpecBooks from "@/components/project-spec-books"
 import type { TocEntry, TocDivision } from "@/lib/scope-types"
 import { uploadFileToSignedUrl, presignAndUpload } from "@/lib/storage-upload"
+import {
+  formatCadence,
+  parseCadenceInput,
+  validateCompanyDefaultsBody,
+  MAX_CADENCE_DAY,
+  MAX_REMINDER_COUNT,
+} from "@/lib/reminder-settings"
 
 type Tab = "company" | "team" | "projects" | "subcontractors" | "suppliers" | "cms" | "gmail"
 
@@ -120,6 +127,20 @@ export default function SettingsPage() {
   const [uploadingCover, setUploadingCover] = useState(false)
   const [companyMessage, setCompanyMessage] = useState<{ text: string; ok: boolean } | null>(null)
 
+  // ── Company-wide reminder defaults (Session K2) ───────────────────────────
+  // Saved values from /api/settings/reminders are mirrored into the input
+  // strings; "dirty" is computed against the saved snapshot so Save disables
+  // until something actually changed.
+  const [reminderDefaultsLoaded, setReminderDefaultsLoaded] = useState(false)
+  const [savedCadence,  setSavedCadence]  = useState<number[]>([])
+  const [savedMax,      setSavedMax]      = useState<number>(2)
+  const [savedAttach,   setSavedAttach]   = useState<boolean>(false)
+  const [cadenceInput,  setCadenceInput]  = useState<string>("")
+  const [maxInput,      setMaxInput]      = useState<string>("")
+  const [attachInput,   setAttachInput]   = useState<boolean>(false)
+  const [savingReminders, setSavingReminders] = useState(false)
+  const [reminderMessage, setReminderMessage] = useState<{ text: string; ok: boolean } | null>(null)
+
   const [teamMembers, setTeamMembers]   = useState<TeamMember[]>([])
   const [teamLoading, setTeamLoading]   = useState(false)
   const [teamLoaded, setTeamLoaded]     = useState(false)
@@ -221,6 +242,18 @@ export default function SettingsPage() {
       .then(r => r.json())
       .then(d => { setLogoUrl(d.logo_url); setHasCoverPage(d.has_cover_page) })
       .finally(() => setLoadingCompany(false))
+
+    fetch("/api/settings/reminders")
+      .then(r => r.json())
+      .then((d: { reminder_cadence_days: number[]; reminder_max_count: number; reminder_default_attach_pdf: boolean }) => {
+        setSavedCadence(d.reminder_cadence_days)
+        setSavedMax(d.reminder_max_count)
+        setSavedAttach(d.reminder_default_attach_pdf)
+        setCadenceInput(formatCadence(d.reminder_cadence_days))
+        setMaxInput(String(d.reminder_max_count))
+        setAttachInput(d.reminder_default_attach_pdf)
+      })
+      .finally(() => setReminderDefaultsLoaded(true))
 
     // Handle redirect params: OAuth callback (?tab=gmail&connected=1) or a
     // direct deep-link to a specific tab (e.g. ?tab=projects from the dashboard).
@@ -385,6 +418,50 @@ export default function SettingsPage() {
       setUploadingCover(false)
       e.target.value = ""
     }
+  }
+
+  // ── Company reminder defaults (Session K2) ───────────────────────────────
+  // TODO(multi-user): gate to admin role once user_profiles.role exists —
+  // see multi-user spec. This handler writes company-wide defaults that
+  // affect every PM in the tenant.
+  async function saveReminderDefaults() {
+    setSavingReminders(true)
+    setReminderMessage(null)
+    try {
+      const cadenceParsed = parseCadenceInput(cadenceInput)
+      const body = {
+        reminder_cadence_days:       cadenceParsed ?? [],
+        reminder_max_count:          maxInput.trim() === "" ? NaN : Number(maxInput),
+        reminder_default_attach_pdf: attachInput,
+      }
+      const res = await fetch("/api/settings/reminders", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      })
+      const d = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        setReminderMessage({ text: d.error ?? "Could not save reminder defaults", ok: false })
+        return
+      }
+      // Snapshot the saved values so dirty-check resets.
+      setSavedCadence(body.reminder_cadence_days as number[])
+      setSavedMax(body.reminder_max_count as number)
+      setSavedAttach(body.reminder_default_attach_pdf)
+      setReminderMessage({ text: "Reminder defaults saved.", ok: true })
+      setTimeout(() => setReminderMessage(null), 3000)
+    } catch (e) {
+      setReminderMessage({ text: e instanceof Error ? e.message : "Network error", ok: false })
+    } finally {
+      setSavingReminders(false)
+    }
+  }
+
+  function revertReminderDefaults() {
+    setCadenceInput(formatCadence(savedCadence))
+    setMaxInput(String(savedMax))
+    setAttachInput(savedAttach)
+    setReminderMessage(null)
   }
 
   function openAddMember() {
@@ -1109,6 +1186,119 @@ export default function SettingsPage() {
                     </button>
                   </div>
                   <input ref={coverInputRef} type="file" accept=".pdf,application/pdf" onChange={handleCoverChange} className="hidden" />
+                </div>
+
+                {/* ── Reminder defaults (Session K2) ──────────────────────
+                    Sits below the file-upload cards. Inline (not an
+                    extracted component) to match the rest of the company
+                    tab's pattern. */}
+                <div className="bg-white rounded-xl border border-[#E2E8F0] p-5">
+                  <h2 className="text-[14px] font-semibold text-[#0F172A] mb-0.5">Reminder Defaults</h2>
+                  <p className="text-[12px] text-[#64748B] mb-4">
+                    Sets the company-wide cadence for outbound package reminders (submittal + closeout).
+                    Per-package overrides are configured on each package&apos;s detail view.
+                  </p>
+
+                  {!reminderDefaultsLoaded ? (
+                    <div className="text-[12px] text-[#64748B]">Loading…</div>
+                  ) : (() => {
+                    // Live validation (mirrors the server-side validator).
+                    const cadenceParsed = parseCadenceInput(cadenceInput)
+                    const validatedBody = validateCompanyDefaultsBody({
+                      reminder_cadence_days:       cadenceParsed ?? [],
+                      reminder_max_count:          maxInput.trim() === "" ? NaN : Number(maxInput),
+                      reminder_default_attach_pdf: attachInput,
+                    })
+                    const validationError = validatedBody.ok ? null : validatedBody.error
+                    const dirty =
+                      JSON.stringify(cadenceParsed ?? []) !== JSON.stringify(savedCadence) ||
+                      (maxInput.trim() === "" ? NaN : Number(maxInput)) !== savedMax ||
+                      attachInput !== savedAttach
+
+                    return (
+                      <div className="space-y-4 max-w-[460px]">
+                        <div>
+                          <label className="block text-[11px] font-semibold text-[#0F172A] mb-1">
+                            Cadence (days after dispatch)
+                          </label>
+                          <input
+                            type="text"
+                            value={cadenceInput}
+                            onChange={(e) => setCadenceInput(e.target.value)}
+                            placeholder="e.g. 7, 14"
+                            className="w-full h-9 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]"
+                          />
+                          <p className="text-[11px] text-[#64748B] mt-1">
+                            Comma-separated, strictly ascending, each ≤ {MAX_CADENCE_DAY}.
+                          </p>
+                        </div>
+
+                        <div>
+                          <label className="block text-[11px] font-semibold text-[#0F172A] mb-1">
+                            Max reminders
+                          </label>
+                          <input
+                            type="number"
+                            min={1}
+                            max={MAX_REMINDER_COUNT}
+                            value={maxInput}
+                            onChange={(e) => setMaxInput(e.target.value)}
+                            className="w-32 h-9 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]"
+                          />
+                          <p className="text-[11px] text-[#64748B] mt-1">1–{MAX_REMINDER_COUNT}.</p>
+                        </div>
+
+                        <div>
+                          <label className="flex items-center gap-2 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={attachInput}
+                              onChange={(e) => setAttachInput(e.target.checked)}
+                              className="h-4 w-4 rounded border-[#CBD5E1] text-[#7B9BB5] focus:ring-[#7B9BB5]"
+                            />
+                            <span className="text-[12px] font-semibold text-[#0F172A]">
+                              Re-attach package PDF by default
+                            </span>
+                          </label>
+                          <p className="text-[11px] text-[#64748B] mt-1 ml-6">
+                            When off, reminders are text-only. Individual packages can override this.
+                          </p>
+                        </div>
+
+                        {validationError && (
+                          <div className="rounded-md bg-red-50 border border-red-200 px-3 py-2 text-[12px] text-red-600">
+                            {validationError}
+                          </div>
+                        )}
+                        {reminderMessage && (
+                          <div className={`rounded-md px-3 py-2 text-[12px] ${
+                            reminderMessage.ok
+                              ? "bg-green-50 border border-green-200 text-green-700"
+                              : "bg-red-50 border border-red-200 text-red-600"
+                          }`}>
+                            {reminderMessage.text}
+                          </div>
+                        )}
+
+                        <div className="flex items-center gap-2 pt-1">
+                          <button
+                            onClick={saveReminderDefaults}
+                            disabled={!dirty || savingReminders || !!validationError}
+                            className="h-8 px-3 rounded-md bg-[#7B9BB5] text-white text-[12px] font-semibold hover:bg-[#5A7A94] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            {savingReminders ? "Saving…" : "Save"}
+                          </button>
+                          <button
+                            onClick={revertReminderDefaults}
+                            disabled={!dirty || savingReminders}
+                            className="h-8 px-3 rounded-md border border-[#E2E8F0] text-[12px] font-semibold text-[#0F172A] hover:bg-[#0F172A]/[0.04] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    )
+                  })()}
                 </div>
               </>
             )}

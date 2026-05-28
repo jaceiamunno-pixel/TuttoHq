@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react"
 import type { CloseoutItem, CloseoutPackage, CloseoutPackageDetail, CloseoutPackageInbound } from "@/app/dashboard/_shared/types"
+import ReminderSettingsPanel from "@/components/reminders/ReminderSettingsPanel"
 
 // ─── Closeout Packages tab (Session K1) ─────────────────────────────────────
 // Lists dispatched + draft closeout packages and a detail panel with expected
@@ -265,6 +266,14 @@ function PackageDetail({ packageId, onBack, onChanged }: {
         {pkg.notes && <p className="text-[12px] text-[#64748B] mt-3 whitespace-pre-wrap">{pkg.notes}</p>}
         {error && <div className="rounded-md bg-red-50 border border-red-200 px-3 py-2 text-[12px] text-red-600 mt-3">{error}</div>}
       </div>
+
+      {/* Reminder settings */}
+      <ReminderSettingsPanel
+        pkg={pkg}
+        reminderSettings={pkg.reminder_settings}
+        saveEndpoint={`/api/closeout-packages/${packageId}/settings`}
+        onSaved={load}
+      />
 
       {/* Needs-review inbound replies — orphans awaiting PM placement */}
       {pkg.needs_review.length > 0 && (
