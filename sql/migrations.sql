@@ -1893,3 +1893,66 @@ DROP POLICY IF EXISTS "gmail_connections: company select" ON gmail_connections;
 DROP POLICY IF EXISTS "gmail_connections: company insert" ON gmail_connections;
 DROP POLICY IF EXISTS "gmail_connections: company update" ON gmail_connections;
 DROP POLICY IF EXISTS "gmail_connections: company delete" ON gmail_connections;
+
+-- --- storage.objects: tenant-scoped RLS (Step 3 of the storage isolation fix)
+--
+-- Before: nine bucket-wide policies. submittals' SELECT/INSERT required
+-- `bucket_id = 'submittals' AND auth.role() = 'authenticated'` (any
+-- authenticated user reaches every object in the bucket). photos and
+-- company-assets had NO auth.role() check at all — bucket_id was the only
+-- predicate. Only UUID path obscurity kept tenants apart, and /api/upload
+-- accepted a client-supplied file_path that could point anywhere, so a
+-- path-leakage incident was the gap to tenant data.
+--
+-- Migration plan that landed this:
+--   Step 1: every upload route prepends {company_id}/ to the path (code,
+--           commit 2547f54). Old objects untouched; wide RLS still served them.
+--   Step 2a: deleted 120 orphan objects (no DB row referenced them).
+--   Step 2b: moved 94 existing objects to {company_id}/{old_path} and
+--           updated 14 DB columns that pointed at them. (1 row was already
+--           prefixed and got skipped.) All 95 remaining objects now have
+--           their first folder segment = a real companies.id.
+--   Step 3 (this): swap the 9 bucket-wide policies for 12 tenant-scoped
+--           ones. Predicate: (storage.foldername(name))[1] = caller's
+--           company_id. Service-role calls (cron + Pub/Sub intake +
+--           in-route admin clients) bypass RLS — unaffected.
+
+DROP POLICY IF EXISTS "Authenticated users can read files 10p6uh8_0"    ON storage.objects;
+DROP POLICY IF EXISTS "Authenticated users can upload files 10p6uh8_0"  ON storage.objects;
+DROP POLICY IF EXISTS "auth overwrite 11180r7_0"                        ON storage.objects;
+DROP POLICY IF EXISTS "auth overwrite 11180r7_1"                        ON storage.objects;
+DROP POLICY IF EXISTS "auth read 11180r7_0"                             ON storage.objects;
+DROP POLICY IF EXISTS "auth upload 11180r7_0"                           ON storage.objects;
+DROP POLICY IF EXISTS "photos delete"                                   ON storage.objects;
+DROP POLICY IF EXISTS "photos read"                                     ON storage.objects;
+DROP POLICY IF EXISTS "photos upload"                                   ON storage.objects;
+
+CREATE POLICY "submittals: tenant select" ON storage.objects FOR SELECT TO authenticated
+  USING       (bucket_id = 'submittals'      AND (storage.foldername(name))[1] = public.get_my_company_id()::text);
+CREATE POLICY "submittals: tenant insert" ON storage.objects FOR INSERT TO authenticated
+  WITH CHECK (bucket_id = 'submittals'      AND (storage.foldername(name))[1] = public.get_my_company_id()::text);
+CREATE POLICY "submittals: tenant update" ON storage.objects FOR UPDATE TO authenticated
+  USING       (bucket_id = 'submittals'      AND (storage.foldername(name))[1] = public.get_my_company_id()::text)
+  WITH CHECK (bucket_id = 'submittals'      AND (storage.foldername(name))[1] = public.get_my_company_id()::text);
+CREATE POLICY "submittals: tenant delete" ON storage.objects FOR DELETE TO authenticated
+  USING       (bucket_id = 'submittals'      AND (storage.foldername(name))[1] = public.get_my_company_id()::text);
+
+CREATE POLICY "photos: tenant select" ON storage.objects FOR SELECT TO authenticated
+  USING       (bucket_id = 'photos'          AND (storage.foldername(name))[1] = public.get_my_company_id()::text);
+CREATE POLICY "photos: tenant insert" ON storage.objects FOR INSERT TO authenticated
+  WITH CHECK (bucket_id = 'photos'          AND (storage.foldername(name))[1] = public.get_my_company_id()::text);
+CREATE POLICY "photos: tenant update" ON storage.objects FOR UPDATE TO authenticated
+  USING       (bucket_id = 'photos'          AND (storage.foldername(name))[1] = public.get_my_company_id()::text)
+  WITH CHECK (bucket_id = 'photos'          AND (storage.foldername(name))[1] = public.get_my_company_id()::text);
+CREATE POLICY "photos: tenant delete" ON storage.objects FOR DELETE TO authenticated
+  USING       (bucket_id = 'photos'          AND (storage.foldername(name))[1] = public.get_my_company_id()::text);
+
+CREATE POLICY "company-assets: tenant select" ON storage.objects FOR SELECT TO authenticated
+  USING       (bucket_id = 'company-assets'  AND (storage.foldername(name))[1] = public.get_my_company_id()::text);
+CREATE POLICY "company-assets: tenant insert" ON storage.objects FOR INSERT TO authenticated
+  WITH CHECK (bucket_id = 'company-assets'  AND (storage.foldername(name))[1] = public.get_my_company_id()::text);
+CREATE POLICY "company-assets: tenant update" ON storage.objects FOR UPDATE TO authenticated
+  USING       (bucket_id = 'company-assets'  AND (storage.foldername(name))[1] = public.get_my_company_id()::text)
+  WITH CHECK (bucket_id = 'company-assets'  AND (storage.foldername(name))[1] = public.get_my_company_id()::text);
+CREATE POLICY "company-assets: tenant delete" ON storage.objects FOR DELETE TO authenticated
+  USING       (bucket_id = 'company-assets'  AND (storage.foldername(name))[1] = public.get_my_company_id()::text);

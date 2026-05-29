@@ -41,6 +41,19 @@ export async function POST(req: NextRequest) {
     )
   }
 
+  // Defense-in-depth on top of the storage RLS: validate that the client-
+  // supplied file_path starts with the caller's company_id. The storage RLS
+  // would reject any cross-tenant signed-URL fetch anyway, but failing fast
+  // here keeps us from inserting an orphan submittals row pointing at an
+  // inaccessible path.
+  const { data: companyId } = await supabase.rpc("get_my_company_id")
+  if (!companyId) {
+    return NextResponse.json({ error: "No company association" }, { status: 500 })
+  }
+  if (!filePath.startsWith(`${companyId}/`)) {
+    return NextResponse.json({ error: "Invalid file_path" }, { status: 400 })
+  }
+
   // Use explicit custom name if provided, otherwise build from structured fields, fall back to filename
   const nameParts   = [materialName, manufacturer, dimensions].filter(Boolean)
   const displayName = customName ?? (nameParts.length > 0 ? nameParts.join(" — ") : fileName)
