@@ -1067,12 +1067,12 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
         {/* Submittal Log action bar */}
         {activeModule === "submittals" && (
         <div className="flex-shrink-0 border-b border-[#E2E8F0] bg-white">
-          <div className="flex items-center justify-between px-4 py-2.5 gap-2 min-w-0">
+          <div className="flex flex-wrap items-center px-4 py-2.5 gap-2 min-w-0">
             <div className="flex items-center gap-2 min-w-0">
               <div className="flex rounded-md border border-[#E2E8F0] overflow-hidden flex-shrink-0">
                 {(["log", "pending", "packages"] as const).map(v => (
                   <button key={v} onClick={() => setSubmittalsView(v)}
-                    className={`h-7 px-3 text-[12px] font-medium transition-colors ${submittalsView === v ? "bg-[#7B9BB5] text-white" : "bg-white text-[#64748B] hover:bg-[#F8F9FA]"}`}>
+                    className={`h-7 px-3 text-[12px] font-medium whitespace-nowrap transition-colors ${submittalsView === v ? "bg-[#7B9BB5] text-white" : "bg-white text-[#64748B] hover:bg-[#F8F9FA]"}`}>
                     {v === "log"
                       ? "Submittal Log"
                       : v === "pending"
@@ -1089,7 +1089,7 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                   : "Staged from spec book — review and commit"}
               </p>
             </div>
-            <div className="flex items-center gap-2 flex-shrink-0">
+            <div className="flex items-center gap-2 ml-auto flex-wrap justify-end">
               {submittalsView === "log" && !isSearchMode && (
                 <label className="flex items-center gap-1.5 text-[12px] text-[#64748B] cursor-pointer select-none whitespace-nowrap">
                   <input type="checkbox" checked={groupBySection}
