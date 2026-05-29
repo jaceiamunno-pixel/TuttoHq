@@ -164,14 +164,16 @@ export async function buildPackagePdf(input: PackagePdfInput): Promise<Uint8Arra
 
 const PKG_BUCKET = "submittals"
 
-/** Storage path for a package's generated PDF. */
-export function packagePdfPath(packageId: string): string {
-  return `submittal-packages/${packageId}/package.pdf`
+/** Storage path for a package's generated PDF. Tenant-prefixed so the
+ *  new storage RLS can scope via (storage.foldername(name))[1]. */
+export function packagePdfPath(companyId: string, packageId: string): string {
+  return `${companyId}/submittal-packages/${packageId}/package.pdf`
 }
 
 interface PackageRow {
   id: string
   project_id: string
+  company_id: string
   package_number: string
   vendor_name_snapshot: string
   sent_to_email: string
@@ -189,11 +191,12 @@ export async function composePackagePdf(
 ): Promise<{ bytes: Uint8Array; storagePath: string }> {
   const { data: pkg, error: pkgErr } = await supabase
     .from("submittal_packages")
-    .select("id, project_id, package_number, vendor_name_snapshot, sent_to_email, due_date")
+    .select("id, project_id, company_id, package_number, vendor_name_snapshot, sent_to_email, due_date")
     .eq("id", packageId)
     .maybeSingle()
   if (pkgErr || !pkg) throw new Error("Package not found")
   const pkgRow = pkg as PackageRow
+  if (!pkgRow.company_id) throw new Error("Package has no company_id")
 
   // Project + company branding
   const [projectRes, settingsRes] = await Promise.all([
@@ -294,7 +297,7 @@ export async function composePackagePdf(
     specExcerpts,
   })
 
-  const storagePath = packagePdfPath(packageId)
+  const storagePath = packagePdfPath(pkgRow.company_id, packageId)
   // The package PDF is a generated artifact. Upload it with the service-role
   // client so it isn't subject to the submittals bucket's storage RLS, which
   // whitelists only specific path prefixes — same approach gmail-intake uses

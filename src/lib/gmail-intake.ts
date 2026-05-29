@@ -498,8 +498,10 @@ async function processAttachment(ctx: AttachmentCtx): Promise<void> {
   }
 
   // ── Upload to Supabase storage ─────────────────────────────────────────────
+  // Tenant-isolated path ({company_id}/...) so the new storage RLS can scope.
+  // companyId is guaranteed non-null at this point — guarded above.
   const safeName    = fileName.replace(/[^a-zA-Z0-9._-]/g, "_")
-  const storagePath = `gmail-intake/${new Date().toISOString().slice(0, 10)}/${Date.now()}_${safeName}`
+  const storagePath = `${companyId}/gmail-intake/${new Date().toISOString().slice(0, 10)}/${Date.now()}_${safeName}`
 
   log("storage-upload-start", { bucket: "submittals", path: storagePath, bytes: fileBytes.length })
   const { data: storageData, error: uploadErr } = await supabase.storage

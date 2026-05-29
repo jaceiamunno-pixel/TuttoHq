@@ -43,12 +43,19 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Project not found" }, { status: 403 })
   }
 
+  // Tenant-isolated path: {company_id}/... prefix is what the new storage.objects
+  // RLS policies will check via (storage.foldername(name))[1].
+  const { data: companyId } = await supabase.rpc("get_my_company_id")
+  if (!companyId) {
+    return NextResponse.json({ error: "No company association" }, { status: 500 })
+  }
+
   // Pre-generate the id so the storage path can embed it. file_path is NOT NULL,
   // so the row cannot be inserted without it — generating the id here avoids an
   // insert-then-update round trip.
   const documentId = randomUUID()
   const safeName    = fileName.replace(/[^a-zA-Z0-9._-]/g, "_")
-  const filePath    = `spec-books/${documentId}/${safeName}`
+  const filePath    = `${companyId}/spec-books/${documentId}/${safeName}`
 
   const { data: signed, error: signError } = await supabase.storage
     .from("submittals")

@@ -38,11 +38,18 @@ export async function POST(req: NextRequest) {
     .join("/")
   const safeName = fileName.replace(/[^a-zA-Z0-9._-]/g, "_")
 
+  // Tenant-isolated path: {company_id}/... prefix is what the new storage.objects
+  // RLS policies will check via (storage.foldername(name))[1].
+  const { data: companyId } = await supabase.rpc("get_my_company_id")
+  if (!companyId) {
+    return NextResponse.json({ error: "No company association" }, { status: 500 })
+  }
+
   // A random id segment makes every path unique: no collisions, no clobbering an
   // existing object, and no need for the caller to know a DB row id up front.
   const path = safePrefix
-    ? `${safePrefix}/${randomUUID()}_${safeName}`
-    : `${randomUUID()}_${safeName}`
+    ? `${companyId}/${safePrefix}/${randomUUID()}_${safeName}`
+    : `${companyId}/${randomUUID()}_${safeName}`
 
   const { data: signed, error } = await supabase.storage
     .from(bucket)

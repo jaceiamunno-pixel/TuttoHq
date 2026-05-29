@@ -129,14 +129,16 @@ export async function buildCloseoutPackagePdf(input: CloseoutPackagePdfInput): P
 
 const PKG_BUCKET = "submittals"
 
-/** Storage path for a closeout package's generated PDF. */
-export function closeoutPackagePdfPath(packageId: string): string {
-  return `closeout-packages/${packageId}/package.pdf`
+/** Storage path for a closeout package's generated PDF. Tenant-prefixed
+ *  so the new storage RLS can scope via (storage.foldername(name))[1]. */
+export function closeoutPackagePdfPath(companyId: string, packageId: string): string {
+  return `${companyId}/closeout-packages/${packageId}/package.pdf`
 }
 
 interface PackageRow {
   id: string
   project_id: string
+  company_id: string
   package_number: string
   vendor_name_snapshot: string
   sent_to_email: string
@@ -154,11 +156,12 @@ export async function composeCloseoutPackagePdf(
 ): Promise<{ bytes: Uint8Array; storagePath: string }> {
   const { data: pkg, error: pkgErr } = await supabase
     .from("closeout_packages")
-    .select("id, project_id, package_number, vendor_name_snapshot, sent_to_email, due_date")
+    .select("id, project_id, company_id, package_number, vendor_name_snapshot, sent_to_email, due_date")
     .eq("id", packageId)
     .maybeSingle()
   if (pkgErr || !pkg) throw new Error("Package not found")
   const pkgRow = pkg as PackageRow
+  if (!pkgRow.company_id) throw new Error("Package has no company_id")
 
   const [projectRes, settingsRes] = await Promise.all([
     supabase.from("projects").select("name, number, location, gc_name, architect").eq("id", pkgRow.project_id).maybeSingle(),
@@ -208,7 +211,7 @@ export async function composeCloseoutPackagePdf(
     items,
   })
 
-  const storagePath = closeoutPackagePdfPath(packageId)
+  const storagePath = closeoutPackagePdfPath(pkgRow.company_id, packageId)
   // Generated artifact — upload with service-role to bypass storage RLS, which
   // whitelists only specific path prefixes. Mirrors composePackagePdf.
   const admin = createServiceClient(

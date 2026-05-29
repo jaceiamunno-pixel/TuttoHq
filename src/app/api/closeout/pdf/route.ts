@@ -170,7 +170,10 @@ export async function POST(req: NextRequest) {
   const pdfBytes = await pdf.save()
   const buf = Buffer.from(pdfBytes)
 
-  const path = `closeout/${project_id}/closeout-package-${Date.now()}.pdf`
+  // Tenant-isolated path (new storage RLS uses (storage.foldername)[1]).
+  const { data: companyId } = await supabase.rpc("get_my_company_id")
+  if (!companyId) return NextResponse.json({ error: "No company association" }, { status: 500 })
+  const path = `${companyId}/closeout/${project_id}/closeout-package-${Date.now()}.pdf`
   await supabase.storage.from("submittals").upload(path, buf, { contentType: "application/pdf", upsert: true })
 
   const { data: urlData } = await supabase.storage

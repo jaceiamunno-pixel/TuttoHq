@@ -80,9 +80,12 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
 
   const pdfBytes = await pdf.save()
 
+  // Tenant-isolated path (new storage RLS uses (storage.foldername)[1]).
+  const { data: companyId } = await supabase.rpc("get_my_company_id")
+  if (!companyId) return NextResponse.json({ error: "No company association" }, { status: 500 })
   // Unique path per generation: a fixed path + upsert lets Supabase's CDN keep
   // serving a stale cached copy after the storage object is overwritten.
-  const pdfPath = `daily-reports/${id}/daily_${report.report_date.replace(/-/g, "")}_${Date.now()}.pdf`
+  const pdfPath = `${companyId}/daily-reports/${id}/daily_${report.report_date.replace(/-/g, "")}_${Date.now()}.pdf`
   await supabase.storage.from("submittals").upload(pdfPath, Buffer.from(pdfBytes), { contentType: "application/pdf", upsert: true })
   await supabase.from("daily_reports").update({ generated_pdf_path: pdfPath }).eq("id", id)
   const { data: signed } = await supabase.storage.from("submittals").createSignedUrl(pdfPath, 604800)

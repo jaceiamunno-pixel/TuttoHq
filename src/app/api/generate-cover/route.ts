@@ -113,8 +113,11 @@ export async function POST(req: NextRequest) {
   // Save merged PDF to project submittal log if a project was selected
   if (projectId) {
     try {
+      const { data: companyId } = await supabase.rpc("get_my_company_id")
+      if (!companyId) throw new Error("No company association")
       const safeName = (description ?? "submittal").replace(/[^a-zA-Z0-9._-]/g, "_")
-      const storagePath = `project-submittals/${projectId}/${Date.now()}_${safeName}_transmittal.pdf`
+      // Tenant-isolated path (new storage RLS uses (storage.foldername)[1]).
+      const storagePath = `${companyId}/project-submittals/${projectId}/${Date.now()}_${safeName}_transmittal.pdf`
 
       await supabase.storage.from("submittals").upload(storagePath, finalBytes, {
         contentType: "application/pdf",

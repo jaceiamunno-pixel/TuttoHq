@@ -121,7 +121,10 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
   }
 
   const finalBytes = await mergedDoc.save()
-  const storagePath = `transmittals/${id}/transmittal.pdf`
+  // Tenant-isolated path (new storage RLS uses (storage.foldername)[1]).
+  const { data: companyId } = await supabase.rpc("get_my_company_id")
+  if (!companyId) return NextResponse.json({ error: "No company association" }, { status: 500 })
+  const storagePath = `${companyId}/transmittals/${id}/transmittal.pdf`
 
   await supabase.storage.from("submittals").upload(storagePath, finalBytes, {
     contentType: "application/pdf",
