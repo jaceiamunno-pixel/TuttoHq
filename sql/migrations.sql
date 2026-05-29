@@ -1868,3 +1868,28 @@ GRANT  EXECUTE ON FUNCTION set_user_role(uuid, text)      TO authenticated;
 REVOKE EXECUTE ON FUNCTION remove_user_from_company(uuid) FROM PUBLIC;
 REVOKE EXECUTE ON FUNCTION remove_user_from_company(uuid) FROM anon, service_role;
 GRANT  EXECUTE ON FUNCTION remove_user_from_company(uuid) TO authenticated;
+
+-- --- gmail_connections: close cross-tenant token-read hole -------------------
+-- gmail_connections stores per-user Gmail access_token + refresh_token. The
+-- table had FIVE policies — `owner` (FOR ALL, auth.uid() = user_id) plus four
+-- company-scoped policies (SELECT/INSERT/UPDATE/DELETE on
+-- company_id = get_my_company_id()). Because PostgreSQL OR's policies per
+-- command, any company member's cookie-client session satisfied the company
+-- predicate and could read every other member's tokens — including refresh
+-- tokens, enough to impersonate their Gmail indefinitely. Invisible while
+-- companies were single-user; exploitable the moment multi-user accounts
+-- went live.
+--
+-- Fix: drop the four company policies. The `owner` policy alone covers every
+-- legitimate regular-client path (all read/write sites in the app filter by
+-- the caller's own user_id — see /api/gmail/*, /api/auth/gmail/callback,
+-- the dispatch routes, /api/invites POST, and getValidToken in lib/gmail.ts).
+-- The two paths that need to read another user's tokens — the reminder cron
+-- (src/lib/reminders.ts via /api/cron/send-reminders) and Pub/Sub intake
+-- (src/lib/gmail-intake.ts) — use the service-role client and bypass RLS
+-- entirely, so they're unaffected.
+
+DROP POLICY IF EXISTS "gmail_connections: company select" ON gmail_connections;
+DROP POLICY IF EXISTS "gmail_connections: company insert" ON gmail_connections;
+DROP POLICY IF EXISTS "gmail_connections: company update" ON gmail_connections;
+DROP POLICY IF EXISTS "gmail_connections: company delete" ON gmail_connections;
