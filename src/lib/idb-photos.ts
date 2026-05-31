@@ -149,16 +149,6 @@ export async function listPhotosToSync(): Promise<DailyDraftPhotoRow[]> {
   return (await db.getAllFromIndex(PHOTOS_STORE, PHOTOS_BY_TARGET_INDEX)) as DailyDraftPhotoRow[]
 }
 
-/** Per-savedReportId counts for the "(N syncing)" badge on the report list. */
-export async function countPhotosToSyncByReport(): Promise<Map<string, number>> {
-  const rows = await listPhotosToSync()
-  const counts = new Map<string, number>()
-  for (const r of rows) {
-    if (r.savedReportId) counts.set(r.savedReportId, (counts.get(r.savedReportId) ?? 0) + 1)
-  }
-  return counts
-}
-
 /** Bridge: a just-created daily_reports.id is stamped onto the draft and
  *  every one of its photos in one IDB transaction. After this, the photos
  *  are visible to the by_target index → the sync runner will pick them

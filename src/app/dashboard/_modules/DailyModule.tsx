@@ -19,9 +19,11 @@ import {
 import { compressFileToUploadablePhoto } from "@/lib/photo-compression"
 import { DraftPhotoThumb } from "@/components/photos/DraftPhotoThumb"
 import {
+  derivePhotoStatus,
   drainPhotoQueue,
+  getCountsByReport,
+  getInFlightIds,
   subscribeToPhotoSync,
-  syncingCountsByReport,
 } from "@/lib/photo-sync"
 
 // Daily Reports module — extracted verbatim from dashboard/page.tsx (Step 4 of the split).
@@ -72,14 +74,18 @@ export default function DailyModule({ globalProjectId, appProjects, teamMembers 
   const [dailyPhotoUploadError, setDailyPhotoUploadError] = useState("")
   const dailyPhotosToAddRef = useRef<HTMLInputElement>(null)
   const [dailyGeneratingPdf, setDailyGeneratingPdf]   = useState(false)
-  // ── Sync surfaces (Piece 2) ────────────────────────────────────────────
+  // ── Sync surfaces ──────────────────────────────────────────────────────
   // viewDailyIdbPhotos: IDB photos for the currently-open report, merged
   // with the server-fetched dailyPhotos in the View modal grid so a photo
-  // that hasn't drained yet still renders ("Syncing…" overlay).
-  // syncingCounts: per-savedReportId counts driving the "(N syncing)"
-  // badge on each row of the reports list.
+  // that hasn't drained yet still renders alongside the saved ones.
+  // syncingCounts / stuckCounts drive the list-row badges (split so the
+  // "stuck" count is visually distinct from "will eventually upload").
+  // inFlightIds is a live in-memory snapshot of which photos this tab is
+  // *currently* uploading — feeds derivePhotoStatus → "Uploading…" overlay.
   const [viewDailyIdbPhotos, setViewDailyIdbPhotos] = useState<DailyDraftPhotoRow[]>([])
   const [syncingCounts, setSyncingCounts]           = useState<Map<string, number>>(new Map())
+  const [stuckCounts, setStuckCounts]               = useState<Map<string, number>>(new Map())
+  const [inFlightIds, setInFlightIds]               = useState<ReadonlySet<string>>(() => new Set())
 
   function loadDaily(pid = globalProjectId) {
     setDailyLoading(true)
@@ -190,10 +196,17 @@ export default function DailyModule({ globalProjectId, appProjects, teamMembers 
   }
 
   // ── Sync orchestration (Piece 2) ───────────────────────────────────────
-  // Refresh per-report syncing counts; called on mount + after every drain.
+  // Refresh per-report sync surfaces. syncing/stuck come from IDB (cheap
+  // index scan); inFlightIds is a pure in-memory snapshot of which photos
+  // this tab is currently uploading. Called on mount and after every drain
+  // event (including each inFlight enter/exit, so "Uploading…" overlay
+  // appears live, not just at end-of-drain).
   async function refreshSyncingCounts() {
     try {
-      setSyncingCounts(await syncingCountsByReport())
+      const { syncing, stuck } = await getCountsByReport()
+      setSyncingCounts(syncing)
+      setStuckCounts(stuck)
+      setInFlightIds(getInFlightIds())
     } catch (err) {
       console.error("[daily sync] count refresh failed", err)
     }
@@ -503,6 +516,11 @@ export default function DailyModule({ globalProjectId, appProjects, teamMembers 
                             <SpinnerIcon className="h-2.5 w-2.5" /> {syncingCounts.get(r.id)} syncing
                           </span>
                         ) : null}
+                        {stuckCounts.get(r.id) ? (
+                          <span className="ml-2 inline-flex items-center gap-1 text-[10px] font-semibold text-red-700 bg-red-50 border border-red-200 px-1.5 py-0.5 rounded-full align-middle">
+                            {stuckCounts.get(r.id)} stuck
+                          </span>
+                        ) : null}
                       </td>
                       <td className="px-4 py-2.5 max-w-0">
                         <p className="text-[#64748B] text-[12px] truncate">{r.work_performed ?? <span className="text-[#64748B] italic">No description</span>}</p>
@@ -535,6 +553,11 @@ export default function DailyModule({ globalProjectId, appProjects, teamMembers 
                         {syncingCounts.get(r.id) ? (
                           <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded-full">
                             <SpinnerIcon className="h-2.5 w-2.5" /> {syncingCounts.get(r.id)} syncing
+                          </span>
+                        ) : null}
+                        {stuckCounts.get(r.id) ? (
+                          <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-red-700 bg-red-50 border border-red-200 px-1.5 py-0.5 rounded-full">
+                            {stuckCounts.get(r.id)} stuck
                           </span>
                         ) : null}
                       </div>
@@ -827,14 +850,22 @@ export default function DailyModule({ globalProjectId, appProjects, teamMembers 
                           </button>
                         </div>
                       ))}
-                      {pendingIdb.map(ph => (
-                        <div key={`idb:${ph.id}`} className="relative aspect-square rounded-md overflow-hidden border border-[#E2E8F0] bg-[#F4F5F7]">
-                          <DraftPhotoThumb blob={ph.bytes} alt={ph.filename} className="w-full h-full object-cover" />
-                          <div className="absolute inset-x-0 bottom-0 bg-amber-500/85 text-white text-[10px] font-semibold px-1.5 py-0.5 flex items-center justify-center gap-1">
-                            <SpinnerIcon className="h-3 w-3" /> Syncing…
+                      {pendingIdb.map(ph => {
+                        const status = derivePhotoStatus(ph, inFlightIds)
+                        const overlay = status === "uploading"
+                          ? { bg: "bg-amber-500/90", label: "Uploading…", icon: <SpinnerIcon className="h-3 w-3" /> }
+                          : status === "needs_attention"
+                          ? { bg: "bg-red-600/90",   label: "Needs attention", icon: null }
+                          : { bg: "bg-slate-600/85", label: "Waiting",   icon: null }
+                        return (
+                          <div key={`idb:${ph.id}`} className={`relative aspect-square rounded-md overflow-hidden border bg-[#F4F5F7] ${status === "needs_attention" ? "border-red-300" : "border-[#E2E8F0]"}`}>
+                            <DraftPhotoThumb blob={ph.bytes} alt={ph.filename} className="w-full h-full object-cover" />
+                            <div className={`absolute inset-x-0 bottom-0 ${overlay.bg} text-white text-[10px] font-semibold px-1.5 py-0.5 flex items-center justify-center gap-1`}>
+                              {overlay.icon} {overlay.label}
+                            </div>
                           </div>
-                        </div>
-                      ))}
+                        )
+                      })}
                     </div>
                   )
                 })()}
