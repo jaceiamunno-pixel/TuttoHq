@@ -6,6 +6,16 @@ import { fmtDateOnly } from "../_shared/format"
 import { PlusIcon, SpinnerIcon, XIcon } from "../_shared/icons"
 import { inputCls, labelCls } from "../_shared/ui"
 import { presignAndUpload } from "@/lib/storage-upload"
+import {
+  ACTIVE_DAILY_DRAFT_KEY,
+  type DailyDraftPhotoRow,
+  addDailyDraftPhoto,
+  getDailyDraft,
+  listDailyDraftPhotos,
+  putDailyDraft,
+} from "@/lib/idb-photos"
+import { compressFileToUploadablePhoto } from "@/lib/photo-compression"
+import { DraftPhotoThumb } from "@/components/photos/DraftPhotoThumb"
 
 // Daily Reports module — extracted verbatim from dashboard/page.tsx (Step 4 of the split).
 // State, handlers, photo sub-system, action bar, content, and both modals are
@@ -43,7 +53,15 @@ export default function DailyModule({ globalProjectId, appProjects, teamMembers 
   const [dailyPhotosLoading, setDailyPhotosLoading]   = useState(false)
   const [dailyPhotoUploading, setDailyPhotoUploading] = useState(false)
   const dailyPhotoRef = useRef<HTMLInputElement>(null)
-  const [dailyPhotosToAdd, setDailyPhotosToAdd]       = useState<File[]>([])
+  // Local-first draft persistence (Piece 1 — IndexedDB store, no upload yet).
+  // A captured photo lives in IDB tied to `draftId` from the instant it leaves
+  // the camera; the form's text fields are persisted alongside so the entire
+  // draft survives a refresh/app restart while offline. The upload + sync
+  // queue is a separate piece — these rows stay in IDB until that lands.
+  const [draftId, setDraftId]                         = useState<string | null>(null)
+  const [draftCreatedAt, setDraftCreatedAt]           = useState<number>(0)
+  const [draftPhotos, setDraftPhotos]                 = useState<DailyDraftPhotoRow[]>([])
+  const [photoCompressProgress, setPhotoCompressProgress] = useState<{ done: number; total: number } | null>(null)
   const [dailyPhotoUploadError, setDailyPhotoUploadError] = useState("")
   const dailyPhotosToAddRef = useRef<HTMLInputElement>(null)
   const [dailyGeneratingPdf, setDailyGeneratingPdf]   = useState(false)
@@ -61,8 +79,100 @@ export default function DailyModule({ globalProjectId, appProjects, teamMembers 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { loadDaily() }, [globalProjectId])
 
-  // Pre-select the current global project whenever the New Daily Report modal opens.
-  useEffect(() => { if (showNewDaily) setDailyProjectId(globalProjectId) }, [showNewDaily, globalProjectId])
+  // Pre-select the current global project when the New Daily Report modal
+  // opens for a fresh draft. A restored draft keeps whatever project the
+  // user had selected before the refresh.
+  useEffect(() => { if (showNewDaily && !draftId) setDailyProjectId(globalProjectId) }, [showNewDaily, globalProjectId, draftId])
+
+  // ── Draft restore (Piece 1) ────────────────────────────────────────────
+  // On module mount, look for an active draft pointer. If found, rehydrate
+  // the form + photos from IndexedDB and pop the form open so the user
+  // lands on exactly what they had before the refresh / app restart /
+  // offline window.
+  useEffect(() => {
+    if (typeof window === "undefined") return
+    const id = window.localStorage.getItem(ACTIVE_DAILY_DRAFT_KEY)
+    if (!id) return
+    let cancelled = false
+    ;(async () => {
+      const draft = await getDailyDraft(id)
+      if (cancelled) return
+      if (!draft) {
+        window.localStorage.removeItem(ACTIVE_DAILY_DRAFT_KEY)
+        return
+      }
+      const f = draft.fields ?? {}
+      if (f.report_date)           setDailyDate(f.report_date)
+      if (f.project_id !== undefined)        setDailyProjectId(f.project_id)
+      if (f.prepared_by !== undefined)       setDailyPreparedBy(f.prepared_by)
+      if (f.weather_conditions !== undefined) setDailyWeather(f.weather_conditions)
+      if (f.temperature !== undefined)       setDailyTemp(f.temperature)
+      if (f.manpower_count !== undefined)    setDailyManpower(f.manpower_count)
+      if (f.work_performed !== undefined)    setDailyWorkPerformed(f.work_performed)
+      if (f.equipment !== undefined)         setDailyEquipment(f.equipment)
+      if (f.materials_delivered !== undefined) setDailyMaterials(f.materials_delivered)
+      if (f.visitors !== undefined)          setDailyVisitors(f.visitors)
+      if (f.issues_delays !== undefined)     setDailyIssues(f.issues_delays)
+      if (f.safety_notes !== undefined)      setDailySafety(f.safety_notes)
+      const photos = await listDailyDraftPhotos(id)
+      if (cancelled) return
+      setDraftId(id)
+      setDraftCreatedAt(draft.createdAt)
+      setDraftPhotos(photos)
+      setShowNewDaily(true)
+    })().catch(err => console.error("[daily draft] restore failed", err))
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // Debounced persist of every form field into the IDB draft row so a
+  // refresh mid-typing loses at most ~300 ms of input.
+  useEffect(() => {
+    if (!draftId) return
+    const handle = setTimeout(() => {
+      putDailyDraft({
+        id: draftId,
+        createdAt: draftCreatedAt || Date.now(),
+        updatedAt: Date.now(),
+        fields: {
+          report_date:          dailyDate,
+          project_id:           dailyProjectId,
+          prepared_by:          dailyPreparedBy,
+          weather_conditions:   dailyWeather,
+          temperature:          dailyTemp,
+          manpower_count:       dailyManpower,
+          work_performed:       dailyWorkPerformed,
+          equipment:            dailyEquipment,
+          materials_delivered:  dailyMaterials,
+          visitors:             dailyVisitors,
+          issues_delays:        dailyIssues,
+          safety_notes:         dailySafety,
+        },
+      }).catch(err => console.error("[daily draft] persist failed", err))
+    }, 300)
+    return () => clearTimeout(handle)
+  }, [draftId, draftCreatedAt, dailyDate, dailyProjectId, dailyPreparedBy, dailyWeather, dailyTemp, dailyManpower, dailyWorkPerformed, dailyEquipment, dailyMaterials, dailyVisitors, dailyIssues, dailySafety])
+
+  // Mint a draft synchronously on "New Report" click so the photo picker
+  // never races the IDB write — UUID gen + state update both run before
+  // any user interaction with the form.
+  function openNewDailyDraft() {
+    setDailyPhotoUploadError("")
+    if (dailyPhotosToAddRef.current) dailyPhotosToAddRef.current.value = ""
+    if (!draftId) {
+      const id = crypto.randomUUID()
+      const now = Date.now()
+      setDraftId(id)
+      setDraftCreatedAt(now)
+      setDraftPhotos([])
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem(ACTIVE_DAILY_DRAFT_KEY, id)
+      }
+      putDailyDraft({ id, createdAt: now, updatedAt: now, fields: {} })
+        .catch(err => console.error("[daily draft] mint failed", err))
+    }
+    setShowNewDaily(true)
+  }
 
   useEffect(() => {
     if (viewDaily) { setDailyPhotos([]); loadDailyPhotos(viewDaily.id) }
@@ -112,19 +222,36 @@ export default function DailyModule({ globalProjectId, appProjects, teamMembers 
     if (viewDaily) await loadDailyPhotos(viewDaily.id)
   }
 
-  async function uploadDailyPhotosAtCreation(reportId: string, files: File[]) {
-    const CONCURRENCY = 4
-    for (let i = 0; i < files.length; i += CONCURRENCY) {
-      const batch = files.slice(i, i + CONCURRENCY)
-      const promises = batch.map(async file => {
-        const { path } = await presignAndUpload("photos", `daily_report/${reportId}`, file)
-        return fetch("/api/photos", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ entity_type: "daily_report", entity_id: reportId, file_path: path, file_name: file.name }),
-        })
-      })
-      await Promise.all(promises)
+  // Photo capture pipeline (Piece 1) — compress an arbitrary set of picked
+  // files, write each as a JPEG into IndexedDB tied to the current draft,
+  // then re-list from IDB so the UI mirrors persistent storage exactly.
+  // No upload is attempted — that's the next piece.
+  async function ingestPhotosToDraft(files: File[]) {
+    if (files.length === 0) return
+    if (!draftId) {
+      setDailyPhotoUploadError("Internal error: no active draft.")
+      return
+    }
+    setDailyPhotoUploadError("")
+    setPhotoCompressProgress({ done: 0, total: files.length })
+    try {
+      let nextOrder = draftPhotos.length
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i]
+        try {
+          const photo = await compressFileToUploadablePhoto(file)
+          await addDailyDraftPhoto(draftId, photo, nextOrder++)
+        } catch (err) {
+          console.error("[daily draft] photo compression failed", err)
+          const msg = err instanceof Error ? err.message : "unknown error"
+          setDailyPhotoUploadError(`${file.name}: could not be processed (${msg})`)
+        }
+        setPhotoCompressProgress({ done: i + 1, total: files.length })
+      }
+      const refreshed = await listDailyDraftPhotos(draftId)
+      setDraftPhotos(refreshed)
+    } finally {
+      setPhotoCompressProgress(null)
     }
   }
 
@@ -166,17 +293,19 @@ export default function DailyModule({ globalProjectId, appProjects, teamMembers 
         body: JSON.stringify(fields),
       })
       if (res.ok) {
-        const { id: reportId } = await res.json()
-        if (dailyPhotosToAdd.length > 0) {
-          try {
-            await uploadDailyPhotosAtCreation(reportId, dailyPhotosToAdd)
-          } catch (photoErr) {
-            setDailyPhotoUploadError("Report created, but some photos failed to upload. You can add them manually later.")
-          }
+        // Piece 1: captured photos stay in IDB tagged with the draft id.
+        // The upload + sync queue (Piece 2) will reconcile draft photos
+        // to the saved report row. Clearing the active-draft pointer here
+        // means the next "New Report" mints a fresh draft; the photo rows
+        // themselves are intentionally NOT removed.
+        if (typeof window !== "undefined") {
+          window.localStorage.removeItem(ACTIVE_DAILY_DRAFT_KEY)
         }
+        setDraftId(null)
+        setDraftCreatedAt(0)
+        setDraftPhotos([])
         setShowNewDaily(false)
         setDailyDate(new Date().toISOString().slice(0, 10)); setDailyProjectId(""); setDailyPreparedBy(""); setDailyWeather(""); setDailyTemp(""); setDailyManpower(""); setDailyWorkPerformed(""); setDailyEquipment(""); setDailyMaterials(""); setDailyVisitors(""); setDailyIssues(""); setDailySafety("")
-        setDailyPhotosToAdd([])
         if (dailyPhotosToAddRef.current) dailyPhotosToAddRef.current.value = ""
         loadDaily()
       } else {
@@ -205,7 +334,7 @@ export default function DailyModule({ globalProjectId, appProjects, teamMembers 
       {/* Daily reports action bar */}
       <div className="flex-shrink-0 border-b border-[#E2E8F0] bg-white flex items-center justify-between px-4 py-2.5">
         <p className="text-[13px] font-semibold text-[#0F172A]">Daily Reports <span className="text-[#64748B] font-normal ml-1">({dailyReports.length})</span></p>
-        <button onClick={() => { setShowNewDaily(true); setDailyPhotosToAdd([]); setDailyPhotoUploadError(""); if (dailyPhotosToAddRef.current) dailyPhotosToAddRef.current.value = "" }} className="h-8 px-4 rounded-md bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors flex items-center gap-1.5">
+        <button onClick={openNewDailyDraft} className="h-8 px-4 rounded-md bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors flex items-center gap-1.5">
           <PlusIcon /> New Report
         </button>
       </div>
@@ -226,7 +355,7 @@ export default function DailyModule({ globalProjectId, appProjects, teamMembers 
                 </div>
                 <p className="text-[15px] font-bold text-[#0F172A]">No daily reports yet</p>
                 <p className="text-[13px] text-[#64748B] mt-1.5">Log daily site activity, weather, and manpower.</p>
-                <button onClick={() => setShowNewDaily(true)} className="mt-5 h-9 px-5 rounded-lg bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors inline-flex items-center gap-2">
+                <button onClick={openNewDailyDraft} className="mt-5 h-9 px-5 rounded-lg bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors inline-flex items-center gap-2">
                   <PlusIcon /> New Report
                 </button>
               </div>
@@ -303,7 +432,9 @@ export default function DailyModule({ globalProjectId, appProjects, teamMembers 
         const isEdit = !!(viewDaily && dailyEditing)
         const onClose = () => {
           setShowNewDaily(false); setViewDaily(null); setDailyEditing(false);
-          setDailyPhotosToAdd([])
+          // Draft id + photos persist across modal close. Reopening "New
+          // Report" will rehydrate from IDB. (Discarding a draft belongs to
+          // the delete/cleanup piece, which is reviewed separately.)
           setDailyPhotoUploadError("")
           if (dailyPhotosToAddRef.current) dailyPhotosToAddRef.current.value = ""
         }
@@ -411,35 +542,36 @@ export default function DailyModule({ globalProjectId, appProjects, teamMembers 
                         <input ref={dailyFileRef} type="file" className="w-full text-[12px] text-[#64748B] file:mr-3 file:py-1 file:px-3 file:rounded file:border file:border-[#E2E8F0] file:bg-[#F4F5F7] file:text-[#64748B] file:text-[11px] file:cursor-pointer hover:file:bg-white/[0.05]" />
                       </div>
                       <div className="border-t border-[#E2E8F0] pt-4">
-                        <label className={labelCls}>Photo Attachments <span className="text-[#64748B] font-normal">(optional, multiple)</span></label>
+                        <label className={labelCls}>Photo Attachments <span className="text-[#64748B] font-normal">(optional, multiple — saved offline)</span></label>
                         <div className="flex items-center gap-2 mb-3">
-                          <button type="button" onClick={() => dailyPhotosToAddRef.current?.click()}
-                            className="h-8 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#64748B] bg-[#F4F5F7] hover:bg-white/50 transition-colors font-medium">
+                          <button type="button" onClick={() => dailyPhotosToAddRef.current?.click()} disabled={!!photoCompressProgress}
+                            className="h-8 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#64748B] bg-[#F4F5F7] hover:bg-white/50 transition-colors font-medium disabled:opacity-50">
                             + Add Photos
                           </button>
-                          {dailyPhotosToAdd.length > 0 && (
-                            <span className="text-[12px] text-[#64748B]">{dailyPhotosToAdd.length} photo{dailyPhotosToAdd.length !== 1 ? 's' : ''} selected</span>
+                          {draftPhotos.length > 0 && (
+                            <span className="text-[12px] text-[#64748B]">{draftPhotos.length} photo{draftPhotos.length !== 1 ? 's' : ''} stored locally</span>
                           )}
                         </div>
                         <input ref={dailyPhotosToAddRef} type="file" accept="image/*" multiple className="hidden"
-                          onChange={e => {
+                          onChange={async e => {
                             const files = Array.from(e.target.files || [])
-                            const validFiles = files.filter(f => {
-                              const sizeOk = f.size <= 10 * 1024 * 1024
-                              if (!sizeOk) setDailyPhotoUploadError(`${f.name} exceeds 10MB limit`)
-                              return sizeOk
-                            })
-                            setDailyPhotosToAdd([...dailyPhotosToAdd, ...validFiles])
+                            // Allow re-picking the same file (Chrome won't fire change otherwise).
+                            e.currentTarget.value = ""
+                            await ingestPhotosToDraft(files)
                           }} />
-                        {dailyPhotosToAdd.length > 0 && (
-                          <div className="space-y-2">
-                            {dailyPhotosToAdd.map((file, idx) => (
-                              <div key={idx} className="flex items-center justify-between p-2 bg-[#F4F5F7] rounded-md border border-[#E2E8F0]">
-                                <span className="text-[12px] text-[#0F172A] flex-1 truncate">{file.name} ({(file.size / 1024 / 1024).toFixed(2)}MB)</span>
-                                <button type="button" onClick={() => setDailyPhotosToAdd(dailyPhotosToAdd.filter((_, i) => i !== idx))}
-                                  className="ml-2 text-[#64748B] hover:text-red-500 text-[14px] font-bold transition-colors">
-                                  ✕
-                                </button>
+                        {photoCompressProgress && (
+                          <p className="text-[12px] text-[#64748B] mb-2 flex items-center gap-1.5">
+                            <SpinnerIcon className="h-3 w-3" /> Compressing photo {Math.min(photoCompressProgress.done + 1, photoCompressProgress.total)} of {photoCompressProgress.total}…
+                          </p>
+                        )}
+                        {draftPhotos.length > 0 && (
+                          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                            {draftPhotos.map(p => (
+                              <div key={p.id} className="relative aspect-square rounded-md border border-[#E2E8F0] bg-[#F4F5F7] overflow-hidden">
+                                <DraftPhotoThumb blob={p.bytes} alt={p.filename} className="absolute inset-0 w-full h-full object-cover" />
+                                <div className="absolute inset-x-0 bottom-0 bg-black/45 text-white text-[10px] px-1.5 py-0.5 truncate">
+                                  {p.filename} · {(p.bytes.size / 1024).toFixed(0)} KB
+                                </div>
                               </div>
                             ))}
                           </div>
