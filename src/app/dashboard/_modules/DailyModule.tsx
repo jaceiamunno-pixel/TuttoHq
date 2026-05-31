@@ -73,6 +73,12 @@ export default function DailyModule({ globalProjectId, appProjects, teamMembers 
   const [photoCompressProgress, setPhotoCompressProgress] = useState<{ done: number; total: number } | null>(null)
   const [dailyPhotoUploadError, setDailyPhotoUploadError] = useState("")
   const dailyPhotosToAddRef = useRef<HTMLInputElement>(null)
+  // Direct-camera capture on the New Report form. Same handler as the
+  // picker — both routes feed ingestPhotosToDraft so behavior is
+  // identical (compress → IDB → tied to the active draft). The picker
+  // is multi-select from library/camera-via-OS; this one bypasses the
+  // OS picker entirely and opens the rear camera in one tap.
+  const dailyTakePhotoRef = useRef<HTMLInputElement>(null)
   const [dailyGeneratingPdf, setDailyGeneratingPdf]   = useState(false)
   // ── Sync surfaces ──────────────────────────────────────────────────────
   // viewDailyIdbPhotos: IDB photos for the currently-open report, merged
@@ -180,6 +186,7 @@ export default function DailyModule({ globalProjectId, appProjects, teamMembers 
   function openNewDailyDraft() {
     setDailyPhotoUploadError("")
     if (dailyPhotosToAddRef.current) dailyPhotosToAddRef.current.value = ""
+    if (dailyTakePhotoRef.current)  dailyTakePhotoRef.current.value  = ""
     if (!draftId) {
       const id = crypto.randomUUID()
       const now = Date.now()
@@ -436,6 +443,7 @@ export default function DailyModule({ globalProjectId, appProjects, teamMembers 
         setShowNewDaily(false)
         setDailyDate(new Date().toISOString().slice(0, 10)); setDailyProjectId(""); setDailyPreparedBy(""); setDailyWeather(""); setDailyTemp(""); setDailyManpower(""); setDailyWorkPerformed(""); setDailyEquipment(""); setDailyMaterials(""); setDailyVisitors(""); setDailyIssues(""); setDailySafety("")
         if (dailyPhotosToAddRef.current) dailyPhotosToAddRef.current.value = ""
+        if (dailyTakePhotoRef.current)  dailyTakePhotoRef.current.value  = ""
         loadDaily()
         refreshSyncingCounts()
       } else {
@@ -591,6 +599,7 @@ export default function DailyModule({ globalProjectId, appProjects, teamMembers 
           // the delete/cleanup piece, which is reviewed separately.)
           setDailyPhotoUploadError("")
           if (dailyPhotosToAddRef.current) dailyPhotosToAddRef.current.value = ""
+          if (dailyTakePhotoRef.current)  dailyTakePhotoRef.current.value  = ""
         }
         const tareaClass = "w-full px-3 py-2 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40 resize-none placeholder:text-[#64748B]"
         return (
@@ -697,10 +706,14 @@ export default function DailyModule({ globalProjectId, appProjects, teamMembers 
                       </div>
                       <div className="border-t border-[#E2E8F0] pt-4">
                         <label className={labelCls}>Photo Attachments <span className="text-[#64748B] font-normal">(optional, multiple — saved offline)</span></label>
-                        <div className="flex items-center gap-2 mb-3">
+                        <div className="flex items-center gap-2 mb-3 flex-wrap">
                           <button type="button" onClick={() => dailyPhotosToAddRef.current?.click()} disabled={!!photoCompressProgress}
                             className="h-8 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#64748B] bg-[#F4F5F7] hover:bg-white/50 transition-colors font-medium disabled:opacity-50">
                             + Add Photos
+                          </button>
+                          <button type="button" onClick={() => dailyTakePhotoRef.current?.click()} disabled={!!photoCompressProgress}
+                            className="h-8 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#64748B] bg-[#F4F5F7] hover:bg-white/50 transition-colors font-medium disabled:opacity-50">
+                            Take Photo
                           </button>
                           {draftPhotos.length > 0 && (
                             <span className="text-[12px] text-[#64748B]">{draftPhotos.length} photo{draftPhotos.length !== 1 ? 's' : ''} stored locally</span>
@@ -710,6 +723,12 @@ export default function DailyModule({ globalProjectId, appProjects, teamMembers 
                           onChange={async e => {
                             const files = Array.from(e.target.files || [])
                             // Allow re-picking the same file (Chrome won't fire change otherwise).
+                            e.currentTarget.value = ""
+                            await ingestPhotosToDraft(files)
+                          }} />
+                        <input ref={dailyTakePhotoRef} type="file" accept="image/*" capture="environment" className="hidden"
+                          onChange={async e => {
+                            const files = Array.from(e.target.files || [])
                             e.currentTarget.value = ""
                             await ingestPhotosToDraft(files)
                           }} />
