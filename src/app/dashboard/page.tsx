@@ -131,10 +131,40 @@ export default function Home() {
   const [appProjects, setAppProjects] = useState<Project[]>([])
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>([])
 
-  // Module navigation
+  // Module navigation. The active module + selected project are persisted
+  // to localStorage so a refresh (or the user closing the tab and reopening
+  // the URL) lands them back on the same view — not on Submittals with no
+  // project, which made just-created rows in other modules look "missing".
   const [activeModule, setActiveModule]     = useState<ModuleId>("submittals")
   const [globalProjectId, setGlobalProjectId] = useState<string>("")
   const [mobileNavOpen, setMobileNavOpen]   = useState(false)
+
+  // Hydrate active module + project from localStorage on mount. Done in an
+  // effect (not useState initializer) so SSR and the client agree on the
+  // first paint, then the client upgrades to the stored values.
+  useEffect(() => {
+    if (typeof window === "undefined") return
+    const storedModule = window.localStorage.getItem("tuttohq:dashboard:active-module")
+    if (storedModule && (MODULES.some(m => m.id === storedModule) || storedModule === "library")) {
+      setActiveModule(storedModule as ModuleId)
+    }
+    const storedProjectId = window.localStorage.getItem("tuttohq:dashboard:global-project-id")
+    if (storedProjectId) setGlobalProjectId(storedProjectId)
+  }, [])
+
+  useEffect(() => {
+    if (typeof window === "undefined") return
+    window.localStorage.setItem("tuttohq:dashboard:active-module", activeModule)
+  }, [activeModule])
+
+  useEffect(() => {
+    if (typeof window === "undefined") return
+    if (globalProjectId) {
+      window.localStorage.setItem("tuttohq:dashboard:global-project-id", globalProjectId)
+    } else {
+      window.localStorage.removeItem("tuttohq:dashboard:global-project-id")
+    }
+  }, [globalProjectId])
 
   // Submittals sub-view — kept in the shell so it survives LibrarySubmittalsModule
   // unmounting (e.g. when switching to Library and back).
