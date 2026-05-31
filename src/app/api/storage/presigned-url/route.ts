@@ -22,6 +22,7 @@ export async function POST(req: NextRequest) {
   const bucket:   string = typeof body?.bucket    === "string" ? body.bucket.trim()    : ""
   const prefix:   string = typeof body?.prefix    === "string" ? body.prefix.trim()    : ""
   const fileName: string = typeof body?.file_name === "string" ? body.file_name.trim() : ""
+  const clientId: string = typeof body?.client_id === "string" ? body.client_id.trim() : ""
 
   if (!ALLOWED_BUCKETS.has(bucket)) {
     return NextResponse.json({ error: "Unsupported storage bucket" }, { status: 400 })
@@ -45,11 +46,16 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "No company association" }, { status: 500 })
   }
 
-  // A random id segment makes every path unique: no collisions, no clobbering an
-  // existing object, and no need for the caller to know a DB row id up front.
+  // If the caller supplied a UUID-shaped client_id, reuse it as the path's
+  // unique segment so retries write to the same object key (upsert:true makes
+  // the PUT itself idempotent). Used by the offline photo sync runner so a
+  // partial failure can re-PUT without producing storage orphans. Anything
+  // not UUID-shaped is ignored — falls back to a fresh randomUUID.
+  const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+  const idSegment = UUID_RE.test(clientId) ? clientId : randomUUID()
   const path = safePrefix
-    ? `${companyId}/${safePrefix}/${randomUUID()}_${safeName}`
-    : `${companyId}/${randomUUID()}_${safeName}`
+    ? `${companyId}/${safePrefix}/${idSegment}_${safeName}`
+    : `${companyId}/${idSegment}_${safeName}`
 
   const { data: signed, error } = await supabase.storage
     .from(bucket)

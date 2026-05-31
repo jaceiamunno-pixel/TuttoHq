@@ -12,10 +12,17 @@ import {
   addDailyDraftPhoto,
   getDailyDraft,
   listDailyDraftPhotos,
+  listPhotosForSavedReport,
   putDailyDraft,
+  tagDraftWithSavedReport,
 } from "@/lib/idb-photos"
 import { compressFileToUploadablePhoto } from "@/lib/photo-compression"
 import { DraftPhotoThumb } from "@/components/photos/DraftPhotoThumb"
+import {
+  drainPhotoQueue,
+  subscribeToPhotoSync,
+  syncingCountsByReport,
+} from "@/lib/photo-sync"
 
 // Daily Reports module — extracted verbatim from dashboard/page.tsx (Step 4 of the split).
 // State, handlers, photo sub-system, action bar, content, and both modals are
@@ -65,6 +72,14 @@ export default function DailyModule({ globalProjectId, appProjects, teamMembers 
   const [dailyPhotoUploadError, setDailyPhotoUploadError] = useState("")
   const dailyPhotosToAddRef = useRef<HTMLInputElement>(null)
   const [dailyGeneratingPdf, setDailyGeneratingPdf]   = useState(false)
+  // ── Sync surfaces (Piece 2) ────────────────────────────────────────────
+  // viewDailyIdbPhotos: IDB photos for the currently-open report, merged
+  // with the server-fetched dailyPhotos in the View modal grid so a photo
+  // that hasn't drained yet still renders ("Syncing…" overlay).
+  // syncingCounts: per-savedReportId counts driving the "(N syncing)"
+  // badge on each row of the reports list.
+  const [viewDailyIdbPhotos, setViewDailyIdbPhotos] = useState<DailyDraftPhotoRow[]>([])
+  const [syncingCounts, setSyncingCounts]           = useState<Map<string, number>>(new Map())
 
   function loadDaily(pid = globalProjectId) {
     setDailyLoading(true)
@@ -174,8 +189,87 @@ export default function DailyModule({ globalProjectId, appProjects, teamMembers 
     setShowNewDaily(true)
   }
 
+  // ── Sync orchestration (Piece 2) ───────────────────────────────────────
+  // Refresh per-report syncing counts; called on mount + after every drain.
+  async function refreshSyncingCounts() {
+    try {
+      setSyncingCounts(await syncingCountsByReport())
+    } catch (err) {
+      console.error("[daily sync] count refresh failed", err)
+    }
+  }
+
+  // Drain on mount, then subscribe so badges + view-modal photos refresh
+  // after any drain pass (capture, online event, periodic tick).
   useEffect(() => {
-    if (viewDaily) { setDailyPhotos([]); loadDailyPhotos(viewDaily.id) }
+    let cancelled = false
+    drainPhotoQueue().then(() => { if (!cancelled) refreshSyncingCounts() })
+    const unsubscribe = subscribeToPhotoSync(() => {
+      if (cancelled) return
+      refreshSyncingCounts()
+      // If the View modal is open, refresh its photo lists too.
+      const id = viewDailyRef.current?.id
+      if (id) {
+        fetch(`/api/photos?entity_type=daily_report&entity_id=${id}`)
+          .then(r => r.ok ? r.json() : [])
+          .then(setDailyPhotos)
+          .catch(() => {})
+        listPhotosForSavedReport(id).then(setViewDailyIdbPhotos).catch(() => {})
+      }
+    })
+    return () => { cancelled = true; unsubscribe() }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // Online event → drain. iOS Safari + Android Chrome both fire this when
+  // the OS transitions out of airplane mode / regains network. Best-effort
+  // only — the periodic tick is the safety net.
+  useEffect(() => {
+    if (typeof window === "undefined") return
+    const handler = () => { drainPhotoQueue().catch(() => {}) }
+    window.addEventListener("online", handler)
+    return () => window.removeEventListener("online", handler)
+  }, [])
+
+  // Periodic drain every 30 s while the tab is visible. Paused on hidden
+  // (browser tab in background, screen off) and immediately drained again
+  // on visibilitychange → visible so a phone that was locked syncs as
+  // soon as it wakes.
+  useEffect(() => {
+    if (typeof window === "undefined") return
+    let interval: ReturnType<typeof setInterval> | null = null
+    const start = () => {
+      if (interval) return
+      interval = setInterval(() => { drainPhotoQueue().catch(() => {}) }, 30_000)
+    }
+    const stop = () => {
+      if (interval) { clearInterval(interval); interval = null }
+    }
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") {
+        drainPhotoQueue().catch(() => {})
+        start()
+      } else {
+        stop()
+      }
+    }
+    if (document.visibilityState === "visible") start()
+    document.addEventListener("visibilitychange", onVisibility)
+    return () => { document.removeEventListener("visibilitychange", onVisibility); stop() }
+  }, [])
+
+  // A ref so the subscribe callback above can read the *current* viewDaily
+  // without re-subscribing on every state change.
+  const viewDailyRef = useRef<DailyReport | null>(null)
+  useEffect(() => { viewDailyRef.current = viewDaily }, [viewDaily])
+
+  useEffect(() => {
+    if (viewDaily) {
+      setDailyPhotos([])
+      setViewDailyIdbPhotos([])
+      loadDailyPhotos(viewDaily.id)
+      listPhotosForSavedReport(viewDaily.id).then(setViewDailyIdbPhotos).catch(() => {})
+    }
   }, [viewDaily?.id])
 
   async function deleteDaily(reportId: string) {
@@ -201,17 +295,28 @@ export default function DailyModule({ globalProjectId, appProjects, teamMembers 
     setDailyPhotosLoading(false)
   }
 
+  // View-modal inline capture (Piece 2): compresses, writes to IDB tagged
+  // with the saved report's id, then kicks the drain runner. Photo shows
+  // up immediately in the grid with a "Syncing…" overlay until the upload
+  // completes (which the sync subscriber then refreshes).
+  //
+  // The draftId field is reused to hold the savedReportId so a single
+  // schema and the same IDB indexes service both creation-time and
+  // view-modal capture paths. No separate "instant draft" row is created
+  // — these photos never need form-field persistence.
   async function uploadDailyPhoto(file: File) {
     if (!viewDaily) return
     setDailyPhotoUploading(true)
     try {
-      const { path } = await presignAndUpload("photos", `daily_report/${viewDaily.id}`, file)
-      const res = await fetch("/api/photos", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ entity_type: "daily_report", entity_id: viewDaily.id, file_path: path, file_name: file.name }),
-      })
-      if (res.ok) await loadDailyPhotos(viewDaily.id)
+      const reportId = viewDaily.id
+      const photo = await compressFileToUploadablePhoto(file)
+      const existing = await listPhotosForSavedReport(reportId)
+      await addDailyDraftPhoto(reportId, photo, existing.length, reportId)
+      setViewDailyIdbPhotos(await listPhotosForSavedReport(reportId))
+      await refreshSyncingCounts()
+      drainPhotoQueue().catch(() => {})
+    } catch (err) {
+      console.error("[daily view-modal capture] failed", err)
     } finally {
       setDailyPhotoUploading(false)
     }
@@ -293,11 +398,22 @@ export default function DailyModule({ globalProjectId, appProjects, teamMembers 
         body: JSON.stringify(fields),
       })
       if (res.ok) {
-        // Piece 1: captured photos stay in IDB tagged with the draft id.
-        // The upload + sync queue (Piece 2) will reconcile draft photos
-        // to the saved report row. Clearing the active-draft pointer here
-        // means the next "New Report" mints a fresh draft; the photo rows
-        // themselves are intentionally NOT removed.
+        // Piece 2: bridge the draft to the saved report so the sync
+        // runner knows where the photos belong, then trigger an
+        // immediate drain (online → first photos land in seconds; offline
+        // → next online/visibility/tick handles them, with the IDB rows
+        // safe meanwhile). The IDB photo rows are NOT removed here —
+        // photo-sync.ts owns the only delete, and only after both
+        // Storage 2xx + /api/photos 2xx confirm.
+        const { id: savedReportId } = await res.json().catch(() => ({}))
+        if (savedReportId && draftId) {
+          try {
+            await tagDraftWithSavedReport(draftId, savedReportId)
+          } catch (err) {
+            console.error("[daily create] tagDraftWithSavedReport failed", err)
+          }
+          drainPhotoQueue().catch(() => {})
+        }
         if (typeof window !== "undefined") {
           window.localStorage.removeItem(ACTIVE_DAILY_DRAFT_KEY)
         }
@@ -308,6 +424,7 @@ export default function DailyModule({ globalProjectId, appProjects, teamMembers 
         setDailyDate(new Date().toISOString().slice(0, 10)); setDailyProjectId(""); setDailyPreparedBy(""); setDailyWeather(""); setDailyTemp(""); setDailyManpower(""); setDailyWorkPerformed(""); setDailyEquipment(""); setDailyMaterials(""); setDailyVisitors(""); setDailyIssues(""); setDailySafety("")
         if (dailyPhotosToAddRef.current) dailyPhotosToAddRef.current.value = ""
         loadDaily()
+        refreshSyncingCounts()
       } else {
         const data = await res.json().catch(() => ({}))
         setDailySaveError(data.error ?? "Failed to create report. Please try again.")
@@ -379,7 +496,14 @@ export default function DailyModule({ globalProjectId, appProjects, teamMembers 
                   {dailyReports.map((r, i) => (
                     <tr key={r.id} className="border-b border-[#E2E8F0]/60 hover:bg-[#F8F9FA] transition-colors cursor-pointer" onClick={() => { setViewDaily(r); setDailyEditing(false) }}>
                       <td className="px-4 py-2.5 text-[#64748B] tabular-nums text-[12px]">{dailyReports.length - i}</td>
-                      <td className="px-4 py-2.5 text-[#0F172A] font-medium text-[12px] whitespace-nowrap">{fmtDateOnly(r.report_date)}</td>
+                      <td className="px-4 py-2.5 text-[#0F172A] font-medium text-[12px] whitespace-nowrap">
+                        {fmtDateOnly(r.report_date)}
+                        {syncingCounts.get(r.id) ? (
+                          <span className="ml-2 inline-flex items-center gap-1 text-[10px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded-full align-middle">
+                            <SpinnerIcon className="h-2.5 w-2.5" /> {syncingCounts.get(r.id)} syncing
+                          </span>
+                        ) : null}
+                      </td>
                       <td className="px-4 py-2.5 max-w-0">
                         <p className="text-[#64748B] text-[12px] truncate">{r.work_performed ?? <span className="text-[#64748B] italic">No description</span>}</p>
                       </td>
@@ -406,7 +530,14 @@ export default function DailyModule({ globalProjectId, appProjects, teamMembers 
                 {dailyReports.map(r => (
                   <div key={r.id} className="bg-white rounded-xl border border-[#E2E8F0] p-3 shadow-sm cursor-pointer" onClick={() => { setViewDaily(r); setDailyEditing(false) }}>
                     <div className="flex items-start justify-between gap-2 mb-1">
-                      <p className="text-[13px] font-semibold text-[#0F172A]">{fmtDateOnly(r.report_date)}</p>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <p className="text-[13px] font-semibold text-[#0F172A]">{fmtDateOnly(r.report_date)}</p>
+                        {syncingCounts.get(r.id) ? (
+                          <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded-full">
+                            <SpinnerIcon className="h-2.5 w-2.5" /> {syncingCounts.get(r.id)} syncing
+                          </span>
+                        ) : null}
+                      </div>
                       {r.manpower_count != null && <span className="text-[11px] text-[#64748B]">{r.manpower_count} workers</span>}
                     </div>
                     {r.work_performed && <p className="text-[12px] text-[#64748B] mb-1 line-clamp-2">{r.work_performed}</p>}
@@ -671,24 +802,42 @@ export default function DailyModule({ globalProjectId, appProjects, teamMembers 
                   <input ref={dailyPhotoRef} type="file" accept="image/*" capture="environment" className="hidden"
                     onChange={e => { const f = e.target.files?.[0]; if (f) uploadDailyPhoto(f); e.target.value = "" }} />
                 </div>
-                {dailyPhotosLoading ? (
-                  <div className="flex justify-center py-3"><SpinnerIcon className="h-4 w-4 text-[#64748B]" /></div>
-                ) : dailyPhotos.length > 0 ? (
-                  <div className="grid grid-cols-3 gap-2">
-                    {dailyPhotos.map(ph => (
-                      <div key={ph.id} className="relative group aspect-square rounded-md overflow-hidden border border-[#E2E8F0] bg-[#F4F5F7]">
-                        <img src={ph.url} alt={ph.file_name ?? ""} className="w-full h-full object-cover cursor-pointer"
-                          onClick={() => window.open(ph.url, "_blank")} />
-                        <button onClick={() => deleteDailyPhoto(ph.id)}
-                          className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 transition-opacity h-6 w-6 rounded-full bg-red-500 text-white text-[11px] flex items-center justify-center shadow">
-                          ✕
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="text-[12px] text-[#64748B] italic">No photos yet — tap "+ Add Photo" to capture or upload</p>
-                )}
+                {(() => {
+                  // Merge server-fetched photos (already uploaded) with IDB
+                  // photos still pending sync. The DB row uses the same id
+                  // as the IDB row (server route upserts on client_id), so
+                  // dedupe is exact-key.
+                  const serverIds = new Set(dailyPhotos.map(p => p.id))
+                  const pendingIdb = viewDailyIdbPhotos.filter(p => !serverIds.has(p.id))
+                  if (dailyPhotosLoading && dailyPhotos.length === 0 && pendingIdb.length === 0) {
+                    return <div className="flex justify-center py-3"><SpinnerIcon className="h-4 w-4 text-[#64748B]" /></div>
+                  }
+                  if (dailyPhotos.length === 0 && pendingIdb.length === 0) {
+                    return <p className="text-[12px] text-[#64748B] italic">No photos yet — tap &quot;+ Add Photo&quot; to capture or upload</p>
+                  }
+                  return (
+                    <div className="grid grid-cols-3 gap-2">
+                      {dailyPhotos.map(ph => (
+                        <div key={`srv:${ph.id}`} className="relative group aspect-square rounded-md overflow-hidden border border-[#E2E8F0] bg-[#F4F5F7]">
+                          <img src={ph.url} alt={ph.file_name ?? ""} className="w-full h-full object-cover cursor-pointer"
+                            onClick={() => window.open(ph.url, "_blank")} />
+                          <button onClick={() => deleteDailyPhoto(ph.id)}
+                            className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 transition-opacity h-6 w-6 rounded-full bg-red-500 text-white text-[11px] flex items-center justify-center shadow">
+                            ✕
+                          </button>
+                        </div>
+                      ))}
+                      {pendingIdb.map(ph => (
+                        <div key={`idb:${ph.id}`} className="relative aspect-square rounded-md overflow-hidden border border-[#E2E8F0] bg-[#F4F5F7]">
+                          <DraftPhotoThumb blob={ph.bytes} alt={ph.filename} className="w-full h-full object-cover" />
+                          <div className="absolute inset-x-0 bottom-0 bg-amber-500/85 text-white text-[10px] font-semibold px-1.5 py-0.5 flex items-center justify-center gap-1">
+                            <SpinnerIcon className="h-3 w-3" /> Syncing…
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )
+                })()}
               </div>
             </div>
           </div>

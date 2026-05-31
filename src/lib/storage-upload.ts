@@ -75,3 +75,43 @@ export async function presignAndUpload(
   await uploadFileToSignedUrl(data.signed_url, file, onProgress)
   return { path: data.path as string }
 }
+
+/**
+ * Blob variant used by the offline photo sync runner. Unlike presignAndUpload,
+ * this takes an explicit `client_id` (the IDB photo's UUID) so:
+ *
+ *   - The storage path is deterministic — retries write to the same object,
+ *     `upsert: true` makes the PUT idempotent at the bucket level.
+ *   - The downstream /api/photos POST uses the same id, so the DB row insert
+ *     is naturally dedupe-able if the runner retries after a partial failure.
+ *
+ * Bytes come from IndexedDB (always a Blob), not from a browser File picker,
+ * so this is its own helper — the porting boundary for a native shell that
+ * would produce bytes via its camera plugin rather than an HTML file input.
+ */
+export async function presignAndUploadBlob(
+  bucket: string,
+  prefix: string,
+  blob: Blob,
+  fileName: string,
+  clientId: string,
+  onProgress?: (p: UploadProgress) => void,
+): Promise<{ path: string }> {
+  const res = await fetch("/api/storage/presigned-url", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ bucket, prefix, file_name: fileName, client_id: clientId }),
+  })
+  const data = await res.json().catch(() => null)
+  if (!res.ok || !data?.signed_url || !data?.path) {
+    throw new Error(data?.error ?? "Could not start the upload")
+  }
+
+  // Reuse the same XHR helper. uploadFileToSignedUrl reads from file.type,
+  // but a generic Blob may or may not carry a type — fall back to a sane
+  // default for the photo path. Wrap as File so the existing helper sets
+  // Content-Type from blob.type when present.
+  const fileLike = new File([blob], fileName, { type: blob.type || "image/jpeg" })
+  await uploadFileToSignedUrl(data.signed_url, fileLike, onProgress)
+  return { path: data.path as string }
+}
