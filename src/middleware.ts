@@ -34,13 +34,14 @@ export async function middleware(request: NextRequest) {
   // page; /api/invites/accept is the route that finalizes the link. Both
   // are token-gated, not session-gated — see accept_invite_link in
   // migrations.sql for the security model.
-  const PUBLIC_PATHS = ["/", "/signup", "/login"]
+  const PUBLIC_PATHS = ["/", "/signup", "/login", "/articles", "/sitemap.xml", "/robots.txt"]
   const isPublic =
     PUBLIC_PATHS.includes(path) ||
     path.startsWith("/api/auth") ||
     path === "/api/signup" ||
     path.startsWith("/invite/") ||
-    path === "/api/invites/accept"
+    path === "/api/invites/accept" ||
+    path.startsWith("/articles/")
 
   if (!user && !isPublic) {
     const url = request.nextUrl.clone()
