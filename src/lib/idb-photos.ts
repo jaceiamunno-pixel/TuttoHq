@@ -123,6 +123,56 @@ export async function getDailyDraft(id: string): Promise<DailyDraftRow | undefin
 }
 
 // ─── Photos ─────────────────────────────────────────────────────────────────
+//
+// iOS-Safari note: WebKit's IndexedDB implementation fails serialization on
+// Blobs produced by certain canvas APIs (canvas.toBlob / OffscreenCanvas
+// .convertToBlob) with the runtime error
+//
+//   "Error preparing Blob/File data to be stored in object store"
+//
+// ArrayBuffer serialization through the typed-array path works on all
+// browsers. So we materialize Blob → ArrayBuffer at the write boundary and
+// reconstruct ArrayBuffer → Blob at the read boundary. The public
+// DailyDraftPhotoRow / UploadablePhoto contract stays Blob-only — callers
+// (the compressor, the upload helper, DraftPhotoThumb) never see the
+// stored shape. The detection on read tolerates legacy Blob rows written
+// by earlier builds on Chrome/Android profiles, so no data migration is
+// required.
+
+/** Internal persistent shape. Never escapes this module. */
+interface StoredDailyDraftPhotoRow {
+  id: string
+  draftId: string
+  orderIndex: number
+  capturedAt: number
+  /** ArrayBuffer for rows written by this build; Blob for legacy rows. */
+  bytes: ArrayBuffer | Blob
+  mime: string
+  filename: string
+  savedReportId?: string
+  attempts?: number
+  lastAttemptAt?: number
+}
+
+/** Read-boundary conversion. Reconstructs a Blob from whichever shape was
+ *  persisted so the caller always works with the documented Blob type. */
+function rowFromStored(stored: StoredDailyDraftPhotoRow): DailyDraftPhotoRow {
+  const bytes: Blob = stored.bytes instanceof Blob
+    ? stored.bytes
+    : new Blob([stored.bytes], { type: stored.mime || "image/jpeg" })
+  return {
+    id: stored.id,
+    draftId: stored.draftId,
+    orderIndex: stored.orderIndex,
+    capturedAt: stored.capturedAt,
+    bytes,
+    mime: stored.mime,
+    filename: stored.filename,
+    savedReportId: stored.savedReportId,
+    attempts: stored.attempts,
+    lastAttemptAt: stored.lastAttemptAt,
+  }
+}
 
 export async function addDailyDraftPhoto(
   draftId: string,
@@ -130,19 +180,23 @@ export async function addDailyDraftPhoto(
   orderIndex: number,
   savedReportId?: string,
 ): Promise<DailyDraftPhotoRow> {
-  const row: DailyDraftPhotoRow = {
+  // Materialize once, here. Whatever the compressor handed us — Blob from
+  // canvas.toBlob (Safari path), OffscreenCanvas.convertToBlob, or
+  // heic2any — becomes a plain ArrayBuffer before IDB sees it.
+  const buf = await photo.bytes.arrayBuffer()
+  const stored: StoredDailyDraftPhotoRow = {
     id: crypto.randomUUID(),
     draftId,
     orderIndex,
     capturedAt: Date.now(),
-    bytes: photo.bytes,
+    bytes: buf,
     mime: photo.mime,
     filename: photo.filename,
     ...(savedReportId ? { savedReportId } : {}),
   }
   const db = await getDB()
-  await db.put(PHOTOS_STORE, row)
-  return row
+  await db.put(PHOTOS_STORE, stored)
+  return rowFromStored(stored)
 }
 
 export async function listDailyDraftPhotos(draftId: string): Promise<DailyDraftPhotoRow[]> {
@@ -151,9 +205,9 @@ export async function listDailyDraftPhotos(draftId: string): Promise<DailyDraftP
     PHOTOS_STORE,
     PHOTOS_BY_DRAFT_INDEX,
     draftId,
-  )) as DailyDraftPhotoRow[]
+  )) as StoredDailyDraftPhotoRow[]
   rows.sort((a, b) => a.orderIndex - b.orderIndex)
-  return rows
+  return rows.map(rowFromStored)
 }
 
 /** All photos for a given saved report — used by the View modal to merge
@@ -164,9 +218,9 @@ export async function listPhotosForSavedReport(savedReportId: string): Promise<D
     PHOTOS_STORE,
     PHOTOS_BY_TARGET_INDEX,
     savedReportId,
-  )) as DailyDraftPhotoRow[]
+  )) as StoredDailyDraftPhotoRow[]
   rows.sort((a, b) => a.orderIndex - b.orderIndex)
-  return rows
+  return rows.map(rowFromStored)
 }
 
 /** Every photo with a target — the sync runner's queue. The by_target
@@ -174,7 +228,8 @@ export async function listPhotosForSavedReport(savedReportId: string): Promise<D
  *  belong to a draft still being edited). */
 export async function listPhotosToSync(): Promise<DailyDraftPhotoRow[]> {
   const db = await getDB()
-  return (await db.getAllFromIndex(PHOTOS_STORE, PHOTOS_BY_TARGET_INDEX)) as DailyDraftPhotoRow[]
+  const rows = (await db.getAllFromIndex(PHOTOS_STORE, PHOTOS_BY_TARGET_INDEX)) as StoredDailyDraftPhotoRow[]
+  return rows.map(rowFromStored)
 }
 
 /** Bridge: a just-created daily_reports.id is stamped onto the draft and
@@ -201,9 +256,12 @@ export async function tagDraftWithSavedReport(
   const photosByDraft = photosStore.index(PHOTOS_BY_DRAFT_INDEX)
   let cursor = await photosByDraft.openCursor(IDBKeyRange.only(draftId))
   while (cursor) {
-    const row = cursor.value as DailyDraftPhotoRow
-    if (row.savedReportId !== savedReportId) {
-      await cursor.update({ ...row, savedReportId })
+    // Cast to the persistent shape — bytes is ArrayBuffer (new rows) or
+    // Blob (legacy). Spread preserves whatever bytes shape was there;
+    // we only touch savedReportId. No conversion needed.
+    const stored = cursor.value as StoredDailyDraftPhotoRow
+    if (stored.savedReportId !== savedReportId) {
+      await cursor.update({ ...stored, savedReportId })
     }
     cursor = await cursor.continue()
   }
@@ -215,7 +273,9 @@ export async function tagDraftWithSavedReport(
 export async function noteSyncAttempt(photoId: string): Promise<void> {
   const db = await getDB()
   const tx = db.transaction(PHOTOS_STORE, "readwrite")
-  const existing = (await tx.store.get(photoId)) as DailyDraftPhotoRow | undefined
+  // Persistent-shape cast — we only touch attempts/lastAttemptAt; the
+  // bytes blob/buffer is round-tripped untouched.
+  const existing = (await tx.store.get(photoId)) as StoredDailyDraftPhotoRow | undefined
   if (existing) {
     await tx.store.put({
       ...existing,
@@ -250,7 +310,7 @@ export async function removeDraftIfEmpty(draftId: string): Promise<boolean> {
     PHOTOS_STORE,
     PHOTOS_BY_DRAFT_INDEX,
     draftId,
-  )) as DailyDraftPhotoRow[]
+  )) as StoredDailyDraftPhotoRow[]
   if (photos.length > 0) return false
   await db.delete(DRAFTS_STORE, draftId)
   return true
