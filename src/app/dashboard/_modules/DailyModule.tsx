@@ -869,7 +869,7 @@ export default function DailyModule({ globalProjectId, appProjects, teamMembers 
                           }} />
                         {photoCompressProgress && (
                           <p className="text-[12px] text-[#64748B] mb-2 flex items-center gap-1.5">
-                            <SpinnerIcon className="h-3 w-3" /> Compressing photo {Math.min(photoCompressProgress.done + 1, photoCompressProgress.total)} of {photoCompressProgress.total}…
+                            <SpinnerIcon className="h-3 w-3" /> Processing photo {Math.min(photoCompressProgress.done + 1, photoCompressProgress.total)} of {photoCompressProgress.total}…
                           </p>
                         )}
                         {draftPhotos.length > 0 && (

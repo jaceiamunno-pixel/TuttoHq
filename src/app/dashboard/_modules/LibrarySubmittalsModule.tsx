@@ -141,6 +141,10 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
   const [editSecName, setEditSecName]           = useState("")
   const [editSaving, setEditSaving]             = useState(false)
 
+  // Detail / preview modal (full-screen submittal view, read-only fields +
+  // PDF preview when storage_path is present).
+  const [detailSubmittal, setDetailSubmittal]   = useState<SubmittalRecord | null>(null)
+
   // Submittal-log tracker — vendors, grouping, inline-save debounce
   const [vendorSubs, setVendorSubs]             = useState<SubcontractorRow[]>([])
   const [vendorSuppliers, setVendorSuppliers]   = useState<SupplierRow[]>([])
@@ -723,6 +727,17 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
     setEditDivName(s.division_name ?? "")
     setEditSec(s.csi_section ?? "")
     setEditSecName(s.section_name ?? "")
+  }
+
+  // Detail view — full-screen modal triggered by clicking a row's title.
+  // Read-only fields + inline PDF preview (when storage_path exists). Editing
+  // the title is intentionally separate — covered by the existing Edit
+  // metadata modal until the title-lock workstream lands.
+  function openDetailModal(s: SubmittalRecord) {
+    setDetailSubmittal(s)
+  }
+  function closeDetailModal() {
+    setDetailSubmittal(null)
   }
 
   async function deleteSubmittal(s: SubmittalRecord) {
@@ -1620,7 +1635,13 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                     </td>
                     <td className="px-3 py-1.5">
                       <div className="flex items-center gap-1.5 max-w-[280px]">
-                        <span className="text-[#0F172A] truncate" title={s.file_name}>{truncateForDisplay(s.file_name)}</span>
+                        <button
+                          type="button"
+                          onClick={() => openDetailModal(s)}
+                          title={s.file_name}
+                          className="text-left text-[#0F172A] truncate hover:underline focus:outline-none focus:underline">
+                          {truncateForDisplay(s.file_name)}
+                        </button>
                         {s.sender_email && (
                           <span title={`Received from ${s.sender_email}`} className="flex-shrink-0 text-[#94A3B8]">
                             <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" /></svg>
@@ -1699,7 +1720,13 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                           className="accent-[#7B9BB5] flex-shrink-0" />
                       )}
                       <span className="text-[11px] font-bold tabular-nums text-[#64748B] flex-shrink-0">#{s.submittal_seq ?? "—"}</span>
-                      <p className="text-[13px] font-medium text-[#0F172A] leading-tight truncate" title={s.file_name}>{truncateForDisplay(s.file_name)}</p>
+                      <button
+                        type="button"
+                        onClick={() => openDetailModal(s)}
+                        title={s.file_name}
+                        className="text-left text-[13px] font-medium text-[#0F172A] leading-tight truncate hover:underline focus:outline-none">
+                        {truncateForDisplay(s.file_name)}
+                      </button>
                     </div>
                     <StatusBadge status={s.review_status ?? "Received"} />
                   </div>
@@ -2522,6 +2549,163 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
           </div>
         </div>
       )}
+
+      {/* ── Detail / preview modal ───────────────────────────────────────── */}
+      {detailSubmittal && (() => {
+        const s = detailSubmittal
+        const proj = s.project_id ? appProjects.find(p => p.id === s.project_id) : null
+        const fmt = (v: string | null | undefined) => v && v.trim() !== "" ? v : "—"
+        const fmtDateField = (v: string | null | undefined) => v ? fmtDate(v) : "—"
+        const hasPdf = !!s.storage_path && s.mime_type === "application/pdf"
+        return (
+        <div className="fixed inset-0 bg-black/70 z-50 flex items-stretch sm:items-center justify-center"
+          onClick={e => { if (e.target === e.currentTarget) closeDetailModal() }}>
+          <div className="bg-white sm:rounded-xl border border-[#E2E8F0] shadow-2xl w-full sm:w-[min(96vw,1100px)] sm:max-h-[92vh] flex flex-col">
+            {/* Header */}
+            <div className="flex items-start justify-between gap-3 px-5 py-4 border-b border-[#E2E8F0]">
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2 text-[11px] text-[#64748B] mb-1">
+                  <span className="font-mono font-semibold">#{s.submittal_seq ?? "—"}</span>
+                  <span>·</span>
+                  <span className="font-mono">{s.csi_section ?? "—"}</span>
+                  {s.submittal_type && <><span>·</span><span>{s.submittal_type}</span></>}
+                </div>
+                <h2 className="text-[16px] font-bold text-[#0F172A] leading-tight break-words">{s.file_name}</h2>
+              </div>
+              <button onClick={closeDetailModal} className="text-[#64748B] hover:text-[#0F172A] flex-shrink-0">
+                <XIcon className="h-5 w-5" />
+              </button>
+            </div>
+
+            {/* Body */}
+            <div className="flex-1 overflow-auto px-5 py-4 grid grid-cols-1 lg:grid-cols-[1fr_1.4fr] gap-5">
+              {/* Field grid */}
+              <div className="space-y-4">
+                <div>
+                  <p className="text-[10px] font-bold text-[#64748B] uppercase tracking-widest mb-1">Project</p>
+                  <p className="text-[13px] text-[#0F172A]">{proj ? `${proj.number?.trim() ? `${proj.number} · ` : ""}${proj.name}` : "—"}</p>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <p className="text-[10px] font-bold text-[#64748B] uppercase tracking-widest mb-1">Division</p>
+                    <p className="text-[13px] text-[#0F172A]">{fmt(s.csi_division)} {s.division_name ? `· ${s.division_name}` : ""}</p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] font-bold text-[#64748B] uppercase tracking-widest mb-1">Section</p>
+                    <p className="text-[13px] text-[#0F172A]">{fmt(s.csi_section)} {s.section_name ? `· ${s.section_name}` : ""}</p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] font-bold text-[#64748B] uppercase tracking-widest mb-1">Submittal #</p>
+                    <p className="text-[13px] text-[#0F172A] tabular-nums">{s.submittal_seq ?? "—"}</p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] font-bold text-[#64748B] uppercase tracking-widest mb-1">Type</p>
+                    <p className="text-[13px] text-[#0F172A]">{fmt(s.submittal_type)}</p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] font-bold text-[#64748B] uppercase tracking-widest mb-1">Status</p>
+                    <p className="text-[13px] text-[#0F172A]">{fmt(s.review_status)}</p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] font-bold text-[#64748B] uppercase tracking-widest mb-1">Revision</p>
+                    <p className="text-[13px] text-[#0F172A]">{fmt(s.revision_number)}</p>
+                  </div>
+                </div>
+                <div>
+                  <p className="text-[10px] font-bold text-[#64748B] uppercase tracking-widest mb-1">Material / Manufacturer / Dimensions</p>
+                  <p className="text-[13px] text-[#0F172A]">{[s.material_name, s.manufacturer, s.dimensions].filter(Boolean).join(" — ") || "—"}</p>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <p className="text-[10px] font-bold text-[#64748B] uppercase tracking-widest mb-1">Received</p>
+                    <p className="text-[13px] text-[#0F172A]">{fmtDateField(s.received_date)}</p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] font-bold text-[#64748B] uppercase tracking-widest mb-1">Sent to A/E</p>
+                    <p className="text-[13px] text-[#0F172A]">{fmtDateField(s.sent_to_ae_date)}</p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] font-bold text-[#64748B] uppercase tracking-widest mb-1">Returned from A/E</p>
+                    <p className="text-[13px] text-[#0F172A]">{fmtDateField(s.returned_from_ae_date)}</p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] font-bold text-[#64748B] uppercase tracking-widest mb-1">Returned to Sub</p>
+                    <p className="text-[13px] text-[#0F172A]">{fmtDateField(s.returned_to_sub_date)}</p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] font-bold text-[#64748B] uppercase tracking-widest mb-1">Due date</p>
+                    <p className="text-[13px] text-[#0F172A]">{fmtDateField(s.due_date)}</p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] font-bold text-[#64748B] uppercase tracking-widest mb-1">Sent to sub</p>
+                    <p className="text-[13px] text-[#0F172A]">{fmtDateField(s.sent_to_sub_date)}</p>
+                  </div>
+                </div>
+                <div>
+                  <p className="text-[10px] font-bold text-[#64748B] uppercase tracking-widest mb-1">Send-to</p>
+                  <p className="text-[13px] text-[#0F172A]">
+                    {[s.send_to_company, s.send_to_contact, s.send_to_email].filter(Boolean).join(" · ") || "—"}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-[10px] font-bold text-[#64748B] uppercase tracking-widest mb-1">Transmitted by</p>
+                  <p className="text-[13px] text-[#0F172A]">{[s.transmitted_by, s.transmitted_by_company].filter(Boolean).join(" · ") || "—"}</p>
+                </div>
+                {s.sender_email && (
+                  <div>
+                    <p className="text-[10px] font-bold text-[#64748B] uppercase tracking-widest mb-1">Received from</p>
+                    <p className="text-[13px] text-[#0F172A]">{s.sender_email}</p>
+                  </div>
+                )}
+                <div>
+                  <p className="text-[10px] font-bold text-[#64748B] uppercase tracking-widest mb-1">Source</p>
+                  <p className="text-[13px] text-[#0F172A]">{fmt(s.source)}</p>
+                </div>
+              </div>
+              {/* PDF preview / no-file state */}
+              <div className="rounded-md border border-[#E2E8F0] bg-[#F8F9FA] min-h-[300px] sm:min-h-[480px] flex items-stretch overflow-hidden">
+                {hasPdf ? (
+                  <iframe
+                    title={`PDF preview · ${s.file_name}`}
+                    src={`/api/download/${s.id}#toolbar=1&navpanes=0`}
+                    className="w-full h-full min-h-[300px] sm:min-h-[480px] border-0" />
+                ) : s.storage_path ? (
+                  <div className="m-auto text-center p-6">
+                    <p className="text-[13px] text-[#64748B]">No inline preview for this file type.</p>
+                    <button onClick={() => window.open(`/api/download/${s.id}`, "_blank")}
+                      className="mt-2 h-8 px-3 rounded-md bg-[#7B9BB5] text-white text-[12px] font-semibold hover:bg-[#6A8AA4]">
+                      Open file
+                    </button>
+                  </div>
+                ) : (
+                  <div className="m-auto text-center p-6">
+                    <p className="text-[13px] text-[#64748B]">No file attached to this submittal.</p>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="flex items-center justify-end gap-2 px-5 py-3 border-t border-[#E2E8F0]">
+              {s.storage_path && (
+                <button onClick={() => window.open(`/api/download/${s.id}`, "_blank")}
+                  className="h-8 px-3 rounded-md border border-[#E2E8F0] text-[12px] text-[#64748B] hover:bg-[#F4F5F7] transition-colors">
+                  Open
+                </button>
+              )}
+              <button onClick={() => { closeDetailModal(); openEditModal(s) }}
+                className="h-8 px-3 rounded-md border border-[#E2E8F0] text-[12px] text-[#64748B] hover:bg-[#F4F5F7] transition-colors">
+                Edit metadata
+              </button>
+              <button onClick={closeDetailModal}
+                className="h-8 px-3 rounded-md bg-[#7B9BB5] text-white text-[12px] font-semibold hover:bg-[#6A8AA4]">
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+        )
+      })()}
 
       {/* ── Batch upload modal ───────────────────────────────────────────── */}
       {showBatch && (
