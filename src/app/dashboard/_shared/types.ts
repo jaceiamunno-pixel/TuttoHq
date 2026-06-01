@@ -83,6 +83,9 @@ export interface SubmittalRecord {
   sent_to_sub_date: string | null
   received_via_package_id: string | null
   received_file_name: string | null
+  // Inline title edit. When true, normalizer / spec-book re-parse must NOT
+  // overwrite file_name — the row carries a human-set label.
+  title_locked: boolean | null
 }
 
 export type BatchStatus = "pending" | "classifying" | "ready" | "error" | "uploading" | "done" | "upload-error"

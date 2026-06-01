@@ -15,6 +15,9 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     // Submittal-log tracker columns
     "received_date", "sent_to_ae_date", "returned_from_ae_date", "returned_to_sub_date",
     "vendor_subcontractor_id", "vendor_supplier_id",
+    // Inline title edit. file_name updates implicitly lock the row so the
+    // normalizer / spec-book re-parse never overwrites a human's choice.
+    "file_name",
   ]
   const safe = Object.fromEntries(Object.entries(updates).filter(([k]) => allowed.includes(k)))
 
@@ -22,6 +25,17 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   if ("csi_division" in safe || "csi_section" in safe) {
     safe.manually_overridden = true
     safe.overridden_by = user.id
+  }
+
+  // Inline title edits are sticky: server-side guarantee that title_locked is
+  // set whenever file_name comes through this route. Trimmed; empty rejects.
+  if ("file_name" in safe) {
+    const v = typeof safe.file_name === "string" ? safe.file_name.trim() : ""
+    if (v.length === 0) {
+      return NextResponse.json({ error: "file_name cannot be empty" }, { status: 400 })
+    }
+    safe.file_name = v
+    safe.title_locked = true
   }
 
   // Assign a per-project submittal number when a submittal is attached to (or

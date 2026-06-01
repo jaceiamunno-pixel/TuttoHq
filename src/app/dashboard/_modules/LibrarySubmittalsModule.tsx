@@ -142,8 +142,13 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
   const [editSaving, setEditSaving]             = useState(false)
 
   // Detail / preview modal (full-screen submittal view, read-only fields +
-  // PDF preview when storage_path is present).
+  // PDF preview, plus inline title edit that locks the row against future
+  // automated rewrites).
   const [detailSubmittal, setDetailSubmittal]   = useState<SubmittalRecord | null>(null)
+  const [detailTitleEditing, setDetailTitleEditing] = useState(false)
+  const [detailTitleDraft, setDetailTitleDraft]     = useState("")
+  const [detailTitleSaving, setDetailTitleSaving]   = useState(false)
+  const [detailTitleError, setDetailTitleError]     = useState<string | null>(null)
 
   // Submittal-log tracker — vendors, grouping, inline-save debounce
   const [vendorSubs, setVendorSubs]             = useState<SubcontractorRow[]>([])
@@ -730,14 +735,52 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
   }
 
   // Detail view — full-screen modal triggered by clicking a row's title.
-  // Read-only fields + inline PDF preview (when storage_path exists). Editing
-  // the title is intentionally separate — covered by the existing Edit
-  // metadata modal until the title-lock workstream lands.
+  // Read-only fields + inline PDF preview (when storage_path exists). Title
+  // is the one editable field; saving stamps title_locked=true server-side.
   function openDetailModal(s: SubmittalRecord) {
     setDetailSubmittal(s)
+    setDetailTitleEditing(false)
+    setDetailTitleDraft(s.file_name)
+    setDetailTitleError(null)
   }
   function closeDetailModal() {
     setDetailSubmittal(null)
+    setDetailTitleEditing(false)
+    setDetailTitleDraft("")
+    setDetailTitleError(null)
+  }
+  async function saveDetailTitle() {
+    if (!detailSubmittal) return
+    const next = detailTitleDraft.trim()
+    if (next.length === 0) { setDetailTitleError("Title cannot be empty."); return }
+    if (next === detailSubmittal.file_name) {
+      // No-op edit — just close the editor without a network round-trip.
+      setDetailTitleEditing(false)
+      return
+    }
+    setDetailTitleSaving(true)
+    setDetailTitleError(null)
+    try {
+      const res = await fetch(`/api/submittals/${detailSubmittal.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ file_name: next }),
+      })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}))
+        throw new Error(err.error || "Save failed")
+      }
+      // Optimistic local update everywhere — log + search + the modal itself.
+      const patch = { file_name: next, title_locked: true } as Partial<SubmittalRecord>
+      setLogSubmittals(prev => prev.map(x => x.id === detailSubmittal.id ? { ...x, ...patch } as SubmittalRecord : x))
+      setSearchResults(prev => prev ? prev.map(x => x.id === detailSubmittal.id ? { ...x, ...patch } as SubmittalRecord : x) : prev)
+      setDetailSubmittal(prev => prev ? { ...prev, ...patch } as SubmittalRecord : prev)
+      setDetailTitleEditing(false)
+    } catch (err) {
+      setDetailTitleError(err instanceof Error ? err.message : "Save failed")
+    } finally {
+      setDetailTitleSaving(false)
+    }
   }
 
   async function deleteSubmittal(s: SubmittalRecord) {
@@ -1642,6 +1685,12 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                           className="text-left text-[#0F172A] truncate hover:underline focus:outline-none focus:underline">
                           {truncateForDisplay(s.file_name)}
                         </button>
+                        {s.title_locked && (
+                          <span title="Title was set manually — automated re-process will not overwrite it"
+                            className="flex-shrink-0 text-[#94A3B8]">
+                            <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 11c-1.1 0-2 .9-2 2v3h4v-3c0-1.1-.9-2-2-2zm6 0V7a6 6 0 10-12 0v4H4v10h16V11h-2zm-10 0V7a4 4 0 118 0v4H8z" /></svg>
+                          </span>
+                        )}
                         {s.sender_email && (
                           <span title={`Received from ${s.sender_email}`} className="flex-shrink-0 text-[#94A3B8]">
                             <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" /></svg>
@@ -1727,6 +1776,12 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                         className="text-left text-[13px] font-medium text-[#0F172A] leading-tight truncate hover:underline focus:outline-none">
                         {truncateForDisplay(s.file_name)}
                       </button>
+                      {s.title_locked && (
+                        <span title="Title was set manually — automated re-process will not overwrite it"
+                          className="flex-shrink-0 text-[#94A3B8]">
+                          <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 11c-1.1 0-2 .9-2 2v3h4v-3c0-1.1-.9-2-2-2zm6 0V7a6 6 0 10-12 0v4H4v10h16V11h-2zm-10 0V7a4 4 0 118 0v4H8z" /></svg>
+                        </span>
+                      )}
                     </div>
                     <StatusBadge status={s.review_status ?? "Received"} />
                   </div>
@@ -2569,8 +2624,50 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                   <span>·</span>
                   <span className="font-mono">{s.csi_section ?? "—"}</span>
                   {s.submittal_type && <><span>·</span><span>{s.submittal_type}</span></>}
+                  {s.title_locked && (
+                    <span title="Title set manually — automated re-process will not overwrite it" className="ml-1 inline-flex items-center gap-0.5 text-[#94A3B8]">
+                      <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 11c-1.1 0-2 .9-2 2v3h4v-3c0-1.1-.9-2-2-2zm6 0V7a6 6 0 10-12 0v4H4v10h16V11h-2zm-10 0V7a4 4 0 118 0v4H8z" /></svg>
+                      <span className="text-[10px]">Locked</span>
+                    </span>
+                  )}
                 </div>
-                <h2 className="text-[16px] font-bold text-[#0F172A] leading-tight break-words">{s.file_name}</h2>
+                {detailTitleEditing ? (
+                  <div className="flex items-center gap-2">
+                    <input
+                      autoFocus
+                      value={detailTitleDraft}
+                      onChange={e => setDetailTitleDraft(e.target.value)}
+                      onKeyDown={e => {
+                        if (e.key === "Enter") { e.preventDefault(); saveDetailTitle() }
+                        if (e.key === "Escape") {
+                          e.preventDefault()
+                          setDetailTitleDraft(s.file_name)
+                          setDetailTitleEditing(false)
+                          setDetailTitleError(null)
+                        }
+                      }}
+                      disabled={detailTitleSaving}
+                      className="flex-1 h-9 px-3 rounded-md border border-[#7B9BB5]/60 bg-white text-[15px] font-semibold text-[#0F172A] focus:outline-none focus:ring-2 focus:ring-[#7B9BB5]/30" />
+                    <button onClick={saveDetailTitle} disabled={detailTitleSaving}
+                      className="h-9 px-3 rounded-md bg-[#7B9BB5] text-white text-[12px] font-semibold hover:bg-[#6A8AA4] disabled:opacity-50 flex items-center gap-1">
+                      {detailTitleSaving && <SpinnerIcon className="h-3 w-3" />}{detailTitleSaving ? "Saving…" : "Save"}
+                    </button>
+                    <button onClick={() => { setDetailTitleDraft(s.file_name); setDetailTitleEditing(false); setDetailTitleError(null) }}
+                      disabled={detailTitleSaving}
+                      className="h-9 px-3 rounded-md border border-[#E2E8F0] text-[12px] text-[#64748B] hover:bg-[#F4F5F7] disabled:opacity-50">Cancel</button>
+                  </div>
+                ) : (
+                  <div className="flex items-start gap-2">
+                    <h2 className="text-[16px] font-bold text-[#0F172A] leading-tight break-words">{s.file_name}</h2>
+                    <button onClick={() => { setDetailTitleDraft(s.file_name); setDetailTitleEditing(true); setDetailTitleError(null) }}
+                      title="Edit title" className="flex-shrink-0 text-[11px] text-[#7B9BB5] hover:text-[#5A7A94] px-2 py-1 rounded hover:bg-[#7B9BB5]/10 transition-colors mt-0.5">
+                      Edit title
+                    </button>
+                  </div>
+                )}
+                {detailTitleError && (
+                  <p className="text-[12px] text-red-500 mt-1">{detailTitleError}</p>
+                )}
               </div>
               <button onClick={closeDetailModal} className="text-[#64748B] hover:text-[#0F172A] flex-shrink-0">
                 <XIcon className="h-5 w-5" />
