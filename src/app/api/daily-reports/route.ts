@@ -15,6 +15,15 @@ export async function GET(req: NextRequest) {
   return NextResponse.json({ reports: data ?? [] })
 }
 
+// Accepts an optional `client_id` (UUID) that becomes the inserted row's id.
+// This makes the route idempotent end-to-end: the offline-first photo flow
+// generates the report id on the client, tags its draft photos with it
+// locally, then POSTs this route — possibly multiple times if a retry is
+// needed. The upsert on id means a second POST with the same client_id
+// returns the existing row instead of creating a duplicate.
+//
+// Falls back to the DB's gen_random_uuid() default when client_id is
+// absent, preserving the legacy "create with server-generated id" flow.
 export async function POST(req: NextRequest) {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
@@ -39,7 +48,11 @@ export async function POST(req: NextRequest) {
   const file_path = typeof fields.file_path === "string" ? fields.file_path.trim() || null : null
   const file_name = typeof fields.file_name === "string" ? fields.file_name.trim() || null : null
 
-  const { data, error } = await supabase.from("daily_reports").insert({
+  const client_id = typeof fields.client_id === "string" ? fields.client_id.trim() : ""
+  const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+  const useClientId = UUID_RE.test(client_id)
+
+  const insertData: Record<string, unknown> = {
     report_date,
     project_id: project_id || null,
     prepared_by: prepared_by?.trim() || null,
@@ -56,7 +69,13 @@ export async function POST(req: NextRequest) {
     file_name,
     company_id,
     uploaded_by: user.id,
-  }).select()
+  }
+  if (useClientId) insertData.id = client_id
+
+  const builder = useClientId
+    ? supabase.from("daily_reports").upsert(insertData, { onConflict: "id" })
+    : supabase.from("daily_reports").insert(insertData)
+  const { data, error } = await builder.select()
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   return NextResponse.json({ id: data?.[0]?.id, ok: true })

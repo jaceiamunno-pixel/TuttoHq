@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useRef } from "react"
+import { useState, useEffect, useMemo, useRef } from "react"
 import type { DailyReport, Project, TeamMember } from "../_shared/types"
 import { fmtDateOnly } from "../_shared/format"
 import { PlusIcon, SpinnerIcon, XIcon } from "../_shared/icons"
@@ -9,11 +9,15 @@ import { presignAndUpload } from "@/lib/storage-upload"
 import {
   ACTIVE_DAILY_DRAFT_KEY,
   type DailyDraftPhotoRow,
+  type PendingDailyReportRow,
   addDailyDraftPhoto,
   getDailyDraft,
   listDailyDraftPhotos,
+  listPendingDailyReports,
   listPhotosForSavedReport,
   putDailyDraft,
+  putPendingDailyReport,
+  removePendingDailyReport,
   tagDraftWithSavedReport,
 } from "@/lib/idb-photos"
 import { compressFileToUploadablePhoto } from "@/lib/photo-compression"
@@ -92,6 +96,12 @@ export default function DailyModule({ globalProjectId, appProjects, teamMembers 
   const [syncingCounts, setSyncingCounts]           = useState<Map<string, number>>(new Map())
   const [stuckCounts, setStuckCounts]               = useState<Map<string, number>>(new Map())
   const [inFlightIds, setInFlightIds]               = useState<ReadonlySet<string>>(() => new Set())
+  // Pending daily-reports — the offline-first queue. Every entry here
+  // represents a report the user has "created" locally whose POST to
+  // /api/daily-reports has not yet been confirmed 2xx. Merged into the
+  // list view so the report is visible immediately, with a "Pending sync"
+  // badge until the runner removes it.
+  const [pendingReports, setPendingReports]         = useState<PendingDailyReportRow[]>([])
 
   function loadDaily(pid = globalProjectId) {
     setDailyLoading(true)
@@ -219,14 +229,33 @@ export default function DailyModule({ globalProjectId, appProjects, teamMembers 
     }
   }
 
+  // Pulls the current pending-daily-reports queue from IDB into local
+  // state. Called on mount, after every drain (via subscribeToPhotoSync),
+  // and immediately after createDaily so the new pending row surfaces
+  // in the list without waiting for a server roundtrip.
+  async function refreshPendingReports() {
+    try {
+      setPendingReports(await listPendingDailyReports())
+    } catch (err) {
+      console.error("[daily sync] pending refresh failed", err)
+    }
+  }
+
   // Drain on mount, then subscribe so badges + view-modal photos refresh
   // after any drain pass (capture, online event, periodic tick).
   useEffect(() => {
     let cancelled = false
-    drainPhotoQueue().then(() => { if (!cancelled) refreshSyncingCounts() })
+    refreshPendingReports()
+    drainPhotoQueue().then(() => {
+      if (!cancelled) {
+        refreshSyncingCounts()
+        refreshPendingReports()
+      }
+    })
     const unsubscribe = subscribeToPhotoSync(() => {
       if (cancelled) return
       refreshSyncingCounts()
+      refreshPendingReports()
       // If the View modal is open, refresh its photo lists too.
       const id = viewDailyRef.current?.id
       if (id) {
@@ -397,59 +426,107 @@ export default function DailyModule({ globalProjectId, appProjects, teamMembers 
     setDailyEditing(true)
   }
 
+  // OFFLINE-FIRST report creation.
+  //
+  // The critical contract is: the photo→report link MUST exist locally and
+  // immediately, before any network call. So:
+  //
+  //   1. crypto.randomUUID() synchronously produces the report's durable
+  //      identity. Used as BOTH the local photo target AND the eventual
+  //      server PK (/api/daily-reports POST upserts on client_id).
+  //   2. tagDraftWithSavedReport(draftId, clientReportId) runs FIRST,
+  //      stamping every draft photo with savedReportId = clientReportId
+  //      in one IDB transaction. Photos are now sync-runner-visible
+  //      regardless of what happens next.
+  //   3. putPendingDailyReport() queues the report's form bag in IDB.
+  //      Even if the user closes the tab right now, the report (and its
+  //      already-linked photos) will be drained on next open.
+  //   4. Optimistic POST. On 2xx → remove the pending row (server has
+  //      it). On non-2xx or throw (offline) → leave it; drainReportsOnce
+  //      retries with backoff. The UI doesn't block on this — the form
+  //      closes and the report appears in the list either way.
+  //
+  // Net effect: an offline create is locally indistinguishable from an
+  // online one. Sync runner does the eventual upload, idempotently.
   async function createDaily(e: React.FormEvent) {
     e.preventDefault()
     setDailySaving(true)
     setDailySaveError("")
     setDailyPhotoUploadError("")
+    const clientReportId = crypto.randomUUID()
     try {
       const dailyFields: Record<string, string> = { report_date: dailyDate, project_id: dailyProjectId, prepared_by: dailyPreparedBy, weather_conditions: dailyWeather, temperature: dailyTemp, manpower_count: dailyManpower, work_performed: dailyWorkPerformed, equipment: dailyEquipment, materials_delivered: dailyMaterials, visitors: dailyVisitors, issues_delays: dailyIssues, safety_notes: dailySafety }
       const fields: Record<string, string> = {}
       Object.entries(dailyFields).forEach(([k, v]) => { if (v) fields[k] = v })
+
+      // Optional generic attachment (non-photo file). Best-effort: if
+      // offline the presigned-url request throws and we proceed without
+      // it. Photos are unaffected — they live in IDB and sync separately.
+      // A future piece can queue the attachment binary itself.
       const dailyFile = dailyFileRef.current?.files?.[0]
       if (dailyFile) {
-        const { path } = await presignAndUpload("submittals", "daily-reports", dailyFile)
-        fields.file_path = path
-        fields.file_name = dailyFile.name
+        try {
+          const { path } = await presignAndUpload("submittals", "daily-reports", dailyFile)
+          fields.file_path = path
+          fields.file_name = dailyFile.name
+        } catch (err) {
+          console.warn("[daily create] attachment upload deferred (offline?):", err)
+        }
       }
-      const res = await fetch("/api/daily-reports", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(fields),
+
+      // ─── LOCAL LINK FIRST, then queue the pending POST. ────────────────
+      if (draftId) {
+        try {
+          await tagDraftWithSavedReport(draftId, clientReportId)
+        } catch (err) {
+          console.error("[daily create] tagDraftWithSavedReport failed", err)
+        }
+      }
+      await putPendingDailyReport({
+        id: clientReportId,
+        fields,
+        createdAt: Date.now(),
       })
-      if (res.ok) {
-        // Piece 2: bridge the draft to the saved report so the sync
-        // runner knows where the photos belong, then trigger an
-        // immediate drain (online → first photos land in seconds; offline
-        // → next online/visibility/tick handles them, with the IDB rows
-        // safe meanwhile). The IDB photo rows are NOT removed here —
-        // photo-sync.ts owns the only delete, and only after both
-        // Storage 2xx + /api/photos 2xx confirm.
-        const { id: savedReportId } = await res.json().catch(() => ({}))
-        if (savedReportId && draftId) {
-          try {
-            await tagDraftWithSavedReport(draftId, savedReportId)
-          } catch (err) {
-            console.error("[daily create] tagDraftWithSavedReport failed", err)
-          }
-          drainPhotoQueue().catch(() => {})
+
+      // ─── Optimistic POST. Pending row stays on any failure. ────────────
+      try {
+        const res = await fetch("/api/daily-reports", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ...fields, client_id: clientReportId }),
+        })
+        if (res.ok) {
+          await removePendingDailyReport(clientReportId)
+        } else {
+          // Non-2xx (RLS rejection, validation, 5xx, …): leave pending,
+          // sync runner will retry with backoff. Log so the failure is
+          // visible in DevTools rather than silent.
+          const data = await res.json().catch(() => ({}))
+          console.error("[daily create] non-OK POST", res.status, data)
         }
-        if (typeof window !== "undefined") {
-          window.localStorage.removeItem(ACTIVE_DAILY_DRAFT_KEY)
-        }
-        setDraftId(null)
-        setDraftCreatedAt(0)
-        setDraftPhotos([])
-        setShowNewDaily(false)
-        setDailyDate(new Date().toISOString().slice(0, 10)); setDailyProjectId(""); setDailyPreparedBy(""); setDailyWeather(""); setDailyTemp(""); setDailyManpower(""); setDailyWorkPerformed(""); setDailyEquipment(""); setDailyMaterials(""); setDailyVisitors(""); setDailyIssues(""); setDailySafety("")
-        if (dailyPhotosToAddRef.current) dailyPhotosToAddRef.current.value = ""
-        if (dailyTakePhotoRef.current)  dailyTakePhotoRef.current.value  = ""
-        loadDaily()
-        refreshSyncingCounts()
-      } else {
-        const data = await res.json().catch(() => ({}))
-        setDailySaveError(data.error ?? "Failed to create report. Please try again.")
+      } catch (err) {
+        // fetch threw — almost certainly offline. The pending row sits
+        // in IDB until the runner picks it up on reconnect.
+        console.warn("[daily create] POST failed, queued for sync:", err)
       }
+
+      // ─── Regardless of POST outcome, the report exists in the user's
+      //     world (pending list + already-linked photos). Reset form.
+      if (typeof window !== "undefined") {
+        window.localStorage.removeItem(ACTIVE_DAILY_DRAFT_KEY)
+      }
+      setDraftId(null)
+      setDraftCreatedAt(0)
+      setDraftPhotos([])
+      setShowNewDaily(false)
+      setDailyDate(new Date().toISOString().slice(0, 10)); setDailyProjectId(""); setDailyPreparedBy(""); setDailyWeather(""); setDailyTemp(""); setDailyManpower(""); setDailyWorkPerformed(""); setDailyEquipment(""); setDailyMaterials(""); setDailyVisitors(""); setDailyIssues(""); setDailySafety("")
+      if (dailyPhotosToAddRef.current) dailyPhotosToAddRef.current.value = ""
+      if (dailyTakePhotoRef.current)  dailyTakePhotoRef.current.value  = ""
+
+      loadDaily()
+      await refreshPendingReports()
+      refreshSyncingCounts()
+      drainPhotoQueue().catch(() => {})
     } finally { setDailySaving(false) }
   }
 
@@ -467,11 +544,44 @@ export default function DailyModule({ globalProjectId, appProjects, teamMembers 
     } finally { setDailyEditSaving(false) }
   }
 
+  // ── Merged list (pending + server) ─────────────────────────────────────
+  // Pending rows are reports the user has "created" locally whose POST
+  // hasn't been confirmed yet. They're rendered alongside server rows so
+  // the user sees their just-created report immediately, even offline.
+  // The DailyReport shape is reconstructed from the PendingDailyReportRow's
+  // string-bag of fields so the same list/card markup works for both.
+  const pendingIds = useMemo(() => new Set(pendingReports.map(p => p.id)), [pendingReports])
+  const mergedReports: DailyReport[] = useMemo(() => {
+    const serverIds = new Set(dailyReports.map(r => r.id))
+    const pendingAsReports: DailyReport[] = pendingReports
+      .filter(p => !serverIds.has(p.id))
+      .map(p => ({
+        id:                 p.id,
+        report_date:        p.fields.report_date ?? "",
+        project_id:         p.fields.project_id || null,
+        prepared_by:        p.fields.prepared_by || null,
+        weather_conditions: p.fields.weather_conditions || null,
+        temperature:        p.fields.temperature || null,
+        manpower_count:     p.fields.manpower_count ? parseInt(p.fields.manpower_count) : null,
+        work_performed:     p.fields.work_performed || null,
+        equipment:          p.fields.equipment || null,
+        materials_delivered: p.fields.materials_delivered || null,
+        visitors:           p.fields.visitors || null,
+        issues_delays:      p.fields.issues_delays || null,
+        safety_notes:       p.fields.safety_notes || null,
+        created_at:         new Date(p.createdAt).toISOString(),
+        uploaded_by:        "",
+        file_path:          p.fields.file_path || null,
+        file_name:          p.fields.file_name || null,
+      }))
+    return [...pendingAsReports, ...dailyReports]
+  }, [pendingReports, dailyReports])
+
   return (
     <>
       {/* Daily reports action bar */}
       <div className="flex-shrink-0 border-b border-[#E2E8F0] bg-white flex items-center justify-between px-4 py-2.5">
-        <p className="text-[13px] font-semibold text-[#0F172A]">Daily Reports <span className="text-[#64748B] font-normal ml-1">({dailyReports.length})</span></p>
+        <p className="text-[13px] font-semibold text-[#0F172A]">Daily Reports <span className="text-[#64748B] font-normal ml-1">({mergedReports.length})</span></p>
         <button onClick={openNewDailyDraft} className="h-8 px-4 rounded-md bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors flex items-center gap-1.5">
           <PlusIcon /> New Report
         </button>
@@ -484,7 +594,7 @@ export default function DailyModule({ globalProjectId, appProjects, teamMembers 
               <div className="flex items-center justify-center h-40 gap-2 text-[13px] text-[#64748B]">
                 <SpinnerIcon className="h-4 w-4" /> Loading…
               </div>
-            ) : dailyReports.length === 0 ? (
+            ) : mergedReports.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-full py-24 text-center">
                 <div className="w-14 h-14 rounded-2xl bg-[#7B9BB5]/10 border border-[#7B9BB5]/20 flex items-center justify-center mb-4">
                   <svg className="w-7 h-7 text-[#7B9BB5]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -514,11 +624,18 @@ export default function DailyModule({ globalProjectId, appProjects, teamMembers 
                   </tr>
                 </thead>
                 <tbody>
-                  {dailyReports.map((r, i) => (
-                    <tr key={r.id} className="border-b border-[#E2E8F0]/60 hover:bg-[#F8F9FA] transition-colors cursor-pointer" onClick={() => { setViewDaily(r); setDailyEditing(false) }}>
-                      <td className="px-4 py-2.5 text-[#64748B] tabular-nums text-[12px]">{dailyReports.length - i}</td>
+                  {mergedReports.map((r, i) => {
+                    const isPending = pendingIds.has(r.id)
+                    return (
+                    <tr key={r.id} className={`border-b border-[#E2E8F0]/60 hover:bg-[#F8F9FA] transition-colors cursor-pointer ${isPending ? "bg-amber-50/40" : ""}`} onClick={() => { setViewDaily(r); setDailyEditing(false) }}>
+                      <td className="px-4 py-2.5 text-[#64748B] tabular-nums text-[12px]">{mergedReports.length - i}</td>
                       <td className="px-4 py-2.5 text-[#0F172A] font-medium text-[12px] whitespace-nowrap">
                         {fmtDateOnly(r.report_date)}
+                        {isPending ? (
+                          <span className="ml-2 inline-flex items-center gap-1 text-[10px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded-full align-middle">
+                            <SpinnerIcon className="h-2.5 w-2.5" /> Pending sync
+                          </span>
+                        ) : null}
                         {syncingCounts.get(r.id) ? (
                           <span className="ml-2 inline-flex items-center gap-1 text-[10px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded-full align-middle">
                             <SpinnerIcon className="h-2.5 w-2.5" /> {syncingCounts.get(r.id)} syncing
@@ -537,27 +654,42 @@ export default function DailyModule({ globalProjectId, appProjects, teamMembers 
                       <td className="px-4 py-2.5 text-[#64748B] text-[12px]">{r.weather_conditions ?? "—"}{r.temperature ? ` · ${r.temperature}` : ""}</td>
                       <td className="px-4 py-2.5 text-[#64748B] text-[12px] text-center">{r.manpower_count ?? "—"}</td>
                       <td className="px-4 py-2.5">
-                        <button onClick={e => { e.stopPropagation(); openDailyForEdit(r) }}
-                          className="text-[11px] text-[#64748B] hover:text-[#0F172A] px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors">
-                          Edit
-                        </button>
-                        <button onClick={e => { e.stopPropagation(); generateDailyPdf(r.id) }} disabled={dailyGeneratingPdf}
-                          className="text-[11px] text-[#7B9BB5] hover:text-[#7B9BB5] px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors disabled:opacity-50">PDF</button>
-                        <button onClick={e => { e.stopPropagation(); deleteDaily(r.id) }}
-                          className="text-[11px] text-red-400 hover:text-red-300 px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors">Del</button>
+                        {/* Server-only actions: Edit/PDF/Del all hit /api/daily-reports/[id]
+                            which 404s for a row that hasn't been POSTed yet. Hidden on
+                            pending rows; they come back when the row syncs. */}
+                        {!isPending && (
+                          <>
+                            <button onClick={e => { e.stopPropagation(); openDailyForEdit(r) }}
+                              className="text-[11px] text-[#64748B] hover:text-[#0F172A] px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors">
+                              Edit
+                            </button>
+                            <button onClick={e => { e.stopPropagation(); generateDailyPdf(r.id) }} disabled={dailyGeneratingPdf}
+                              className="text-[11px] text-[#7B9BB5] hover:text-[#7B9BB5] px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors disabled:opacity-50">PDF</button>
+                            <button onClick={e => { e.stopPropagation(); deleteDaily(r.id) }}
+                              className="text-[11px] text-red-400 hover:text-red-300 px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors">Del</button>
+                          </>
+                        )}
                       </td>
                     </tr>
-                  ))}
+                    )
+                  })}
                 </tbody>
               </table>
               </div>
               {/* Mobile card list */}
               <div className="sm:hidden px-3 py-3 space-y-2">
-                {dailyReports.map(r => (
-                  <div key={r.id} className="bg-white rounded-xl border border-[#E2E8F0] p-3 shadow-sm cursor-pointer" onClick={() => { setViewDaily(r); setDailyEditing(false) }}>
+                {mergedReports.map(r => {
+                  const isPending = pendingIds.has(r.id)
+                  return (
+                  <div key={r.id} className={`bg-white rounded-xl border p-3 shadow-sm cursor-pointer ${isPending ? "border-amber-200 bg-amber-50/40" : "border-[#E2E8F0]"}`} onClick={() => { setViewDaily(r); setDailyEditing(false) }}>
                     <div className="flex items-start justify-between gap-2 mb-1">
                       <div className="flex items-center gap-2 flex-wrap">
                         <p className="text-[13px] font-semibold text-[#0F172A]">{fmtDateOnly(r.report_date)}</p>
+                        {isPending ? (
+                          <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded-full">
+                            <SpinnerIcon className="h-2.5 w-2.5" /> Pending sync
+                          </span>
+                        ) : null}
                         {syncingCounts.get(r.id) ? (
                           <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded-full">
                             <SpinnerIcon className="h-2.5 w-2.5" /> {syncingCounts.get(r.id)} syncing
@@ -576,13 +708,16 @@ export default function DailyModule({ globalProjectId, appProjects, teamMembers 
                       {r.prepared_by && <span>{r.prepared_by}</span>}
                       {r.weather_conditions && <span>{r.weather_conditions}{r.temperature ? ` · ${r.temperature}` : ""}</span>}
                     </div>
-                    <div className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
-                      <button onClick={() => openDailyForEdit(r)} className="text-[11px] text-[#64748B] px-2 py-1 rounded border border-[#E2E8F0] bg-[#F8F9FA]">Edit</button>
-                      <button onClick={() => generateDailyPdf(r.id)} disabled={dailyGeneratingPdf} className="text-[11px] text-[#7B9BB5] px-2 py-1 rounded border border-[#E2E8F0] bg-[#F8F9FA] disabled:opacity-50">PDF</button>
-                      <button onClick={() => deleteDaily(r.id)} className="text-[11px] text-red-400 px-2 py-1 rounded border border-[#E2E8F0] bg-[#F8F9FA]">Del</button>
-                    </div>
+                    {!isPending && (
+                      <div className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
+                        <button onClick={() => openDailyForEdit(r)} className="text-[11px] text-[#64748B] px-2 py-1 rounded border border-[#E2E8F0] bg-[#F8F9FA]">Edit</button>
+                        <button onClick={() => generateDailyPdf(r.id)} disabled={dailyGeneratingPdf} className="text-[11px] text-[#7B9BB5] px-2 py-1 rounded border border-[#E2E8F0] bg-[#F8F9FA] disabled:opacity-50">PDF</button>
+                        <button onClick={() => deleteDaily(r.id)} className="text-[11px] text-red-400 px-2 py-1 rounded border border-[#E2E8F0] bg-[#F8F9FA]">Del</button>
+                      </div>
+                    )}
                   </div>
-                ))}
+                  )
+                })}
               </div>
               </>
             )
@@ -786,21 +921,34 @@ export default function DailyModule({ globalProjectId, appProjects, teamMembers 
             <div className="flex items-center justify-between px-6 pt-5 pb-4 border-b border-[#E2E8F0] flex-shrink-0">
               <div>
                 <p className="text-[11px] text-[#64748B] uppercase tracking-widest font-bold">Daily Report</p>
-                <h2 className="text-[16px] font-bold text-[#0F172A] mt-0.5">{fmtDateOnly(viewDaily.report_date)}</h2>
+                <h2 className="text-[16px] font-bold text-[#0F172A] mt-0.5">
+                  {fmtDateOnly(viewDaily.report_date)}
+                  {pendingIds.has(viewDaily.id) ? (
+                    <span className="ml-2 inline-flex items-center gap-1 text-[10px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded-full align-middle">
+                      <SpinnerIcon className="h-2.5 w-2.5" /> Pending sync
+                    </span>
+                  ) : null}
+                </h2>
               </div>
               <div className="flex items-center gap-2">
-                <button onClick={() => openDailyForEdit(viewDaily)}
-                  className="h-7 px-3 rounded-md border border-[#E2E8F0] text-[12px] text-[#64748B] hover:bg-[#0F172A]/[0.04] transition-colors">
-                  Edit
-                </button>
-                <button onClick={() => generateDailyPdf(viewDaily.id)} disabled={dailyGeneratingPdf}
-                  className="h-7 px-3 rounded-md border border-[#E2E8F0] text-[12px] text-[#7B9BB5] hover:bg-[#0F172A]/[0.04] transition-colors disabled:opacity-50 flex items-center gap-1.5">
-                  {dailyGeneratingPdf ? <><SpinnerIcon className="h-3 w-3" />Generating…</> : "PDF"}
-                </button>
-                <button onClick={() => deleteDaily(viewDaily.id)}
-                  className="h-7 px-3 rounded-md border border-red-900/50 text-[12px] text-red-400 hover:bg-red-900/20 transition-colors">
-                  Delete
-                </button>
+                {/* Server-only actions hidden until the row syncs — Edit/PDF/Del
+                    all 404 against /api/daily-reports/[id] for a pending row. */}
+                {!pendingIds.has(viewDaily.id) && (
+                  <>
+                    <button onClick={() => openDailyForEdit(viewDaily)}
+                      className="h-7 px-3 rounded-md border border-[#E2E8F0] text-[12px] text-[#64748B] hover:bg-[#0F172A]/[0.04] transition-colors">
+                      Edit
+                    </button>
+                    <button onClick={() => generateDailyPdf(viewDaily.id)} disabled={dailyGeneratingPdf}
+                      className="h-7 px-3 rounded-md border border-[#E2E8F0] text-[12px] text-[#7B9BB5] hover:bg-[#0F172A]/[0.04] transition-colors disabled:opacity-50 flex items-center gap-1.5">
+                      {dailyGeneratingPdf ? <><SpinnerIcon className="h-3 w-3" />Generating…</> : "PDF"}
+                    </button>
+                    <button onClick={() => deleteDaily(viewDaily.id)}
+                      className="h-7 px-3 rounded-md border border-red-900/50 text-[12px] text-red-400 hover:bg-red-900/20 transition-colors">
+                      Delete
+                    </button>
+                  </>
+                )}
                 <button onClick={() => setViewDaily(null)} className="text-[#64748B] hover:text-[#64748B] transition-colors">
                   <XIcon className="h-4 w-4" />
                 </button>

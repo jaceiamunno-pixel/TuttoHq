@@ -17,12 +17,13 @@ import type { UploadablePhoto } from "./uploadable-photo"
 // photo whose round-trip is incomplete.
 
 const DB_NAME = "tuttohq-offline"
-const DB_VERSION = 2
+const DB_VERSION = 3
 
 const DRAFTS_STORE = "daily_drafts"
 const PHOTOS_STORE = "daily_draft_photos"
 const PHOTOS_BY_DRAFT_INDEX = "by_draft"
 const PHOTOS_BY_TARGET_INDEX = "by_target"
+const PENDING_REPORTS_STORE = "pending_daily_reports"
 
 // Active draft pointer lives in localStorage so the form can find the
 // in-progress draft without hitting IDB first. The draft row in IDB is
@@ -56,6 +57,25 @@ export interface DailyDraftPhotoRow extends UploadablePhoto {
   lastAttemptAt?: number
 }
 
+/** A daily report that has been "created" locally — its photos are linked
+ *  to its `id` in IDB — but whose server POST has not yet been confirmed
+ *  successful. The sync runner POSTs each pending row to /api/daily-reports
+ *  with `client_id = id`, which the server upserts onto `daily_reports.id`.
+ *  Removed from this store IFF /api/daily-reports returns 2xx.
+ *
+ *  This is the row that makes "the report exists" hold offline. Without it,
+ *  a failed report POST leaves the photos orphaned (tagged with an id no
+ *  server row will ever exist for, since the client forgot the id). */
+export interface PendingDailyReportRow {
+  id: string
+  /** Same flat string bag the original POST handler accepts. */
+  fields: Record<string, string>
+  createdAt: number
+  /** Sync-runner bookkeeping. Mirrors the photo runner's semantics. */
+  attempts?: number
+  lastAttemptAt?: number
+}
+
 let dbPromise: Promise<IDBPDatabase> | null = null
 
 function getDB(): Promise<IDBPDatabase> {
@@ -74,6 +94,14 @@ function getDB(): Promise<IDBPDatabase> {
           const photos = transaction.objectStore(PHOTOS_STORE)
           if (!photos.indexNames.contains(PHOTOS_BY_TARGET_INDEX)) {
             photos.createIndex(PHOTOS_BY_TARGET_INDEX, "savedReportId")
+          }
+        }
+        if (oldVersion < 3) {
+          // Pending daily-reports queue. Adding the store leaves prior
+          // data untouched — drafts and photos already in IDB keep
+          // working. The store is empty until the next createDaily.
+          if (!db.objectStoreNames.contains(PENDING_REPORTS_STORE)) {
+            db.createObjectStore(PENDING_REPORTS_STORE, { keyPath: "id" })
           }
         }
       },
@@ -238,4 +266,49 @@ export async function cleanupEmptyDrafts(): Promise<number> {
     if (await removeDraftIfEmpty(d.id)) removed++
   }
   return removed
+}
+
+// ─── Pending reports ────────────────────────────────────────────────────────
+// Lifecycle: createDaily writes a row here BEFORE the optimistic POST. The
+// sync runner posts it to /api/daily-reports with client_id = id, and on
+// 2xx removes the row via removePendingDailyReport. removePendingDailyReport
+// is to pending-reports what removePhotoFromIDB is to photos — it is the
+// SOLE legitimate exit. Any other caller is a bug.
+
+export async function putPendingDailyReport(row: PendingDailyReportRow): Promise<void> {
+  const db = await getDB()
+  await db.put(PENDING_REPORTS_STORE, row)
+}
+
+export async function getPendingDailyReport(id: string): Promise<PendingDailyReportRow | undefined> {
+  const db = await getDB()
+  return db.get(PENDING_REPORTS_STORE, id) as Promise<PendingDailyReportRow | undefined>
+}
+
+/** Newest-first so the merged list view shows fresh creates at the top. */
+export async function listPendingDailyReports(): Promise<PendingDailyReportRow[]> {
+  const db = await getDB()
+  const rows = (await db.getAll(PENDING_REPORTS_STORE)) as PendingDailyReportRow[]
+  rows.sort((a, b) => b.createdAt - a.createdAt)
+  return rows
+}
+
+export async function removePendingDailyReport(id: string): Promise<void> {
+  const db = await getDB()
+  await db.delete(PENDING_REPORTS_STORE, id)
+}
+
+/** Increment the attempts counter — bookkeeping only, never gates deletion. */
+export async function notePendingReportAttempt(id: string): Promise<void> {
+  const db = await getDB()
+  const tx = db.transaction(PENDING_REPORTS_STORE, "readwrite")
+  const existing = (await tx.store.get(id)) as PendingDailyReportRow | undefined
+  if (existing) {
+    await tx.store.put({
+      ...existing,
+      attempts: (existing.attempts ?? 0) + 1,
+      lastAttemptAt: Date.now(),
+    })
+  }
+  await tx.done
 }

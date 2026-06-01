@@ -1,8 +1,12 @@
 import {
   cleanupEmptyDrafts,
   type DailyDraftPhotoRow,
+  type PendingDailyReportRow,
+  listPendingDailyReports,
   listPhotosToSync,
+  notePendingReportAttempt,
   noteSyncAttempt,
+  removePendingDailyReport,
   removePhotoFromIDB,
 } from "./idb-photos"
 import { presignAndUploadBlob } from "./storage-upload"
@@ -54,6 +58,9 @@ export type PhotoSyncStatus = "waiting" | "uploading" | "needs_attention"
 // online event firing during a periodic tick) skip rows already uploading.
 let isDraining = false
 const inFlight = new Set<string>()
+// Reports are claimed separately so their "pending sync" / "stuck" state in
+// the list view is independent of any photo's in-flight state.
+const inFlightReports = new Set<string>()
 
 // Tiny pub/sub — components subscribe to be re-rendered after a drain
 // finishes (so "(N syncing)" badges and the View modal photo grid stay
@@ -91,6 +98,20 @@ function isWithinBackoff(row: DailyDraftPhotoRow, nowMs: number): boolean {
   return (nowMs - last) < backoffMs(attempts)
 }
 
+// Same predicates for pending reports — same MAX_ATTEMPTS + backoff curve.
+// A persistently-failing report stays in IDB indefinitely (terminal "stuck")
+// rather than being silently dropped.
+function isReportStuck(row: PendingDailyReportRow): boolean {
+  return (row.attempts ?? 0) >= MAX_ATTEMPTS
+}
+
+function isReportWithinBackoff(row: PendingDailyReportRow, nowMs: number): boolean {
+  const attempts = row.attempts ?? 0
+  if (attempts <= 0) return false
+  const last = row.lastAttemptAt ?? 0
+  return (nowMs - last) < backoffMs(attempts)
+}
+
 /** Snapshot of currently-uploading photo IDs in this tab. Pure read; the
  *  returned set is a copy and may be retained safely by callers. */
 export function getInFlightIds(): ReadonlySet<string> {
@@ -108,6 +129,59 @@ export function derivePhotoStatus(
   if (inFlightIds.has(row.id)) return "uploading"
   if (isStuck(row)) return "needs_attention"
   return "waiting"
+}
+
+async function uploadOneReport(report: PendingDailyReportRow): Promise<void> {
+  await notePendingReportAttempt(report.id)
+
+  // /api/daily-reports POST upserts on the row id when client_id is a
+  // valid UUID. A retried call returns the existing row instead of
+  // colliding — safe to fire as many times as the runner needs.
+  const res = await fetch("/api/daily-reports", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ client_id: report.id, ...report.fields }),
+  })
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "")
+    throw new Error(`/api/daily-reports returned ${res.status} ${detail}`)
+  }
+}
+
+/** Drain the pending-reports queue. Same backoff + max-attempts policy as
+ *  photos. The IDB row is removed IFF the POST returns 2xx. Returns counts;
+ *  never throws. Called by drainPhotoQueue() before the photo pass. */
+async function drainReportsOnce(): Promise<DrainStats> {
+  const now = Date.now()
+  let uploaded = 0
+  let failed = 0
+  let skipped = 0
+  let stuck = 0
+  const reports = await listPendingDailyReports()
+  for (const report of reports) {
+    if (inFlightReports.has(report.id)) { skipped++; continue }
+    if (isReportStuck(report)) { stuck++; continue }
+    if (isReportWithinBackoff(report, now)) { skipped++; continue }
+
+    inFlightReports.add(report.id)
+    notify()
+    try {
+      await uploadOneReport(report)
+      // Server confirmed 2xx. The pending row is gone; the saved
+      // daily_reports row now exists with id = report.id, so photos
+      // tagged with savedReportId === report.id will attach cleanly
+      // when their own drain pass runs.
+      await removePendingDailyReport(report.id)
+      uploaded++
+    } catch (err) {
+      console.error("[report-sync] upload failed for", report.id, err)
+      failed++
+    } finally {
+      inFlightReports.delete(report.id)
+      notify()
+    }
+  }
+  return { uploaded, failed, skipped, stuck }
 }
 
 async function uploadOne(photo: DailyDraftPhotoRow): Promise<void> {
@@ -160,6 +234,16 @@ export async function drainPhotoQueue(): Promise<DrainStats> {
       // event will call us again.
       return { uploaded, failed, skipped, stuck }
     }
+
+    // Reports first. Photos tagged with savedReportId === report.id depend
+    // on the server's daily_reports row existing — item_photos has no FK
+    // on entity_id, so a photo CAN be inserted before the report row
+    // (server upsert just creates an unattached row), but the View modal's
+    // GET /api/photos query keys by entity_id, so the user sees nothing
+    // until the daily_reports row is also there. Draining reports first
+    // makes the post-reconnect "report appears with its photos" land in
+    // a single sync pass.
+    await drainReportsOnce()
 
     const now = Date.now()
     const photos = await listPhotosToSync()
