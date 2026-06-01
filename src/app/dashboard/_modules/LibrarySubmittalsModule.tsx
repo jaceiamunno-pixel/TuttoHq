@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useRef } from "react"
+import { useState, useEffect, useMemo, useRef } from "react"
 import SubmittalCoversheet from "@/components/submittals/SubmittalCoversheet"
 import type {
   Division, SubmittalFile, SubmittalRecord, AiResult, NameOptions, UploadStep,
@@ -15,6 +15,7 @@ import { SearchIcon, XIcon, PlusIcon, CheckIcon, SpinnerIcon, LayersIcon } from 
 import { StatusBadge } from "../_shared/badges"
 import { Combobox, inputCls, labelCls } from "../_shared/ui"
 import { presignAndUpload } from "@/lib/storage-upload"
+import { truncateForDisplay } from "@/lib/title-normalize"
 import { exportSubmittalLogToExcel } from "../_shared/excel-export"
 import PackageCreateModal, { type VendorPreset } from "@/components/packages/PackageCreateModal"
 import PackagesView from "@/components/packages/PackagesView"
@@ -91,6 +92,15 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
   // Files per section, loaded on demand, keyed by section.code
   const [sectionFiles, setSectionFiles]       = useState<Record<string, SubmittalFile[]>>({})
   const [loadingSections, setLoadingSections] = useState<Set<string>>(new Set())
+
+  // Project lookup for Library row badges. The cross-project Library stacks
+  // rows from every project under the same CSI section; without a project
+  // chip on each row two rows that share a title (e.g. a cover sheet of the
+  // same library item dispatched into two projects) read as duplicates.
+  const projectById = useMemo(
+    () => new Map(appProjects.map(p => [p.id, p])),
+    [appProjects],
+  )
 
   // Search
   const [query, setQuery]                 = useState("")
@@ -1249,10 +1259,22 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                                   <div className="flex items-center gap-2 py-2 text-[12px] text-[#64748B]"><SpinnerIcon className="h-3.5 w-3.5" /> Loading…</div>
                                 ) : (sectionFiles[sec.code] ?? []).length === 0 ? (
                                   <p className="text-[12px] text-[#64748B] py-2">No files found.</p>
-                                ) : (sectionFiles[sec.code] ?? []).map(file => (
+                                ) : (sectionFiles[sec.code] ?? []).map(file => {
+                                  const proj = file.project_id ? projectById.get(file.project_id) : null
+                                  const projLabel = proj ? (proj.number?.trim() || proj.name) : null
+                                  return (
                                   <div key={file.id} className="flex items-center gap-2 py-1.5 group">
                                     <span className={`flex-shrink-0 w-1.5 h-1.5 rounded-full ${getDot(file.mime_type)}`} />
-                                    <span className="flex-1 min-w-0 text-[12px] text-[#0F172A] truncate">{file.file_name}</span>
+                                    <span className="flex-1 min-w-0 text-[12px] text-[#0F172A] truncate" title={file.file_name}>{truncateForDisplay(file.file_name)}</span>
+                                    {file.source === "spec_ingestion" && file.submittal_type && (
+                                      <span className="flex-shrink-0 text-[10px] text-[#64748B] bg-[#F1F5F9] px-1.5 py-0.5 rounded font-medium">· {file.submittal_type}</span>
+                                    )}
+                                    {projLabel && (
+                                      <span
+                                        className="flex-shrink-0 text-[10px] text-[#7B9BB5] bg-[#7B9BB5]/10 px-1.5 py-0.5 rounded font-medium"
+                                        title={proj?.name ?? ""}
+                                      >{projLabel}</span>
+                                    )}
                                     <a
                                       href={file.file_url}
                                       target="_blank"
@@ -1264,7 +1286,8 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                                       className="flex-shrink-0 text-[11px] text-[#64748B] hover:text-[#0F172A] font-medium px-2 py-0.5 rounded hover:bg-[#0F172A]/[0.04] transition-colors"
                                     >Cover</button>
                                   </div>
-                                ))}
+                                  )
+                                })}
                               </div>
                             )}
                           </div>
@@ -1597,7 +1620,7 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                     </td>
                     <td className="px-3 py-1.5">
                       <div className="flex items-center gap-1.5 max-w-[280px]">
-                        <span className="text-[#0F172A] truncate" title={s.file_name}>{s.file_name}</span>
+                        <span className="text-[#0F172A] truncate" title={s.file_name}>{truncateForDisplay(s.file_name)}</span>
                         {s.sender_email && (
                           <span title={`Received from ${s.sender_email}`} className="flex-shrink-0 text-[#94A3B8]">
                             <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" /></svg>
@@ -1676,7 +1699,7 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                           className="accent-[#7B9BB5] flex-shrink-0" />
                       )}
                       <span className="text-[11px] font-bold tabular-nums text-[#64748B] flex-shrink-0">#{s.submittal_seq ?? "—"}</span>
-                      <p className="text-[13px] font-medium text-[#0F172A] leading-tight truncate" title={s.file_name}>{s.file_name}</p>
+                      <p className="text-[13px] font-medium text-[#0F172A] leading-tight truncate" title={s.file_name}>{truncateForDisplay(s.file_name)}</p>
                     </div>
                     <StatusBadge status={s.review_status ?? "Received"} />
                   </div>

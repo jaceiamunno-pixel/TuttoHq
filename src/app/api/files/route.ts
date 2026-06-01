@@ -14,7 +14,7 @@ export async function GET(req: NextRequest) {
 
   const { data, error } = await supabase
     .from("submittals")
-    .select("id, file_name, storage_path, mime_type, file_size, created_at")
+    .select("id, file_name, storage_path, mime_type, file_size, created_at, submittal_type, source, project_id")
     .eq("csi_section", code)
     .eq("status", "active")
     .not("storage_path", "is", null)
@@ -44,12 +44,15 @@ export async function GET(req: NextRequest) {
   }
 
   const files = rows.map(r => ({
-    id:         r.id,
-    file_name:  r.file_name,
-    file_url:   r.storage_path ? (signedUrls[r.storage_path] ?? "") : "",
-    mime_type:  r.mime_type,
-    file_size:  r.file_size,
-    created_at: r.created_at,
+    id:             r.id,
+    file_name:      r.file_name,
+    file_url:       r.storage_path ? (signedUrls[r.storage_path] ?? "") : "",
+    mime_type:      r.mime_type,
+    file_size:      r.file_size,
+    created_at:     r.created_at,
+    submittal_type: r.submittal_type ?? null,
+    source:         r.source ?? null,
+    project_id:     r.project_id ?? null,
   }))
 
   return NextResponse.json({ files })

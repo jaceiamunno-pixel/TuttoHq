@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server"
 import { PDFDocument } from "pdf-lib"
 import { type SubmittalCoversheetProps } from "@/components/submittals/SubmittalCoversheet"
 import { buildCoversheetPdf } from "@/lib/coversheet-pdf"
+import { normalizeSubmittalTitle } from "@/lib/title-normalize"
 
 export const maxDuration = 60
 
@@ -137,9 +138,11 @@ export async function POST(req: NextRequest) {
         transmitted_by_company: transmittedByCompany || null,
       }
 
+      const displayTitle = normalizeSubmittalTitle(description) || safeName
+
       if (targetId) {
         await supabase.from("submittals").update({
-          file_name:    description?.trim() || safeName,
+          file_name:    displayTitle,
           storage_path: storagePath,
           mime_type:    "application/pdf",
           project_id:   projectId,
@@ -152,7 +155,7 @@ export async function POST(req: NextRequest) {
           .eq("id", submittalId).maybeSingle()
 
         await supabase.from("submittals").insert({
-          file_name:     description?.trim() || safeName,
+          file_name:     displayTitle,
           storage_path:  storagePath,
           mime_type:     "application/pdf",
           csi_division:  orig?.csi_division  ?? null,

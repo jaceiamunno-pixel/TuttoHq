@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
+import { normalizeSubmittalTitle } from "@/lib/title-normalize"
 
 // POST /api/upload — records a manually uploaded submittal.
 //
@@ -56,7 +57,8 @@ export async function POST(req: NextRequest) {
 
   // Use explicit custom name if provided, otherwise build from structured fields, fall back to filename
   const nameParts   = [materialName, manufacturer, dimensions].filter(Boolean)
-  const displayName = customName ?? (nameParts.length > 0 ? nameParts.join(" — ") : fileName)
+  const rawName     = customName ?? (nameParts.length > 0 ? nameParts.join(" — ") : fileName)
+  const displayName = normalizeSubmittalTitle(rawName) || fileName
 
   // Insert DB row
   const { data: inserted, error: dbError } = await supabase.from("submittals").insert({

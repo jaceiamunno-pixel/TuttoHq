@@ -12,6 +12,12 @@ export interface SubmittalFile {
   division_name?: string
   csi_section?: string
   section_name?: string
+  // Library row context — populated by /api/files so cross-project rows can
+  // surface their project + spec_ingestion rows can show submittal_type.
+  // Optional because the type is also constructed locally for non-library flows.
+  submittal_type?: string | null
+  source?: string | null
+  project_id?: string | null
 }
 
 export interface Section  { code: string; name: string; file_count?: number }

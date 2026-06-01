@@ -1,6 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk"
 import { createClient as createServiceClient, SupabaseClient } from "@supabase/supabase-js"
 import { refreshAccessToken } from "./gmail"
+import { normalizeSubmittalTitle } from "./title-normalize"
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnySupabase = SupabaseClient<any, any, any>
@@ -539,8 +540,13 @@ async function processAttachment(ctx: AttachmentCtx): Promise<void> {
   // ── Insert database record ─────────────────────────────────────────────────
   const reviewStatus = (classification.confidence_score ?? 0) >= 70 ? "Received" : "Needs Review"
 
+  // Gmail attachment filenames are often ALL CAPS or quoted — run through the
+  // shared title normalizer so the Library row label matches every other
+  // insert path. Original filename is still recoverable from storage_path.
+  const displayName = normalizeSubmittalTitle(fileName) || fileName
+
   const record = {
-    file_name:       fileName,
+    file_name:       displayName,
     storage_path:    storagePath,
     mime_type:       mimeType,
     file_size:       fileBytes.length,
@@ -560,7 +566,7 @@ async function processAttachment(ctx: AttachmentCtx): Promise<void> {
     uploaded_by:     userId,
   }
 
-  log("db-insert-start", { file_name: fileName, review_status: reviewStatus, uploaded_by: userId })
+  log("db-insert-start", { file_name: displayName, review_status: reviewStatus, uploaded_by: userId })
   const { error: dbErr } = await supabase.from("submittals").insert(record)
 
   if (dbErr) {
@@ -652,7 +658,7 @@ async function matchBackAttachment(ctx: MatchBackCtx): Promise<void> {
 
   // Ambiguous — file as an orphan for PM review.
   const record = {
-    file_name:               fileName,
+    file_name:               normalizeSubmittalTitle(fileName) || fileName,
     received_file_name:      fileName,
     storage_path:            storagePath,
     mime_type:               mimeType,

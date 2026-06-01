@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import { divisionNameFor, divisionNumberOf } from "@/lib/spec-parser"
+import { normalizeSubmittalTitle } from "@/lib/title-normalize"
 
 export const maxDuration = 30
 
@@ -81,7 +82,7 @@ export async function POST(req: NextRequest) {
 
   if (mode === "detailed") {
     for (const s of staged) {
-      submittalRows.push({ file_name: s.description, ...baseFields(s) })
+      submittalRows.push({ file_name: normalizeSubmittalTitle(s.description), ...baseFields(s) })
       stagedIdsPerRow.push([s.id])
     }
   } else {
@@ -94,7 +95,7 @@ export async function POST(req: NextRequest) {
     }
     for (const group of groups.values()) {
       const head = group[0]
-      submittalRows.push({ file_name: head.project_item_name, ...baseFields(head) })
+      submittalRows.push({ file_name: normalizeSubmittalTitle(head.project_item_name), ...baseFields(head) })
       stagedIdsPerRow.push(group.map(g => g.id))
     }
   }
