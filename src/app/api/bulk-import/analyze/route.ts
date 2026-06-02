@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import { extractPdfPages } from "@/lib/spec-parser"
 import { analyzePdf } from "@/lib/bulk-import-detect"
+import { extractRawFormFields, recoverCoversheetFields } from "@/lib/bulk-import-form"
 
 // Bulk Import — Stage 1 analyze. Read-only by design: this route NEVER
 // writes to the submittals table, NEVER mutates the staged PDF, and never
@@ -68,8 +69,24 @@ export async function POST(req: NextRequest) {
     }, { status: 422 })
   }
 
+  // ── Recover the coversheet's AcroForm widget values ─────────────────────
+  // THP submitter coversheets are fillable PDF forms. The static labels
+  // ("Spec Section No.", "Date Submitted", …) are in the text stream and
+  // already extracted above, but the user-typed VALUES live in form-widget
+  // annotations that text extractors don't see. extractRawFormFields uses
+  // pdf-lib to enumerate the widgets and recover those values. The detector
+  // treats this as the authoritative section source (it's what the human
+  // typed on the coversheet).
+  //
+  // STAGE 2 ORDERING — when the commit/strip route is built, this read
+  // MUST happen BEFORE any coversheet pages are stripped. Strip the cover,
+  // and both the widget tree and the labeled text vanish with it.
+  const rawFormFields = await extractRawFormFields(buffer)
+  const { fields: coverFields, confidence: coverFieldsConfidence } =
+    recoverCoversheetFields(rawFormFields)
+
   // ── Pure detection — no I/O from here on. ───────────────────────────────
-  const analysis = analyzePdf(fileName, pages)
+  const analysis = analyzePdf(fileName, pages, coverFields, coverFieldsConfidence)
 
   return NextResponse.json({
     storage_path: storagePath,

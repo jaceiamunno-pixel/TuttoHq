@@ -31,7 +31,12 @@ interface Row {
   section: string
   type: SubmittalType | ""
   coverSplit: number
-  approvalDate: string  // yyyy-mm-dd, user-entered (no OCR in v1)
+  /** yyyy-mm-dd. Pre-filled from the coversheet "Date Submitted" AcroForm
+   *  field when analyze can parse it; user confirms in the date input. */
+  approvalDate: string
+  /** Pre-filled from the coversheet "Submittal No." AcroForm field when
+   *  present; user confirms or overrides. */
+  submittalNo: string
   reviewStatus: "Approved" | "Approved with Comments" | "Rejected" | "Revise and Resubmit"
 }
 
@@ -45,6 +50,7 @@ function newRow(file: File): Row {
     type: "",
     coverSplit: 0,
     approvalDate: "",
+    submittalNo: "",
     reviewStatus: "Approved",
   }
 }
@@ -152,6 +158,10 @@ export default function BulkImportModal({
         section: analysis.suggestedSection ?? "",
         type: analysis.suggestedType ?? "",
         coverSplit: analysis.cover.coverSplit,
+        // Pre-fill from the recovered AcroForm widget values. User confirms
+        // in the inputs below — Stage 1 commits nothing.
+        approvalDate: analysis.suggestedApprovalDate ?? "",
+        submittalNo: analysis.suggestedSubmittalNo ?? "",
       })
     } catch (err) {
       console.error("[bulk-import] processRow failed for", row.file.name, err)
@@ -322,12 +332,13 @@ export default function BulkImportModal({
               <table className="w-full text-[12px] border-collapse">
                 <thead className="bg-[#F8F9FA]">
                   <tr className="text-left text-[10px] font-bold text-[#64748B] uppercase tracking-wider">
-                    <th className="px-3 py-2 w-[26%]">File</th>
-                    <th className="px-3 py-2 w-[15%]">Spec section</th>
-                    <th className="px-3 py-2 w-[15%]">Type</th>
-                    <th className="px-3 py-2 w-[12%]">Cover split</th>
-                    <th className="px-3 py-2 w-[14%]">Approval date</th>
-                    <th className="px-3 py-2 w-[12%]">Status</th>
+                    <th className="px-3 py-2 w-[24%]">File</th>
+                    <th className="px-3 py-2 w-[13%]">Spec section</th>
+                    <th className="px-3 py-2 w-[13%]">Type</th>
+                    <th className="px-3 py-2 w-[8%]">Sub #</th>
+                    <th className="px-3 py-2 w-[10%]">Cover split</th>
+                    <th className="px-3 py-2 w-[12%]">Approval date</th>
+                    <th className="px-3 py-2 w-[14%]">Status</th>
                     <th className="px-3 py-2 w-[6%]"></th>
                   </tr>
                 </thead>
@@ -344,7 +355,19 @@ export default function BulkImportModal({
                             <p className="text-[10px] text-[#64748B] mt-0.5">
                               {fmtBytes(r.file.size)}
                               {r.analysis ? ` · ${r.analysis.pageCount} pages` : ""}
+                              {r.analysis?.sectionSource === "form" && " · section from coversheet form"}
+                              {r.analysis?.sectionSource === "filename" && " · section from filename"}
                             </p>
+                            {(r.analysis?.coverFields.projectName || r.analysis?.coverFields.specSectionTitle) && (
+                              <p className="text-[10px] text-[#475569] mt-0.5 truncate" title={[
+                                r.analysis?.coverFields.projectName,
+                                r.analysis?.coverFields.specSectionTitle,
+                              ].filter(Boolean).join(" · ")}>
+                                {r.analysis?.coverFields.projectName}
+                                {r.analysis?.coverFields.projectName && r.analysis?.coverFields.specSectionTitle ? " · " : ""}
+                                {r.analysis?.coverFields.specSectionTitle}
+                              </p>
+                            )}
                             {r.status === "uploading" && (
                               <p className="text-[10px] text-[#64748B] mt-1 flex items-center gap-1">
                                 <Spinner className="h-3 w-3" /> Uploading… {r.uploadPercent}%
@@ -415,6 +438,37 @@ export default function BulkImportModal({
                         </select>
                       </td>
 
+                      {/* Submittal number — pre-filled from coversheet form.
+                          Subtle dashed-border + italic placeholder hint when
+                          the value was guessed positionally (e.g. THP's
+                          unlabeled Text1..Text10 form fields), so the user
+                          knows to verify. */}
+                      <td className="px-3 py-2 align-top">
+                        {(() => {
+                          const guessed = r.status === "ready"
+                            && !!r.submittalNo
+                            && r.analysis?.coverFieldsConfidence.submittalNo === "positional"
+                          return <>
+                            <input
+                              type="text"
+                              value={r.submittalNo}
+                              onChange={e => updateRow(r.id, { submittalNo: e.target.value })}
+                              placeholder={r.status === "ready" ? "—" : ""}
+                              disabled={r.status !== "ready"}
+                              title={guessed ? "Guessed from the coversheet form by widget position — verify before commit" : undefined}
+                              className={`w-full h-7 px-2 rounded text-[12px] tabular-nums disabled:opacity-50 ${
+                                guessed
+                                  ? "border border-dashed border-amber-400 bg-amber-50 italic"
+                                  : "border border-[#E2E8F0]"
+                              }`}
+                            />
+                            {guessed && (
+                              <p className="text-[9px] text-amber-700 mt-0.5 leading-tight">guess · verify</p>
+                            )}
+                          </>
+                        })()}
+                      </td>
+
                       {/* Coversheet split — number input */}
                       <td className="px-3 py-2 align-top">
                         <div className="flex items-center gap-1">
@@ -437,19 +491,37 @@ export default function BulkImportModal({
                         </div>
                       </td>
 
-                      {/* Approval date — user-entered, NO OCR in v1 */}
+                      {/* Approval date — pre-filled from the latest date in
+                          the coversheet form. Missing → amber solid (must
+                          fill in). Present but positionally guessed → amber
+                          dashed (verify; could be revision/submission date
+                          instead of the architect's approval date). */}
                       <td className="px-3 py-2 align-top">
-                        <input
-                          type="date"
-                          value={r.approvalDate}
-                          onChange={e => updateRow(r.id, { approvalDate: e.target.value })}
-                          disabled={r.status !== "ready"}
-                          className={`w-full h-7 px-2 rounded border text-[12px] ${
-                            r.status === "ready" && !r.approvalDate
-                              ? "border-amber-400 bg-amber-50"
-                              : "border-[#E2E8F0]"
-                          } disabled:opacity-50`}
-                        />
+                        {(() => {
+                          const missing = r.status === "ready" && !r.approvalDate
+                          const guessed = r.status === "ready"
+                            && !!r.approvalDate
+                            && r.analysis?.coverFieldsConfidence.dateSubmitted === "positional"
+                          return <>
+                            <input
+                              type="date"
+                              value={r.approvalDate}
+                              onChange={e => updateRow(r.id, { approvalDate: e.target.value })}
+                              disabled={r.status !== "ready"}
+                              title={guessed ? "Guessed from the coversheet form by widget position — verify before commit" : undefined}
+                              className={`w-full h-7 px-2 rounded text-[12px] disabled:opacity-50 ${
+                                missing
+                                  ? "border border-amber-400 bg-amber-50"
+                                  : guessed
+                                    ? "border border-dashed border-amber-400 bg-amber-50 italic"
+                                    : "border border-[#E2E8F0]"
+                              }`}
+                            />
+                            {guessed && (
+                              <p className="text-[9px] text-amber-700 mt-0.5 leading-tight">guess · verify</p>
+                            )}
+                          </>
+                        })()}
                       </td>
 
                       {/* Approval status — default Approved */}
