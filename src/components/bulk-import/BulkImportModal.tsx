@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { presignAndUpload } from "@/lib/storage-upload"
 import { SUBMITTAL_TYPES, type SubmittalType, type BulkImportAnalysis } from "@/lib/bulk-import-detect"
 
@@ -83,24 +83,40 @@ export default function BulkImportModal({
   const [rows, setRows] = useState<Row[]>([])
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [dragOver, setDragOver] = useState(false)
+  // Top-level error banner — captures anything that escapes a worker's own
+  // catch so the UI never sits silently empty. The runner also writes
+  // per-row errors via updateRow(..., { status: "error" }).
+  const [globalError, setGlobalError] = useState<string | null>(null)
 
   // Single-runner guard. Multiple concurrent worker pools would race the
-  // same row ids; prevent another processBatch() while one is already in
+  // same row ids; prevent another runBatch() while one is already in
   // flight (e.g. user adds files mid-run).
   const runningRef = useRef(false)
+
+  // ── Always-fresh row snapshot ────────────────────────────────────────────
+  // Earlier this component used the setRows(prev => { read = prev.find(...);
+  // return prev }) pattern to read state inside async callbacks. That broke
+  // in production because React 18 can bail out of a setState whose updater
+  // returns the same reference — meaning the snapshot side-effect never ran
+  // and the worker silently did nothing. rowsRef is assigned on every render
+  // and read directly inside the workers, so the snapshot is always live.
+  const rowsRef = useRef<Row[]>([])
+  rowsRef.current = rows
 
   function updateRow(id: string, patch: Partial<Row>) {
     setRows(prev => prev.map(r => r.id === id ? { ...r, ...patch } : r))
   }
 
   const processRow = useCallback(async (id: string) => {
-    // Snapshot the row from a state read — the closure can't reliably see
-    // the latest after multiple updates, so grab a fresh copy through
-    // setRows( prev => …).
-    let row: Row | undefined
-    setRows(prev => { row = prev.find(r => r.id === id); return prev })
-    if (!row) return
-    if (row.status !== "queued") return
+    const row = rowsRef.current.find(r => r.id === id)
+    if (!row) {
+      // Defensive: a removeRow could race this. Nothing to do.
+      return
+    }
+    if (row.status !== "queued") {
+      // Already past queued — another worker pass picked it up.
+      return
+    }
 
     try {
       updateRow(id, { status: "uploading", uploadPercent: 0 })
@@ -122,7 +138,14 @@ export default function BulkImportModal({
         throw new Error(data?.error ?? `Analyze failed (HTTP ${res.status})`)
       }
 
-      const analysis = data.analysis as BulkImportAnalysis
+      const analysis = data?.analysis as BulkImportAnalysis | undefined
+      if (!analysis || typeof analysis.cover?.coverSplit !== "number") {
+        // Belt-and-braces: a 200 OK whose body lacks the expected shape
+        // (e.g. an auth-redirect HTML page that snuck through). Don't crash
+        // — surface a real error on the row.
+        throw new Error("Analyze returned no analysis payload")
+      }
+
       updateRow(id, {
         status: "ready",
         analysis,
@@ -131,6 +154,7 @@ export default function BulkImportModal({
         coverSplit: analysis.cover.coverSplit,
       })
     } catch (err) {
+      console.error("[bulk-import] processRow failed for", row.file.name, err)
       updateRow(id, {
         status: "error",
         errorMsg: err instanceof Error ? err.message : "Unknown error",
@@ -138,39 +162,62 @@ export default function BulkImportModal({
     }
   }, [])
 
+  // Drain queued rows in batches of CONCURRENCY. Re-reads the live ref each
+  // pass so files added mid-run get picked up automatically without
+  // requiring a second kickoff.
   const runBatch = useCallback(async () => {
     if (runningRef.current) return
     runningRef.current = true
     try {
-      // Snapshot queued ids at start. Files added mid-run are picked up by
-      // a subsequent runBatch() invocation (we kick one after onPickFiles).
-      let queued: string[] = []
-      setRows(prev => { queued = prev.filter(r => r.status === "queued").map(r => r.id); return prev })
-      if (queued.length === 0) return
+      while (true) {
+        const queuedIds = rowsRef.current
+          .filter(r => r.status === "queued")
+          .map(r => r.id)
+        if (queuedIds.length === 0) break
 
-      // Worker pool of size CONCURRENCY drains the queue. Each worker picks
-      // the next id off the shared queue until empty.
-      let cursor = 0
-      const worker = async () => {
-        while (cursor < queued.length) {
-          const i = cursor++
-          await processRow(queued[i])
-        }
+        const batch = queuedIds.slice(0, CONCURRENCY)
+        // Each processRow has its own try/catch; the .catch here is a
+        // belt-and-braces backstop so a programmer error inside processRow
+        // can't escape to the modal and leave rows stranded.
+        await Promise.all(batch.map(id => processRow(id).catch(err => {
+          console.error("[bulk-import] processRow threw unexpectedly", err)
+          updateRow(id, {
+            status: "error",
+            errorMsg: err instanceof Error ? err.message : "Worker crashed",
+          })
+        })))
       }
-      await Promise.all(
-        Array.from({ length: Math.min(CONCURRENCY, queued.length) }, worker),
-      )
+    } catch (err) {
+      console.error("[bulk-import] runBatch threw", err)
+      setGlobalError(err instanceof Error ? err.message : "Batch processing failed")
     } finally {
       runningRef.current = false
     }
   }, [processRow])
 
+  // Drive the runner from a useEffect that watches the rows array. Every
+  // time a new row lands in "queued" (or a previous worker finishes), the
+  // effect fires and runBatch is invoked. The runningRef inside runBatch
+  // short-circuits redundant kickoffs so this never duplicates work.
+  // Replacing the previous `setTimeout(() => runBatch(), 0)` which could
+  // be skipped by a backgrounded tab or a thrown render-time callback.
+  useEffect(() => {
+    const hasQueued = rows.some(r => r.status === "queued")
+    if (!hasQueued) return
+    if (runningRef.current) return
+    runBatch().catch(err => {
+      console.error("[bulk-import] runBatch threw from effect", err)
+      setGlobalError(err instanceof Error ? err.message : "Batch processing failed")
+    })
+  }, [rows, runBatch])
+
   function addFiles(files: FileList | File[]) {
     const incoming = Array.from(files).filter(f => f.type === "application/pdf" || /\.pdf$/i.test(f.name))
     if (incoming.length === 0) return
+    setGlobalError(null)
     setRows(prev => [...prev, ...incoming.map(newRow)])
-    // Kick the runner — guarded against concurrent passes.
-    setTimeout(() => { runBatch().catch(err => console.error("[bulk-import] runBatch threw", err)) }, 0)
+    // The useEffect on `rows` picks this up and kicks runBatch — no
+    // setTimeout fragility.
   }
 
   function onPickFiles(e: React.ChangeEvent<HTMLInputElement>) {
@@ -228,6 +275,19 @@ export default function BulkImportModal({
 
         {/* Body */}
         <div className="flex-1 overflow-auto px-5 py-4 space-y-4">
+
+          {globalError && (
+            <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 flex items-start gap-2">
+              <FlagIcon className="h-4 w-4 text-red-600 flex-shrink-0 mt-0.5" />
+              <div className="min-w-0 flex-1">
+                <p className="text-[12px] font-semibold text-red-700">Batch processing hit a snag.</p>
+                <p className="text-[11px] text-red-600 mt-0.5 break-words">{globalError}</p>
+              </div>
+              <button onClick={() => setGlobalError(null)} className="text-red-600 hover:text-red-800 flex-shrink-0" aria-label="Dismiss">
+                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+              </button>
+            </div>
+          )}
 
           {/* Drop / pick zone */}
           <div
@@ -296,7 +356,10 @@ export default function BulkImportModal({
                               </p>
                             )}
                             {r.status === "error" && (
-                              <p className="text-[10px] text-red-600 mt-1">{r.errorMsg ?? "Failed"}</p>
+                              <p className="text-[11px] font-semibold text-red-700 mt-1 flex items-start gap-1 break-words">
+                                <FlagIcon className="h-3.5 w-3.5 flex-shrink-0 mt-0.5" />
+                                <span className="min-w-0 flex-1">{r.errorMsg ?? "Failed — see browser console"}</span>
+                              </p>
                             )}
                             {r.status === "ready" && r.analysis?.notes && r.analysis.notes.length > 0 && (
                               <ul className="mt-1 space-y-0.5">
