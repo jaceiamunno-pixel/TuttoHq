@@ -99,9 +99,19 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "storage_path and file_name are required" }, { status: 400 })
   }
 
-  // Defense-in-depth: only allow reads from the presigned-upload prefix so an
-  // authenticated user can't aim this route at arbitrary objects in the bucket.
-  if (!storagePath.startsWith("uploads/")) {
+  // Defense-in-depth on top of the storage RLS: validate that the client-
+  // supplied storage_path starts with the caller's company_id segment AND
+  // the presigned-upload prefix. The admin-client download below intentionally
+  // bypasses storage RLS (freshly-uploaded blobs sit outside any user-scoped
+  // policy), so this guard is doing real work — without it, an authenticated
+  // user could aim this route at any object in the submittals bucket,
+  // including other tenants'. Same companyId-resolution shape as
+  // /api/upload and /api/spec-books/finalize.
+  const { data: companyId } = await supabase.rpc("get_my_company_id")
+  if (!companyId) {
+    return NextResponse.json({ error: "No company association" }, { status: 500 })
+  }
+  if (!storagePath.startsWith(`${companyId}/uploads/`)) {
     return NextResponse.json({ error: "Invalid storage path" }, { status: 400 })
   }
 
