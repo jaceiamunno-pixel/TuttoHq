@@ -19,6 +19,7 @@ import { truncateForDisplay } from "@/lib/title-normalize"
 import { exportSubmittalLogToExcel } from "../_shared/excel-export"
 import PackageCreateModal, { type VendorPreset } from "@/components/packages/PackageCreateModal"
 import PackagesView from "@/components/packages/PackagesView"
+import BulkImportModal from "@/components/bulk-import/BulkImportModal"
 
 // Status options for the inline Status dropdown in the submittal log.
 // "Sent to Sub" is the outbound-dispatch milestone (Session I).
@@ -149,6 +150,9 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
   const [detailTitleDraft, setDetailTitleDraft]     = useState("")
   const [detailTitleSaving, setDetailTitleSaving]   = useState(false)
   const [detailTitleError, setDetailTitleError]     = useState<string | null>(null)
+
+  // Bulk Import — Stage 1. Detect + review-only; commit ships in Stage 2.
+  const [showBulkImport, setShowBulkImport]     = useState(false)
 
   // Submittal-log tracker — vendors, grouping, inline-save debounce
   const [vendorSubs, setVendorSubs]             = useState<SubcontractorRow[]>([])
@@ -1222,6 +1226,16 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                     </>
                   )}
                 </div>
+              )}
+              {submittalsView === "log" && activeProjectId && (
+                <button
+                  onClick={() => setShowBulkImport(true)}
+                  title="Bulk-import previously approved submittals (Stage 1 — review only)"
+                  className="h-8 px-3 rounded-md border border-[#E2E8F0] text-[12px] text-[#64748B] hover:bg-[#0F172A]/[0.04] transition-colors flex items-center gap-1.5 whitespace-nowrap"
+                >
+                  <LayersIcon />
+                  <span className="hidden sm:inline">Bulk Import</span>
+                </button>
               )}
               <button
                 onClick={() => onNavigate("library")}
@@ -2803,6 +2817,14 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
         </div>
         )
       })()}
+
+      {/* ── Bulk Import modal (Stage 1 — review only) ────────────────────── */}
+      {showBulkImport && activeProjectId && (
+        <BulkImportModal
+          projectId={activeProjectId}
+          onClose={() => setShowBulkImport(false)}
+        />
+      )}
 
       {/* ── Batch upload modal ───────────────────────────────────────────── */}
       {showBatch && (
