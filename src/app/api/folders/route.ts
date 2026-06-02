@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
+import { isProjectTransmittalCopy } from "@/lib/storage-paths"
 
 export interface SectionNode { code: string; name: string; file_count?: number }
 export interface DivisionNode { num: string; name: string; sections: SectionNode[]; file_count: number }
@@ -303,8 +304,9 @@ export async function GET() {
 
   for (const row of data ?? []) {
     // Skip cover-sheet transmittal copies — they belong to a project's Submittal
-    // Log, not the cross-project Library count (matches the /api/files filter).
-    if (row.storage_path?.startsWith("project-submittals/")) continue
+    // Log, not the cross-project Library count (matches the /api/files filter
+    // via the same isProjectTransmittalCopy helper).
+    if (isProjectTransmittalCopy(row.storage_path)) continue
     if (!row.csi_division) continue
     const divNum = row.csi_division.trim().padStart(2, "0")
     countsByDiv.set(divNum, (countsByDiv.get(divNum) ?? 0) + 1)

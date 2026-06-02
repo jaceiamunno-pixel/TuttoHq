@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
+import { isProjectTransmittalCopy } from "@/lib/storage-paths"
 
 // GET /api/files?code=03+10+00
 export async function GET(req: NextRequest) {
@@ -25,9 +26,11 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Failed to load files" }, { status: 500 })
   }
 
-  // Transmittal copies (generate-cover output, stored under "project-submittals/")
-  // belong to a project's Submittal Log — exclude them from the cross-project Library.
-  const rows = (data ?? []).filter(r => !r.storage_path?.startsWith("project-submittals/"))
+  // Transmittal copies (generate-cover output, stored under
+  // {company_id}/project-submittals/) belong to a project's Submittal Log —
+  // exclude them from the cross-project Library. See isProjectTransmittalCopy
+  // for the tenant-prefix-aware matcher.
+  const rows = (data ?? []).filter(r => !isProjectTransmittalCopy(r.storage_path))
 
   // Batch-generate signed URLs (7-day expiry)
   const paths = rows.map(r => r.storage_path).filter(Boolean) as string[]

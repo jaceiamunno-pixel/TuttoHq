@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import Anthropic from "@anthropic-ai/sdk"
+import { isProjectTransmittalCopy } from "@/lib/storage-paths"
 
 export const maxDuration = 60
 
@@ -125,7 +126,7 @@ export async function GET(req: NextRequest) {
     for (const row of rows) {
       if (seen.has(row.id)) continue
       // Skip project transmittal copies — they belong to a Submittal Log, not the Library.
-      if (typeof row.storage_path === "string" && row.storage_path.startsWith("project-submittals/")) continue
+      if (isProjectTransmittalCopy(row.storage_path)) continue
       seen.add(row.id)
       allRows.push(row)
     }
