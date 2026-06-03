@@ -176,6 +176,20 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
     { url: string; page: number; spec_number: string; spec_title: string; file_name: string } | null>(null)
   const [sourceLoadingId, setSourceLoadingId]   = useState<string | null>(null)
 
+  // Revision history (Stage 2a-v2): map of submittal_id → attachment count,
+  // populated alongside the log fetch. Drives the "Rev R2 · 3 of 3" badge.
+  const [attachmentCounts, setAttachmentCounts] = useState<Record<string, number>>({})
+  // Slide-out state: which row's revision history is open + loaded attachments.
+  const [revHistorySub, setRevHistorySub]       = useState<SubmittalRecord | null>(null)
+  const [revHistoryItems, setRevHistoryItems]   = useState<Array<{
+    id: string; storage_path: string; file_name: string; file_size: number | null;
+    revision_label: string; is_current: boolean; approval_date: string | null;
+    review_status: string | null; submittal_number: string | null;
+    uploaded_at: string; source: string;
+  }> | null>(null)
+  const [revHistoryLoading, setRevHistoryLoading] = useState(false)
+  const [revHistoryError,   setRevHistoryError]   = useState<string | null>(null)
+
   // Batch upload
   const [showBatch, setShowBatch]     = useState(false)
   const [batchItems, setBatchItems]   = useState<BatchItem[]>([])
@@ -505,6 +519,37 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
       .then(d => { if (seq === logReqSeq.current) setLogSubmittals(d.submittals ?? []) })
       .catch(() => { if (seq === logReqSeq.current) setLogSubmittals([]) })
       .finally(() => { if (seq === logReqSeq.current) setLogLoading(false) })
+    // Parallel: pull revision counts for the project. Cheap (single
+    // groupBy server-side, ~31 rows today). Used to show the revision
+    // badge on rows with >= 2 attachments.
+    fetch(`/api/projects/${encodeURIComponent(pid)}/attachment-counts`)
+      .then(r => r.json())
+      .then(d => { if (seq === logReqSeq.current) setAttachmentCounts(d.counts ?? {}) })
+      .catch(() => { if (seq === logReqSeq.current) setAttachmentCounts({}) })
+  }
+
+  // Open the revision-history slide-out for a row. Lazily fetches the
+  // full attachment list for that submittal_id.
+  async function openRevHistory(s: SubmittalRecord) {
+    setRevHistorySub(s)
+    setRevHistoryItems(null)
+    setRevHistoryError(null)
+    setRevHistoryLoading(true)
+    try {
+      const res = await fetch(`/api/submittals/${encodeURIComponent(s.id)}/attachments`)
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data?.error ?? `Failed (HTTP ${res.status})`)
+      setRevHistoryItems(Array.isArray(data?.attachments) ? data.attachments : [])
+    } catch (e) {
+      setRevHistoryError(e instanceof Error ? e.message : "Failed to load revisions")
+    } finally {
+      setRevHistoryLoading(false)
+    }
+  }
+  function closeRevHistory() {
+    setRevHistorySub(null)
+    setRevHistoryItems(null)
+    setRevHistoryError(null)
   }
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1709,6 +1754,21 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                           <span title={`Received from ${s.sender_email}`} className="flex-shrink-0 text-[#94A3B8]">
                             <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" /></svg>
                           </span>
+                        )}
+                        {/* Revision badge: shown only when this submittal
+                            has >= 2 attachments. Click → slide-out with
+                            the full history. The label uses the parent
+                            row's revision_number (kept in sync by the DB
+                            trigger to match the current attachment). */}
+                        {attachmentCounts[s.id] && attachmentCounts[s.id] >= 2 && (
+                          <button
+                            type="button"
+                            onClick={() => openRevHistory(s)}
+                            title={`${attachmentCounts[s.id]} revisions on file — click to view history`}
+                            className="flex-shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold tabular-nums bg-[#7B9BB5]/10 text-[#5A7A94] hover:bg-[#7B9BB5]/20 transition-colors">
+                            <span>Rev {s.revision_number ?? "?"}</span>
+                            <span className="text-[#94A3B8]">· {attachmentCounts[s.id]} of {attachmentCounts[s.id]}</span>
+                          </button>
                         )}
                       </div>
                     </td>
@@ -3077,6 +3137,74 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                   </button>
                 )
               })}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Revision history slide-out — opens on revision-badge click. Shows
+          every attachment for a submittal log row, newest first. Current
+          revision (the one displayed in the log) is highlighted. Download
+          links go through the existing /api/download/{id}/{path} pattern. */}
+      {revHistorySub && (
+        <div className="fixed inset-0 bg-black/50 z-[60] flex items-stretch justify-end"
+          onClick={e => { if (e.target === e.currentTarget) closeRevHistory() }}>
+          <div className="bg-white border-l border-[#E2E8F0] shadow-2xl w-full sm:w-[min(90vw,520px)] h-full flex flex-col">
+            <div className="px-5 py-4 border-b border-[#E2E8F0] flex items-start justify-between">
+              <div className="min-w-0">
+                <h3 className="text-[14px] font-bold text-[#0F172A]">Revision history</h3>
+                <p className="text-[11px] text-[#64748B] mt-0.5 truncate" title={revHistorySub.file_name}>
+                  {revHistorySub.csi_section ?? "—"} · {revHistorySub.submittal_type ?? "—"}
+                </p>
+                {revHistorySub.material_name && (
+                  <p className="text-[11px] text-[#475569] mt-0.5 truncate" title={revHistorySub.material_name}>
+                    {revHistorySub.material_name}
+                  </p>
+                )}
+              </div>
+              <button onClick={closeRevHistory} className="text-[#64748B] hover:text-[#0F172A] flex-shrink-0" aria-label="Close">
+                <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+              </button>
+            </div>
+            <div className="flex-1 overflow-auto">
+              {revHistoryLoading && <p className="px-5 py-4 text-[12px] text-[#64748B]">Loading revisions…</p>}
+              {revHistoryError   && <p className="px-5 py-4 text-[12px] text-red-700">{revHistoryError}</p>}
+              {revHistoryItems && revHistoryItems.length === 0 && !revHistoryLoading && (
+                <p className="px-5 py-4 text-[12px] text-[#64748B]">No attachments on file.</p>
+              )}
+              {revHistoryItems && revHistoryItems.length > 0 && (
+                <ul className="divide-y divide-[#E2E8F0]">
+                  {revHistoryItems.map(att => (
+                    <li key={att.id} className={`px-5 py-3 ${att.is_current ? "bg-emerald-50/60" : ""}`}>
+                      <div className="flex items-start gap-2">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="text-[12px] font-semibold tabular-nums text-[#0F172A]">{att.revision_label}</span>
+                            {att.is_current && (
+                              <span className="text-[10px] font-semibold uppercase tracking-wider text-emerald-700 bg-emerald-100 px-1.5 py-0.5 rounded">Current</span>
+                            )}
+                          </div>
+                          <p className="text-[11px] text-[#475569] mt-1 truncate" title={att.file_name}>{att.file_name}</p>
+                          <p className="text-[10px] text-[#64748B] mt-0.5">
+                            Approved: {att.approval_date ?? "—"}
+                            {att.review_status ? ` · ${att.review_status}` : ""}
+                            {att.submittal_number ? ` · GC #${att.submittal_number}` : ""}
+                          </p>
+                          <p className="text-[10px] text-[#94A3B8] mt-0.5">
+                            Uploaded {new Date(att.uploaded_at).toLocaleDateString()} · via {att.source}
+                          </p>
+                        </div>
+                        <a
+                          href={`/api/download/${encodeURIComponent(revHistorySub.id)}?path=${encodeURIComponent(att.storage_path)}`}
+                          target="_blank" rel="noreferrer"
+                          className="flex-shrink-0 text-[11px] text-[#7B9BB5] hover:text-[#5A7A94] px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors">
+                          Download
+                        </a>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
             </div>
           </div>
         </div>

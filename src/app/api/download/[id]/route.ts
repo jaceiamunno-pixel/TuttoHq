@@ -3,7 +3,7 @@ import { createClient } from "@/lib/supabase/server"
 import { PDFDocument } from "pdf-lib"
 
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params
@@ -18,6 +18,30 @@ export async function GET(
   if (!submittal?.storage_path) {
     return NextResponse.json({ error: "Not found" }, { status: 404 })
   }
+
+  // Historical-revision download: when ?path=… is supplied, override
+  // submittal.storage_path with that value AFTER validating the path is
+  // a real attachment on this submittal (RLS-filtered). Defends against
+  // a crafted query attempting to download an arbitrary storage object.
+  const requestedPath = new URL(req.url).searchParams.get("path")
+  let useStoragePath = submittal.storage_path
+  let useFileName = submittal.file_name
+  if (requestedPath && requestedPath !== submittal.storage_path) {
+    const { data: att } = await supabase
+      .from("submittal_attachments")
+      .select("storage_path, file_name")
+      .eq("submittal_id", id)
+      .eq("storage_path", requestedPath)
+      .maybeSingle()
+    if (!att) return NextResponse.json({ error: "attachment not found" }, { status: 404 })
+    useStoragePath = att.storage_path
+    useFileName    = att.file_name
+  }
+  // Continue with `useStoragePath` / `useFileName` for the rest of the
+  // route. The variables `submittal.storage_path` / `file_name` are
+  // shadowed below.
+  submittal.storage_path = useStoragePath
+  submittal.file_name    = useFileName
 
   // Non-PDFs — redirect to signed URL
   if (submittal.mime_type !== "application/pdf") {

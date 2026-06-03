@@ -153,18 +153,13 @@ export async function POST(req: NextRequest) {
       results.push({ client_row_id: cid, status: "error", error: "target row is deleted" })
       continue
     }
-    if (target.storage_path) {
-      // Already has a PDF attached. Stage 2a refuses overwrite — clearing
-      // an existing attachment is an explicit Stage 3 affordance.
-      results.push({
-        client_row_id: cid, status: "error",
-        error: "target row already has a PDF attached (clear it first to re-commit)",
-      })
-      continue
-    }
+    // No more storage_path-non-null refuse. Stage 2a-v2 allows multiple
+    // attachments per submittal — each commit adds a new attachment under
+    // the same parent row, and the RPC decides whether it becomes current
+    // based on revision number (newest wins) rather than insertion order.
 
     // Derive the canonical uploads path. Keep the UUID prefix from staging
-    // so storage paths stay unique per import session.
+    // so storage paths stay unique per attachment.
     const stagingBase = r.staging_path.slice(stagingPrefix.length)
     if (!stagingBase || stagingBase.includes("/")) {
       results.push({
@@ -175,8 +170,24 @@ export async function POST(req: NextRequest) {
     }
     const uploadsPath = `${companyId}/uploads/${stagingBase}`
 
-    // Storage copy first — DB UPDATE after. If UPDATE fails, we try to
-    // delete the copied object so it doesn't become an orphan in uploads/.
+    // Parse the revision label from the filename. The form's submittal-#
+    // field lies on revisions (verified in the date diagnosis — Sub 234-R3's
+    // form was byte-identical to R2 because the GC never updated the
+    // coversheet). The filename is the reliable revision signal.
+    //
+    //   "0301-0509 Sub No 234 -R2 Ceramic Tile Sample.pdf"  →  "R2"
+    //   "0301-0509 Sub No 030-R1 Frame and Door Schedule.pdf" → "R1"
+    //   "0301-0509 Sub No 075 Masonry Package.pdf"          →  "R0"
+    //   "20251014_08000006_R1_Acrovyn_Doors.pdf" (older BAM) →  "R1"
+    const watersMatch = r.file_name.match(/[ _-]Sub[ _-]+No[ _-]+\d+[ _-]+R(\d+)/i)
+    const bamMatch    = r.file_name.match(/\d{8}[ _-]+R(\d+)/i)
+    const revisionLabel =
+      (watersMatch && watersMatch[1] && `R${watersMatch[1]}`) ??
+      (bamMatch    && bamMatch[1]    && `R${bamMatch[1]}`)    ??
+      "R0"
+
+    // Storage copy first — RPC call after. If the RPC fails, delete the
+    // copied object so it doesn't become an orphan in uploads/.
     const { error: copyErr } = await supabase.storage
       .from("submittals")
       .copy(r.staging_path, uploadsPath)
@@ -188,40 +199,28 @@ export async function POST(req: NextRequest) {
       continue
     }
 
-    // Attach the PDF + metadata. The WHERE constraints repeat the safety
-    // checks above so a race between the SELECT and the UPDATE can't slip
-    // an unwritable row through.
-    const { data: updated, error: uErr } = await supabase
-      .from("submittals")
-      .update({
-        storage_path: uploadsPath,
-        file_name: r.file_name,
-        received_file_name: r.file_name,
-        file_size: r.file_size ?? null,
-        mime_type: "application/pdf",
-        returned_from_ae_date: r.approval_date || null,
-        submittal_number: r.submittal_number?.trim() || null,
-        revision_number: r.revision_number?.trim() || null,
-        review_status: r.review_status || null,
-        manually_overridden: true,
-        overridden_by: user.id,
-        received_at: nowIso,
-      })
-      .eq("id", r.target_row_id)
-      .eq("company_id", companyId)
-      .eq("project_id", projectId)
-      .eq("source", "spec_ingestion")
-      .neq("status", "deleted")
-      .is("storage_path", null)
-      .select("id")
-      .single()
+    // Attach via the add_submittal_attachment RPC — atomic newest-wins
+    // (unset prev current + insert new + trigger syncs submittals row).
+    // The RPC enforces tenant scope via get_my_company_id() and refuses
+    // to write if the submittal isn't accessible to the caller.
+    const { data: attachment, error: rpcErr } = await supabase.rpc("add_submittal_attachment", {
+      p_submittal_id:     r.target_row_id,
+      p_storage_path:     uploadsPath,
+      p_file_name:        r.file_name,
+      p_file_size:        r.file_size ?? null,
+      p_revision_label:   revisionLabel,
+      p_approval_date:    r.approval_date || null,
+      p_review_status:    r.review_status || null,
+      p_submittal_number: r.submittal_number?.trim() || null,
+      p_source:           "bulk_import",
+    }).single()
 
-    if (uErr || !updated) {
+    if (rpcErr || !attachment) {
       // Roll back the storage copy (best-effort).
       await supabase.storage.from("submittals").remove([uploadsPath]).catch(() => {})
       results.push({
         client_row_id: cid, status: "error",
-        error: `update failed: ${uErr?.message ?? "row not updatable (race or constraint)"}`,
+        error: `attach failed: ${rpcErr?.message ?? "RPC returned no row"}`,
       })
       continue
     }
@@ -229,7 +228,7 @@ export async function POST(req: NextRequest) {
     results.push({
       client_row_id: cid,
       status: "ok",
-      row_id: updated.id,
+      row_id: r.target_row_id,
       attached_path: uploadsPath,
     })
   }
