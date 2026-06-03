@@ -74,35 +74,41 @@ function newRow(file: File): Row {
   }
 }
 
-/** Decide whether a row is currently READY to commit:
- *   - analysis ready
- *   - section + type non-empty
- *   - approval date set (architect signed on a date — required for the log)
- *   - the row isn't multi-section without an explicit single-section pick
- *   - match resolved: auto-match OR user picked a target OR user marked skip
- *   - not already committing / committed */
+/** Decide whether a row is currently READY to commit. PLACEMENT-CRITICAL
+ *  fields only — block when something would put the import in the wrong
+ *  log row OR no log row at all. Metadata (sub#, approval date, cover
+ *  split, review status) does NOT block; the modal still surfaces an
+ *  amber cue for missing approval date but the commit gate ignores it.
+ *
+ *   BLOCKS on:
+ *     - row not in "ready" state (still uploading/analyzing/matching/error)
+ *     - section empty
+ *     - type empty
+ *     - match unresolved: no `match` yet, OR
+ *       no-match with no fallback pick, OR
+ *       ambiguous-distinct with no pick, OR
+ *       match errored
+ *   Does NOT block on:
+ *     - approvalDate (metadata; amber cue stays on the input)
+ *     - submittalNo  (metadata, GC-side label — not a join key)
+ *     - coverSplit   (Library copy is Stage 2b, doesn't ship yet)
+ *     - reviewStatus (always defaults to "Approved")
+ *     - multi-section presence per se — the section input must be
+ *       non-empty, but the analyzePdf pre-fill already populates it
+ *       with the primary; if the user wants a sibling they edit it.
+ *       Either way the section-empty rule above gates correctly.
+ */
 function commitReadiness(r: Row): "ready" | "blocked" | "skip" | "done" | "in-flight" {
   if (r.status === "committed" || r.committedRowId) return "done"
   if (r.status === "committing") return "in-flight"
   if (r.matchSkip) return "skip"
   if (r.status !== "ready") return "blocked"
   if (!r.section.trim() || !r.type) return "blocked"
-  if (!r.approvalDate) return "blocked"
-  if (r.analysis?.additionalSections && r.analysis.additionalSections.length > 0) {
-    // Multi-section row: the user must have edited the section to a single
-    // value (no longer matching the original multi). We treat the section
-    // input being non-empty as the explicit confirmation that the user
-    // picked one — analyzePdf pre-fills with the PRIMARY, but if the user
-    // wants the sibling instead they must edit it. Either way: must match
-    // one of the surfaced sections, never empty.
-  }
   if (!r.match) return "blocked"  // match call still pending
   if (r.match.kind === "no-match") {
-    // Must have picked a fallback target row.
     return r.pickedTargetRowId ? "ready" : "blocked"
   }
   if (r.match.kind === "ambiguous-distinct") {
-    // Must have confirmed a pick.
     return r.pickedTargetRowId ? "ready" : "blocked"
   }
   if (r.match.kind === "auto-match") {
@@ -215,9 +221,34 @@ export default function BulkImportModal({
 
   // ── Match a single row's analysis against the spec book ─────────────────
   // Called after analyze lands. Single API call per row, no AI, no loops.
-  const matchRow = useCallback(async (id: string) => {
+  //
+  // The `fresh` parameter is how `processRow` passes the just-analyzed
+  // values directly, bypassing `rowsRef`. Reason: `processRow` calls
+  // `updateRow(id, {analysis, section, type, ...})` then SYNCHRONOUSLY
+  // calls `matchRow(id)` — but `rowsRef.current = rows` only re-aims on
+  // render, so right after the queued setRows the ref still points at the
+  // pre-update array. `row.analysis` is undefined there, so the original
+  // code's `if (!row.analysis) return` early-exited silently and the row
+  // ended up in `status: "ready"` with `match: undefined` — looked
+  // complete in the UI, blocked commit via the `!r.match` gate.
+  //
+  // Same shape of race that bit `processRow` earlier (the rowsRef pattern
+  // in commit 620e81e). Audited the modal for other instances; the
+  // remaining rowsRef reads are either (a) read-then-await-then-render
+  // (runBatch, doCommit) or (b) post-debounce (scheduleRematch's 400ms),
+  // both of which are safe.
+  //
+  // Debounced re-matches from scheduleRematch keep calling matchRow(id)
+  // without `fresh` — they're safe because by 400ms React has rendered.
+  const matchRow = useCallback(async (
+    id: string,
+    fresh?: { section: string; type: SubmittalType | ""; description: string | null },
+  ) => {
     const row = rowsRef.current.find(r => r.id === id)
-    if (!row || !row.analysis) return
+    if (!row) return
+    const section     = fresh?.section     ?? row.section
+    const type        = fresh?.type        ?? row.type
+    const description = fresh?.description ?? row.analysis?.coverFields?.specSectionTitle ?? null
     updateRow(id, { status: "matching" })
     try {
       const res = await fetch("/api/bulk-import/match", {
@@ -227,9 +258,9 @@ export default function BulkImportModal({
           project_id: projectId,
           rows: [{
             client_row_id: id,
-            section: row.section || null,
-            submittal_type: row.type || null,
-            description: row.analysis.coverFields?.specSectionTitle ?? null,
+            section: section || null,
+            submittal_type: type || null,
+            description,
           }],
         }),
       })
@@ -294,20 +325,37 @@ export default function BulkImportModal({
         throw new Error("Analyze returned no analysis payload")
       }
 
+      const seedSection = analysis.suggestedSection ?? ""
+      const seedType    = (analysis.suggestedType ?? "") as SubmittalType | ""
+      const seedSubmittalNo = analysis.suggestedSubmittalNo ?? ""
+      // Sub# cosmetic fix — Waters revision files store an "-R1"-suffixed
+      // value in the form's Text5 widget (e.g. "30-R" / "032-" appears in
+      // the UI because the AcroForm's display width clips the value mid-
+      // suffix). The filename always carries the clean GC submittal #
+      // ("_Sub_No_032_" or "_Sub_No_032-R1_") — prefer the filename pattern
+      // when present. Doesn't affect matching (sub# is metadata, not a
+      // join key) — purely cosmetic.
+      const filenameSubNo = row.file.name.match(/_Sub_No_(\d{2,4})(?:-R\d+)?/i)?.[1]
+      const finalSubmittalNo = filenameSubNo ?? seedSubmittalNo
+
       updateRow(id, {
         status: "ready",
         analysis,
-        section: analysis.suggestedSection ?? "",
-        type: analysis.suggestedType ?? "",
+        section: seedSection,
+        type: seedType,
         coverSplit: analysis.cover.coverSplit,
         // Pre-fill from the recovered AcroForm widget values. User confirms
         // in the inputs below — committing is gated on resolution.
         approvalDate: analysis.suggestedApprovalDate ?? "",
-        submittalNo: analysis.suggestedSubmittalNo ?? "",
+        submittalNo: finalSubmittalNo,
       })
-      // Chain into match. Don't block processRow on it — if match fails,
-      // the row stays "ready" and the user can still edit the inputs.
-      matchRow(id).catch(err => {
+      // Chain into match. Pass the freshly-analyzed values directly so we
+      // don't race the queued setRows above (rowsRef hasn't repointed yet).
+      matchRow(id, {
+        section: seedSection,
+        type: seedType,
+        description: analysis.coverFields?.specSectionTitle ?? null,
+      }).catch(err => {
         console.error("[bulk-import] matchRow threw", err)
       })
     } catch (err) {
