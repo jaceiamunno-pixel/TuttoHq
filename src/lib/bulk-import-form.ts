@@ -19,7 +19,7 @@
 // once the pages are gone, the form widgets are gone too.
 
 import { PDFDocument, PDFTextField, PDFCheckBox, PDFDropdown, PDFOptionList } from "pdf-lib"
-import type { CoversheetFields } from "./bulk-import-detect"
+import type { CoversheetFields, CoversheetTemplate } from "./bulk-import-detect"
 
 /** A map of raw form-field name → raw value, normalized to strings. Empty
  *  when the PDF has no AcroForm or extraction failed for any reason. */
@@ -262,15 +262,12 @@ function recoverStringsByPosition(raw: RawFormFields, sectionFieldIdx: number): 
   return { projectName, specSectionTitle }
 }
 
-/** Per-field confidence from the recovery step. "label" means the value came
- *  from a real semantic field-name hit (high confidence). "positional" means
- *  it came from value-shape or widget-position inference (best-effort guess
- *  — render as unconfirmed in the review row, since unlike the section it
- *  has no cross-check against filename). "none" means nothing was found.
- *
- *  Section detection has its own cross-check (form vs filename) and isn't
- *  surfaced here; for submittal # and date there's no second source — they
- *  are exactly as trustworthy as the recovery strategy that produced them. */
+/** Per-field confidence from the recovery step. "label" means the value
+ *  came from a real labeled field hit OR from a known coversheet template's
+ *  fixed field map (e.g. Waters' Text5=submittalNo) — treat as confirmed.
+ *  "positional" means value-shape / widget-position inference on a template
+ *  we couldn't identify — render as unconfirmed in the review row. "none"
+ *  means nothing was found. */
 export type FieldConfidence = "label" | "positional" | "none"
 
 export interface CoversheetFieldsConfidence {
@@ -279,26 +276,125 @@ export interface CoversheetFieldsConfidence {
   submittalNo:      FieldConfidence
   dateSubmitted:    FieldConfidence
   projectName:      FieldConfidence
+  submitter:        FieldConfidence
 }
 
 export interface CoversheetRecovery {
   fields: CoversheetFields
   confidence: CoversheetFieldsConfidence
+  template: CoversheetTemplate
+  /** Sections beyond the primary (e.g. Waters Sub 158 lists
+   *  "09-67-23 & 09-65-19"). Primary = `fields.specSectionNo`; the rest
+   *  go here so the analyzer can flag a multi-section row. */
+  additionalSections: string[]
 }
 
 const EMPTY_CONFIDENCE: CoversheetFieldsConfidence = {
   specSectionNo: "none", specSectionTitle: "none", submittalNo: "none",
-  dateSubmitted: "none", projectName: "none",
+  dateSubmitted: "none", projectName: "none", submitter: "none",
 }
 
-/** Recover the THP/BAM coversheet's structured values. Two strategies, in
- *  order: (1) semantic label match — works for forms whose field names
- *  carry the visible labels; (2) value-shape / widget-position match —
- *  works for the THP/BAM template whose fields are generically named
- *  `Text1`..`Text10`. Returns null per field when neither strategy finds
- *  anything, with a confidence map so callers can distinguish a confident
- *  label hit from a positional guess. */
+// ─── Template detection + per-template field maps ──────────────────────────
+//
+// The bulk-import flow has seen TWO distinct fillable-PDF coversheets:
+//
+//   "bam-thp" (the architect/owner-side BAM template) — section as bare
+//     `XX YY ZZ` in Text7, submittal# in Text8, date in Text9, title in
+//     Text5, project in Text1. Field names are generic (Text1..Text10).
+//
+//   "waters" (the GC/Waters Construction Co. submitter coversheet) —
+//     section as free-text "Division XX; Section XX-XX-XX" (sometimes
+//     with a leading item number and an "& XX-XX-XX" for multi-section)
+//     in Text6, submittal# in Text5, date in Text4, title in Text8,
+//     submitter (the GC) in Text1. Names are Text1#1..Text10#1 in some
+//     PDFs (pdf-lib widget naming quirk) — match both forms.
+//
+// Detection is by content shape, not field name:
+//
+//   - Waters: any field carries a dashed `XX-XX-XX` whose leading two
+//     digits are a real CSI division. Distinguishes from BAM, which uses
+//     space-separated `XX YY ZZ`.
+//   - BAM: any field IS exactly bare `XX YY ZZ` (full-string).
+//
+// Once detected, the matching field-map extractor runs. The map is keyed
+// by the known field NAMES (Text4/5/6/8/1), with #1 suffix tried as a
+// fallback. Confidence is "label" on a template match (we know the map)
+// and "positional" only when template is unknown.
+
+const VALID_DIVISIONS_FOR_TEMPLATE = VALID_DIVISIONS_FOR_SHAPE
+const WATERS_DASHED_SECTION_RE = /(\d{2})-(\d{2})-(\d{2})(?!\d)/
+
+function detectTemplate(raw: RawFormFields): CoversheetTemplate {
+  // Waters first — dashed sections are a strong template signature.
+  for (const v of Object.values(raw)) {
+    const m = v.match(WATERS_DASHED_SECTION_RE)
+    if (m && VALID_DIVISIONS_FOR_TEMPLATE.has(m[1])) return "waters"
+  }
+  // BAM — any bare XX YY ZZ value.
+  for (const v of Object.values(raw)) {
+    if (isSectionShape(v)) return "bam-thp"
+  }
+  return "unknown"
+}
+
+function lookupByExactName(raw: RawFormFields, ...candidates: string[]): string | null {
+  for (const name of candidates) {
+    const v = raw[name]
+    if (v && v.trim().length > 0) return v.trim()
+  }
+  return null
+}
+
+/** Recover the Waters template's NICE-TO-HAVE fields by their fixed-position
+ *  field names. Section is NOT pulled here — the analyzer runs a
+ *  template-agnostic CSI extractor (`extractCsiSectionFromCoversheet`)
+ *  against the raw form values + coversheet pages, so adding new templates
+ *  doesn't require a new section handler. We keep template detection so
+ *  that submitter / title / submittal# / date can pre-fill confidently
+ *  from a known field map. */
+function recoverWatersFields(raw: RawFormFields): CoversheetFields {
+  return {
+    specSectionNo:    null,  // not surfaced from here; generic extractor handles it
+    specSectionTitle: lookupByExactName(raw, "Text8#1", "Text8"),
+    submittalNo:      lookupByExactName(raw, "Text5#1", "Text5"),
+    dateSubmitted:    lookupByExactName(raw, "Text4#1", "Text4"),
+    // Waters template doesn't carry a project / facility name in the form.
+    // Stage 2 derives project from the user's selected project-id at
+    // commit time, not from the coversheet.
+    projectName:      null,
+    submitter:        lookupByExactName(raw, "Text1#1", "Text1"),
+  }
+}
+
+/** Recover the coversheet's structured values. Detects the template first
+ *  (Waters vs BAM/THP) and runs the matching extractor. Returns a
+ *  confidence map so the review row knows whether each value was
+ *  authoritatively recovered or just a value-shape guess. */
 export function recoverCoversheetFields(raw: RawFormFields): CoversheetRecovery {
+  const template = detectTemplate(raw)
+
+  if (template === "waters") {
+    const fields = recoverWatersFields(raw)
+    // Every nice-to-have on Waters comes from the known template map →
+    // "label" confidence when present. Section is handled by the generic
+    // CSI extractor in the analyzer; specSectionNo here is null so the
+    // confidence map reports "none" for it (the analyzer doesn't consume
+    // confidence for section).
+    return {
+      fields,
+      confidence: {
+        specSectionNo:    "none",
+        specSectionTitle: fields.specSectionTitle ? "label" : "none",
+        submittalNo:      fields.submittalNo      ? "label" : "none",
+        dateSubmitted:    fields.dateSubmitted    ? "label" : "none",
+        projectName:      "none",
+        submitter:        fields.submitter        ? "label" : "none",
+      },
+      template,
+      additionalSections: [],
+    }
+  }
+
   const labelHits: CoversheetFields = {
     specSectionNo: lookupField(raw,
       "Spec Section No", "Specification Section No", "Section No",
@@ -317,6 +413,7 @@ export function recoverCoversheetFields(raw: RawFormFields): CoversheetRecovery 
     projectName: lookupField(raw,
       "Project Name", "ProjectName", "Project",
     ),
+    submitter: null,  // No semantic field label for "submitter" on the BAM template.
   }
 
   // Where labels didn't hit, fall back to value-shape recovery.
@@ -341,6 +438,8 @@ export function recoverCoversheetFields(raw: RawFormFields): CoversheetRecovery 
     // "Date Submitted" (page 2). See ValueShapeMatches comment.
     dateSubmitted:    labelHits.dateSubmitted    ?? shape.approvalDate,
     projectName:      labelHits.projectName      ?? strings.projectName,
+    // BAM template doesn't carry a separate submitter field.
+    submitter:        null,
   }
   const confidence: CoversheetFieldsConfidence = {
     specSectionNo:    labelHits.specSectionNo    ? "label" : shape.specSection      ? "positional" : "none",
@@ -348,8 +447,9 @@ export function recoverCoversheetFields(raw: RawFormFields): CoversheetRecovery 
     submittalNo:      labelHits.submittalNo      ? "label" : shape.submittalNo      ? "positional" : "none",
     dateSubmitted:    labelHits.dateSubmitted    ? "label" : shape.approvalDate     ? "positional" : "none",
     projectName:      labelHits.projectName      ? "label" : strings.projectName    ? "positional" : "none",
+    submitter:        "none",
   }
-  return { fields, confidence }
+  return { fields, confidence, template, additionalSections: [] }
 }
 
 export { EMPTY_CONFIDENCE }

@@ -355,19 +355,33 @@ export default function BulkImportModal({
                             <p className="text-[10px] text-[#64748B] mt-0.5">
                               {fmtBytes(r.file.size)}
                               {r.analysis ? ` · ${r.analysis.pageCount} pages` : ""}
+                              {/* Template-agnostic section-source label —
+                                  describes the tier the extractor picked,
+                                  not which coversheet vendor it matched.
+                                  Detected template (waters / bam-thp) is
+                                  informational, shown after the tier when
+                                  known. */}
                               {r.analysis?.sectionSource === "form" && " · section from coversheet form"}
+                              {r.analysis?.sectionSource === "page" && " · section from coversheet text"}
                               {r.analysis?.sectionSource === "filename" && " · section from filename"}
+                              {r.analysis?.coverTemplate === "waters"  && r.analysis.sectionSource !== "none"  && " (Waters coversheet)"}
+                              {r.analysis?.coverTemplate === "bam-thp" && r.analysis.sectionSource !== "none"  && " (BAM/THP coversheet)"}
                             </p>
-                            {(r.analysis?.coverFields.projectName || r.analysis?.coverFields.specSectionTitle) && (
-                              <p className="text-[10px] text-[#475569] mt-0.5 truncate" title={[
-                                r.analysis?.coverFields.projectName,
-                                r.analysis?.coverFields.specSectionTitle,
-                              ].filter(Boolean).join(" · ")}>
-                                {r.analysis?.coverFields.projectName}
-                                {r.analysis?.coverFields.projectName && r.analysis?.coverFields.specSectionTitle ? " · " : ""}
-                                {r.analysis?.coverFields.specSectionTitle}
-                              </p>
-                            )}
+                            {(() => {
+                              const cf = r.analysis?.coverFields
+                              if (!cf) return null
+                              const parts = [
+                                cf.submitter   ? `from ${cf.submitter}`  : null,
+                                cf.projectName ? cf.projectName          : null,
+                                cf.specSectionTitle ? cf.specSectionTitle : null,
+                              ].filter(Boolean) as string[]
+                              if (parts.length === 0) return null
+                              return (
+                                <p className="text-[10px] text-[#475569] mt-0.5 truncate" title={parts.join(" · ")}>
+                                  {parts.join(" · ")}
+                                </p>
+                              )
+                            })()}
                             {r.status === "uploading" && (
                               <p className="text-[10px] text-[#64748B] mt-1 flex items-center gap-1">
                                 <Spinner className="h-3 w-3" /> Uploading… {r.uploadPercent}%

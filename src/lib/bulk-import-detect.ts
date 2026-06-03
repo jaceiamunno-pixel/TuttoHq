@@ -24,7 +24,7 @@
 // commits nothing; Stage 2 (separate change) will consume these outputs.
 
 import { divisionNameFor } from "./spec-parser"
-import type { CoversheetFieldsConfidence, FieldConfidence } from "./bulk-import-form"
+import type { CoversheetFieldsConfidence, FieldConfidence, RawFormFields } from "./bulk-import-form"
 
 // ─── Fixed vocabulary ───────────────────────────────────────────────────────
 
@@ -166,8 +166,17 @@ export interface CoversheetFields {
   submittalNo:      string | null
   /** Raw text from the form, not yet normalized. Use normalizeApprovalDate. */
   dateSubmitted:    string | null
+  /** The owner-side identifier (BAM template) — usually the project /
+   *  facility name. May be null on templates that don't carry it. */
   projectName:      string | null
+  /** The submitter / GC the form was completed by (Waters template).
+   *  Null on the BAM template, which doesn't include this. */
+  submitter:        string | null
 }
+
+/** Which coversheet form template a recovery saw. Each template has a
+ *  fixed Text-field-name → meaning map, so this drives the extractor. */
+export type CoversheetTemplate = "waters" | "bam-thp" | "unknown"
 
 const MONTH_NAMES_NORM = [
   "january","february","march","april","may","june",
@@ -500,17 +509,26 @@ export function detectCoverSplit(pageTexts: string[]): CoverSplitResult {
 export interface BulkImportAnalysis {
   pageCount: number
   filename: string
-  /** Final suggested section. Form field wins when present (authoritative),
-   *  then page-text label, then filename. */
+  /** Final suggested section. Generic CSI extractor (form widgets + cover
+   *  page text) wins; filename is only a fallback when extraction returned
+   *  nothing or flagged disagreement. */
   suggestedSection: string | null
   suggestedSectionDivision: string | null
-  /** Section parsed from the coversheet's AcroForm "Spec Section No." widget. */
+  /** Section the generic extractor surfaced (regardless of tier). */
   formSection: string | null
   filenameSection: FilenameSectionGuess
+  /** Deprecated. The legacy page-text label scrape was replaced by the
+   *  generic extractor; this field stays for callers that read it, but is
+   *  always null going forward. */
   pageSection: string | null
-  /** Source of the value we actually surfaced. */
+  /** Coarse source of the value we actually surfaced. */
   sectionSource: "form" | "page" | "filename" | "none"
+  /** Tier that produced the surfaced section (null when filename or none). */
+  sectionTier: SectionCandidateTier | null
   sectionFlag: boolean
+  /** Distinct labeled sections found in the coversheet (form + page) that
+   *  disagree with each other. Non-empty → primary is null, user must pick. */
+  sectionDisagreement: string[]
   /** Final suggested type, plus the raw signal source. */
   suggestedType: SubmittalType | null
   typeGuess: SubmittalTypeGuess
@@ -523,11 +541,18 @@ export interface BulkImportAnalysis {
   suggestedApprovalDate: string | null
   /** Pre-fill for the submittal-no input. */
   suggestedSubmittalNo: string | null
-  /** Per-field confidence — "label" = real labeled field hit;
-   *  "positional" = value-shape / widget-position guess; "none" = nothing
-   *  found. The review row flags "positional" fields as unconfirmed so the
-   *  user knows to verify before commit. */
+  /** Per-field confidence — "label" = real labeled field hit OR known
+   *  template field position; "positional" = value-shape guess on an
+   *  unknown template; "none" = nothing found. The review row flags
+   *  "positional" fields as unconfirmed so the user knows to verify. */
   coverFieldsConfidence: CoversheetFieldsConfidence
+  /** Which coversheet form template the extractor matched. "waters" / "bam-thp"
+   *  use known field maps; "unknown" relies on value-shape heuristics. */
+  coverTemplate: CoversheetTemplate
+  /** Additional sections found inside the section field — e.g. Waters'
+   *  "Section 09-67-23 & 09-65-19". Primary goes in `suggestedSection`,
+   *  the rest live here so the row flags that the user may want to split. */
+  additionalSections: string[]
   /** Aggregate "this row needs attention" — any of the individual flags. */
   needsAttention: boolean
   /** Human-readable summary for the review-table tooltip / warning. */
@@ -536,57 +561,288 @@ export interface BulkImportAnalysis {
 
 const EMPTY_COVER_FIELDS: CoversheetFields = {
   specSectionNo: null, specSectionTitle: null, submittalNo: null,
-  dateSubmitted: null, projectName: null,
+  dateSubmitted: null, projectName: null, submitter: null,
 }
 const EMPTY_COVER_FIELDS_CONFIDENCE: CoversheetFieldsConfidence = {
   specSectionNo: "none", specSectionTitle: "none", submittalNo: "none",
-  dateSubmitted: "none", projectName: "none",
+  dateSubmitted: "none", projectName: "none", submitter: "none",
+}
+
+// ─── Template-agnostic CSI section extractor ────────────────────────────────
+//
+// Section detection runs ONCE, regardless of which subcontractor's coversheet
+// the file came from. CSI MasterFormat is an industry standard — every
+// section number is "DD UU SU" / "DD-UU-SU" / "DDUUSU" with a real
+// MasterFormat division as the first two digits.
+//
+// We scan form widget values AND coversheet-page text (pages BEFORE
+// cover.coverSplit only, to avoid false positives from product-page
+// datasheets that mention an unrelated section). Candidates are ranked by
+// tier, validated against `VALID_DIVISIONS`, and surfaced primary + extras.
+//
+// Tier ranking (best → worst):
+//   labeled-form     — "...Section NN-NN-NN..." inside a form widget value
+//   labeled-page     — "...Section NN-NN-NN..." in coversheet page text
+//   bare-form        — bare "NN NN NN" / "NN-NN-NN" with valid division
+//                       inside a form widget value
+//   bare-page        — same, in coversheet page text
+//   compact-form     — bare "NNNNNN" with valid division in a form widget
+//   compact-page     — same, in coversheet page text
+//
+// When multiple LABELED hits exist that disagree on section, we DO NOT
+// silently pick one — we set `labeledDisagreement` so the row flags and
+// the user must choose. Disagreement among bare/compact tiers is not
+// surfaced (those hits are too weak to second-guess).
+//
+// IMPORTANT — never default a section. If extraction fails, primary stays
+// null, the row flags, and Stage 2 commit MUST be blocked until the user
+// fills it in (see commit-gate comment below `analyzePdf`).
+
+export type SectionCandidateTier =
+  | "labeled-form"
+  | "labeled-page"
+  | "bare-form"
+  | "bare-page"
+  | "compact-form"
+  | "compact-page"
+
+export interface ExtractedSection {
+  primary: string | null
+  /** Other sections found in the SAME labeled value (e.g. Waters Sub 158:
+   *  "Section 09-67-23 & 09-65-19"). Stage 2 will flag the row so the user
+   *  can split into separate submittals. */
+  siblings: string[]
+  /** Which tier the primary was sourced from. Null when nothing matched. */
+  tier: SectionCandidateTier | null
+  /** Set when 2+ distinct labeled-tier candidates were found. When non-empty,
+   *  `primary` is null — never silently pick one. */
+  labeledDisagreement: string[]
+}
+
+const EMPTY_EXTRACTED_SECTION: ExtractedSection = {
+  primary: null, siblings: [], tier: null, labeledDisagreement: [],
+}
+
+// Anchored on the "Section" keyword (or its full-form variants). The keyword
+// is required, so this won't fire on phone numbers, project IDs, or random
+// 6-digit runs. Lookbehind on the keyword `\b` prevents matching within
+// "Subsection" or other word substrings.
+const LABELED_SECTION_RE =
+  /\b(?:Spec(?:ification)?\s+Section|CSI\s+Section|Section|Spec\s+Sec\.?)\s*(?:No\.?|#|Number)?\s*[:\-]?\s*(\d{2})[-\s.](\d{2})[-\s.](\d{2})(?!\d)/gi
+
+// Bare CSI shape — `NN<sep>NN<sep>NN` where sep is space, dash, or dot.
+// The negative lookbehind rejects digits AND letters/underscores so we
+// don't pick up the tail of a longer number ("0063510") or run into a
+// version string. Negative lookahead rejects a 4th digit (so "203-334-6888"
+// — `\d{3}-\d{3}-\d{4}` — never matches because the shape requires 2-2-2).
+const BARE_SECTION_RE =
+  /(?<![\w\d])(\d{2})[-\s.](\d{2})[-\s.](\d{2})(?!\d)/g
+
+// Compact 6-digit, no separators. Lowest-confidence tier — only used when
+// nothing else hit. Word-bounded so contiguous longer runs don't leak in.
+const COMPACT_SECTION_RE = /(?<!\d)(\d{6})(?!\d)/g
+
+function isValidDivision(d: string): boolean {
+  return VALID_DIVISIONS.has(d)
+}
+
+/** Pull all valid labeled sections out of a single string. Returns the
+ *  primary (first labeled hit) + siblings (additional dashed/spaced CSI
+ *  matches found AFTER the labeled hit, within the same string — handles
+ *  multi-section coversheets like "Section 09-67-23 & 09-65-19"). */
+function findLabeledSectionsInValue(text: string): { primary: string; siblings: string[] }[] {
+  if (!text) return []
+  const out: { primary: string; siblings: string[] }[] = []
+  for (const m of text.matchAll(LABELED_SECTION_RE)) {
+    if (!isValidDivision(m[1])) continue
+    const primary = `${m[1]} ${m[2]} ${m[3]}`
+    const tail = text.slice((m.index ?? 0) + m[0].length, (m.index ?? 0) + m[0].length + 200)
+    const siblings: string[] = []
+    for (const sm of tail.matchAll(BARE_SECTION_RE)) {
+      if (isValidDivision(sm[1])) {
+        const sib = `${sm[1]} ${sm[2]} ${sm[3]}`
+        if (sib !== primary && !siblings.includes(sib)) siblings.push(sib)
+      }
+      if (siblings.length >= 4) break
+    }
+    out.push({ primary, siblings })
+  }
+  return out
+}
+
+function findBareSectionsInValue(text: string): string[] {
+  if (!text) return []
+  const out: string[] = []
+  for (const m of text.matchAll(BARE_SECTION_RE)) {
+    if (isValidDivision(m[1])) {
+      const candidate = `${m[1]} ${m[2]} ${m[3]}`
+      if (!out.includes(candidate)) out.push(candidate)
+    }
+  }
+  return out
+}
+
+function findCompactSectionsInValue(text: string): string[] {
+  if (!text) return []
+  const out: string[] = []
+  for (const m of text.matchAll(COMPACT_SECTION_RE)) {
+    const six = m[1]
+    if (isValidDivision(six.slice(0, 2))) {
+      const candidate = `${six.slice(0, 2)} ${six.slice(2, 4)} ${six.slice(4, 6)}`
+      if (!out.includes(candidate)) out.push(candidate)
+    }
+  }
+  return out
 }
 
 /**
- * Run all three detectors over a single PDF and return the suggestions.
- * Stage 1 emits this object per row; Stage 2 will accept the (possibly
- * user-edited) version of these fields and perform the commit.
+ * Generic CSI section extractor — runs against form widget values plus
+ * coversheet-page text, ranks candidates by tier, never defaults to a
+ * section. Caller is responsible for surfacing `primary == null` to the
+ * user as a required-input flag and blocking commit at Stage 2.
  *
- * `pageTexts[i]` = text for page i+1. The caller (server route) is
- * responsible for getting the text out of the PDF.
+ * `coverPageTexts` should be `pageTexts.slice(0, cover.coverSplit)` — i.e.
+ * only the pages classified as coversheet. Scanning further would risk
+ * pulling a CSI reference out of a product datasheet inside the submittal.
+ */
+export function extractCsiSectionFromCoversheet(
+  rawForm: RawFormFields,
+  coverPageTexts: string[],
+): ExtractedSection {
+  // Tier 1 — labeled hits in form widget values.
+  const labeledForm: { primary: string; siblings: string[] }[] = []
+  for (const v of Object.values(rawForm)) {
+    for (const hit of findLabeledSectionsInValue(v)) labeledForm.push(hit)
+  }
+  // Tier 2 — labeled hits in coversheet page text.
+  const labeledPage: { primary: string; siblings: string[] }[] = []
+  for (const pg of coverPageTexts) {
+    for (const hit of findLabeledSectionsInValue(pg)) labeledPage.push(hit)
+  }
+
+  if (labeledForm.length > 0 || labeledPage.length > 0) {
+    const all = [...labeledForm, ...labeledPage]
+    const distinctPrimaries = [...new Set(all.map(x => x.primary))]
+    if (distinctPrimaries.length === 1) {
+      // Unanimous labeled signal. Use the first hit's siblings (multi-section
+      // case lives inside one value).
+      return {
+        primary: distinctPrimaries[0],
+        siblings: all[0].siblings,
+        tier: labeledForm.length > 0 ? "labeled-form" : "labeled-page",
+        labeledDisagreement: [],
+      }
+    }
+    // 2+ distinct labeled hits — DO NOT silently pick one. Force a user pick.
+    return {
+      primary: null,
+      siblings: [],
+      tier: labeledForm.length > 0 ? "labeled-form" : "labeled-page",
+      labeledDisagreement: distinctPrimaries,
+    }
+  }
+
+  // Tier 3 — bare CSI shape in form widget values.
+  const bareForm: string[] = []
+  for (const v of Object.values(rawForm)) bareForm.push(...findBareSectionsInValue(v))
+  if (bareForm.length > 0) {
+    return { primary: bareForm[0], siblings: [], tier: "bare-form", labeledDisagreement: [] }
+  }
+
+  // Tier 4 — bare CSI in coversheet page text.
+  const barePage: string[] = []
+  for (const pg of coverPageTexts) barePage.push(...findBareSectionsInValue(pg))
+  if (barePage.length > 0) {
+    return { primary: barePage[0], siblings: [], tier: "bare-page", labeledDisagreement: [] }
+  }
+
+  // Tier 5 — compact 6-digit in form. False-positive prone (item numbers,
+  // partial dates). Lowest confidence; only used as a last resort.
+  const compactForm: string[] = []
+  for (const v of Object.values(rawForm)) compactForm.push(...findCompactSectionsInValue(v))
+  if (compactForm.length > 0) {
+    return { primary: compactForm[0], siblings: [], tier: "compact-form", labeledDisagreement: [] }
+  }
+
+  // Tier 6 — compact 6-digit in page text.
+  const compactPage: string[] = []
+  for (const pg of coverPageTexts) compactPage.push(...findCompactSectionsInValue(pg))
+  if (compactPage.length > 0) {
+    return { primary: compactPage[0], siblings: [], tier: "compact-page", labeledDisagreement: [] }
+  }
+
+  return EMPTY_EXTRACTED_SECTION
+}
+
+/**
+ * Run all detectors over a single PDF and return the suggestions. Stage 1
+ * emits this object per row; Stage 2 will accept the (possibly user-edited)
+ * version of these fields and perform the commit.
  *
- * `coverFields` is the result of pdf-lib AcroForm widget enumeration —
- * the authoritative source for THP submitter coversheets. When present,
- * the form's Spec Section No. wins over page-text scraping and filename
- * parsing. Pass an empty fields object when the PDF has no AcroForm or
- * extraction failed; section detection then falls back to the older
- * page-text + filename path.
+ * Section detection is now **template-agnostic**: a single CSI-shape
+ * extractor (`extractCsiSectionFromCoversheet`) scans form widget values
+ * plus coversheet-page text and ranks candidates by tier — no per-template
+ * field map drives the section decision. The recovery layer
+ * (`recoverCoversheetFields`) is consulted only for **nice-to-have**
+ * fields (submitter, title, submittal#, date, project), which can vary
+ * by coversheet author without breaking section.
+ *
+ * STAGE 2 — COMMIT-GATE CONTRACT (lock this in when Stage 2 ships):
+ *   - Per-row commit MUST be blocked when `suggestedSection` is null OR
+ *     `sectionFlag` is still true after the user edits the row. Never
+ *     guess, never default — section drives log placement.
+ *   - The bulk-commit (footer) button MUST be disabled when ANY row has
+ *     an empty section or unresolved `labeledDisagreement`.
+ *   - When `additionalSections.length > 0` (multi-section row), Stage 2
+ *     should offer to fan out into one submittal per section OR commit
+ *     against the primary with the user's explicit acknowledgement.
  *
  * STAGE 2 ORDERING (note for the commit/strip implementation): all
- * coversheet reads — section, submittal #, date, etc. — MUST run before
+ * coversheet reads — section, submittal#, date, etc. — MUST run BEFORE
  * any coversheet stripping. Once the cover pages are removed, the AcroForm
  * widgets and the labeled text both go with them. Never strip then read.
+ *
+ * `pageTexts[i]` = text for page i+1. `rawForm` is the AcroForm widget
+ * map (empty object when the PDF has no form). `recovery` carries the
+ * nice-to-have fields (template-aware) + template label.
  */
 export function analyzePdf(
   filename: string,
   pageTexts: string[],
-  coverFields: CoversheetFields = EMPTY_COVER_FIELDS,
-  coverFieldsConfidence: CoversheetFieldsConfidence = EMPTY_COVER_FIELDS_CONFIDENCE,
+  rawForm: RawFormFields = {},
+  recovery: {
+    fields: CoversheetFields
+    confidence: CoversheetFieldsConfidence
+    template: CoversheetTemplate
+  } = {
+    fields: EMPTY_COVER_FIELDS,
+    confidence: EMPTY_COVER_FIELDS_CONFIDENCE,
+    template: "unknown",
+  },
 ): BulkImportAnalysis {
   const filenameSection = parseSectionFromFilename(filename)
-  const page2Text = pageTexts[1] ?? ""
   const page1Text = pageTexts[0] ?? ""
-  const pageSection = parseSectionFromPageText(page2Text)
-    ?? parseSectionFromPageText(page1Text)
-  // The form-typed Spec Section No. is the authoritative coversheet value —
-  // it's what the human typed into the AcroForm widget. Use it first.
-  const formSection = normalizeSpecSection(coverFields.specSectionNo)
+  const page2Text = pageTexts[1] ?? ""
 
-  // Source priority: form (typed by human on the coversheet) → page text
-  // label (scrape if form fields weren't recoverable) → filename (fallback).
+  // Cover split first — the section extractor needs to know which pages
+  // are coversheet so it doesn't grab CSI references out of product
+  // datasheets buried inside the submittal.
+  const cover = detectCoverSplit(pageTexts)
+  const coverPageTexts = pageTexts.slice(0, Math.max(cover.coverSplit, 2))
+
+  // Template-agnostic generic section extraction. Wins over filename
+  // (filename is a sanity-check, not a source of truth — it can be
+  // anything the GC named the PDF).
+  const csi = extractCsiSectionFromCoversheet(rawForm, coverPageTexts)
+  const formSection = csi.primary
+
   let suggestedSection: string | null = null
   let sectionSource: "form" | "page" | "filename" | "none" = "none"
-  if (formSection) {
-    suggestedSection = formSection
+  if (csi.primary && (csi.tier === "labeled-form" || csi.tier === "bare-form" || csi.tier === "compact-form")) {
+    suggestedSection = csi.primary
     sectionSource = "form"
-  } else if (pageSection) {
-    suggestedSection = pageSection
+  } else if (csi.primary && (csi.tier === "labeled-page" || csi.tier === "bare-page" || csi.tier === "compact-page")) {
+    suggestedSection = csi.primary
     sectionSource = "page"
   } else if (filenameSection.section) {
     suggestedSection = filenameSection.section
@@ -595,70 +851,95 @@ export function analyzePdf(
 
   const sectionFlag = (() => {
     if (!suggestedSection) return true
-    // Form is authoritative; only flag if the form value disagrees with the
-    // filename (which would be a strange typo to highlight).
-    if (sectionSource === "form" && filenameSection.section && formSection !== filenameSection.section) return true
-    // Page-text + filename disagreement (legacy path) still worth flagging.
-    if (sectionSource === "page" && filenameSection.section && pageSection !== filenameSection.section) return true
-    // A loose 6-digit-only filename hit (with no form/page corroboration) is weak.
+    // Multiple labeled candidates disagreed — user must pick.
+    if (csi.labeledDisagreement.length > 0) return true
+    // Form/page vs filename mismatch — surface for cross-check (extractor
+    // value still wins, but the user should know).
+    if ((sectionSource === "form" || sectionSource === "page") &&
+        filenameSection.section &&
+        csi.primary !== filenameSection.section) return true
+    // A loose-6-digit-only filename hit with no extractor corroboration is weak.
     if (sectionSource === "filename" && filenameSection.source === "loose-6digit") return true
+    // Compact-tier hit (no labels, no separators) is brittle — flag for confirm.
+    if (sectionSource === "form" && csi.tier === "compact-form") return true
+    if (sectionSource === "page" && csi.tier === "compact-page") return true
     return false
   })()
 
   const typeGuess = detectSubmittalType(filename, [
     page1Text, page2Text,
-    coverFields.specSectionTitle ?? "",  // form-field title carries strong type hints
+    recovery.fields.specSectionTitle ?? "",  // recovered title carries strong type hints
   ].join("\n"))
   const suggestedType = typeGuess.type
   const typeFlag = !typeGuess.confident
 
-  const cover = detectCoverSplit(pageTexts)
+  // Pre-fill review-row nice-to-haves from recovery. User confirms; not
+  // committed automatically. Submittal# + date come from the recovery
+  // layer (template-aware OR value-shape positional). Section is NOT
+  // sourced from recovery — see csi above.
+  const suggestedApprovalDate = normalizeApprovalDate(recovery.fields.dateSubmitted)
+  const suggestedSubmittalNo  = recovery.fields.submittalNo?.trim() || null
 
-  // Pre-fill review-row fields from the recovered AcroForm values. User
-  // confirms in the UI — these aren't committed automatically.
-  const suggestedApprovalDate = normalizeApprovalDate(coverFields.dateSubmitted)
-  const suggestedSubmittalNo  = coverFields.submittalNo?.trim() || null
+  const additionalSections = csi.siblings
 
   const notes: string[] = []
   if (sectionFlag) {
     if (!suggestedSection) {
-      notes.push("Couldn't read a spec section from the coversheet form, page text, or filename.")
-    } else if (sectionSource === "form" && filenameSection.section && formSection !== filenameSection.section) {
-      notes.push(`Coversheet form says ${formSection}; filename suggests ${filenameSection.section}. Defaulted to the form value.`)
-    } else if (sectionSource === "page" && filenameSection.section && pageSection !== filenameSection.section) {
-      notes.push(`Filename suggests ${filenameSection.section}; coversheet text says ${pageSection}. Defaulted to the coversheet value.`)
+      if (csi.labeledDisagreement.length > 0) {
+        notes.push(
+          `Coversheet text labeled multiple distinct sections: ${csi.labeledDisagreement.join(", ")}. ` +
+          `Pick one before commit — we won't guess.`,
+        )
+      } else {
+        notes.push("Couldn't read a spec section from the coversheet form, page text, or filename. Enter it manually before commit.")
+      }
+    } else if ((sectionSource === "form" || sectionSource === "page") &&
+               filenameSection.section &&
+               csi.primary !== filenameSection.section) {
+      notes.push(`Coversheet says ${csi.primary}; filename suggests ${filenameSection.section}. Defaulted to the coversheet value.`)
     } else if (sectionSource === "filename" && filenameSection.source === "loose-6digit") {
       notes.push(`Section was guessed from a loose 6-digit run in the filename — no coversheet form value or labeled page text. Confirm before commit.`)
+    } else if (sectionSource === "form" && csi.tier === "compact-form") {
+      notes.push(`Section came from a compact 6-digit run in a form field, with no "Section" label nearby — confirm before commit.`)
+    } else if (sectionSource === "page" && csi.tier === "compact-page") {
+      notes.push(`Section came from a compact 6-digit run in the coversheet page text, with no "Section" label nearby — confirm before commit.`)
     }
   }
   if (typeFlag) notes.push("Couldn't infer the submittal type — pick one from the list.")
   if (cover.uncertain) notes.push(cover.reason)
-  if (coverFields.dateSubmitted && !suggestedApprovalDate) {
-    notes.push(`Coversheet date "${coverFields.dateSubmitted}" wasn't in a format we could parse — confirm in the date field.`)
+  if (recovery.fields.dateSubmitted && !suggestedApprovalDate) {
+    notes.push(`Coversheet date "${recovery.fields.dateSubmitted}" wasn't in a format we could parse — confirm in the date field.`)
   }
 
   // Surface a "positional guess" note when the date or submittal # came from
   // value-shape / widget-position inference (THP's generic Text1..Text10
   // names hit this path on every file). User sees a subtle styling on the
   // input AND a one-line nudge. Skipped when the value originated from a
-  // real labeled field — those don't need second-guessing.
+  // real labeled field OR a known template's field map.
   if (
     suggestedSubmittalNo &&
-    coverFieldsConfidence.submittalNo === "positional"
+    recovery.confidence.submittalNo === "positional"
   ) notes.push(`Submittal # was guessed positionally — verify.`)
   if (
     suggestedApprovalDate &&
-    coverFieldsConfidence.dateSubmitted === "positional"
+    recovery.confidence.dateSubmitted === "positional"
   ) notes.push(`Approval date was guessed positionally — verify.`)
 
-  // Suppress confidence for the date when our parser couldn't normalize it
-  // — the input is empty and there's nothing to second-guess.
   const reportedApprovalDateConfidence: FieldConfidence = suggestedApprovalDate
-    ? coverFieldsConfidence.dateSubmitted
+    ? recovery.confidence.dateSubmitted
     : "none"
   const reportedSubmittalNoConfidence: FieldConfidence = suggestedSubmittalNo
-    ? coverFieldsConfidence.submittalNo
+    ? recovery.confidence.submittalNo
     : "none"
+
+  // Multi-section case ("Section 09-67-23 & 09-65-19") — the generic CSI
+  // extractor surfaces extras as siblings. We pre-fill only the primary;
+  // Stage 2 will offer to split per the commit-gate contract above.
+  if (additionalSections.length > 0) {
+    notes.push(
+      `Coversheet lists ${1 + additionalSections.length} sections (${[suggestedSection, ...additionalSections].filter(Boolean).join(", ")}). Pre-filled the first; split into separate rows if both apply.`,
+    )
+  }
 
   return {
     pageCount: pageTexts.length,
@@ -667,22 +948,28 @@ export function analyzePdf(
     suggestedSectionDivision: suggestedSection ? divisionNameFor(suggestedSection) : null,
     formSection,
     filenameSection,
-    pageSection,
+    // pageSection retained as a (now-thin) compatibility shim — the legacy
+    // page-text label scrape is dead, the generic extractor subsumes it.
+    pageSection: null,
     sectionSource,
+    sectionTier: csi.tier,
     sectionFlag,
+    sectionDisagreement: csi.labeledDisagreement,
     suggestedType,
     typeGuess,
     typeFlag,
     cover,
-    coverFields,
+    coverFields: recovery.fields,
     suggestedApprovalDate,
     suggestedSubmittalNo,
     coverFieldsConfidence: {
-      ...coverFieldsConfidence,
+      ...recovery.confidence,
       dateSubmitted: reportedApprovalDateConfidence,
       submittalNo: reportedSubmittalNoConfidence,
     },
-    needsAttention: sectionFlag || typeFlag || cover.uncertain,
+    coverTemplate: recovery.template,
+    additionalSections,
+    needsAttention: sectionFlag || typeFlag || cover.uncertain || additionalSections.length > 0,
     notes,
   }
 }

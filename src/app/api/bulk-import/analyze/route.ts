@@ -82,11 +82,13 @@ export async function POST(req: NextRequest) {
   // MUST happen BEFORE any coversheet pages are stripped. Strip the cover,
   // and both the widget tree and the labeled text vanish with it.
   const rawFormFields = await extractRawFormFields(buffer)
-  const { fields: coverFields, confidence: coverFieldsConfidence } =
-    recoverCoversheetFields(rawFormFields)
+  const recovery = recoverCoversheetFields(rawFormFields)
 
   // ── Pure detection — no I/O from here on. ───────────────────────────────
-  const analysis = analyzePdf(fileName, pages, coverFields, coverFieldsConfidence)
+  // Section detection is template-agnostic: analyzePdf runs the generic CSI
+  // extractor against rawFormFields + coversheet-page text. The recovery
+  // struct supplies nice-to-haves only (submitter, title, submittal#, date).
+  const analysis = analyzePdf(fileName, pages, rawFormFields, recovery)
 
   return NextResponse.json({
     storage_path: storagePath,
