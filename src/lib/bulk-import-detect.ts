@@ -802,6 +802,37 @@ export function extractCsiSectionFromCoversheet(
  * any coversheet stripping. Once the cover pages are removed, the AcroForm
  * widgets and the labeled text both go with them. Never strip then read.
  *
+ * STAGE 2 — COVER-SPLIT FIXES (observed gaps as of 2026-06-03):
+ *   (a) `looksLikeSubmitterCoversheet` does NOT match the Waters template.
+ *       The Waters submitter cover has no "Submittal No." / "Date Submitted"
+ *       labels in the page text — the labels are inside form widgets, not
+ *       in the content stream. The fingerprint needs additional Waters
+ *       cues OR a fallback: if the file has a recognized fillable form on
+ *       the first page (AcroForm widgets we can enumerate), treat that
+ *       page as a coversheet regardless of page-text label matches. Today
+ *       Waters batches default to coverSplit=0/1 even on long submittals.
+ *
+ *   (b) The strip target is broader than "the coversheet page". The
+ *       Library copy must have ALL front routing/approval pages stripped
+ *       — that includes (1) the submitter coversheet AND (2) the
+ *       architect approval-STAMP page(s). The architect stamp typically
+ *       sits on page 1 (BAM/THP) or before the first product datasheet,
+ *       and identifies itself by stamp vocabulary ("Approved (A)",
+ *       "Exceptions Noted", "Revise and Resubmit"), the architect's
+ *       signature box, and the project info banner. `detectCoverSplit`
+ *       already counts a leading architect-review page as coversheet via
+ *       `looksLikeArchitectReview`; Stage 2's strip-on-commit must
+ *       consume the full `cover.coverSplit` count and not stop at "page 1"
+ *       — the routing/approval pages can stack 2–3 deep depending on the
+ *       submission flow.
+ *
+ *   Both (a) and (b) preserve the read-before-strip invariant above:
+ *   section + nice-to-haves come out of the form widgets and page text
+ *   FIRST, then the coversheet+stamp pages are removed for the Library
+ *   copy. The Submittal Log entry retains a reference to the original
+ *   (unstripped) PDF for downloads / audit; only the Library-facing
+ *   asset is the stripped version.
+ *
  * `pageTexts[i]` = text for page i+1. `rawForm` is the AcroForm widget
  * map (empty object when the PDF has no form). `recovery` carries the
  * nice-to-have fields (template-aware) + template label.

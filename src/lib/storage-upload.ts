@@ -15,6 +15,14 @@ export interface UploadProgress {
  *
  * Uses XMLHttpRequest rather than fetch() because fetch exposes no
  * upload-progress event — essential UX for large (30+ MB) spec books.
+ *
+ * Error surfacing: rejects with the Supabase response body when present.
+ * Supabase wraps storage failures as `{ statusCode, error, message }` —
+ * notably "exceeded the maximum allowed size" for 413/Payload-Too-Large,
+ * which surfaces as HTTP 400 from the signed-upload endpoint. Without
+ * surfacing the body the modal just shows "Upload failed (HTTP 400)" and
+ * the user has no idea why. With the body included, they see the actual
+ * reason ("The object exceeded the maximum allowed size") and can act.
  */
 export function uploadFileToSignedUrl(
   signedUrl: string,
@@ -38,8 +46,19 @@ export function uploadFileToSignedUrl(
     }
 
     xhr.onload = () => {
-      if (xhr.status >= 200 && xhr.status < 300) resolve()
-      else reject(new Error(`Upload failed (HTTP ${xhr.status})`))
+      if (xhr.status >= 200 && xhr.status < 300) return resolve()
+      // Try to pull the underlying reason out of the Supabase JSON envelope.
+      let reason: string | null = null
+      try {
+        const body = JSON.parse(xhr.responseText)
+        reason = body?.message || body?.error || null
+      } catch {
+        const raw = (xhr.responseText || "").trim()
+        if (raw && raw.length < 240) reason = raw
+      }
+      reject(new Error(reason
+        ? `Upload failed (HTTP ${xhr.status}): ${reason}`
+        : `Upload failed (HTTP ${xhr.status})`))
     }
     xhr.onerror = () => reject(new Error("Network error during upload"))
     xhr.onabort = () => reject(new Error("Upload was cancelled"))

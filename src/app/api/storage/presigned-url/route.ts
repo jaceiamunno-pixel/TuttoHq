@@ -13,6 +13,26 @@ const ALLOWED_BUCKETS = new Set(["submittals", "photos", "company-assets"])
 //
 // Shared by every upload flow except spec books, which keeps its own
 // presigned-url route because it must embed a DB row id in the storage path.
+//
+// FILE-SIZE LIMIT — the cap on uploaded objects lives in Supabase, not here:
+//
+//   1. PROJECT-WIDE upload limit — set in the Supabase Dashboard under
+//      Project Settings → Storage → "Max upload file size". This is the
+//      hard ceiling for every bucket in the project. As of 2026-06-03 it
+//      is **50 MB** (probed against the signed-upload endpoint), which
+//      means signed-submittal PDFs over 50 MB fail upload with a
+//      Supabase 413 wrapped as HTTP 400:
+//         { statusCode: "413", error: "Payload too large",
+//           message: "The object exceeded the maximum allowed size" }
+//      This was hit by the real "Sub 275 Sound Abs Wall Unit Samples"
+//      file (60.3 MB) in the 2026-06-03 batch. Raise the project setting
+//      in the Dashboard to unblock — bucket-level overrides are capped at
+//      the project ceiling, so they can't be used to raise the limit.
+//
+//   2. BUCKET-LEVEL `file_size_limit` — set via the Storage Admin API on
+//      the bucket row in `storage.buckets`. May be used to set a lower
+//      cap per bucket, but cannot exceed the project-wide ceiling.
+//      Currently NULL on `submittals` — defers to the project setting.
 export async function POST(req: NextRequest) {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
