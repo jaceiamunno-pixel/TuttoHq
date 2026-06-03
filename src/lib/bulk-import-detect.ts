@@ -833,6 +833,34 @@ export function extractCsiSectionFromCoversheet(
  *   (unstripped) PDF for downloads / audit; only the Library-facing
  *   asset is the stripped version.
  *
+ * STAGE 2 — STAGING AUTO-PURGE (observed gap as of 2026-06-03):
+ *   `bulk-import-staging/` accumulates orphans because Stage 1 has no
+ *   commit step — every analyzed PDF lands there and stays. By the end
+ *   of the user's 2026-06-03 batch testing there were 84 staged objects
+ *   totaling 427.7 MB (~43% of the project's Supabase 1 GB free-tier
+ *   quota) with zero references from any `submittals` row. A one-off
+ *   manual cleanup recovered the space.
+ *
+ *   Stage 2 must close this leak. Options for the auto-purge hook:
+ *     - On successful per-row commit: delete that row's staging object.
+ *       Bytes promoted to the Library copy live at a different storage
+ *       path under `submittals/uploads/` (the canonical home), so the
+ *       staging object is pure scratch once commit succeeds.
+ *     - On session end / modal close with unpromoted rows: prompt
+ *       "Discard N unsaved staged files?" — accept = delete, defer =
+ *       leave (relying on the TTL sweep below).
+ *     - TTL sweep — a scheduled cleanup (cron-style, or a check on
+ *       the next bulk-import session opening) that removes any staging
+ *       object older than e.g. 24h AND not referenced by any submittals
+ *       row. Cross-check is critical: cross-reference every candidate
+ *       against `submittals.storage_path` before deleting. Today's
+ *       audit showed 0 staging-path references in any submittals row
+ *       — that's the expected invariant; the sweep must enforce it.
+ *
+ *   See `scripts/staging-cleanup-candidates.json` and
+ *   `scripts/bulk-import-find-filename-less.mjs` for the audit pattern
+ *   used in the 2026-06-03 manual cleanup.
+ *
  * `pageTexts[i]` = text for page i+1. `rawForm` is the AcroForm widget
  * map (empty object when the PDF has no form). `recovery` carries the
  * nice-to-have fields (template-aware) + template label.
