@@ -3,20 +3,21 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { presignAndUpload } from "@/lib/storage-upload"
 import { SUBMITTAL_TYPES, type SubmittalType, type BulkImportAnalysis } from "@/lib/bulk-import-detect"
+import type { MatchOutcome, MatchedRow, ScoredCandidate } from "@/lib/bulk-import-match"
 
-// Bulk Import — Stage 1 modal. Drop many signed PDFs (or one — same engine,
+// Bulk Import — Stage 2a modal. Drop many signed PDFs (or one — same engine,
 // per the design's single-upload-is-batch-of-one decision). Each file is
-// uploaded to a staging path and analyzed read-only. The review table
-// surfaces three suggestions per row (spec section, submittal type,
-// coversheet split) plus a user-entered approval date and status. No
-// commit action — Stage 2 ships separately for review.
+// uploaded to staging, analyzed read-only, then MATCHED against existing
+// spec-book-built rows in the project's submittal log. On user confirm,
+// commit attaches the PDF to its matched log row. Model A: never silently
+// creates a row.
 
 // Bounded concurrency: process N PDFs at a time so a 50-PDF batch can't OOM
 // the function or saturate the user's uplink. Same lesson as the photo
 // batch pipeline (DailyModule Add Photos).
 const CONCURRENCY = 3
 
-type RowStatus = "queued" | "uploading" | "analyzing" | "ready" | "error"
+type RowStatus = "queued" | "uploading" | "analyzing" | "matching" | "ready" | "error" | "committing" | "committed"
 
 interface Row {
   id: string
@@ -38,6 +39,22 @@ interface Row {
    *  present; user confirms or overrides. */
   submittalNo: string
   reviewStatus: "Approved" | "Approved with Comments" | "Rejected" | "Revise and Resubmit"
+  // ── Stage 2a state ──────────────────────────────────────────────────────
+  /** Result of /api/bulk-import/match — auto / ambiguous / no-match / error. */
+  match?: MatchOutcome
+  /** The log row the user resolved this Bulk Import row against. For
+   *  auto-match this defaults to outcome.targetRowId; for ambiguous-distinct
+   *  the user picks; for no-match the user picks from a fallback dropdown
+   *  (or marks as skip).
+   *  null = unresolved, blocks commit. */
+  pickedTargetRowId?: string | null
+  /** When `matchSkip` is true, the row is intentionally excluded from
+   *  commit (user chose "skip" on a no-match). The row stays visible but
+   *  doesn't block bulk-commit gating. */
+  matchSkip?: boolean
+  /** Post-commit per-row result. */
+  committedRowId?: string
+  commitError?: string
 }
 
 function newRow(file: File): Row {
@@ -52,7 +69,55 @@ function newRow(file: File): Row {
     approvalDate: "",
     submittalNo: "",
     reviewStatus: "Approved",
+    pickedTargetRowId: null,
+    matchSkip: false,
   }
+}
+
+/** Decide whether a row is currently READY to commit:
+ *   - analysis ready
+ *   - section + type non-empty
+ *   - approval date set (architect signed on a date — required for the log)
+ *   - the row isn't multi-section without an explicit single-section pick
+ *   - match resolved: auto-match OR user picked a target OR user marked skip
+ *   - not already committing / committed */
+function commitReadiness(r: Row): "ready" | "blocked" | "skip" | "done" | "in-flight" {
+  if (r.status === "committed" || r.committedRowId) return "done"
+  if (r.status === "committing") return "in-flight"
+  if (r.matchSkip) return "skip"
+  if (r.status !== "ready") return "blocked"
+  if (!r.section.trim() || !r.type) return "blocked"
+  if (!r.approvalDate) return "blocked"
+  if (r.analysis?.additionalSections && r.analysis.additionalSections.length > 0) {
+    // Multi-section row: the user must have edited the section to a single
+    // value (no longer matching the original multi). We treat the section
+    // input being non-empty as the explicit confirmation that the user
+    // picked one — analyzePdf pre-fills with the PRIMARY, but if the user
+    // wants the sibling instead they must edit it. Either way: must match
+    // one of the surfaced sections, never empty.
+  }
+  if (!r.match) return "blocked"  // match call still pending
+  if (r.match.kind === "no-match") {
+    // Must have picked a fallback target row.
+    return r.pickedTargetRowId ? "ready" : "blocked"
+  }
+  if (r.match.kind === "ambiguous-distinct") {
+    // Must have confirmed a pick.
+    return r.pickedTargetRowId ? "ready" : "blocked"
+  }
+  if (r.match.kind === "auto-match") {
+    return "ready"
+  }
+  // error
+  return "blocked"
+}
+
+function effectiveTargetRowId(r: Row): string | null {
+  if (!r.match) return null
+  if (r.match.kind === "auto-match") return r.pickedTargetRowId ?? r.match.targetRowId
+  if (r.match.kind === "ambiguous-distinct") return r.pickedTargetRowId ?? null
+  if (r.match.kind === "no-match") return r.pickedTargetRowId ?? null
+  return null
 }
 
 function fmtBytes(n: number): string {
@@ -113,6 +178,83 @@ export default function BulkImportModal({
     setRows(prev => prev.map(r => r.id === id ? { ...r, ...patch } : r))
   }
 
+  // ── Fallback log-row picker for no-match cases ──────────────────────────
+  // Lazily loaded on first open; cached in state so opening the picker for
+  // multiple rows doesn't re-query.
+  const [logRows, setLogRows] = useState<MatchedRow[] | null>(null)
+  const [logRowsLoading, setLogRowsLoading] = useState(false)
+  const [logRowsError, setLogRowsError] = useState<string | null>(null)
+  const [pickerForRowId, setPickerForRowId] = useState<string | null>(null)
+  const [pickerQuery, setPickerQuery] = useState("")
+
+  async function ensureLogRowsLoaded() {
+    if (logRows !== null || logRowsLoading) return
+    setLogRowsLoading(true)
+    setLogRowsError(null)
+    try {
+      const res = await fetch(`/api/bulk-import/log-rows?project_id=${encodeURIComponent(projectId)}&limit=500`)
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data?.error ?? `Failed (HTTP ${res.status})`)
+      setLogRows(Array.isArray(data?.rows) ? data.rows : [])
+    } catch (e) {
+      setLogRowsError(e instanceof Error ? e.message : "Failed to load log rows")
+    } finally {
+      setLogRowsLoading(false)
+    }
+  }
+
+  function openLogRowPicker(rowId: string) {
+    setPickerForRowId(rowId)
+    setPickerQuery("")
+    ensureLogRowsLoaded().catch(() => {})
+  }
+  function closeLogRowPicker() {
+    setPickerForRowId(null)
+    setPickerQuery("")
+  }
+
+  // ── Match a single row's analysis against the spec book ─────────────────
+  // Called after analyze lands. Single API call per row, no AI, no loops.
+  const matchRow = useCallback(async (id: string) => {
+    const row = rowsRef.current.find(r => r.id === id)
+    if (!row || !row.analysis) return
+    updateRow(id, { status: "matching" })
+    try {
+      const res = await fetch("/api/bulk-import/match", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          project_id: projectId,
+          rows: [{
+            client_row_id: id,
+            section: row.section || null,
+            submittal_type: row.type || null,
+            description: row.analysis.coverFields?.specSectionTitle ?? null,
+          }],
+        }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data?.error ?? `Match failed (HTTP ${res.status})`)
+      const outcome = data?.results?.[0]?.outcome as MatchOutcome | undefined
+      if (!outcome) throw new Error("Match returned no outcome")
+      // Auto-confirm the picked target for auto-match. Ambiguous-distinct
+      // defaults to the highest-fuzzy candidate but stays "unconfirmed"
+      // until the user clicks — we don't silently choose.
+      updateRow(id, {
+        status: "ready",
+        match: outcome,
+        pickedTargetRowId:
+          outcome.kind === "auto-match" ? outcome.targetRowId : null,
+      })
+    } catch (err) {
+      console.error("[bulk-import] matchRow failed for", row.file.name, err)
+      updateRow(id, {
+        status: "ready",  // match failure doesn't kill the analyze result
+        match: { kind: "error", message: err instanceof Error ? err.message : "match failed" },
+      })
+    }
+  }, [projectId])
+
   const processRow = useCallback(async (id: string) => {
     const row = rowsRef.current.find(r => r.id === id)
     if (!row) {
@@ -159,9 +301,14 @@ export default function BulkImportModal({
         type: analysis.suggestedType ?? "",
         coverSplit: analysis.cover.coverSplit,
         // Pre-fill from the recovered AcroForm widget values. User confirms
-        // in the inputs below — Stage 1 commits nothing.
+        // in the inputs below — committing is gated on resolution.
         approvalDate: analysis.suggestedApprovalDate ?? "",
         submittalNo: analysis.suggestedSubmittalNo ?? "",
+      })
+      // Chain into match. Don't block processRow on it — if match fails,
+      // the row stays "ready" and the user can still edit the inputs.
+      matchRow(id).catch(err => {
+        console.error("[bulk-import] matchRow threw", err)
       })
     } catch (err) {
       console.error("[bulk-import] processRow failed for", row.file.name, err)
@@ -170,7 +317,7 @@ export default function BulkImportModal({
         errorMsg: err instanceof Error ? err.message : "Unknown error",
       })
     }
-  }, [])
+  }, [matchRow])
 
   // Drain queued rows in batches of CONCURRENCY. Re-reads the live ref each
   // pass so files added mid-run get picked up automatically without
@@ -247,20 +394,94 @@ export default function BulkImportModal({
     setRows(prev => prev.filter(r => r.id !== id))
   }
 
-  // Aggregates for the footer summary.
+  // ── Commit (Stage 2a) — bulk write of resolved rows to the log ──────────
+  // Sends every resolved row to /api/bulk-import/commit in one call. The
+  // server processes per-row and returns a status array; we apply per-row
+  // updates on response. No retry loops — the user can re-click commit on
+  // any failed rows.
+  const [committing, setCommitting] = useState(false)
+  const [commitSummary, setCommitSummary] = useState<{ ok: number; err: number } | null>(null)
+
+  const doCommit = useCallback(async () => {
+    if (committing) return
+    const toCommit = rowsRef.current.filter(r => commitReadiness(r) === "ready")
+    if (toCommit.length === 0) return
+    setCommitting(true)
+    setCommitSummary(null)
+    // Mark each row as committing for visual state.
+    setRows(prev => prev.map(r => commitReadiness(r) === "ready" ? { ...r, status: "committing" } : r))
+    try {
+      const payload = {
+        project_id: projectId,
+        rows: toCommit.map(r => ({
+          client_row_id: r.id,
+          target_row_id: effectiveTargetRowId(r),
+          staging_path: r.storagePath,
+          file_name: r.file.name,
+          file_size: r.file.size,
+          approval_date: r.approvalDate || null,
+          submittal_number: r.submittalNo || null,
+          revision_number: null,
+          review_status: r.reviewStatus,
+        })),
+      }
+      const res = await fetch("/api/bulk-import/commit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data?.error ?? `Commit failed (HTTP ${res.status})`)
+      const results: Array<{ client_row_id: string; status: "ok" | "error"; row_id?: string; error?: string }>
+        = Array.isArray(data?.results) ? data.results : []
+      let ok = 0, err = 0
+      setRows(prev => prev.map(r => {
+        const result = results.find(x => x.client_row_id === r.id)
+        if (!result) return r.status === "committing" ? { ...r, status: "ready" } : r  // server skipped — restore
+        if (result.status === "ok") {
+          ok++
+          return { ...r, status: "committed", committedRowId: result.row_id, commitError: undefined }
+        } else {
+          err++
+          return { ...r, status: "ready", commitError: result.error ?? "Commit failed" }
+        }
+      }))
+      setCommitSummary({ ok, err })
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Commit failed"
+      setGlobalError(msg)
+      // Roll committing rows back to ready so the user can retry.
+      setRows(prev => prev.map(r => r.status === "committing" ? { ...r, status: "ready", commitError: msg } : r))
+    } finally {
+      setCommitting(false)
+    }
+  }, [projectId, committing])
+
+  // Aggregates for the footer summary + commit gating.
   const totals = useMemo(() => {
     const total = rows.length
     const ready = rows.filter(r => r.status === "ready").length
     const errored = rows.filter(r => r.status === "error").length
-    const inFlight = rows.filter(r => r.status === "uploading" || r.status === "analyzing").length
+    const inFlight = rows.filter(r => r.status === "uploading" || r.status === "analyzing" || r.status === "matching").length
     const flagged = rows.filter(r => r.status === "ready" && r.analysis?.needsAttention).length
     const missingDate = rows.filter(r => r.status === "ready" && !r.approvalDate).length
     const missingSection = rows.filter(r => r.status === "ready" && !r.section).length
     const missingType = rows.filter(r => r.status === "ready" && !r.type).length
-    return { total, ready, errored, inFlight, flagged, missingDate, missingSection, missingType }
+    const commitReady   = rows.filter(r => commitReadiness(r) === "ready").length
+    const commitBlocked = rows.filter(r => commitReadiness(r) === "blocked").length
+    const commitDone    = rows.filter(r => commitReadiness(r) === "done").length
+    const commitSkip    = rows.filter(r => commitReadiness(r) === "skip").length
+    return { total, ready, errored, inFlight, flagged, missingDate, missingSection, missingType, commitReady, commitBlocked, commitDone, commitSkip }
   }, [rows])
 
-  void projectId  // kept in the API for Stage 2 (project assignment on commit)
+  // When the user edits section or type after a match has resolved, the
+  // stored match is stale. Re-run match for that row. Debounced via a
+  // single setTimeout per row, cleared on subsequent edits.
+  const reMatchTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
+  function scheduleRematch(id: string) {
+    if (reMatchTimers.current[id]) clearTimeout(reMatchTimers.current[id])
+    reMatchTimers.current[id] = setTimeout(() => { matchRow(id).catch(() => {}) }, 400)
+  }
 
   return (
     <div className="fixed inset-0 bg-black/70 z-50 flex items-stretch sm:items-center justify-center"
@@ -272,8 +493,7 @@ export default function BulkImportModal({
           <div>
             <h2 className="text-[16px] font-bold text-[#0F172A] leading-tight">Bulk Import — Approved Submittals</h2>
             <p className="text-[12px] text-[#64748B] mt-0.5">
-              Drop signed submittal PDFs. Each row shows three suggestions to confirm: spec section, type, and where the coversheet ends.
-              <span className="text-[#7B9BB5] font-semibold"> Stage 1 — review only. Nothing is committed yet.</span>
+              Drop signed submittal PDFs. Each row matches against an existing spec-book log row, then commits on confirm. Resolve any flagged rows before committing — the section drives log placement.
             </p>
           </div>
           <button onClick={onClose} className="text-[#64748B] hover:text-[#0F172A] flex-shrink-0" aria-label="Close">
@@ -408,16 +628,97 @@ export default function BulkImportModal({
                                 ))}
                               </ul>
                             )}
+                            {/* Match outcome strip */}
+                            {r.status === "matching" && (
+                              <p className="text-[10px] text-[#64748B] mt-1 flex items-center gap-1">
+                                <Spinner className="h-3 w-3" /> Matching to log…
+                              </p>
+                            )}
+                            {r.status === "committing" && (
+                              <p className="text-[10px] text-[#64748B] mt-1 flex items-center gap-1">
+                                <Spinner className="h-3 w-3" /> Committing…
+                              </p>
+                            )}
+                            {r.status === "committed" && (
+                              <p className="text-[10px] text-emerald-700 mt-1 font-semibold">
+                                ✓ Attached to log row
+                              </p>
+                            )}
+                            {r.commitError && r.status !== "committed" && (
+                              <p className="text-[10px] text-red-700 mt-1 break-words">
+                                Commit failed: {r.commitError}
+                              </p>
+                            )}
+                            {r.status === "ready" && r.match?.kind === "auto-match" && (
+                              <p className="text-[10px] text-emerald-700 mt-1 truncate" title={[r.match.target.csi_section, r.match.target.submittal_type, r.match.target.material_name].filter(Boolean).join(" · ")}>
+                                ✓ Auto-match: {r.match.target.csi_section} {r.match.target.submittal_type}
+                                {r.match.target.material_name && ` — ${r.match.target.material_name}`}
+                                {r.match.duplicateCount && r.match.duplicateCount > 1 && (
+                                  <span className="text-[#64748B]"> (collapsed {r.match.duplicateCount} spec-book duplicates)</span>
+                                )}
+                              </p>
+                            )}
+                            {r.status === "ready" && r.match?.kind === "ambiguous-distinct" && (
+                              <div className="mt-1">
+                                <p className="text-[10px] text-amber-700 font-semibold">⚠ {r.match.candidates.length} candidates — pick one to commit:</p>
+                                <select
+                                  value={r.pickedTargetRowId ?? ""}
+                                  onChange={e => updateRow(r.id, { pickedTargetRowId: e.target.value || null })}
+                                  className="mt-0.5 w-full h-7 px-1.5 rounded border border-amber-400 bg-amber-50 text-[11px]"
+                                >
+                                  <option value="">— pick a log row —</option>
+                                  {(r.match.candidates as ScoredCandidate[]).map(c => (
+                                    <option key={c.id} value={c.id}>
+                                      {c.csi_section} {c.submittal_type} — {c.material_name ?? "(no name)"} (seq {c.submittal_seq ?? "?"})
+                                    </option>
+                                  ))}
+                                </select>
+                              </div>
+                            )}
+                            {r.status === "ready" && r.match?.kind === "no-match" && !r.matchSkip && (
+                              <div className="mt-1">
+                                <p className="text-[10px] text-red-700 font-semibold">✗ No spec-book row for {r.section || "?"} {r.type || "?"}</p>
+                                {!r.pickedTargetRowId ? (
+                                  <div className="flex items-center gap-2 mt-0.5">
+                                    <button
+                                      onClick={() => openLogRowPicker(r.id)}
+                                      className="h-6 px-2 rounded border border-[#7B9BB5] text-[#7B9BB5] hover:bg-[#7B9BB5]/10 text-[10px] font-semibold"
+                                    >Pick a log row</button>
+                                    <button
+                                      onClick={() => updateRow(r.id, { matchSkip: true })}
+                                      className="h-6 px-2 rounded border border-[#E2E8F0] text-[#64748B] hover:bg-[#F8F9FA] text-[10px]"
+                                    >Skip this file</button>
+                                  </div>
+                                ) : (
+                                  <p className="text-[10px] text-[#475569] mt-0.5">
+                                    Routed to log row {r.pickedTargetRowId.slice(0,8)}…
+                                    <button onClick={() => updateRow(r.id, { pickedTargetRowId: null })} className="ml-2 underline text-[#7B9BB5]">change</button>
+                                  </p>
+                                )}
+                              </div>
+                            )}
+                            {r.status === "ready" && r.matchSkip && (
+                              <p className="text-[10px] text-[#64748B] mt-1 italic">
+                                Skipped — won't commit.
+                                <button onClick={() => updateRow(r.id, { matchSkip: false })} className="ml-2 underline text-[#7B9BB5] not-italic">undo</button>
+                              </p>
+                            )}
+                            {r.status === "ready" && r.match?.kind === "error" && (
+                              <p className="text-[10px] text-red-700 mt-1">
+                                Match failed: {r.match.message}
+                                <button onClick={() => matchRow(r.id)} className="ml-2 underline text-[#7B9BB5]">retry</button>
+                              </p>
+                            )}
                           </div>
                         </div>
                       </td>
 
-                      {/* Spec section — editable */}
+                      {/* Spec section — editable. Edits trigger re-match. */}
                       <td className="px-3 py-2 align-top">
                         <input
                           type="text"
                           value={r.section}
-                          onChange={e => updateRow(r.id, { section: e.target.value })}
+                          onChange={e => { updateRow(r.id, { section: e.target.value, pickedTargetRowId: null }); scheduleRematch(r.id) }}
                           placeholder={r.status === "ready" ? "XX YY ZZ" : "…"}
                           disabled={r.status !== "ready"}
                           className={`w-full h-7 px-2 rounded border text-[12px] tabular-nums ${
@@ -433,11 +734,11 @@ export default function BulkImportModal({
                         )}
                       </td>
 
-                      {/* Submittal type — fixed-vocab dropdown */}
+                      {/* Submittal type — fixed-vocab dropdown. Edits trigger re-match. */}
                       <td className="px-3 py-2 align-top">
                         <select
                           value={r.type}
-                          onChange={e => updateRow(r.id, { type: e.target.value as SubmittalType | "" })}
+                          onChange={e => { updateRow(r.id, { type: e.target.value as SubmittalType | "", pickedTargetRowId: null }); scheduleRematch(r.id) }}
                           disabled={r.status !== "ready"}
                           className={`w-full h-7 px-1.5 rounded border text-[12px] ${
                             flagged && r.analysis?.typeFlag
@@ -574,7 +875,8 @@ export default function BulkImportModal({
           )}
         </div>
 
-        {/* Footer — Stage 1 has NO commit action. Just totals + Close. */}
+        {/* Footer — Stage 2a commit. Disabled until every row is either
+            ready (resolved match + section + type + date) or skipped. */}
         <div className="border-t border-[#E2E8F0] px-5 py-3 flex items-center justify-between gap-3">
           <div className="text-[11px] text-[#64748B] flex flex-wrap items-center gap-x-3 gap-y-1">
             {totals.total > 0 ? (
@@ -583,42 +885,112 @@ export default function BulkImportModal({
                 {totals.inFlight > 0 && (
                   <span className="flex items-center gap-1"><Spinner className="h-3 w-3" /> {totals.inFlight} processing</span>
                 )}
-                {totals.ready > 0 && <span>{totals.ready} ready</span>}
-                {totals.errored > 0 && <span className="text-red-600">{totals.errored} failed</span>}
-                {totals.flagged > 0 && (
+                {totals.commitReady > 0 && <span className="text-emerald-700 font-semibold">{totals.commitReady} ready to commit</span>}
+                {totals.commitBlocked > 0 && (
                   <span className="flex items-center gap-1 text-amber-700">
-                    <FlagIcon className="h-3 w-3" /> {totals.flagged} need review
+                    <FlagIcon className="h-3 w-3" /> {totals.commitBlocked} need attention
                   </span>
                 )}
-                {(totals.missingDate + totals.missingSection + totals.missingType) > 0 && (
-                  <span className="text-amber-700">
-                    Missing: {[
-                      totals.missingDate > 0 ? `${totals.missingDate} date${totals.missingDate === 1 ? "" : "s"}` : null,
-                      totals.missingSection > 0 ? `${totals.missingSection} section${totals.missingSection === 1 ? "" : "s"}` : null,
-                      totals.missingType > 0 ? `${totals.missingType} type${totals.missingType === 1 ? "" : "s"}` : null,
-                    ].filter(Boolean).join(" · ")}
-                  </span>
-                )}
+                {totals.commitDone > 0 && <span className="text-emerald-700">{totals.commitDone} committed</span>}
+                {totals.commitSkip > 0 && <span className="text-[#64748B]">{totals.commitSkip} skipped</span>}
+                {totals.errored > 0 && <span className="text-red-600">{totals.errored} failed</span>}
               </>
             ) : (
               <span>Drop PDFs to start.</span>
             )}
+            {commitSummary && (
+              <span className={commitSummary.err === 0 ? "text-emerald-700 font-semibold" : "text-amber-700"}>
+                Last commit: {commitSummary.ok} ok{commitSummary.err > 0 ? ` · ${commitSummary.err} failed` : ""}
+              </span>
+            )}
           </div>
           <div className="flex items-center gap-2">
-            <span
-              title="Stage 2 (commit to log + library) ships separately for review."
-              className="text-[11px] text-[#64748B] italic">
-              Commit step coming after Stage 1 review
-            </span>
             <button
               onClick={onClose}
-              className="h-8 px-4 rounded-md bg-[#7B9BB5] text-white text-[12px] font-semibold hover:bg-[#6A8AA4] transition-colors"
+              className="h-8 px-3 rounded-md border border-[#E2E8F0] text-[#0F172A] hover:bg-[#F8F9FA] text-[12px]"
             >
               Close
+            </button>
+            <button
+              onClick={doCommit}
+              disabled={committing || totals.commitReady === 0 || totals.commitBlocked > 0}
+              title={
+                totals.commitBlocked > 0 ? `${totals.commitBlocked} row${totals.commitBlocked === 1 ? "" : "s"} need attention before commit` :
+                totals.commitReady === 0 ? "Nothing ready to commit" :
+                `Commit ${totals.commitReady} row${totals.commitReady === 1 ? "" : "s"} to the log`
+              }
+              className="h-8 px-4 rounded-md bg-[#7B9BB5] text-white text-[12px] font-semibold hover:bg-[#6A8AA4] transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+            >
+              {committing && <Spinner className="h-3 w-3" />}
+              Commit {totals.commitReady > 0 ? totals.commitReady : ""} to log
             </button>
           </div>
         </div>
       </div>
+
+      {/* No-match fallback log-row picker — overlay. */}
+      {pickerForRowId && (
+        <div className="fixed inset-0 bg-black/50 z-[60] flex items-center justify-center" onClick={e => { if (e.target === e.currentTarget) closeLogRowPicker() }}>
+          <div className="bg-white rounded-lg border border-[#E2E8F0] shadow-2xl w-full sm:w-[min(90vw,720px)] max-h-[80vh] flex flex-col">
+            <div className="px-4 py-3 border-b border-[#E2E8F0] flex items-center justify-between">
+              <h3 className="text-[14px] font-bold text-[#0F172A]">Pick a log row to attach to</h3>
+              <button onClick={closeLogRowPicker} className="text-[#64748B] hover:text-[#0F172A]" aria-label="Close">
+                <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+              </button>
+            </div>
+            <div className="px-4 py-3 border-b border-[#E2E8F0]">
+              <input
+                type="text"
+                value={pickerQuery}
+                onChange={e => setPickerQuery(e.target.value)}
+                placeholder="Filter by section, type, or material name…"
+                className="w-full h-8 px-3 rounded border border-[#E2E8F0] text-[12px]"
+                autoFocus
+              />
+            </div>
+            <div className="flex-1 overflow-auto">
+              {logRowsLoading && <p className="px-4 py-3 text-[12px] text-[#64748B]">Loading log rows…</p>}
+              {logRowsError && <p className="px-4 py-3 text-[12px] text-red-700">{logRowsError}</p>}
+              {logRows && logRows.length === 0 && !logRowsLoading && (
+                <p className="px-4 py-3 text-[12px] text-[#64748B]">No spec-built log rows available in this project. (Either none exist or all already have an attached PDF.)</p>
+              )}
+              {logRows && logRows.length > 0 && (() => {
+                const q = pickerQuery.trim().toLowerCase()
+                const filtered = q
+                  ? logRows.filter(lr =>
+                      (lr.csi_section ?? "").toLowerCase().includes(q) ||
+                      (lr.submittal_type ?? "").toLowerCase().includes(q) ||
+                      (lr.material_name ?? "").toLowerCase().includes(q),
+                    )
+                  : logRows
+                return (
+                  <ul className="divide-y divide-[#E2E8F0]">
+                    {filtered.slice(0, 100).map(lr => (
+                      <li key={lr.id}>
+                        <button
+                          onClick={() => {
+                            updateRow(pickerForRowId, { pickedTargetRowId: lr.id })
+                            closeLogRowPicker()
+                          }}
+                          className="w-full text-left px-4 py-2 hover:bg-[#F8F9FA] text-[12px]"
+                        >
+                          <span className="font-semibold tabular-nums text-[#0F172A]">{lr.csi_section ?? "?"}</span>
+                          <span className="text-[#64748B] ml-2">{lr.submittal_type ?? "?"}</span>
+                          <span className="text-[#0F172A] ml-2">{lr.material_name ?? "(no name)"}</span>
+                          <span className="text-[10px] text-[#64748B] ml-2">seq {lr.submittal_seq ?? "?"}</span>
+                        </button>
+                      </li>
+                    ))}
+                    {filtered.length > 100 && (
+                      <li className="px-4 py-2 text-[10px] text-[#64748B] italic">…{filtered.length - 100} more — refine the filter to narrow.</li>
+                    )}
+                  </ul>
+                )
+              })()}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
