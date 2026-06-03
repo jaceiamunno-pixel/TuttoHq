@@ -232,6 +232,48 @@ export async function POST(req: NextRequest) {
       continue
     }
 
+    // Staging auto-purge — closes the historical ~400 MB leak. Now that
+    // the attachment is committed, the staging copy is no longer
+    // referenced (submittal_attachments.storage_path holds the uploads
+    // path, not the staging path). This is an irreversible storage
+    // delete, so we belt-and-suspender the check before firing:
+    //   1) The newly-committed attachment's storage_path equals
+    //      uploadsPath (the row's promoted location) and does NOT equal
+    //      the staging path. Proves the RPC promoted the bytes.
+    //   2) The staging path lives under the caller's company staging
+    //      dir (already verified above when constructing uploadsPath).
+    //   3) Active-reference check: SELECT submittal_attachments where
+    //      storage_path = staging_path. If ANY row still references it,
+    //      DO NOT DELETE. Logs a warning and the row stays. This catches
+    //      the (theoretical) case where a parallel commit somehow
+    //      pointed an attachment at the same staging object — we'd
+    //      rather leak the file than orphan a live reference.
+    // Best-effort delete; failure does not fail the commit (the file is
+    // already in uploads/ and any TTL sweep will catch the orphan later).
+    const att = attachment as { storage_path?: string }
+    if (
+      att.storage_path === uploadsPath &&
+      att.storage_path !== r.staging_path
+    ) {
+      const { data: liveRefs, error: refErr } = await supabase
+        .from("submittal_attachments")
+        .select("id")
+        .eq("storage_path", r.staging_path)
+        .limit(1)
+      if (refErr) {
+        console.warn("[bulk-import-commit] staging purge: live-ref check failed for", r.staging_path, refErr.message)
+      } else if (liveRefs && liveRefs.length > 0) {
+        console.warn("[bulk-import-commit] staging purge SKIPPED — live attachment still references", r.staging_path)
+      } else {
+        const { error: purgeErr } = await supabase.storage
+          .from("submittals")
+          .remove([r.staging_path])
+        if (purgeErr) {
+          console.warn("[bulk-import-commit] staging purge failed for", r.staging_path, purgeErr.message)
+        }
+      }
+    }
+
     results.push({
       client_row_id: cid,
       status: "ok",

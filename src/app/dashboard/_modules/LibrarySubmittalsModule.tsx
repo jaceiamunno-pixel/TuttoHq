@@ -1849,7 +1849,20 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                     <td className="px-3 py-1.5 whitespace-nowrap">
                       <div className="flex items-center gap-0.5">
                         {s.storage_path && (
-                          <button onClick={() => window.open(`/api/download/${s.id}`, "_blank")} className="text-[11px] text-[#64748B] hover:text-[#0F172A] px-1.5 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors">Open</button>
+                          <>
+                            <button
+                              onClick={() => window.open(`/api/download/${s.id}?stripped=1`, "_blank")}
+                              title="Library view — front matter (Waters cover + architect-stamp page + routing/blanks) auto-stripped. Original is one click away."
+                              className="text-[11px] text-[#64748B] hover:text-[#0F172A] px-1.5 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors">
+                              Open
+                            </button>
+                            <button
+                              onClick={() => window.open(`/api/download/${s.id}`, "_blank")}
+                              title="Original full PDF — Waters coversheet + architect stamp + all content, exactly as uploaded. This is the record-of-truth file."
+                              className="text-[10px] text-[#94A3B8] hover:text-[#475569] px-1 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors">
+                              Original (w/ stamp)
+                            </button>
+                          </>
                         )}
                         <button onClick={() => openEditModal(s)} className="text-[11px] text-[#64748B] hover:text-[#0F172A] px-1.5 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors">Edit</button>
                         <button onClick={() => s.project_id ? openEditCoverSheet(s) : openTransmittal(s)} className="text-[11px] text-[#7B9BB5] px-1.5 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors">Cover</button>
