@@ -24,7 +24,7 @@
 // commits nothing; Stage 2 (separate change) will consume these outputs.
 
 import { divisionNameFor } from "./spec-parser"
-import type { CoversheetFieldsConfidence, FieldConfidence, RawFormFields } from "./bulk-import-form"
+import type { CoversheetFieldsConfidence, FieldConfidence, RawFormFields, ApprovalStampInfo } from "./bulk-import-form"
 
 // ─── Fixed vocabulary ───────────────────────────────────────────────────────
 
@@ -537,8 +537,21 @@ export interface BulkImportAnalysis {
   cover: CoverSplitResult
   /** Other coversheet-form values recovered for review-table pre-fill. */
   coverFields: CoversheetFields
-  /** Normalized YYYY-MM-DD pre-fill for the approval-date input. */
+  /** YYYY-MM-DD pre-fill for the approval-date input. Sourced ONLY from
+   *  the PDF /Stamp annotation's /CreationDate (the architect's signing
+   *  action). NEVER falls back to the GC's submission date (Text4) — when
+   *  no stamp is found, this is null and the row flags for manual entry.
+   *  See approvalStamp below for the metadata. */
   suggestedApprovalDate: string | null
+  /** YYYY-MM-DD pre-fill for the submission-date input — the GC's
+   *  Text4 "Date Submitted" value, kept as a separate field so it
+   *  never gets confused with the approval date. */
+  suggestedSubmittedDate: string | null
+  /** Full architect-stamp metadata when a /Stamp annotation was found
+   *  (date / author / page / stamp name). Null when no stamp on the
+   *  scanned front-matter pages. Stage 2b's cover-strip uses
+   *  `approvalStamp.page` as the strip-through anchor. */
+  approvalStamp: ApprovalStampInfo | null
   /** Pre-fill for the submittal-no input. */
   suggestedSubmittalNo: string | null
   /** Per-field confidence — "label" = real labeled field hit OR known
@@ -833,6 +846,25 @@ export function extractCsiSectionFromCoversheet(
  *   (unstripped) PDF for downloads / audit; only the Library-facing
  *   asset is the stripped version.
  *
+ *   (c) ACTUAL HEURISTIC (lands with the approval-date fix): the
+ *   architect's stamp is a PDF /Stamp annotation. The analyze step
+ *   already locates it (page index in `analysis.approvalStamp.page`).
+ *   Stage 2b's strip endpoint = LAST page through and including the
+ *   page that carries the /Stamp annotation, PLUS any immediately-
+ *   following pages with < 10 chars of extractable text (the
+ *   "intentionally-blank" routing separator page Waters includes).
+ *   This replaces the broken page-text fingerprint default. Anchor
+ *   logic shared with extractApprovalStampDate so a single scan
+ *   covers both date extraction AND strip-end detection.
+ *
+ *   DISPOSITION extraction (Approved vs Approved as Noted vs Revise and
+ *   Resubmit) is DEFERRED — it lives in the stamp's nested /BBA form
+ *   XObjects (checkbox states drawn as vector overlays). Recoverable
+ *   via render+OCR or by mapping the present /BBA child names against a
+ *   stamp-template dictionary, but not blocking the date fix. The
+ *   approval DATE alone (from /CreationDate) is sufficient for the
+ *   official-record column; disposition is a follow-up item.
+ *
  * STAGE 2 — STAGING AUTO-PURGE (observed gap as of 2026-06-03):
  *   `bulk-import-staging/` accumulates orphans because Stage 1 has no
  *   commit step — every analyzed PDF lands there and stays. By the end
@@ -878,6 +910,7 @@ export function analyzePdf(
     confidence: EMPTY_COVER_FIELDS_CONFIDENCE,
     template: "unknown",
   },
+  approvalStamp: ApprovalStampInfo | null = null,
 ): BulkImportAnalysis {
   const filenameSection = parseSectionFromFilename(filename)
   const page1Text = pageTexts[0] ?? ""
@@ -932,12 +965,17 @@ export function analyzePdf(
   const suggestedType = typeGuess.type
   const typeFlag = !typeGuess.confident
 
-  // Pre-fill review-row nice-to-haves from recovery. User confirms; not
-  // committed automatically. Submittal# + date come from the recovery
-  // layer (template-aware OR value-shape positional). Section is NOT
-  // sourced from recovery — see csi above.
-  const suggestedApprovalDate = normalizeApprovalDate(recovery.fields.dateSubmitted)
-  const suggestedSubmittalNo  = recovery.fields.submittalNo?.trim() || null
+  // Pre-fill review-row nice-to-haves from recovery + stamp annotation.
+  // Two separate dates:
+  //   suggestedApprovalDate — architect's stamp /CreationDate (THE approval).
+  //     NEVER falls back to Text4. If no stamp present, this is null and
+  //     the row flags for manual entry.
+  //   suggestedSubmittedDate — Text4 ("Date Submitted" on the Waters
+  //     coversheet). This IS the GC's submission date, surfaced
+  //     separately so it never gets confused with approval.
+  const suggestedApprovalDate  = approvalStamp?.date ?? null
+  const suggestedSubmittedDate = normalizeApprovalDate(recovery.fields.dateSubmitted)
+  const suggestedSubmittalNo   = recovery.fields.submittalNo?.trim() || null
 
   const additionalSections = csi.siblings
 
@@ -966,26 +1004,27 @@ export function analyzePdf(
   }
   if (typeFlag) notes.push("Couldn't infer the submittal type — pick one from the list.")
   if (cover.uncertain) notes.push(cover.reason)
-  if (recovery.fields.dateSubmitted && !suggestedApprovalDate) {
-    notes.push(`Coversheet date "${recovery.fields.dateSubmitted}" wasn't in a format we could parse — confirm in the date field.`)
+  if (recovery.fields.dateSubmitted && !suggestedSubmittedDate) {
+    notes.push(`GC submission date "${recovery.fields.dateSubmitted}" wasn't in a format we could parse — confirm in the field.`)
+  }
+  // No stamp annotation found = no approval date recoverable from the PDF.
+  // Per the design: NEVER fall back to Text4 (submission date). Flag and
+  // let the user enter the architect's approval date manually.
+  if (!suggestedApprovalDate) {
+    notes.push("No architect stamp found on the cover pages — enter the approval date manually.")
   }
 
-  // Surface a "positional guess" note when the date or submittal # came from
+  // Surface a "positional guess" note when the submittal # came from
   // value-shape / widget-position inference (THP's generic Text1..Text10
-  // names hit this path on every file). User sees a subtle styling on the
-  // input AND a one-line nudge. Skipped when the value originated from a
-  // real labeled field OR a known template's field map.
+  // names hit this path on every file). User sees a subtle styling on
+  // the input AND a one-line nudge.
   if (
     suggestedSubmittalNo &&
     recovery.confidence.submittalNo === "positional"
   ) notes.push(`Submittal # was guessed positionally — verify.`)
-  if (
-    suggestedApprovalDate &&
-    recovery.confidence.dateSubmitted === "positional"
-  ) notes.push(`Approval date was guessed positionally — verify.`)
 
   const reportedApprovalDateConfidence: FieldConfidence = suggestedApprovalDate
-    ? recovery.confidence.dateSubmitted
+    ? "label"  // stamp date is always authoritative — never positional
     : "none"
   const reportedSubmittalNoConfidence: FieldConfidence = suggestedSubmittalNo
     ? recovery.confidence.submittalNo
@@ -1020,6 +1059,8 @@ export function analyzePdf(
     cover,
     coverFields: recovery.fields,
     suggestedApprovalDate,
+    suggestedSubmittedDate,
+    approvalStamp,
     suggestedSubmittalNo,
     coverFieldsConfidence: {
       ...recovery.confidence,

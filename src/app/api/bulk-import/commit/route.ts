@@ -41,8 +41,14 @@ interface RowIn {
   /** Clean original filename (no UUID prefix). */
   file_name: string
   file_size: number
-  /** YYYY-MM-DD architect approval date (review_status confirmation). */
+  /** YYYY-MM-DD architect approval date (from the PDF /Stamp annotation
+   *  /CreationDate). Empty/null when no stamp was found — the operator
+   *  must enter it before commit. NEVER the GC's submission date. */
   approval_date: string | null
+  /** YYYY-MM-DD GC submission date (Waters Text4 "Date Submitted").
+   *  Stored separately from approval_date so the two are never confused.
+   *  Propagates via the trigger to submittals.sent_to_ae_date. */
+  submitted_date: string | null
   /** GC-side submittal number (Waters Text5, e.g. "080"). Stored in
    *  submittal_number for visibility; NOT a join key. */
   submittal_number: string | null
@@ -213,6 +219,7 @@ export async function POST(req: NextRequest) {
       p_review_status:    r.review_status || null,
       p_submittal_number: r.submittal_number?.trim() || null,
       p_source:           "bulk_import",
+      p_submitted_date:   r.submitted_date || null,
     }).single()
 
     if (rpcErr || !attachment) {

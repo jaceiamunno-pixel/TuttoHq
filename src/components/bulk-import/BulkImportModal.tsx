@@ -32,9 +32,17 @@ interface Row {
   section: string
   type: SubmittalType | ""
   coverSplit: number
-  /** yyyy-mm-dd. Pre-filled from the coversheet "Date Submitted" AcroForm
-   *  field when analyze can parse it; user confirms in the date input. */
+  /** yyyy-mm-dd. Pre-filled from the architect's PDF /Stamp annotation
+   *  /CreationDate (the architect's signing action). Empty when no
+   *  stamp annotation is present on the cover pages — the row flags
+   *  for manual entry rather than falling back to the submission date. */
   approvalDate: string
+  /** yyyy-mm-dd. Pre-filled from Waters' Text4 ("Date Submitted" on
+   *  the coversheet) — the GC's submission date, kept distinct from
+   *  approvalDate. Surfaced as a small subtitle under the approval
+   *  input + persisted to submittal_attachments.submitted_date on
+   *  commit (trigger propagates to submittals.sent_to_ae_date). */
+  submittedDate: string
   /** Pre-filled from the coversheet "Submittal No." AcroForm field when
    *  present; user confirms or overrides. */
   submittalNo: string
@@ -67,6 +75,7 @@ function newRow(file: File): Row {
     type: "",
     coverSplit: 0,
     approvalDate: "",
+    submittedDate: "",
     submittalNo: "",
     reviewStatus: "Approved",
     pickedTargetRowId: null,
@@ -344,9 +353,12 @@ export default function BulkImportModal({
         section: seedSection,
         type: seedType,
         coverSplit: analysis.cover.coverSplit,
-        // Pre-fill from the recovered AcroForm widget values. User confirms
-        // in the inputs below — committing is gated on resolution.
-        approvalDate: analysis.suggestedApprovalDate ?? "",
+        // approvalDate = architect stamp /CreationDate (NEVER Text4).
+        // Empty when no stamp found — row flags amber for manual entry.
+        approvalDate:  analysis.suggestedApprovalDate ?? "",
+        // submittedDate = Text4 (GC's submission). Separate so it never
+        // gets confused with the architect's approval date.
+        submittedDate: analysis.suggestedSubmittedDate ?? "",
         submittalNo: finalSubmittalNo,
       })
       // Chain into match. Pass the freshly-analyzed values directly so we
@@ -467,7 +479,8 @@ export default function BulkImportModal({
           staging_path: r.storagePath,
           file_name: r.file.name,
           file_size: r.file.size,
-          approval_date: r.approvalDate || null,
+          approval_date:  r.approvalDate  || null,
+          submitted_date: r.submittedDate || null,
           submittal_number: r.submittalNo || null,
           revision_number: null,
           review_status: r.reviewStatus,
@@ -862,34 +875,42 @@ export default function BulkImportModal({
                         </div>
                       </td>
 
-                      {/* Approval date — pre-filled from the latest date in
-                          the coversheet form. Missing → amber solid (must
-                          fill in). Present but positionally guessed → amber
-                          dashed (verify; could be revision/submission date
-                          instead of the architect's approval date). */}
+                      {/* Approval date — architect stamp /CreationDate.
+                          Empty (amber) when no stamp found on the PDF —
+                          NEVER falls back to the GC's submission date.
+                          The Text4 "Date Submitted" surfaces as a small
+                          subtitle below the input so the user can see
+                          when the GC sent the package without confusing
+                          it with the architect's approval. */}
                       <td className="px-3 py-2 align-top">
                         {(() => {
                           const missing = r.status === "ready" && !r.approvalDate
-                          const guessed = r.status === "ready"
-                            && !!r.approvalDate
-                            && r.analysis?.coverFieldsConfidence.dateSubmitted === "positional"
+                          const stamp = r.analysis?.approvalStamp ?? null
                           return <>
                             <input
                               type="date"
                               value={r.approvalDate}
                               onChange={e => updateRow(r.id, { approvalDate: e.target.value })}
                               disabled={r.status !== "ready"}
-                              title={guessed ? "Guessed from the coversheet form by widget position — verify before commit" : undefined}
+                              title={stamp ? `From architect stamp /CreationDate — ${stamp.author ?? "unknown author"}, page ${stamp.page}` : undefined}
                               className={`w-full h-7 px-2 rounded text-[12px] disabled:opacity-50 ${
                                 missing
                                   ? "border border-amber-400 bg-amber-50"
-                                  : guessed
-                                    ? "border border-dashed border-amber-400 bg-amber-50 italic"
-                                    : "border border-[#E2E8F0]"
+                                  : "border border-[#E2E8F0]"
                               }`}
                             />
-                            {guessed && (
-                              <p className="text-[9px] text-amber-700 mt-0.5 leading-tight">guess · verify</p>
+                            {r.submittedDate && (
+                              <p className="text-[9px] text-[#94A3B8] mt-0.5 leading-tight" title="GC's submission date (Text4) — not the architect approval">
+                                GC submitted {r.submittedDate}
+                              </p>
+                            )}
+                            {missing && (
+                              <p className="text-[9px] text-amber-700 mt-0.5 leading-tight">no stamp · enter manually</p>
+                            )}
+                            {stamp && (
+                              <p className="text-[9px] text-emerald-700 mt-0.5 leading-tight" title={stamp.stampName ?? undefined}>
+                                stamp: {stamp.author ?? "unknown"}
+                              </p>
                             )}
                           </>
                         })()}

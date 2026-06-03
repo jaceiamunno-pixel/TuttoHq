@@ -18,8 +18,98 @@
 // Stage 2 (commit/strip) MUST call this BEFORE any coversheet stripping —
 // once the pages are gone, the form widgets are gone too.
 
-import { PDFDocument, PDFTextField, PDFCheckBox, PDFDropdown, PDFOptionList } from "pdf-lib"
+import { PDFDocument, PDFTextField, PDFCheckBox, PDFDropdown, PDFOptionList, PDFDict, PDFArray } from "pdf-lib"
 import type { CoversheetFields, CoversheetTemplate } from "./bulk-import-detect"
+
+/** Architect-stamp information recovered from a PDF /Stamp annotation. */
+export interface ApprovalStampInfo {
+  /** YYYY-MM-DD — the PDF Stamp annotation's /CreationDate (when the
+   *  architect applied the stamp). This IS the approval date. */
+  date: string
+  /** PDF /T field — the annotator's name. e.g. "Fernanda Alves". Null
+   *  when the annotation didn't record it. */
+  author: string | null
+  /** 1-based page where the stamp annotation lives. Used by Stage 2b
+   *  to anchor the cover-strip endpoint (strip through this page). */
+  page: number
+  /** Stamp template name (PDF /Name field). e.g. "Designer's Submittal
+   *  Review", "Submittal Status". */
+  stampName: string | null
+}
+
+/** Parse a PDF date string ("D:YYYYMMDDHHmmSS+OH'mm'") down to YYYY-MM-DD.
+ *  Returns null when the input doesn't match the expected shape. */
+function parsePdfDate(raw: string | null | undefined): string | null {
+  if (!raw) return null
+  const s = String(raw).replace(/^\(?D:|\)$/g, "").replace(/['"]/g, "")
+  const m = s.match(/^(\d{4})(\d{2})(\d{2})/)
+  return m ? `${m[1]}-${m[2]}-${m[3]}` : null
+}
+
+function stringFromPdfText(raw: string | null | undefined): string | null {
+  if (!raw) return null
+  // pdf-lib stringifies as "(text)" or "<hex>" — strip the parens / brackets.
+  let s = String(raw).trim()
+  if (s.startsWith("(") && s.endsWith(")")) s = s.slice(1, -1)
+  if (s.startsWith("<") && s.endsWith(">")) s = s.slice(1, -1)
+  return s || null
+}
+
+/** Scan the first `maxPages` pages of a PDF for /Subtype = /Stamp
+ *  annotations and return the EARLIEST stamp's metadata. The Stamp
+ *  annotation's /CreationDate is set automatically by the PDF tool when
+ *  the architect places the stamp — it IS the approval date.
+ *
+ *  Never throws — returns null when there is no AcroForm OR no stamp
+ *  annotation is found OR pdf-lib fails to parse the file.
+ *
+ *  Reusable: Stage 2b's cover-split will use the same scan to anchor
+ *  the strip endpoint (last front-matter page = page with the Stamp). */
+export async function extractApprovalStampDate(
+  buffer: Buffer,
+  maxPages = 6,
+): Promise<ApprovalStampInfo | null> {
+  try {
+    const doc = await PDFDocument.load(buffer, {
+      ignoreEncryption: true,
+      throwOnInvalidObject: false,
+      updateMetadata: false,
+    })
+    const pages = doc.getPages()
+    let best: ApprovalStampInfo | null = null
+    const limit = Math.min(pages.length, maxPages)
+
+    for (let p = 0; p < limit; p++) {
+      const annotsRef = pages[p].node.get(doc.context.obj("Annots"))
+      if (!annotsRef) continue
+      const annots = doc.context.lookup(annotsRef)
+      if (!(annots instanceof PDFArray)) continue
+
+      for (let i = 0; i < annots.size(); i++) {
+        const annot = doc.context.lookup(annots.get(i))
+        if (!(annot instanceof PDFDict)) continue
+        const subtype = annot.get(doc.context.obj("Subtype"))?.toString?.() ?? ""
+        if (subtype !== "/Stamp") continue
+
+        const created = parsePdfDate(annot.get(doc.context.obj("CreationDate"))?.toString?.())
+        if (!created) continue
+
+        const info: ApprovalStampInfo = {
+          date: created,
+          author: stringFromPdfText(annot.get(doc.context.obj("T"))?.toString?.()),
+          page: p + 1,
+          stampName: stringFromPdfText(annot.get(doc.context.obj("Name"))?.toString?.()),
+        }
+        // Earliest stamp wins — submittal could have multiple disposition
+        // overlays (re-stamped) but the first one is the original action.
+        if (best === null || info.date < best.date) best = info
+      }
+    }
+    return best
+  } catch {
+    return null
+  }
+}
 
 /** A map of raw form-field name → raw value, normalized to strings. Empty
  *  when the PDF has no AcroForm or extraction failed for any reason. */

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import { extractPdfPages } from "@/lib/spec-parser"
 import { analyzePdf } from "@/lib/bulk-import-detect"
-import { extractRawFormFields, recoverCoversheetFields } from "@/lib/bulk-import-form"
+import { extractRawFormFields, recoverCoversheetFields, extractApprovalStampDate } from "@/lib/bulk-import-form"
 
 // Bulk Import — Stage 1 analyze. Read-only by design: this route NEVER
 // writes to the submittals table, NEVER mutates the staged PDF, and never
@@ -84,11 +84,21 @@ export async function POST(req: NextRequest) {
   const rawFormFields = await extractRawFormFields(buffer)
   const recovery = recoverCoversheetFields(rawFormFields)
 
+  // ── Architect-stamp date (THE approval date) ────────────────────────────
+  // Waters coversheets have one date field (Text4 = GC's "Date Submitted")
+  // and an architect stamp on the disposition-stamp page. The stamp is a
+  // PDF /Stamp annotation whose /CreationDate is set when the architect
+  // applies it — that IS the approval date. extractApprovalStampDate scans
+  // the first 6 pages for /Stamp annotations and returns the earliest one.
+  // Returns null on no stamp; the analyzer flags approval-empty rather
+  // than falling back to Text4 (which is the SUBMISSION date, not approval).
+  const approvalStamp = await extractApprovalStampDate(buffer)
+
   // ── Pure detection — no I/O from here on. ───────────────────────────────
   // Section detection is template-agnostic: analyzePdf runs the generic CSI
   // extractor against rawFormFields + coversheet-page text. The recovery
   // struct supplies nice-to-haves only (submitter, title, submittal#, date).
-  const analysis = analyzePdf(fileName, pages, rawFormFields, recovery)
+  const analysis = analyzePdf(fileName, pages, rawFormFields, recovery, approvalStamp)
 
   return NextResponse.json({
     storage_path: storagePath,
