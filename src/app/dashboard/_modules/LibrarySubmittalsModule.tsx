@@ -179,6 +179,11 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
   // Revision history (Stage 2a-v2): map of submittal_id → attachment count,
   // populated alongside the log fetch. Drives the "Rev R2 · 3 of 3" badge.
   const [attachmentCounts, setAttachmentCounts] = useState<Record<string, number>>({})
+  // Spec sections where the parser couldn't extract a clean title and fell
+  // back to the MasterFormat division name. Set of spec_section_id strings.
+  // Submittal rows pointing at one of these show a small "title needs review"
+  // badge so the user knows to set the title manually.
+  const [titleReviewSet, setTitleReviewSet] = useState<Set<string>>(new Set())
   // Slide-out state: which row's revision history is open + loaded attachments.
   const [revHistorySub, setRevHistorySub]       = useState<SubmittalRecord | null>(null)
   const [revHistoryItems, setRevHistoryItems]   = useState<Array<{
@@ -526,6 +531,13 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
       .then(r => r.json())
       .then(d => { if (seq === logReqSeq.current) setAttachmentCounts(d.counts ?? {}) })
       .catch(() => { if (seq === logReqSeq.current) setAttachmentCounts({}) })
+    // Parallel: pull the set of spec_section_ids where the parser used a
+    // MasterFormat fallback. Rows pointing at one of these get a
+    // "title needs review" badge.
+    fetch(`/api/projects/${encodeURIComponent(pid)}/sections-needing-review`)
+      .then(r => r.json())
+      .then(d => { if (seq === logReqSeq.current) setTitleReviewSet(new Set(d.spec_section_ids ?? [])) })
+      .catch(() => { if (seq === logReqSeq.current) setTitleReviewSet(new Set()) })
   }
 
   // Open the revision-history slide-out for a row. Lazily fetches the
@@ -1768,6 +1780,18 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                         {s.sender_email && (
                           <span title={`Received from ${s.sender_email}`} className="flex-shrink-0 text-[#94A3B8]">
                             <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" /></svg>
+                          </span>
+                        )}
+                        {/* Title-needs-review badge: shown when this
+                            submittal's spec_section had no clean title
+                            extractable from the spec book (parser used
+                            the MasterFormat division name as last resort).
+                            User clicks the title to edit it manually. */}
+                        {s.spec_section_id && titleReviewSet.has(s.spec_section_id) && (
+                          <span
+                            title="The parser couldn't extract a clean title for this spec section from the spec book. Click the title to set it manually."
+                            className="flex-shrink-0 inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-semibold uppercase tracking-wider bg-amber-100 text-amber-800">
+                            Title needs review
                           </span>
                         )}
                         {/* Revision badge: shown only when this submittal

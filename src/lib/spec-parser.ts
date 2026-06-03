@@ -12,6 +12,16 @@ export interface ParsedSection {
   endPage: number         // 1-based, inclusive
   fullText: string
   submittalsText: string  // concatenated SUBMITTALS-type articles, "" if none
+  /** True when Layer 1 (section-prefix + body-fragment guard) and Layer 2
+   *  (footer-pattern fallback) both failed to find a clean title and the
+   *  MasterFormat division name was used as a last-resort label. The
+   *  spec-book + Library views surface this so the user knows to set the
+   *  title manually for these rare cases. NEVER set true silently — a
+   *  clean Layer 1 / Layer 2 title clears this flag. */
+  needsTitleReview: boolean
+  /** Provenance of the title — useful for diagnostics + the dry-run
+   *  comparison view. */
+  titleSource: "section-prefix" | "bare-same-line" | "lookahead" | "footer-pattern" | "masterformat-fallback"
 }
 
 export interface SpecParseResult {
@@ -87,10 +97,26 @@ export async function extractPdfPages(buffer: Buffer): Promise<string[]> {
 }
 
 // ─── Section detection ───────────────────────────────────────────────────────
+//
+// Title extraction is tiered (Layer 1) so a genuine `SECTION NNNNNN — TITLE`
+// header always beats page-header noise (`NNNNNN - <pgnum>`) that repeats
+// throughout the section's body. Body-fragment titles ("3.2 PREPARATION",
+// "PART 3 - EXECUTION", "1. SSPC-Sp 2.", "B. Fire-Retardant…") are rejected
+// outright — never kept as a title. When Layer 1 fails to find a clean
+// title for a section, parseSpecBook falls back to Layer 2 (footer pattern,
+// the spec-book-page-bottom `\n<TITLE>\nProject No.` shape), and finally
+// to the MasterFormat division name with needsTitleReview=true.
+
+type TitleTier =
+  | "section-prefix"   // line literally contains "SECTION" keyword + clean title (best)
+  | "bare-same-line"   // bare number + clean title on same line
+  | "lookahead"        // bare number + clean title on the next non-blank line
+  | "no-clean-title"   // candidate exists but no clean title — anchor only
 
 interface Candidate {
   specNumber: string
-  specTitle: string
+  specTitle: string     // "" when tier === "no-clean-title"
+  tier: TitleTier
   page: number          // 1-based
   globalOffset: number  // char offset across the whole document
 }
@@ -105,7 +131,172 @@ function cleanTitle(raw: string): string {
     .slice(0, 80)
 }
 
-const HEADER_LINE =
+// ─── Smart Title Case ───────────────────────────────────────────────────────
+//
+// Construction acronyms preserved in caps; minor words lowercased when
+// not first; hyphenated compounds title-cased per-part with minor-word
+// rules; numbers/leading-digit tokens passthrough unchanged.
+
+const CONSTRUCTION_ACRONYMS = new Set([
+  // Mechanical / HVAC
+  "HVAC","AHU","RTU","VAV","CAV","FCU","EPDM","PVC","CPVC","ABS","HDPE","CFM","GPM",
+  "BTU","BTUH","MBH","KW","KVA","KWH","IAQ","MERV","HEPA","DDC","BAS","BMS","VFD",
+  "VRF","DOAS","CRAC","FLA","RLA","MCA","MCB","COP","SEER","EER","DX",
+  // Electrical
+  "NEMA","NEC","UL","AFCI","GFCI","GFI","LED","OLED","EMT","IMC","USB","POE","UPS",
+  "AC","DC","KV","KVAR","RGS","MV","LV","HV","RH","CCT","CRI","IES",
+  // Structural / civil
+  "CMU","FRP","GFRC","GRP","EIFS","PSF","PCF","PSI","OSB","MDF","LVL","PSL","OWSJ",
+  "DI","HDPE","RCP","PCC","HMA","SPT","SF","CY","LF","SY","EA",
+  // Standards / agencies
+  "ASTM","ASME","ANSI","ASHRAE","NFPA","OSHA","USGBC","LEED","EPA","SSPC","AISI",
+  "AISC","ACI","NOMMA","AWS","AWWA","NIST","NAAMM","TIA","EIA",
+  // Misc construction
+  "MEP","FFE","ADA","CCTV","DVR","NVR","ID","OD","SDS","MSDS","DAS","BDA","MCP",
+  "PIR","BIM","COR","CO","ROI","RFP","RFI","NCR","AHJ","SOG","SLA",
+  // Building / envelope
+  "TPO","EPDM","SBS","APP","PVA","BUR","KEE","BIPV","HVLP","DPM",
+  // Comm / IT
+  "RJ45","IP","POE","NVR","DVR","WAP","SSID","VLAN","VPN","NIC","SAN","NAS","SQL",
+  // Misc industry
+  "GC","CM","FF","CW","HW","DDC","BAS","ATS","ARC",
+])
+
+const MINOR_WORDS = new Set([
+  "and","or","but","of","for","the","to","a","an","in","on","at","by","with",
+  "as","is","via","per",
+])
+
+/** Title-case a single word, honoring the acronym list and minor-word
+ *  rules. Leading/trailing punctuation passes through unchanged. */
+function titleCaseWord(word: string, isFirstInTitle: boolean): string {
+  if (!word) return word
+  const m = word.match(/^([^A-Za-z0-9]*)([A-Za-z0-9]+(?:'[A-Za-z]+)?)([^A-Za-z0-9]*)$/)
+  if (!m) return word
+  const [, leading, core, trailing] = m
+
+  // Explicit acronym list (case-insensitive lookup)
+  if (CONSTRUCTION_ACRONYMS.has(core.toUpperCase())) {
+    return leading + core.toUpperCase() + trailing
+  }
+  // Numbers / mixed (e.g. "3M", "0.0190", "0301-0509") pass through
+  if (/^\d/.test(core)) return leading + core + trailing
+  // Minor word: lowercase when not first in the title
+  if (!isFirstInTitle && MINOR_WORDS.has(core.toLowerCase())) {
+    return leading + core.toLowerCase() + trailing
+  }
+  // Default Title Case
+  return leading + core.charAt(0).toUpperCase() + core.slice(1).toLowerCase() + trailing
+}
+
+/** Apply smart Title Case to a complete title.
+ *
+ *  Rules:
+ *    - Preserve construction acronyms in caps (HVAC, EPDM, CMU, …).
+ *    - Lowercase minor words (and, of, for, …) when not the first word
+ *      OR the first word of a hyphenated compound that isn't the first
+ *      word of the overall title.
+ *    - Hyphenated compounds title-case per part, retaining hyphens
+ *      ("Cast-in-Place", "Non-Structural", "Sound-Absorbing").
+ *    - Slash-separated phrases ("Hangers/Supports") title-case per part.
+ *    - Numbers and tokens starting with digits pass through unchanged.
+ *
+ *  When the input contains MIXED case (signal that the spec book already
+ *  hand-cased the title), still apply the rules — this normalizes mixed
+ *  results from quote-strip cases too, and matches the user's request
+ *  for Title Case output across the project.
+ */
+export function smartTitleCase(input: string): string {
+  if (!input) return input
+  // Split into runs of whitespace + words. Capturing group preserves the
+  // whitespace tokens so we can re-join with original spacing.
+  const tokens = input.split(/(\s+)/)
+  let isFirstWord = true
+  return tokens.map(token => {
+    if (/^\s+$/.test(token) || token === "") return token
+    // Hyphenated compound — title-case each piece with minor-word rules.
+    // Only the FIRST piece of the FIRST overall word respects isFirstWord.
+    if (token.includes("-")) {
+      const parts = token.split("-")
+      const titled = parts.map((p, i) =>
+        titleCaseWord(p, isFirstWord && i === 0),
+      )
+      isFirstWord = false
+      return titled.join("-")
+    }
+    // Slash-separated — same treatment as hyphens
+    if (token.includes("/")) {
+      const parts = token.split("/")
+      const titled = parts.map((p, i) =>
+        titleCaseWord(p, isFirstWord && i === 0),
+      )
+      isFirstWord = false
+      return titled.join("/")
+    }
+    const out = titleCaseWord(token, isFirstWord)
+    isFirstWord = false
+    return out
+  }).join("")
+}
+
+/** Strip surrounding quotes (straight + curly), leading punctuation
+ *  (commas, periods, slashes, dashes), and trailing punctuation from a
+ *  title. Cross-references in spec bodies read like
+ *  `Section 079200 "Joint Sealants."` (trailing punct) or
+ *  `Section 071605, "Water Vapor…"` (leading comma+quote slipping into
+ *  the captured title). Without this the parser surfaces titles like
+ *  `', "Title'` or `/ Hardware`. */
+function stripQuotesAndPunctuation(raw: string): string {
+  return raw
+    .replace(/^[\s"“”'',./\-–—]+/, "")    // leading quote/punct/whitespace
+    .replace(/[\s"“”'',.;:]+$/, "")       // trailing same
+    .trim()
+}
+
+/** Body-item / article-heading patterns that masquerade as titles when the
+ *  parser hits a page-header line and looks ahead for the next non-blank
+ *  line. NEVER keep a title matching one of these. */
+const BODY_FRAGMENT_PATTERNS: RegExp[] = [
+  /^PART\s+\d/i,            // "PART 3 - EXECUTION"
+  /^\d+\.\d+(?:\.\d+)?\s/,  // "3.2 PREPARATION", "1.1 SUMMARY"
+  /^\d+\.\s/,               // "1. SSPC-Sp 2.", "10. Acoustical Performance"
+  /^[A-Z]\.\s/,             // "B. Fire-Retardant…", "A. Section Includes"
+]
+
+function isBodyFragment(title: string): boolean {
+  return BODY_FRAGMENT_PATTERNS.some(re => re.test(title))
+}
+
+function letterCount(s: string): number {
+  return s.replace(/[^A-Za-z]/g, "").length
+}
+
+/** Validate + normalize a raw title string. Returns the cleaned title
+ *  when it passes (≥ 3 letters, not a body fragment), else null. */
+function validateTitle(raw: string): string | null {
+  if (!raw) return null
+  const stripped = stripQuotesAndPunctuation(raw)
+  const cleaned = cleanTitle(stripped)
+  if (letterCount(cleaned) < 3) return null
+  if (isBodyFragment(cleaned)) return null
+  return cleaned
+}
+
+// Strict tier-0 header: line LITERALLY starts with `SECTION`, has the
+// section number, then a dash/colon separator, then a non-empty title on
+// the SAME LINE. The strict separator (not comma, not quote) rejects
+// cross-references in body prose like:
+//   `Section 071605, "Water Vapor Emission Control System - Station Building"`
+//   `as specified in Section 071605 "Title"`
+// while still matching the real header
+//   `SECTION 071605 – WATER VAPOR EMISSION CONTROL SYSTEM - STATION BUILDING`.
+const STRICT_HEADER_LINE =
+  /^\s*SECTION\s+(\d{2})\s?(\d{2})\s?(\d{2})(?:\.\d{1,2})?\s*[-–—:]\s*(.+)$/i
+
+// Looser fallback: bare number (with or without SECTION prefix) — used for
+// tiers 1/2 (bare-same-line + lookahead). The separator is optional here so
+// we catch books that don't use a separator after the number.
+const SAME_LINE_HEADER =
   /^\s*(?:SECTION\s+)?(\d{2})\s?(\d{2})\s?(\d{2})(?:\.\d{1,2})?\s*(?:[-–—:]\s*)?(.*)$/i
 
 function findCandidatesInPage(
@@ -121,7 +312,27 @@ function findCandidatesInPage(
     const lineOffset = offsetInPage
     offsetInPage += lines[i].length + 1
 
-    const m = lines[i].match(HEADER_LINE)
+    // Tier 0 — strict: line starts with SECTION + dash/colon separator
+    // + clean title same-line. If this matches AND the title validates,
+    // emit immediately at the best tier and move on to the next line.
+    const strict = lines[i].match(STRICT_HEADER_LINE)
+    if (strict && VALID_DIVISIONS.has(strict[1])) {
+      const specNumber = `${strict[1]} ${strict[2]} ${strict[3]}`
+      if (specNumber !== "00 00 00") {
+        const title = validateTitle(strict[4] ?? "")
+        if (title !== null) {
+          out.push({ specNumber, specTitle: title, tier: "section-prefix", page, globalOffset: pageStartOffset + lineOffset })
+          continue
+        }
+      }
+    }
+
+    // Tier 1+ — loose match (no SECTION-prefix requirement, separator
+    // optional). Used for bare-number headers AND for cross-references
+    // that the strict tier 0 deliberately rejected — those land here at
+    // tier 1 or 2 and lose to any tier-0 candidate for the same section
+    // number elsewhere in the document.
+    const m = lines[i].match(SAME_LINE_HEADER)
     if (!m) continue
 
     const div = m[1]
@@ -129,46 +340,128 @@ function findCandidatesInPage(
     const specNumber = `${m[1]} ${m[2]} ${m[3]}`
     if (specNumber === "00 00 00") continue
 
-    // The title is usually on the same line; if not, look at the next few lines.
-    let title = (m[4] ?? "").trim()
-    if (title.replace(/[^A-Za-z]/g, "").length < 3) {
-      for (let j = i + 1; j < Math.min(lines.length, i + 4); j++) {
+    const sameLineValid = validateTitle(m[4] ?? "")
+
+    let title = ""
+    let tier: TitleTier
+
+    if (sameLineValid !== null) {
+      title = sameLineValid
+      tier  = "bare-same-line"
+    } else {
+      // Lookahead — only inspect the FIRST non-blank following line. If
+      // THAT line is a body fragment, stop; what follows will be body
+      // content too. Prevents skipping past body fragments to grab a
+      // later "real-looking" string.
+      let lookaheadTitle: string | null = null
+      for (let j = i + 1; j < Math.min(lines.length, i + 5); j++) {
         const next = lines[j].trim()
-        if (next.replace(/[^A-Za-z]/g, "").length >= 3) { title = next; break }
+        if (letterCount(next) < 3) continue
+        lookaheadTitle = validateTitle(next)
+        break
+      }
+      if (lookaheadTitle !== null) {
+        title = lookaheadTitle
+        tier  = "lookahead"
+      } else {
+        title = ""
+        tier  = "no-clean-title"
       }
     }
-    title = cleanTitle(title)
-    if (title.replace(/[^A-Za-z]/g, "").length < 3) continue
 
-    out.push({ specNumber, specTitle: title, page, globalOffset: pageStartOffset + lineOffset })
+    out.push({ specNumber, specTitle: title, tier, page, globalOffset: pageStartOffset + lineOffset })
   }
   return out
 }
 
-/**
- * Picks the real section header among duplicate occurrences of the same spec
- * number. A table-of-contents lists many headers packed close together; a
- * cross-reference is isolated. The genuine header is the one followed by the
- * most body text before the next header — so keep, per spec number, the
- * occurrence with the largest gap to the next candidate in document order.
- */
-function dedupeByBodyLength(all: Candidate[], totalChars: number): Candidate[] {
-  const ordered = [...all].sort((a, b) => a.globalOffset - b.globalOffset)
-  const best = new Map<string, { cand: Candidate; gap: number }>()
+const TIER_RANK: Record<TitleTier, number> = {
+  "section-prefix":   0,
+  "bare-same-line":   1,
+  "lookahead":        2,
+  "no-clean-title":   3,
+}
 
+/**
+ * Pick the real section header among duplicate occurrences of the same
+ * spec number. Two-stage:
+ *
+ *   1. **Tier first.** A line that literally says `SECTION NNNNNN —
+ *      <clean title>` beats a bare page-header (`NNNNNN - 4`) every time,
+ *      regardless of how much body text sits after each. This is what
+ *      the prior gap-only heuristic missed: a spec book that repeats
+ *      `NNNNNN - <pgnum>` as a page header on every body page produces
+ *      many low-tier candidates whose gaps to the NEXT section can be
+ *      large; the genuine section header (early in the section) has a
+ *      smaller gap because the next page-header follows quickly.
+ *
+ *   2. **Gap within the chosen tier.** Among candidates of the best
+ *      available tier, the largest-gap one wins — same idea as the
+ *      original heuristic, but now scoped to candidates we already
+ *      trust by structure.
+ */
+function dedupeByTierThenGap(all: Candidate[], totalChars: number): Candidate[] {
+  const ordered = [...all].sort((a, b) => a.globalOffset - b.globalOffset)
+
+  // Compute each candidate's gap to the NEXT candidate in document order
+  // (irrespective of spec number). Same coordinate as the prior heuristic.
+  const gaps = new Array<number>(ordered.length)
   for (let i = 0; i < ordered.length; i++) {
-    const gap =
-      (i + 1 < ordered.length ? ordered[i + 1].globalOffset : totalChars) -
-      ordered[i].globalOffset
-    const prev = best.get(ordered[i].specNumber)
-    if (!prev || gap > prev.gap) {
-      best.set(ordered[i].specNumber, { cand: ordered[i], gap })
-    }
+    gaps[i] = (i + 1 < ordered.length ? ordered[i + 1].globalOffset : totalChars) - ordered[i].globalOffset
   }
 
-  return [...best.values()]
-    .map(b => b.cand)
-    .sort((a, b) => a.globalOffset - b.globalOffset)
+  // Group by specNumber; within each group, pick the best-tier candidate
+  // and within that the largest gap.
+  const grouped = new Map<string, Array<{ cand: Candidate; gap: number; idx: number }>>()
+  for (let i = 0; i < ordered.length; i++) {
+    const arr = grouped.get(ordered[i].specNumber) ?? []
+    arr.push({ cand: ordered[i], gap: gaps[i], idx: i })
+    grouped.set(ordered[i].specNumber, arr)
+  }
+
+  const picked: Candidate[] = []
+  for (const arr of grouped.values()) {
+    let bestTier = Infinity
+    for (const e of arr) bestTier = Math.min(bestTier, TIER_RANK[e.cand.tier])
+    const inBestTier = arr.filter(e => TIER_RANK[e.cand.tier] === bestTier)
+    let bestEntry = inBestTier[0]
+    for (const e of inBestTier) if (e.gap > bestEntry.gap) bestEntry = e
+    picked.push(bestEntry.cand)
+  }
+
+  return picked.sort((a, b) => a.globalOffset - b.globalOffset)
+}
+
+// ─── Layer 2 — footer-title fallback ────────────────────────────────────────
+//
+// Spec books following the THP / BAM template print the section title at
+// the bottom of every body page in this exact shape:
+//
+//     [body text, possibly with the page-number stuck on]
+//     <TITLE-IN-CAPS-or-Title-Case>     ← standalone line
+//     Project No. NNNN-NNNN              ← required anchor
+//
+// The trailing "Project No." marker is what makes this pattern safe to
+// trust — it almost never appears in body content of other formats, and
+// when it doesn't appear at all (non-THP books) the fallback returns null
+// and we move on to last-resort.
+//
+// Required strict shape to avoid false-firing on books that don't use this
+// template: the title line MUST be all-caps OR Title-Case, MUST be on a
+// line by itself (preceded + followed by newlines), and MUST be immediately
+// followed by a "Project No." line.
+const FOOTER_TITLE_RE =
+  /\n\s*([A-Z][A-Z\s\-/&,]{4,80}|[A-Z][A-Za-z][A-Za-z\s\-/&,]{4,80})\s*\n\s*Project\s+No\.?/
+
+function extractFooterTitle(fullText: string): string | null {
+  if (!fullText) return null
+  // Search globally; take the FIRST hit — the section title repeats every
+  // body page, so the first occurrence is fine.
+  const m = fullText.match(FOOTER_TITLE_RE)
+  if (!m) return null
+  const candidate = cleanTitle(stripQuotesAndPunctuation(m[1]))
+  if (letterCount(candidate) < 3) return null
+  if (isBodyFragment(candidate)) return null
+  return candidate
 }
 
 // ─── SUBMITTALS article extraction ───────────────────────────────────────────
@@ -250,7 +543,7 @@ export async function parseSpecBook(buffer: Buffer): Promise<SpecParseResult> {
     candidates.push(...perPage[i])
   }
 
-  const headers = dedupeByBodyLength(candidates, totalChars)
+  const headers = dedupeByTierThenGap(candidates, totalChars)
 
   // Whole-document text in the same coordinate space as Candidate.globalOffset
   // (pageStartOffsets advance by page length + 1, matching a "\n" join).
@@ -268,13 +561,49 @@ export async function parseSpecBook(buffer: Buffer): Promise<SpecParseResult> {
     const startOff = h.globalOffset
     const endOff = i + 1 < headers.length ? headers[i + 1].globalOffset : docText.length
     const fullText = docText.slice(startOff, endOff)
+
+    // Title resolution — Layer 1 result first; fall back to Layer 2 if
+    // Layer 1 left it empty (the "no-clean-title" tier); fall back finally
+    // to MasterFormat division name + needsTitleReview flag.
+    let specTitle = h.specTitle
+    let titleSource: ParsedSection["titleSource"] =
+      h.tier === "section-prefix" ? "section-prefix" :
+      h.tier === "bare-same-line" ? "bare-same-line" :
+      h.tier === "lookahead"      ? "lookahead" :
+      "masterformat-fallback"  // placeholder — overwritten below if Layer 2 hits
+    let needsTitleReview = false
+
+    if (h.tier === "no-clean-title" || specTitle === "") {
+      const footerTitle = extractFooterTitle(fullText)
+      if (footerTitle !== null) {
+        specTitle = footerTitle
+        titleSource = "footer-pattern"
+      } else {
+        // Last resort: MasterFormat division name. NEVER a body fragment.
+        specTitle = divisionNameFor(h.specNumber)
+        titleSource = "masterformat-fallback"
+        needsTitleReview = true
+      }
+    }
+
+    // Smart Title Case the final title. Acronyms preserved (HVAC, EPDM,
+    // CMU…), hyphens handled (Cast-in-Place not Cast-In-Place), minor
+    // words lowercased except when first. Skipped only for last-resort
+    // MasterFormat fallbacks (already title-case from the DIVISION_NAMES
+    // dict, no need to re-process).
+    if (titleSource !== "masterformat-fallback") {
+      specTitle = smartTitleCase(specTitle)
+    }
+
     return {
       specNumber: h.specNumber,
-      specTitle: h.specTitle,
+      specTitle,
       startPage,
       endPage,
       fullText,
       submittalsText: extractSubmittalsText(fullText),
+      needsTitleReview,
+      titleSource,
     }
   })
 
