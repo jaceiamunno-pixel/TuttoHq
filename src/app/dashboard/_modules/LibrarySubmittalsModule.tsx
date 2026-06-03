@@ -1722,8 +1722,14 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                   const appr = approvalDays(s)
                   const late = lateState(s)
                   const hasSource = s.source === "spec_ingestion" && !!s.spec_section_id
+                  // Has-attachment indicator: spec-built placeholder rows
+                  // (no PDF yet) read as visually quieter; rows with an
+                  // attachment get a darker title + a small PDF icon and
+                  // a subtle white-tinted background to stand out from
+                  // the section-color tint that applies to all rows.
+                  const hasAttachment = !!s.storage_path
                   return (
-                  <tr key={s.id} className={`border-b border-[#E2E8F0]/60 ${c.bg} ${showSelect && selectedIds.has(s.id) ? "ring-1 ring-inset ring-[#7B9BB5]/40" : ""}`}>
+                  <tr key={s.id} className={`border-b border-[#E2E8F0]/60 ${c.bg} ${hasAttachment ? "shadow-[inset_0_0_0_999px_rgba(255,255,255,0.45)]" : ""} ${showSelect && selectedIds.has(s.id) ? "ring-1 ring-inset ring-[#7B9BB5]/40" : ""}`}>
                     {showSelect && (
                       <td className="px-3 py-1.5">
                         <input type="checkbox" checked={selectedIds.has(s.id)}
@@ -1731,17 +1737,26 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                           className="accent-[#7B9BB5] align-middle" />
                       </td>
                     )}
-                    <td className={`px-3 py-1.5 tabular-nums text-[#0F172A] font-semibold border-l-4 ${c.border} whitespace-nowrap`}>{s.submittal_seq ?? "—"}</td>
+                    <td className={`px-3 py-1.5 tabular-nums ${hasAttachment ? "text-[#0F172A] font-semibold" : "text-[#94A3B8] font-medium"} border-l-4 ${c.border} whitespace-nowrap`}>{s.submittal_seq ?? "—"}</td>
                     <td className="px-3 py-1.5 whitespace-nowrap">
                       <span className={`inline-block px-1.5 py-0.5 rounded font-mono text-[11px] font-semibold ${c.chip}`}>{s.csi_section ?? "—"}</span>
                     </td>
                     <td className="px-3 py-1.5">
                       <div className="flex items-center gap-1.5 max-w-[280px]">
+                        {hasAttachment ? (
+                          <svg className="h-3.5 w-3.5 flex-shrink-0 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-label="Attached">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                          </svg>
+                        ) : (
+                          <svg className="h-3.5 w-3.5 flex-shrink-0 text-[#CBD5E1]" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-label="Awaiting submittal">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                          </svg>
+                        )}
                         <button
                           type="button"
                           onClick={() => openDetailModal(s)}
                           title={s.file_name}
-                          className="text-left text-[#0F172A] truncate hover:underline focus:outline-none focus:underline">
+                          className={`text-left truncate hover:underline focus:outline-none focus:underline ${hasAttachment ? "text-[#0F172A] font-medium" : "text-[#94A3B8] italic"}`}>
                           {truncateForDisplay(s.file_name)}
                         </button>
                         {s.title_locked && (

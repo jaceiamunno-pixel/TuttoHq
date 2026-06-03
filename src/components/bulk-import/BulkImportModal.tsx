@@ -724,21 +724,29 @@ export default function BulkImportModal({
                               </div>
                             )}
                             {r.status === "ready" && r.match?.kind === "no-match" && !r.matchSkip && (
-                              <div className="mt-1">
-                                <p className="text-[10px] text-red-700 font-semibold">✗ No spec-book row for {r.section || "?"} {r.type || "?"}</p>
+                              <div className="mt-1 rounded border border-amber-300 bg-amber-50/80 px-2 py-1.5">
+                                <p className="text-[10px] text-amber-900 font-semibold flex items-start gap-1">
+                                  <FlagIcon className="h-3 w-3 flex-shrink-0 mt-0.5 text-amber-700" />
+                                  <span>Needs routing — section {r.section || "?"} isn&apos;t in this project&apos;s spec book.</span>
+                                </p>
                                 {!r.pickedTargetRowId ? (
-                                  <div className="flex items-center gap-2 mt-0.5">
-                                    <button
-                                      onClick={() => openLogRowPicker(r.id)}
-                                      className="h-6 px-2 rounded border border-[#7B9BB5] text-[#7B9BB5] hover:bg-[#7B9BB5]/10 text-[10px] font-semibold"
-                                    >Pick a log row</button>
-                                    <button
-                                      onClick={() => updateRow(r.id, { matchSkip: true })}
-                                      className="h-6 px-2 rounded border border-[#E2E8F0] text-[#64748B] hover:bg-[#F8F9FA] text-[10px]"
-                                    >Skip this file</button>
-                                  </div>
+                                  <>
+                                    <p className="text-[10px] text-amber-800 mt-0.5 ml-4">
+                                      Pick a log row to file this under, or skip the file. (Not an error — it just doesn&apos;t auto-place.)
+                                    </p>
+                                    <div className="flex items-center gap-2 mt-1 ml-4">
+                                      <button
+                                        onClick={() => openLogRowPicker(r.id)}
+                                        className="h-6 px-2 rounded bg-[#7B9BB5] text-white hover:bg-[#6A8AA4] text-[10px] font-semibold"
+                                      >Pick a log row</button>
+                                      <button
+                                        onClick={() => updateRow(r.id, { matchSkip: true })}
+                                        className="h-6 px-2 rounded border border-[#E2E8F0] text-[#64748B] hover:bg-white text-[10px]"
+                                      >Skip this file</button>
+                                    </div>
+                                  </>
                                 ) : (
-                                  <p className="text-[10px] text-[#475569] mt-0.5">
+                                  <p className="text-[10px] text-[#475569] mt-0.5 ml-4">
                                     Routed to log row {r.pickedTargetRowId.slice(0,8)}…
                                     <button onClick={() => updateRow(r.id, { pickedTargetRowId: null })} className="ml-2 underline text-[#7B9BB5]">change</button>
                                   </p>
@@ -961,10 +969,18 @@ export default function BulkImportModal({
             </button>
             <button
               onClick={doCommit}
-              disabled={committing || totals.commitReady === 0 || totals.commitBlocked > 0}
+              // Disabled ONLY when nothing is ready OR a commit is already
+              // in flight. We deliberately allow committing the ready rows
+              // even when other rows in the batch are still blocked
+              // (typically no-match rows the user is still routing). The
+              // doCommit handler filters to commitReadiness === "ready"
+              // before sending — blocked rows stay in the modal so the
+              // user can keep working them after the partial commit.
+              disabled={committing || totals.commitReady === 0}
               title={
-                totals.commitBlocked > 0 ? `${totals.commitBlocked} row${totals.commitBlocked === 1 ? "" : "s"} need attention before commit` :
+                totals.commitReady === 0 && totals.commitBlocked > 0 ? `${totals.commitBlocked} row${totals.commitBlocked === 1 ? "" : "s"} still need routing` :
                 totals.commitReady === 0 ? "Nothing ready to commit" :
+                totals.commitBlocked > 0 ? `Commit ${totals.commitReady} ready row${totals.commitReady === 1 ? "" : "s"} now — ${totals.commitBlocked} other${totals.commitBlocked === 1 ? "" : "s"} stay in the modal to keep routing` :
                 `Commit ${totals.commitReady} row${totals.commitReady === 1 ? "" : "s"} to the log`
               }
               className="h-8 px-4 rounded-md bg-[#7B9BB5] text-white text-[12px] font-semibold hover:bg-[#6A8AA4] transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
