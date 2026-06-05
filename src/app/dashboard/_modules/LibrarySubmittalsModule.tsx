@@ -1070,7 +1070,7 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
           const dRes = await fetch("/api/check-duplicate", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ sha256: sha, project_id: globalProjectId ?? null }),
+            body: JSON.stringify({ sha256: sha, project_id: null }),   // Library shelf scope (project-independent)
           })
           if (dRes.ok) updateBatchItem(item.id, { dupeMatch: await dRes.json() })
         } catch (err) {
@@ -1145,7 +1145,7 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
             manufacturer:  item.nameMfr  || null,
             dimensions:    item.nameDims || null,
             display_name:  item.customName || null,
-            project_id:    globalProjectId || null,
+            project_id:    null,   // Library shelf upload — never the open project
             file_sha256:   item.fileSha256 || null,
           }),
         })
@@ -1185,7 +1185,11 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
       manufacturer:  nameMfr,
       dimensions:    nameDims,
     }
-    if (globalProjectId)              payload.project_id    = globalProjectId
+    // Library uploads are PROJECT-INDEPENDENT. A file uploaded to the
+    // Library shelf must NEVER inherit whatever project the user happens to
+    // have open — project_id stays null (server defaults null when omitted).
+    // Putting a Library file into a project is a separate, explicit per-row
+    // action (the Cover/attach flow), not a side effect of uploading.
     if (aiResult?.confidence != null) payload.ai_confidence = aiResult.confidence
     if (aiResult?.reasoning)          payload.ai_reasoning  = aiResult.reasoning
     if (uploadFileSha256)             payload.file_sha256   = uploadFileSha256
@@ -1214,21 +1218,10 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
       loadTree()
       closeModal()
 
-      // If uploaded directly to a project, immediately prompt for cover sheet
-      if (globalProjectId && data.record) {
-        const rec = data.record
-        const proj = appProjects.find(p => p.id === globalProjectId)
-        const today = new Date().toLocaleDateString("en-US", { month: "2-digit", day: "2-digit", year: "numeric" })
-        setOpenFileCtx({ file: { id: rec.id, file_name: rec.file_name, file_url: "", mime_type: rec.mime_type, file_size: rec.file_size, created_at: rec.created_at }, divNum: rec.csi_division ?? uploadDiv, divName: rec.division_name ?? uploadDivName, secCode: rec.csi_section ?? uploadSec, secName: rec.section_name ?? uploadSecName })
-        setModalProjectId(globalProjectId)
-        setCoverEditId(rec.id)
-        const myName = teamMembers.find(m => m.email === userEmail)?.name ?? userEmail ?? ""
-        setCoverForm({ projectName: proj?.name ?? "", projectNumber: proj?.number ?? "", projectLocation: proj?.location ?? "", gcName: proj?.gc_name ?? "", architect: proj?.architect ?? "", specSectionNo: rec.csi_section ?? uploadSec, specSectionTitle: rec.section_name ?? uploadSecName, description: rec.file_name.replace(/\.[^.]+$/, ""), dateSubmitted: today, submittalNo: "1", revisionNo: "00", dueDate: "", isCritical: false, partyRequired: false, copyTo: "", reviewedBy: "", certifiedBy: "", notes: "", sendToType: "", sendToCompany: "", sendToContact: "", sendToEmail: "", sendToPhone: "", sendToAddress: "", transmittedBy: myName, transmittedByCompany: proj?.gc_name ?? "" })
-        loadCoverContacts(globalProjectId)
-        setFileModalStep("form")
-      } else {
-        loadSubmittals()
-      }
+      // Library upload is project-independent — just refresh the Library +
+      // log views. Attaching a Library file to a project (with a cover sheet)
+      // is a separate, explicit per-row action, never an upload side effect.
+      loadSubmittals()
     } catch (err) {
       setUploadError(err instanceof Error ? err.message : "Upload failed")
     } finally {
@@ -2612,7 +2605,7 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                         const res = await fetch("/api/check-duplicate", {
                           method: "POST",
                           headers: { "Content-Type": "application/json" },
-                          body: JSON.stringify({ sha256: sha, project_id: globalProjectId ?? null }),
+                          body: JSON.stringify({ sha256: sha, project_id: null }),   // Library shelf scope (project-independent)
                         })
                         if (res.ok) setUploadDupeMatch(await res.json())
                       } catch (err) {
