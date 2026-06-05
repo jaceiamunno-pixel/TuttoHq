@@ -2785,7 +2785,7 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                 <div className="rounded-md bg-amber-50 border border-amber-300 px-3 py-2 text-[12px] text-amber-900">
                   <p className="font-semibold">⚠ Possible duplicate</p>
                   <p className="mt-1">
-                    This exact file already exists in this project as{" "}
+                    This exact file already exists {globalProjectId ? "in this project" : "in your Library"} as{" "}
                     {uploadDupeMatch.same_project_matches.map((m, i) => (
                       <span key={m.submittal_id}>
                         {i > 0 ? ", " : ""}
@@ -3209,7 +3209,7 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                                   (m.revision_number ? ` (${m.revision_number})` : "")
                                 ).join(", ")}. You can still upload — nothing is auto-blocked.`}
                               >
-                                ⚠ Possible duplicate in this project
+                                ⚠ Possible duplicate {globalProjectId ? "in this project" : "in your Library"}
                               </span>
                             )}
                           </div>

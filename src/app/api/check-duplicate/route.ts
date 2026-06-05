@@ -12,16 +12,19 @@ import { isValidSha256 } from "@/lib/file-hash"
 //     cross_project_matches: [{ project_id, project_name, count }]   // counts only — informational
 //   }
 //
-// SCOPE RULES:
-//   - same-company + same-project + same-hash → WARN (likely accidental
-//     re-upload of a file already in this project). Client shows a modal
-//     letting the user confirm-or-cancel. Don't silently block, don't
-//     silently store the duplicate.
-//   - same-company + DIFFERENT-project + same-hash → INFORMATIONAL ONLY.
-//     Cross-project reuse of the same product datasheet is legitimate —
-//     don't make it feel like an error. Client may surface this as a
-//     small note ("also exists on project X") or hide it; this route
-//     returns the data so the UI can decide.
+// SCOPE RULES (same-scope = WARN, other named project = informational):
+//   - "same scope" means the SAME place the user is uploading to:
+//       · uploading to a project  → same-scope = same project_id
+//       · uploading to the Library SHELF (project_id = null) → same-scope =
+//         other SHELF entries (project_id IS NULL)
+//     A same-scope same-hash match → WARN ("already here"). This is what
+//     catches the identical file uploaded twice to the shelf — previously
+//     missed because `projectId && m.project_id === projectId` short-
+//     circuited on a null projectId, so null == null never matched.
+//   - same-company + DIFFERENT named project + same-hash → INFORMATIONAL
+//     ONLY. Cross-project reuse of the same datasheet is legitimate.
+//   - When uploading to a project, a SHELF copy (null project) is neither
+//     same-scope nor a named other-project → not surfaced (low signal).
 //
 // SECURITY: standard authenticated server-side client. RLS on submittals
 // scopes by company. We additionally filter status <> 'deleted' so
@@ -82,8 +85,13 @@ export async function POST(req: NextRequest) {
   const otherProjectIds = new Set<string>()
   const otherProjectRowCounts = new Map<string, number>()
 
+  // Same-scope handles the shelf (null project) case explicitly: null === null
+  // doesn't work in the SQL/JS short-circuit form, so compare deliberately.
+  const isSameScope = (rowProjectId: string | null) =>
+    projectId ? rowProjectId === projectId : rowProjectId == null
+
   for (const m of all) {
-    if (projectId && m.project_id === projectId) {
+    if (isSameScope(m.project_id)) {
       sameProject.push({
         submittal_id:     m.id,
         file_name:        m.file_name,
@@ -94,11 +102,12 @@ export async function POST(req: NextRequest) {
         project_id:       m.project_id,
       })
     } else if (m.project_id) {
+      // Different NAMED project → informational cross-project note.
       otherProjectIds.add(m.project_id)
       otherProjectRowCounts.set(m.project_id, (otherProjectRowCounts.get(m.project_id) ?? 0) + 1)
     }
-    // m.project_id IS NULL → cross-project library matches with no project
-    // association (rare; ignored — not a useful informational signal).
+    // Remaining case: uploading to a project, match is a shelf (null) copy —
+    // not same-scope, not a named project → not surfaced (low signal).
   }
 
   // Pull project names for the cross-project rollup. Single query, one
