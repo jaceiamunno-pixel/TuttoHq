@@ -16,6 +16,7 @@ import { StatusBadge } from "../_shared/badges"
 import { Combobox, inputCls, labelCls } from "../_shared/ui"
 import { presignAndUpload } from "@/lib/storage-upload"
 import { truncateForDisplay } from "@/lib/title-normalize"
+import { hashFileInBrowser } from "@/lib/file-hash"
 import { exportSubmittalLogToExcel } from "../_shared/excel-export"
 import PackageCreateModal, { type VendorPreset } from "@/components/packages/PackageCreateModal"
 import PackagesView from "@/components/packages/PackagesView"
@@ -117,6 +118,23 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
   // URL flow). Both /api/classify and /api/upload reference this — the file is
   // never streamed through a Vercel function.
   const [uploadFilePath, setUploadFilePath] = useState<string | null>(null)
+  // SHA-256 of the picked file (Web Crypto). Computed in parallel with the
+  // storage PUT + AI classify so the dupe-check API call doesn't add
+  // perceived latency. Passed in the /api/upload metadata.
+  const [uploadFileSha256, setUploadFileSha256] = useState<string | null>(null)
+  // Result of /api/check-duplicate. When same_project_matches is non-empty,
+  // the modal renders an amber "possible duplicate" banner. Never blocks
+  // submission — the user can always proceed (e.g. uploading a new
+  // revision of a previously-stored file).
+  const [uploadDupeMatch, setUploadDupeMatch] = useState<{
+    same_project_matches: Array<{
+      submittal_id: string; file_name: string; submittal_seq: number | null;
+      submittal_number: string | null; revision_number: string | null;
+    }>
+    cross_project_matches: Array<{
+      project_id: string | null; project_name: string | null; count: number;
+    }>
+  } | null>(null)
   const [uploadDiv, setUploadDiv]           = useState("")
   const [uploadDivName, setUploadDivName]   = useState("")
   const [uploadSec, setUploadSec]           = useState("")
@@ -274,6 +292,8 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
     setShowUpload(false)
     setUploadFile(null)
     setUploadFilePath(null)
+    setUploadFileSha256(null)
+    setUploadDupeMatch(null)
     setUploadDiv("")
     setUploadDivName("")
     setUploadSec("")
@@ -1011,6 +1031,23 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
 
     async function classifyOne(item: BatchItem) {
       updateBatchItem(item.id, { status: "classifying" })
+      // Fire hash + dupe-check in parallel with the storage PUT + classify.
+      // Both are non-fatal; failure leaves dupeMatch undefined and the
+      // row uploads normally.
+      void (async () => {
+        try {
+          const sha = await hashFileInBrowser(item.file)
+          updateBatchItem(item.id, { fileSha256: sha })
+          const dRes = await fetch("/api/check-duplicate", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ sha256: sha, project_id: globalProjectId ?? null }),
+          })
+          if (dRes.ok) updateBatchItem(item.id, { dupeMatch: await dRes.json() })
+        } catch (err) {
+          console.warn(`[library] batch hash/dupe-check failed for ${item.file.name}`, err)
+        }
+      })()
       try {
         // PUT the file straight to storage once — its path then feeds both
         // /api/classify here and /api/upload in uploadBatch.
@@ -1080,6 +1117,7 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
             dimensions:    item.nameDims || null,
             display_name:  item.customName || null,
             project_id:    globalProjectId || null,
+            file_sha256:   item.fileSha256 || null,
           }),
         })
         updateBatchItem(item.id, { status: res.ok ? "done" : "upload-error", errorMsg: res.ok ? undefined : "Upload failed" })
@@ -1121,6 +1159,7 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
     if (globalProjectId)              payload.project_id    = globalProjectId
     if (aiResult?.confidence != null) payload.ai_confidence = aiResult.confidence
     if (aiResult?.reasoning)          payload.ai_reasoning  = aiResult.reasoning
+    if (uploadFileSha256)             payload.file_sha256   = uploadFileSha256
 
     try {
       const res  = await fetch("/api/upload", {
@@ -2456,10 +2495,32 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                     const f = e.target.files?.[0] ?? null
                     setUploadFile(f)
                     setUploadFilePath(null)
+                    setUploadFileSha256(null)
+                    setUploadDupeMatch(null)
                     setAiResult(null)
                     setUploadError(null)
                     if (!f) { setUploadStep("file"); return }
                     setUploadStep("classifying")
+                    // Compute SHA-256 in parallel with the storage PUT —
+                    // the browser already has the bytes, so this is free.
+                    // The dupe-check fires once the hash is ready. Both
+                    // are non-fatal: a failure leaves uploadFileSha256
+                    // null and the upload proceeds without the hash
+                    // (backfill will fill it in).
+                    void (async () => {
+                      try {
+                        const sha = await hashFileInBrowser(f)
+                        setUploadFileSha256(sha)
+                        const res = await fetch("/api/check-duplicate", {
+                          method: "POST",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({ sha256: sha, project_id: globalProjectId ?? null }),
+                        })
+                        if (res.ok) setUploadDupeMatch(await res.json())
+                      } catch (err) {
+                        console.warn("[library] hash/dupe-check failed (non-fatal)", err)
+                      }
+                    })()
                     // PUT the file straight to storage first; its path then
                     // feeds both /api/classify and /api/upload.
                     let path: string
@@ -2621,6 +2682,35 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
               )}
 
               {uploadError && <p className="text-[12px] text-red-400">{uploadError}</p>}
+
+              {uploadDupeMatch && uploadDupeMatch.same_project_matches.length > 0 && (
+                <div className="rounded-md bg-amber-50 border border-amber-300 px-3 py-2 text-[12px] text-amber-900">
+                  <p className="font-semibold">⚠ Possible duplicate</p>
+                  <p className="mt-1">
+                    This exact file already exists in this project as{" "}
+                    {uploadDupeMatch.same_project_matches.map((m, i) => (
+                      <span key={m.submittal_id}>
+                        {i > 0 ? ", " : ""}
+                        <span className="font-medium">
+                          {m.submittal_seq != null ? `Sub ${m.submittal_seq}` : m.file_name}
+                          {m.revision_number ? ` (${m.revision_number})` : ""}
+                        </span>
+                      </span>
+                    ))}.
+                    {" "}You can still upload it (e.g. as a new revision) — nothing is auto-blocked.
+                  </p>
+                </div>
+              )}
+
+              {uploadDupeMatch && uploadDupeMatch.cross_project_matches.length > 0 && (
+                <p className="text-[11px] text-[#64748B] italic">
+                  This file also exists on{" "}
+                  {uploadDupeMatch.cross_project_matches.length === 1
+                    ? (uploadDupeMatch.cross_project_matches[0].project_name ?? "another project")
+                    : `${uploadDupeMatch.cross_project_matches.length} other projects`}
+                  {" "}(re-using the same datasheet across jobs is normal).
+                </p>
+              )}
 
               <div className="flex justify-between gap-2 pt-1">
                 <div className="flex gap-2">
@@ -3013,6 +3103,17 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                               <span className="text-[12px] text-[#0F172A] truncate" title={item.file.name}>{item.customName || item.file.name}</span>
                             )}
                             <span className="text-[10px] text-[#64748B] truncate" title={item.file.name}>{item.file.name}</span>
+                            {item.dupeMatch && item.dupeMatch.same_project_matches.length > 0 && (
+                              <span
+                                className="text-[10px] text-amber-700 bg-amber-50 border border-amber-300 rounded px-1.5 py-0.5 self-start"
+                                title={`Same bytes as: ${item.dupeMatch.same_project_matches.map(m =>
+                                  (m.submittal_seq != null ? `Sub ${m.submittal_seq}` : m.file_name) +
+                                  (m.revision_number ? ` (${m.revision_number})` : "")
+                                ).join(", ")}. You can still upload — nothing is auto-blocked.`}
+                              >
+                                ⚠ Possible duplicate in this project
+                              </span>
+                            )}
                           </div>
 
                           <select value={item.divNum} disabled={!isEditable}

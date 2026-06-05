@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server"
 import { extractPdfPages } from "@/lib/spec-parser"
 import { analyzePdf } from "@/lib/bulk-import-detect"
 import { extractRawFormFields, recoverCoversheetFields, extractApprovalStampDate } from "@/lib/bulk-import-form"
+import { hashBufferInNode } from "@/lib/file-hash"
 
 // Bulk Import — Stage 1 analyze. Read-only by design: this route NEVER
 // writes to the submittals table, NEVER mutates the staged PDF, and never
@@ -100,9 +101,18 @@ export async function POST(req: NextRequest) {
   // struct supplies nice-to-haves only (submitter, title, submittal#, date).
   const analysis = analyzePdf(fileName, pages, rawFormFields, recovery, approvalStamp)
 
+  // ── SHA-256 for exact-duplicate detection (Part C). Computed here
+  // because the buffer is already in memory for text extraction; adding
+  // a hash pass costs ~50 ms even on a 30-page PDF. The hash is returned
+  // alongside the analysis so the client can call /api/check-duplicate
+  // BEFORE the user commits, and so the commit route can pass it to the
+  // attachment RPC.
+  const fileSha256 = await hashBufferInNode(buffer)
+
   return NextResponse.json({
     storage_path: storagePath,
     file_name: fileName,
+    file_sha256: fileSha256,
     analysis,
   })
 }

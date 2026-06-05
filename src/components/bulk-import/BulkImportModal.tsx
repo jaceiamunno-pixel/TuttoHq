@@ -63,6 +63,25 @@ interface Row {
   /** Post-commit per-row result. */
   committedRowId?: string
   commitError?: string
+  // ── Part C: exact-duplicate detection ───────────────────────────────────
+  /** SHA-256 of the file bytes (lowercase hex). Computed server-side in
+   *  /api/bulk-import/analyze (the buffer is already in memory there for
+   *  text extraction). Passed to commit so the RPC stores it on the
+   *  attachment row. */
+  fileSha256?: string
+  /** Result of /api/check-duplicate. When same_project_matches is
+   *  non-empty, the row shows an amber "possible duplicate" badge —
+   *  user can still commit (e.g. uploading a new revision whose bytes
+   *  match the prior one). Never blocks the commit gate. */
+  dupeMatch?: {
+    same_project_matches: Array<{
+      submittal_id: string; file_name: string; submittal_seq: number | null;
+      submittal_number: string | null; revision_number: string | null;
+    }>
+    cross_project_matches: Array<{
+      project_id: string | null; project_name: string | null; count: number;
+    }>
+  }
 }
 
 function newRow(file: File): Row {
@@ -347,6 +366,10 @@ export default function BulkImportModal({
       const filenameSubNo = row.file.name.match(/_Sub_No_(\d{2,4})(?:-R\d+)?/i)?.[1]
       const finalSubmittalNo = filenameSubNo ?? seedSubmittalNo
 
+      // file_sha256 comes back from /analyze (server-side hash of the
+      // staged buffer). Kick a non-fatal dupe-check in parallel — the row
+      // continues without dupeMatch if the check fails.
+      const fileSha256 = typeof data?.file_sha256 === "string" ? data.file_sha256 : undefined
       updateRow(id, {
         status: "ready",
         analysis,
@@ -360,7 +383,22 @@ export default function BulkImportModal({
         // gets confused with the architect's approval date.
         submittedDate: analysis.suggestedSubmittedDate ?? "",
         submittalNo: finalSubmittalNo,
+        fileSha256,
       })
+      if (fileSha256) {
+        void (async () => {
+          try {
+            const dRes = await fetch("/api/check-duplicate", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ sha256: fileSha256, project_id: projectId }),
+            })
+            if (dRes.ok) updateRow(id, { dupeMatch: await dRes.json() })
+          } catch (err) {
+            console.warn(`[bulk-import] dupe-check failed for ${row.file.name}`, err)
+          }
+        })()
+      }
       // Chain into match. Pass the freshly-analyzed values directly so we
       // don't race the queued setRows above (rowsRef hasn't repointed yet).
       matchRow(id, {
@@ -484,6 +522,7 @@ export default function BulkImportModal({
           submittal_number: r.submittalNo || null,
           revision_number: null,
           review_status: r.reviewStatus,
+          file_sha256: r.fileSha256 ?? null,
         })),
       }
       const res = await fetch("/api/bulk-import/commit", {
@@ -688,6 +727,36 @@ export default function BulkImportModal({
                                   </li>
                                 ))}
                               </ul>
+                            )}
+                            {r.dupeMatch && r.dupeMatch.same_project_matches.length > 0 && (
+                              <p
+                                className="text-[10px] text-amber-700 flex items-start gap-1 mt-1"
+                                title={`Same bytes as: ${r.dupeMatch.same_project_matches.map(m =>
+                                  (m.submittal_seq != null ? `Sub ${m.submittal_seq}` : m.file_name) +
+                                  (m.revision_number ? ` (${m.revision_number})` : "")
+                                ).join(", ")}. You can still commit — nothing is auto-blocked.`}
+                              >
+                                <FlagIcon className="h-3 w-3 flex-shrink-0 mt-0.5" />
+                                <span>
+                                  ⚠ Possible duplicate — same bytes as{" "}
+                                  {r.dupeMatch.same_project_matches.slice(0, 2).map((m, i) => (
+                                    <span key={m.submittal_id} className="font-semibold">
+                                      {i > 0 ? ", " : ""}
+                                      {m.submittal_seq != null ? `Sub ${m.submittal_seq}` : m.file_name}
+                                      {m.revision_number ? ` (${m.revision_number})` : ""}
+                                    </span>
+                                  ))}
+                                  {r.dupeMatch.same_project_matches.length > 2 ? ` +${r.dupeMatch.same_project_matches.length - 2} more` : ""}
+                                </span>
+                              </p>
+                            )}
+                            {r.dupeMatch && r.dupeMatch.cross_project_matches.length > 0 && (
+                              <p className="text-[10px] text-[#64748B] italic mt-0.5 truncate">
+                                Also on{" "}
+                                {r.dupeMatch.cross_project_matches.length === 1
+                                  ? (r.dupeMatch.cross_project_matches[0].project_name ?? "another project")
+                                  : `${r.dupeMatch.cross_project_matches.length} other projects`}
+                              </p>
                             )}
                             {/* Match outcome strip */}
                             {r.status === "matching" && (

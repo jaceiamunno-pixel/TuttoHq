@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
+import { isValidSha256 } from "@/lib/file-hash"
 
 // POST /api/bulk-import/commit — Stage 2a write path. Attach each Bulk
 // Import row to its user-confirmed spec-built submittals row. Model A:
@@ -55,6 +56,10 @@ interface RowIn {
   revision_number: string | null
   /** "Approved" / "Approved with Comments" / "Rejected" / "Revise and Resubmit". */
   review_status: string
+  /** SHA-256 of the file bytes (lowercase hex). Computed by /analyze and
+   *  passed through verbatim. Optional — a missing/invalid value is
+   *  non-fatal; backfill will populate later. */
+  file_sha256?: string | null
 }
 
 interface CommitResult {
@@ -209,6 +214,7 @@ export async function POST(req: NextRequest) {
     // (unset prev current + insert new + trigger syncs submittals row).
     // The RPC enforces tenant scope via get_my_company_id() and refuses
     // to write if the submittal isn't accessible to the caller.
+    const sha = isValidSha256(r.file_sha256) ? r.file_sha256 : null
     const { data: attachment, error: rpcErr } = await supabase.rpc("add_submittal_attachment", {
       p_submittal_id:     r.target_row_id,
       p_storage_path:     uploadsPath,
@@ -220,6 +226,7 @@ export async function POST(req: NextRequest) {
       p_submittal_number: r.submittal_number?.trim() || null,
       p_source:           "bulk_import",
       p_submitted_date:   r.submitted_date || null,
+      p_file_sha256:      sha,
     }).single()
 
     if (rpcErr || !attachment) {

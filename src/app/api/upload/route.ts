@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import { normalizeSubmittalTitle } from "@/lib/title-normalize"
+import { isValidSha256 } from "@/lib/file-hash"
 
 // POST /api/upload — records a manually uploaded submittal.
 //
@@ -33,6 +34,11 @@ export async function POST(req: NextRequest) {
   const aiReasoning   = (typeof body.ai_reasoning === "string" ? body.ai_reasoning : "").trim() || null
   const projectId     = (typeof body.project_id   === "string" ? body.project_id   : "").trim() || null
   const customName    = (typeof body.display_name === "string" ? body.display_name : "").trim() || null
+  // Client-computed SHA-256 of the file bytes (Web Crypto). Used by the
+  // dupe-check API and stored for future backfill consistency. Optional —
+  // a missing/invalid hash is a non-fatal "we don't have it yet" state,
+  // not an upload failure; the backfill script will fill it in later.
+  const fileSha256    = isValidSha256(body.file_sha256) ? body.file_sha256 : null
   const reviewStatus  = (aiConfidence !== null && aiConfidence < 70) ? "Needs Review" : "Received"
 
   if (!filePath || !fileName || !divisionNum || !divisionName) {
@@ -79,6 +85,7 @@ export async function POST(req: NextRequest) {
     project_id:     projectId,
     status:         "active",
     uploaded_by:    user.id,
+    file_sha256:    fileSha256,
   }).select("id, file_name, mime_type, file_size, created_at, csi_division, division_name, csi_section, section_name").single()
 
   if (dbError) {

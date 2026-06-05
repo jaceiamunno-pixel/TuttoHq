@@ -90,7 +90,16 @@ export interface SubmittalRecord {
 
 export type BatchStatus = "pending" | "classifying" | "ready" | "error" | "uploading" | "done" | "upload-error"
 export type BatchPhase  = "select" | "classifying" | "review" | "uploading" | "done"
-export interface BatchItem { id: string; file: File; status: BatchStatus; divNum: string; divName: string; secCode: string; secName: string; nameMatl: string; nameMfr: string; nameDims: string; customName: string; expanded: boolean; errorMsg?: string; storagePath?: string }
+export interface BatchItemDupeMatch {
+  same_project_matches: Array<{
+    submittal_id: string; file_name: string; submittal_seq: number | null;
+    submittal_number: string | null; revision_number: string | null;
+  }>
+  cross_project_matches: Array<{
+    project_id: string | null; project_name: string | null; count: number;
+  }>
+}
+export interface BatchItem { id: string; file: File; status: BatchStatus; divNum: string; divName: string; secCode: string; secName: string; nameMatl: string; nameMfr: string; nameDims: string; customName: string; expanded: boolean; errorMsg?: string; storagePath?: string; fileSha256?: string; dupeMatch?: BatchItemDupeMatch }
 
 export interface Project { id: string; name: string; number: string | null; location: string | null; gc_name: string | null; architect: string | null; short_id?: string | null }
 export interface TeamMember { id: string; name: string; title: string | null; email: string | null }
