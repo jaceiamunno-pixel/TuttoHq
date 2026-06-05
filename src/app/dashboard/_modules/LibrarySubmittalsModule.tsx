@@ -95,6 +95,11 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
   const [sectionFiles, setSectionFiles]       = useState<Record<string, SubmittalFile[]>>({})
   const [loadingSections, setLoadingSections] = useState<Set<string>>(new Set())
 
+  // Library delete (detach-or-delete). Branch is decided server-side; the
+  // client uses file.source only to render the right confirm copy.
+  const [libDeleteTarget, setLibDeleteTarget] = useState<{ file: SubmittalFile; secCode: string } | null>(null)
+  const [libDeleting, setLibDeleting]         = useState(false)
+
   // Project lookup for Library row badges. The cross-project Library stacks
   // rows from every project under the same CSI section; without a project
   // chip on each row two rows that share a title (e.g. a cover sheet of the
@@ -525,6 +530,30 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
       .then(d => setSectionFiles(prev => ({ ...prev, [code]: d.files ?? [] })))
       .catch(() => setSectionFiles(prev => ({ ...prev, [code]: [] })))
       .finally(() => setLoadingSections(prev => { const n = new Set(prev); n.delete(code); return n }))
+  }
+
+  // Library delete. The server branches: spec_ingestion rows DETACH (file
+  // removed, log row kept as an empty placeholder); manual/gmail rows are
+  // soft-deleted entirely. On success we refetch the affected section + the
+  // folder tree so counts update.
+  async function confirmLibraryDelete() {
+    if (!libDeleteTarget) return
+    setLibDeleting(true)
+    try {
+      const res = await fetch(`/api/submittals/${libDeleteTarget.file.id}/library-delete`, { method: "POST" })
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}))
+        throw new Error(d.error ?? "Delete failed")
+      }
+      const code = libDeleteTarget.secCode
+      setLibDeleteTarget(null)
+      refetchSection(code)
+      loadTree()
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Delete failed")
+    } finally {
+      setLibDeleting(false)
+    }
   }
 
   function loadSubmittals(pid = activeProjectId) {
@@ -1453,6 +1482,13 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                                       onClick={() => handleFileOpen(file, div.num, div.name, sec.code, sec.name)}
                                       className="flex-shrink-0 text-[11px] text-[#64748B] hover:text-[#0F172A] font-medium px-2 py-0.5 rounded hover:bg-[#0F172A]/[0.04] transition-colors"
                                     >Cover</button>
+                                    <button
+                                      onClick={() => setLibDeleteTarget({ file, secCode: sec.code })}
+                                      title={file.source === "spec_ingestion"
+                                        ? "Remove the file — keeps the submittal log entry"
+                                        : "Delete this Library item"}
+                                      className="flex-shrink-0 text-[11px] text-[#94A3B8] hover:text-red-500 font-medium px-2 py-0.5 rounded hover:bg-red-50 transition-colors"
+                                    >Delete</button>
                                   </div>
                                   )
                                 })}
@@ -2105,6 +2141,49 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
           </div>
         </div>
       )}
+
+      {/* ── Library delete confirm (detach-or-delete) ─────────────────────── */}
+      {libDeleteTarget && (() => {
+        const isSpec = libDeleteTarget.file.source === "spec_ingestion"
+        const name = truncateForDisplay(libDeleteTarget.file.file_name)
+        return (
+          <div
+            className="fixed inset-0 bg-black/60 z-[60] flex items-center justify-center p-4"
+            onClick={e => { if (e.target === e.currentTarget && !libDeleting) setLibDeleteTarget(null) }}
+          >
+            <div className="bg-white rounded-xl shadow-2xl max-w-md w-full p-5">
+              <h2 className="text-[15px] font-bold text-[#0F172A] mb-2">
+                {isSpec ? "Remove file from Library?" : "Delete Library item?"}
+              </h2>
+              <p className="text-[13px] text-[#475569] mb-5 leading-relaxed">
+                {isSpec ? (
+                  <>This permanently deletes the stored PDF for <span className="font-semibold text-[#0F172A]">{name}</span>.
+                  {" "}The submittal log entry stays exactly as it is — section, title, type, number and project are untouched;
+                  it just returns to an empty placeholder, ready for re-import. Only the file is removed.</>
+                ) : (
+                  <>This permanently deletes <span className="font-semibold text-[#0F172A]">{name}</span> and its file.
+                  {" "}This item exists only in the Library (no spec-book log entry), so the entire record is removed.</>
+                )}
+              </p>
+              <div className="flex gap-2 justify-end">
+                <button
+                  disabled={libDeleting}
+                  onClick={() => setLibDeleteTarget(null)}
+                  className="h-9 px-4 rounded-md border border-[#E2E8F0] text-[13px] text-[#64748B] hover:bg-[#0F172A]/[0.04] transition-colors disabled:opacity-50">
+                  Cancel
+                </button>
+                <button
+                  disabled={libDeleting}
+                  onClick={confirmLibraryDelete}
+                  className="h-9 px-4 rounded-md bg-red-600 text-white text-[13px] font-semibold hover:bg-red-700 transition-colors disabled:opacity-50 flex items-center gap-1.5">
+                  {libDeleting ? <SpinnerIcon className="h-3.5 w-3.5" /> : null}
+                  {isSpec ? "Remove file" : "Delete item"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )
+      })()}
 
       {/* ── File open modal ───────────────────────────────────────────────── */}
       {openFileCtx && fileModalStep === "project" && (
