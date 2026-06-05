@@ -3,7 +3,7 @@ import { createClient } from "@/lib/supabase/server"
 import { extractPdfPages } from "@/lib/spec-parser"
 import { analyzePdf } from "@/lib/bulk-import-detect"
 import { extractRawFormFields, recoverCoversheetFields, extractApprovalStampDate } from "@/lib/bulk-import-form"
-import { hashBufferInNode } from "@/lib/file-hash"
+import { hashBufferInNode } from "@/lib/file-hash-node"
 
 // Bulk Import — Stage 1 analyze. Read-only by design: this route NEVER
 // writes to the submittals table, NEVER mutates the staged PDF, and never
