@@ -31,7 +31,9 @@ await c.connect()
 
 const BLANK = 10
 const STAMP_SCAN = 6
-const COVER_KEYWORDS = /Submittal Transmittal Form|Submittal Disposition Stamp|Submittal Review Completed|Letter of Transmittal|Material Sample Transfer|Quality Control Program/i
+const FORM_SCAN = 5
+// Mirror of src/lib/pdf-strip.ts COVER_KEYWORDS (generic AIA/CSI, fallback only).
+const COVER_KEYWORDS = /Letter of Transmittal|Submittal Transmittal|Transmittal Form|Transmittal No|For Approval|For Review|Approved as Noted|No Exceptions Taken|Revise and Resubmit|Make Corrections Noted|Rejected as Noted|Reviewed for Conformance|Shop Drawing|Date Received|Specification Section|Spec Section/i
 
 function parsePdfDate(raw) {
   if (!raw) return null
@@ -44,6 +46,12 @@ function isCoverShaped(m, text) {
   if (m.stampAnnotCount > 0) return true
   if (m.charCount < BLANK && m.imageCount === 0) return true
   if (m.imageCount === 0 && COVER_KEYWORDS.test(text)) return true
+  return false
+}
+function isStructuralCover(m) {
+  if (m.formWidgetCount > 0) return true
+  if (m.stampAnnotCount > 0) return true
+  if (m.charCount < BLANK && m.imageCount === 0) return true
   return false
 }
 
@@ -70,9 +78,8 @@ async function stripBuffer(buffer) {
       if (!stamp || info.date < stamp.date) stamp = info
     }
   }
-  if (!stamp) return { out: null, plan: null }
 
-  // per-page text + meta
+  // per-page text + meta (needed for both stamp + coversheet paths)
   let pageTexts
   try {
     const pdf = await getDocumentProxy(new Uint8Array(buffer))
@@ -112,13 +119,31 @@ async function stripBuffer(buffer) {
     meta.push({ formWidgetCount, stampAnnotCount, imageCount, charCount: (pageTexts[p] ?? "").replace(/\s+/g, "").length })
   }
 
-  const stampIdx = stamp.page - 1
-  let firstCover = stampIdx
-  while (firstCover - 1 >= 0 && isCoverShaped(meta[firstCover - 1], pageTexts[firstCover - 1] ?? "")) firstCover--
-  let lastCover = stampIdx
-  while (lastCover + 1 < total && isCoverShaped(meta[lastCover + 1], pageTexts[lastCover + 1] ?? "")) lastCover++
-
-  const stripStart = firstCover + 1, stripEnd = lastCover + 1
+  // Determine strip range — mirrors src/lib/pdf-strip.ts findStripPlan.
+  let stripStart, stripEnd
+  if (stamp) {
+    const stampIdx = stamp.page - 1
+    let firstCover = stampIdx
+    while (firstCover - 1 >= 0 && isCoverShaped(meta[firstCover - 1], pageTexts[firstCover - 1] ?? "")) firstCover--
+    let lastCover = stampIdx
+    while (lastCover + 1 < total && isCoverShaped(meta[lastCover + 1], pageTexts[lastCover + 1] ?? "")) lastCover++
+    stripStart = firstCover + 1; stripEnd = lastCover + 1
+  } else {
+    // Coversheet form-anchor: form (/Widget) page within first FORM_SCAN.
+    let formIdx = -1
+    for (let p = 0; p < Math.min(total, FORM_SCAN); p++) { if (meta[p].formWidgetCount > 0) { formIdx = p; break } }
+    if (formIdx >= 0) {
+      let lastCover = formIdx
+      while (lastCover + 1 < total && isCoverShaped(meta[lastCover + 1], pageTexts[lastCover + 1] ?? "")) lastCover++
+      stripStart = 1; stripEnd = lastCover + 1
+    } else if (isStructuralCover(meta[0])) {
+      let lastCover = 0
+      while (lastCover + 1 < total && isCoverShaped(meta[lastCover + 1], pageTexts[lastCover + 1] ?? "")) lastCover++
+      stripStart = 1; stripEnd = lastCover + 1
+    } else {
+      return { out: null, plan: null }  // no anchor → serve original
+    }
+  }
   const remaining = total - (stripEnd - stripStart + 1)
   if (remaining <= 0) return { out: null, plan: null }
 
