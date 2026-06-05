@@ -37,21 +37,29 @@ export async function stripAndStore(opts: {
   fileName: string
   companyId: string
 }): Promise<StripAndStoreResult> {
+  // One observable line per upload so a silently-broken strip is visible
+  // (and distinguishable from a legitimate no-anchor). The default
+  // best-effort design swallows failures; this is the only signal.
+  const log = (r: StripAndStoreResult) => {
+    const tag = r.stripped ? "stripped" : (r.reason ?? "unknown")
+    console.log(`[strip-at-upload] ${tag} submittal=${opts.submittalId} file=${JSON.stringify(opts.fileName).slice(0, 80)}${r.strippedPath ? ` → ${r.strippedPath}` : ""}`)
+    return r
+  }
   try {
     const url = process.env.NEXT_PUBLIC_SUPABASE_URL
     const key = process.env.SUPABASE_SERVICE_ROLE_KEY
-    if (!url || !key) return { stripped: false, reason: "config" }
+    if (!url || !key) return log({ stripped: false, reason: "config" })
     const sb = createClient(url, key, { auth: { persistSession: false } })
 
     // 1. Download the original.
     const { data: blob, error: dlErr } = await sb.storage.from("submittals").download(opts.storagePath)
-    if (dlErr || !blob) return { stripped: false, reason: "download-failed" }
+    if (dlErr || !blob) return log({ stripped: false, reason: "download-failed" })
     const original = Buffer.from(await blob.arrayBuffer())
 
     // 2. Strip. stripFrontMatter is itself best-effort (returns the original
     //    buffer + null plan when there's no anchor or on any catchable error).
     const { buffer: strippedBuffer, plan } = await stripFrontMatter(original)
-    if (!plan) return { stripped: false, reason: "no-anchor" }  // nothing to strip → original serves
+    if (!plan) return log({ stripped: false, reason: "no-anchor" })  // nothing to strip → original serves
 
     // 3. Store the stripped copy under a dedicated prefix (separate from
     //    uploads/ so it's easy to identify + never collides with originals).
@@ -59,7 +67,7 @@ export async function stripAndStore(opts: {
     const { error: upErr } = await sb.storage
       .from("submittals")
       .upload(strippedPath, strippedBuffer, { contentType: "application/pdf", upsert: false })
-    if (upErr) return { stripped: false, reason: "upload-failed" }
+    if (upErr) return log({ stripped: false, reason: "upload-failed" })
 
     // 4. Record it. View serves stripped_storage_path when set.
     const { error: updErr } = await sb
@@ -69,12 +77,12 @@ export async function stripAndStore(opts: {
     if (updErr) {
       // Roll back the orphaned stripped object (best-effort).
       await sb.storage.from("submittals").remove([strippedPath]).catch(() => {})
-      return { stripped: false, reason: "update-failed" }
+      return log({ stripped: false, reason: "update-failed" })
     }
 
-    return { stripped: true, strippedPath }
+    return log({ stripped: true, strippedPath })
   } catch {
     // Absolute backstop — never throw to the caller.
-    return { stripped: false, reason: "strip-failed" }
+    return log({ stripped: false, reason: "strip-failed" })
   }
 }
