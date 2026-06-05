@@ -34,6 +34,7 @@ import type { CoversheetFieldsConfidence, FieldConfidence, RawFormFields, Approv
 export const SUBMITTAL_TYPES = [
   "Product Data",
   "Shop Drawing",
+  "Design Mix",
   "Certification",
   "O&M Manual",
   "Sample",
@@ -275,6 +276,8 @@ const TYPE_HINTS: { re: RegExp; type: SubmittalType }[] = [
   // Long forms first — they should win over abbreviations.
   { re: /\bProduct\s*Data\b/i,    type: "Product Data" },
   { re: /\bShop\s*Drawings?\b/i,  type: "Shop Drawing" },
+  { re: /\bDesign\s*Mix(?:es|tures?)?\b/i, type: "Design Mix" },
+  { re: /\bConcrete\s+Mix(?:\s+Design)?\b/i, type: "Design Mix" },
   { re: /\bO\s*&\s*M\b/i,         type: "O&M Manual" },
   { re: /\bO\s*and\s*M\b/i,       type: "O&M Manual" },
   { re: /\bOperation(?:s)?\s+(?:and|&)\s+Maintenance\b/i, type: "O&M Manual" },
@@ -304,7 +307,7 @@ export interface SubmittalTypeGuess {
   type: SubmittalType | null
   /** True when we found a real hint. False = no signal, caller should flag. */
   confident: boolean
-  source: "filename" | "page-text" | "none"
+  source: "filename" | "page-text" | "form-value" | "none"
 }
 
 /**
@@ -958,10 +961,31 @@ export function analyzePdf(
     return false
   })()
 
-  const typeGuess = detectSubmittalType(filename, [
-    page1Text, page2Text,
-    recovery.fields.specSectionTitle ?? "",  // recovered title carries strong type hints
-  ].join("\n"))
+  // Type detection reads BOTH the text layer AND the AcroForm value layer.
+  // Section detection already trusts form values (Gilbane's section sits in a
+  // generically-/misleadingly-named widget, e.g. "Submittal No (1)" = "06 16
+  // 00"); type must too — Gilbane puts the type in a widget value (e.g.
+  // "Text14" = "Product Data" / "Design Mix" / "Shop Drawing") that never
+  // reaches the page-text layer. Template-agnostic + value-based (no
+  // field-name / label / position dependence):
+  //   (a) EXACT-VALUE shortcut — if any form value is exactly a known type,
+  //       take it (high confidence). The labeled-dropdown case.
+  //   (b) else run the hint matcher over filename + page text + form values.
+  const formValues = Object.values(rawForm).filter(
+    (v): v is string => typeof v === "string" && v.trim().length > 0,
+  )
+  let exactType: SubmittalType | null = null
+  for (const v of formValues) {
+    const hit = SUBMITTAL_TYPES.find(t => t.toLowerCase() === v.trim().toLowerCase())
+    if (hit) { exactType = hit; break }
+  }
+  const typeGuess: SubmittalTypeGuess = exactType
+    ? { type: exactType, confident: true, source: "form-value" }
+    : detectSubmittalType(filename, [
+        page1Text, page2Text,
+        recovery.fields.specSectionTitle ?? "",  // recovered title carries strong type hints
+        formValues.join("\n"),                    // ← form-value layer (Gilbane et al.)
+      ].join("\n"))
   const suggestedType = typeGuess.type
   const typeFlag = !typeGuess.confident
 

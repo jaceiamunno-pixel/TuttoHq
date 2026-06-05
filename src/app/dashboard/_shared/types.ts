@@ -189,7 +189,7 @@ export interface PendingDoc {
   uploaded_at: string
 }
 export const SUBMITTAL_TYPE_OPTIONS = [
-  "Product Data", "Shop Drawing", "Sample", "Certification",
+  "Product Data", "Shop Drawing", "Design Mix", "Sample", "Certification",
   "Warranty", "O&M Manual", "Lab Test", "Attic Stock", "Other",
 ] as const
 export interface SubcontractorRow { id: string; company_name: string; trade: string | null; contact_name?: string | null; email?: string | null }
