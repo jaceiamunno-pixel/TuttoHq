@@ -1,7 +1,12 @@
 import { NextRequest, NextResponse } from "next/server"
+import { after } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import { normalizeSubmittalTitle } from "@/lib/title-normalize"
 import { isValidSha256 } from "@/lib/file-hash"
+import { stripAndStore } from "@/lib/strip-and-store"
+
+// Give after() room to download + strip + store a Library copy post-response.
+export const maxDuration = 60
 
 // POST /api/upload — records a manually uploaded submittal.
 //
@@ -93,6 +98,24 @@ export async function POST(req: NextRequest) {
     // Clean up the orphaned storage file
     await supabase.storage.from("submittals").remove([filePath])
     return NextResponse.json({ error: "Failed to save file record" }, { status: 500 })
+  }
+
+  // Strip-at-upload — generate + store the stripped Library copy ONCE, AFTER
+  // the response is sent. ISOLATED BY DESIGN: after() runs post-response, so
+  // even a process-level strip failure (unpdf OOM / pdf.js worker crash) can
+  // never block or fail this upload — the row + original are already saved
+  // and the 200 is already returned. On any failure stripped_storage_path
+  // stays NULL and the view serves the original. Only PDFs are worth
+  // stripping; skip others to avoid needless work.
+  if (mimeType === "application/pdf" && inserted?.id) {
+    after(async () => {
+      await stripAndStore({
+        submittalId: inserted.id,
+        storagePath: filePath,
+        fileName,
+        companyId: String(companyId),
+      })
+    })
   }
 
   return NextResponse.json({ ok: true, record: inserted })

@@ -1,7 +1,21 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import { PDFDocument } from "pdf-lib"
-import { stripFrontMatter } from "@/lib/pdf-strip"
+
+// GET /api/download/[id]
+//
+// ROBUSTNESS CONTRACT: a submittal that has a stored file is ALWAYS
+// openable. No code path returns 500 for a bad/large PDF — every branch
+// falls back to a plain signed-URL redirect of the original. The only
+// non-200 outcomes are 404 (no file at all) and 502 (storage itself
+// unreachable, so nothing can be served).
+//
+// Stripping does NOT happen here anymore. The Library "stripped" view is
+// generated ONCE at upload and stored (submittals.stripped_storage_path);
+// this route just serves that stored object. Running unpdf/pdf-lib strip
+// in the request used to cause process-level crashes (OOM / pdf.js worker
+// death) that a try/catch can't trap → 500 on every open. Serving a stored
+// file can't crash on a bad PDF.
 
 export async function GET(
   req: NextRequest,
@@ -12,7 +26,7 @@ export async function GET(
 
   const { data: submittal } = await supabase
     .from("submittals")
-    .select("file_name, storage_path, mime_type")
+    .select("file_name, storage_path, mime_type, stripped_storage_path")
     .eq("id", id)
     .single()
 
@@ -20,118 +34,89 @@ export async function GET(
     return NextResponse.json({ error: "Not found" }, { status: 404 })
   }
 
-  // Library-view mode: ?stripped=1 returns the front-matter-stripped
-  // version of the submittal (Waters cover + architect-stamp page +
-  // routing/blank pages removed). The original PDF on storage is
-  // unchanged — strip runs in-memory per request. When the conservative
-  // strip detector finds no /Stamp anchor OR the strip would empty the
-  // doc, the original buffer is served unchanged.
   const url = new URL(req.url)
   const stripped = url.searchParams.get("stripped") === "1"
-
-  // Historical-revision download: when ?path=… is supplied, override
-  // submittal.storage_path with that value AFTER validating the path is
-  // a real attachment on this submittal (RLS-filtered). Defends against
-  // a crafted query attempting to download an arbitrary storage object.
   const requestedPath = url.searchParams.get("path")
-  let useStoragePath = submittal.storage_path
-  let useFileName = submittal.file_name
-  if (requestedPath && requestedPath !== submittal.storage_path) {
+  const originalPath = submittal.storage_path
+
+  // Universal safe fallback: redirect to a 1-hour signed URL for a stored
+  // object. Plain download, no PDF processing — cannot crash on a bad file.
+  async function signedRedirect(path: string): Promise<NextResponse | null> {
+    const { data } = await supabase.storage.from("submittals").createSignedUrl(path, 3600)
+    return data?.signedUrl ? NextResponse.redirect(data.signedUrl) : null
+  }
+  const storageDown = () => NextResponse.json({ error: "storage unavailable" }, { status: 502 })
+
+  // ── Historical-revision download (?path=…): validate the path is a real
+  //    attachment on this submittal (defends against arbitrary-object reads),
+  //    then serve it raw via signed redirect.
+  if (requestedPath && requestedPath !== originalPath) {
     const { data: att } = await supabase
       .from("submittal_attachments")
-      .select("storage_path, file_name")
+      .select("storage_path")
       .eq("submittal_id", id)
       .eq("storage_path", requestedPath)
       .maybeSingle()
     if (!att) return NextResponse.json({ error: "attachment not found" }, { status: 404 })
-    useStoragePath = att.storage_path
-    useFileName    = att.file_name
-  }
-  // Continue with `useStoragePath` / `useFileName` for the rest of the
-  // route. The variables `submittal.storage_path` / `file_name` are
-  // shadowed below.
-  submittal.storage_path = useStoragePath
-  submittal.file_name    = useFileName
-
-  // Non-PDFs — redirect to signed URL (strip mode has nothing to do here)
-  if (submittal.mime_type !== "application/pdf") {
-    const { data: urlData } = await supabase.storage
-      .from("submittals")
-      .createSignedUrl(submittal.storage_path, 3600)
-    if (!urlData?.signedUrl) return NextResponse.json({ error: "URL generation failed" }, { status: 500 })
-    return NextResponse.redirect(urlData.signedUrl)
+    return (await signedRedirect(att.storage_path)) ?? storageDown()
   }
 
-  // Stripped Library-view path — bypasses the company-cover-merge below.
-  // Downloads the submittal, runs the conservative cover-strip, returns
-  // the stripped (or original, if no anchor) PDF.
+  // ── Library stripped view (?stripped=1): serve the PRE-STRIPPED stored
+  //    copy if one exists, else the original. Never strips on the fly.
   if (stripped) {
-    const { data: subBlob, error: dlErr } = await supabase.storage
-      .from("submittals")
-      .download(submittal.storage_path)
-    if (!subBlob || dlErr) {
-      return NextResponse.json({ error: dlErr?.message ?? "download failed" }, { status: 500 })
+    if (submittal.stripped_storage_path) {
+      const r = await signedRedirect(submittal.stripped_storage_path)
+      if (r) return r
+      // Stripped object missing/unreachable → fall back to the original.
     }
-    const original = Buffer.from(await subBlob.arrayBuffer())
-    const { buffer: stripBuffer, plan } = await stripFrontMatter(original)
-    return new NextResponse(new Uint8Array(stripBuffer), {
+    return (await signedRedirect(originalPath)) ?? storageDown()
+  }
+
+  // ── Default download (no params). Non-PDF → original.
+  if (submittal.mime_type !== "application/pdf") {
+    return (await signedRedirect(originalPath)) ?? storageDown()
+  }
+
+  // PDF default: prepend the company cover sheet when configured. Wrapped so
+  // ANY failure (download error, malformed/huge PDF, pdf-lib throw) falls
+  // back to the raw original — a bad PDF must never 500 a download.
+  try {
+    const { data: settings } = await supabase
+      .from("company_settings")
+      .select("cover_page_path")
+      .maybeSingle()
+
+    if (!settings?.cover_page_path) {
+      return (await signedRedirect(originalPath)) ?? storageDown()
+    }
+
+    const [{ data: submittalBlob, error: e1 }, { data: coverBlob, error: e2 }] = await Promise.all([
+      supabase.storage.from("submittals").download(originalPath),
+      supabase.storage.from("company-assets").download(settings.cover_page_path),
+    ])
+    if (!submittalBlob || !coverBlob || e1 || e2) throw new Error("cover/submittal download failed")
+
+    const [submittalBytes, coverBytes] = await Promise.all([
+      submittalBlob.arrayBuffer(),
+      coverBlob.arrayBuffer(),
+    ])
+    const coverDoc     = await PDFDocument.load(coverBytes)
+    const submittalDoc = await PDFDocument.load(submittalBytes)
+    const mergedDoc    = await PDFDocument.create()
+    const coverPages = await mergedDoc.copyPages(coverDoc, coverDoc.getPageIndices())
+    coverPages.forEach(p => mergedDoc.addPage(p))
+    const submittalPages = await mergedDoc.copyPages(submittalDoc, submittalDoc.getPageIndices())
+    submittalPages.forEach(p => mergedDoc.addPage(p))
+    const mergedBytes = await mergedDoc.save()
+
+    return new NextResponse(Buffer.from(mergedBytes), {
       headers: {
         "Content-Type": "application/pdf",
         "Content-Disposition": `inline; filename="${submittal.file_name}"`,
-        "X-Strip-Plan": plan
-          ? `strip ${plan.stripStartPage}-${plan.stripEndPage} of ${plan.totalPages}`
-          : "no-strip (no stamp anchor)",
       },
     })
+  } catch (err) {
+    console.warn("[download] cover-merge failed, serving original", err)
+    return (await signedRedirect(originalPath)) ?? storageDown()
   }
-
-  // Check for cover page
-  const { data: settings } = await supabase
-    .from("company_settings")
-    .select("cover_page_path")
-    .maybeSingle()
-
-  // No cover page — redirect to signed URL
-  if (!settings?.cover_page_path) {
-    const { data: urlData } = await supabase.storage
-      .from("submittals")
-      .createSignedUrl(submittal.storage_path, 3600)
-    if (!urlData?.signedUrl) return NextResponse.json({ error: "URL generation failed" }, { status: 500 })
-    return NextResponse.redirect(urlData.signedUrl)
-  }
-
-  // Download both PDFs in parallel
-  const [{ data: submittalBlob, error: e1 }, { data: coverBlob, error: e2 }] = await Promise.all([
-    supabase.storage.from("submittals").download(submittal.storage_path),
-    supabase.storage.from("company-assets").download(settings.cover_page_path),
-  ])
-
-  if (!submittalBlob || !coverBlob || e1 || e2) {
-    console.error("PDF download failed", e1, e2)
-    return NextResponse.json({ error: "Download failed" }, { status: 500 })
-  }
-
-  // Merge with pdf-lib: cover page first, then submittal
-  const [submittalBytes, coverBytes] = await Promise.all([
-    submittalBlob.arrayBuffer(),
-    coverBlob.arrayBuffer(),
-  ])
-
-  const coverDoc    = await PDFDocument.load(coverBytes)
-  const submittalDoc = await PDFDocument.load(submittalBytes)
-  const mergedDoc   = await PDFDocument.create()
-
-  const coverPages = await mergedDoc.copyPages(coverDoc, coverDoc.getPageIndices())
-  coverPages.forEach(p => mergedDoc.addPage(p))
-
-  const submittalPages = await mergedDoc.copyPages(submittalDoc, submittalDoc.getPageIndices())
-  submittalPages.forEach(p => mergedDoc.addPage(p))
-
-  const mergedBytes = await mergedDoc.save()
-
-return new NextResponse(Buffer.from(mergedBytes), {    headers: {
-      "Content-Type": "application/pdf",
-      "Content-Disposition": `inline; filename="${submittal.file_name}"`,
-    },
-  })
 }
