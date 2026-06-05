@@ -72,6 +72,19 @@ function SourceIcon({ className = "h-4 w-4" }: { className?: string }) {
 // prop. submittalsView is owned by the shell so it survives this module
 // unmounting (Library ↔ Submittals switch); navigation uses onNavigate.
 
+// Plain (no-AI) matcher for the Submittal-Log filter-as-you-type search.
+// Field set (identical to the Library search): title, CSI section number,
+// section name, submittal type, division (number + name). Partial,
+// case-insensitive. q must be pre-trimmed + lowercased.
+function submittalMatchesQuery(s: SubmittalRecord, q: string): boolean {
+  if (!q) return true
+  const hay = [
+    s.file_name, s.csi_section, s.section_name,
+    s.submittal_type, s.csi_division, s.division_name,
+  ].filter(Boolean).join("  ").toLowerCase()
+  return hay.includes(q)
+}
+
 export default function LibrarySubmittalsModule({ activeModule, globalProjectId, appProjects, teamMembers, userEmail, submittalsView, setSubmittalsView, onNavigate }: {
   activeModule: string
   globalProjectId: string
@@ -115,6 +128,12 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
   const [searching, setSearching]         = useState(false)
   const [searchError, setSearchError]     = useState<string | null>(null)
   const [searchAiSummary, setSearchAiSummary] = useState<string | null>(null)
+  // Library search — plain, debounced, no AI (/api/library-search). Results
+  // mode replaces the folder tree while a query is active.
+  const [libQuery, setLibQuery]           = useState("")
+  const [libResults, setLibResults]       = useState<SubmittalFile[] | null>(null)
+  const [libSearching, setLibSearching]   = useState(false)
+  const libSearchTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Upload modal
   const [showUpload, setShowUpload]         = useState(false)
@@ -266,6 +285,23 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
   }
 
   useEffect(() => { loadTree() }, [])
+
+  // Debounced Library search → /api/library-search (plain ilike, no AI).
+  useEffect(() => {
+    const q = libQuery.trim()
+    if (libSearchTimer.current) clearTimeout(libSearchTimer.current)
+    if (!q) { setLibResults(null); setLibSearching(false); return }
+    setLibSearching(true)
+    libSearchTimer.current = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/library-search?q=${encodeURIComponent(q)}`)
+        const data = await res.json()
+        setLibResults(res.ok ? (data.files ?? []) : [])
+      } catch { setLibResults([]) }
+      finally { setLibSearching(false) }
+    }, 250)
+    return () => { if (libSearchTimer.current) clearTimeout(libSearchTimer.current) }
+  }, [libQuery])
 
   useEffect(() => {
     try {
@@ -494,25 +530,12 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
     }
   }
 
-  async function handleSearch(e: React.FormEvent) {
+  // Submittal-Log search filters live as the user types (see
+  // displaySubmittals). The form's only job is to swallow Enter so the page
+  // doesn't reload — no AI call, no /api/search. (The AI route stays in the
+  // codebase for the separate semantic-search phase.)
+  function handleSearch(e: React.FormEvent) {
     e.preventDefault()
-    const q = query.trim()
-    if (!q) { clearSearch(); return }
-    setSearching(true)
-    setSearchError(null)
-    setSearchAiSummary(null)
-    try {
-      const res  = await fetch(`/api/search?q=${encodeURIComponent(q)}`)
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.error ?? "Search failed")
-      setSearchResults(data.files)
-      setSearchAiSummary(data.aiSummary ?? null)
-    } catch (e) {
-      setSearchError(e instanceof Error ? e.message : "Search failed")
-      setSearchResults(null)
-    } finally {
-      setSearching(false)
-    }
   }
 
   function clearSearch() {
@@ -1229,8 +1252,52 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
     }
   }
 
-  const isSearchMode = searchResults !== null || searching
-  const displaySubmittals = isSearchMode ? (searchResults ?? []) : logSubmittals
+  // One Library file row, reused by the folder tree AND the search results
+  // so both render identically (Open=stripped, Original, Cover, Delete).
+  function renderLibFile(file: SubmittalFile) {
+    const proj = file.project_id ? projectById.get(file.project_id) : null
+    const projLabel = proj ? (proj.number?.trim() || proj.name) : null
+    return (
+      <div key={file.id} className="flex items-center gap-2 py-1.5 group">
+        <span className={`flex-shrink-0 w-1.5 h-1.5 rounded-full ${getDot(file.mime_type)}`} />
+        <span className="flex-1 min-w-0 text-[12px] text-[#0F172A] truncate" title={file.file_name}>{truncateForDisplay(file.file_name)}</span>
+        {file.source === "spec_ingestion" && file.submittal_type && (
+          <span className="flex-shrink-0 text-[10px] text-[#64748B] bg-[#F1F5F9] px-1.5 py-0.5 rounded font-medium">· {file.submittal_type}</span>
+        )}
+        {projLabel && (
+          <span className="flex-shrink-0 text-[10px] text-[#7B9BB5] bg-[#7B9BB5]/10 px-1.5 py-0.5 rounded font-medium" title={proj?.name ?? ""}>{projLabel}</span>
+        )}
+        {file.mime_type === "application/pdf" ? (
+          <>
+            <a href={`/api/download/${file.id}?stripped=1`} target="_blank" rel="noopener noreferrer"
+              title="Library view — front matter (coversheet + architect-stamp page + routing/blanks) auto-stripped when detected. Original is one click away."
+              className="flex-shrink-0 text-[11px] text-[#7B9BB5] hover:text-[#5A7A94] font-medium px-2 py-0.5 rounded hover:bg-[#7B9BB5]/10 transition-colors">Open</a>
+            <a href={`/api/download/${file.id}`} target="_blank" rel="noopener noreferrer"
+              title="Original full PDF — coversheet + stamp + content, exactly as uploaded."
+              className="flex-shrink-0 text-[10px] text-[#94A3B8] hover:text-[#475569] font-medium px-1.5 py-0.5 rounded hover:bg-[#0F172A]/[0.04] transition-colors">Original (w/ stamp)</a>
+          </>
+        ) : (
+          <a href={file.file_url} target="_blank" rel="noopener noreferrer"
+            className="flex-shrink-0 text-[11px] text-[#7B9BB5] hover:text-[#5A7A94] font-medium px-2 py-0.5 rounded hover:bg-[#7B9BB5]/10 transition-colors">Open</a>
+        )}
+        <button onClick={() => handleFileOpen(file, file.csi_division ?? "", file.division_name ?? "", file.csi_section ?? "", file.section_name ?? "")}
+          className="flex-shrink-0 text-[11px] text-[#64748B] hover:text-[#0F172A] font-medium px-2 py-0.5 rounded hover:bg-[#0F172A]/[0.04] transition-colors">Cover</button>
+        <button onClick={() => setLibDeleteTarget({ file, secCode: file.csi_section ?? "" })}
+          title={file.source === "spec_ingestion" ? "Remove the file — keeps the submittal log entry" : "Delete this Library item"}
+          className="flex-shrink-0 text-[11px] text-[#94A3B8] hover:text-red-500 font-medium px-2 py-0.5 rounded hover:bg-red-50 transition-colors">Delete</button>
+      </div>
+    )
+  }
+
+  // Submittal-Log search is PLAIN + client-side filter-as-you-type over the
+  // already-loaded (and project-scoped) logSubmittals — no /api/search, no
+  // AI, no cross-project bleed. Matches the agreed field set via
+  // submittalMatchesQuery.
+  const trimmedLogQuery = query.trim().toLowerCase()
+  const isSearchMode = trimmedLogQuery.length > 0
+  const displaySubmittals = isSearchMode
+    ? logSubmittals.filter(s => submittalMatchesQuery(s, trimmedLogQuery))
+    : logSubmittals
   return (
     <>
         {/* Library action bar */}
@@ -1254,6 +1321,27 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
         </div>
         )}
 
+        {/* Library search bar — plain, filter-as-you-type, no AI */}
+        {activeModule === "library" && (
+          <div className="flex-shrink-0 border-b border-[#E2E8F0] bg-white px-4 py-2">
+            <div className="relative">
+              <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[#94A3B8] pointer-events-none"><SearchIcon /></span>
+              <input
+                type="search"
+                value={libQuery}
+                onChange={e => setLibQuery(e.target.value)}
+                placeholder="Search the Library by title, CSI section, type, or division…"
+                className="w-full h-8 pl-8 pr-8 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40 focus:border-[#7B9BB5]/50 placeholder:text-[#94A3B8]"
+              />
+              {libQuery && (
+                <button type="button" onClick={() => setLibQuery("")} className="absolute right-2 top-1/2 -translate-y-1/2 text-[#94A3B8] hover:text-[#0F172A]">
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12"/></svg>
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* Submittal Log action bar */}
         {activeModule === "submittals" && (
         <div className="flex-shrink-0 border-b border-[#E2E8F0] bg-white">
@@ -1274,7 +1362,7 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
               <p className="text-[12px] text-[#64748B] truncate hidden sm:block">
                 {submittalsView === "log"
                   ? (isSearchMode
-                      ? `Search results${searchResults !== null ? ` (${searchResults.length})` : ""}`
+                      ? `${displaySubmittals.length} match${displaySubmittals.length === 1 ? "" : "es"}`
                       : `${logSubmittals.length} submittal${logSubmittals.length === 1 ? "" : "s"}`)
                   : "Staged from spec book — review and commit"}
               </p>
@@ -1399,7 +1487,22 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
           {/* Library */}
           {activeModule === "library" && (
             <div className="px-4 py-4 max-w-4xl">
-              {treeLoading ? (
+              {libQuery.trim() ? (
+                libSearching && libResults === null ? (
+                  <div className="flex items-center gap-2 py-8 text-[13px] text-[#64748B]"><SpinnerIcon className="h-4 w-4" /> Searching…</div>
+                ) : (libResults ?? []).length === 0 ? (
+                  <p className="text-[13px] text-[#64748B] py-10 text-center">No Library matches for “{libQuery.trim()}”.</p>
+                ) : (
+                  <div className="bg-white rounded-xl border border-[#E2E8F0] overflow-hidden">
+                    <div className="px-4 py-2.5 bg-[#F8F9FA] border-b border-[#E2E8F0] text-[12px] text-[#64748B]">
+                      {(libResults ?? []).length} match{(libResults ?? []).length === 1 ? "" : "es"}
+                    </div>
+                    <div className="divide-y divide-[#E2E8F0] px-4">
+                      {(libResults ?? []).map(f => renderLibFile(f))}
+                    </div>
+                  </div>
+                )
+              ) : treeLoading ? (
                 <div className="flex items-center gap-2 py-8 text-[13px] text-[#64748B]">
                   <SpinnerIcon className="h-4 w-4" /> Loading library…
                 </div>
