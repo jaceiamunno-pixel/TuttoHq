@@ -63,6 +63,13 @@ interface Row {
   /** Post-commit per-row result. */
   committedRowId?: string
   commitError?: string
+  /** True when the commit hit the server-side same-bytes idempotency
+   *  guard — the existing attachment row was returned, no new
+   *  attachment was created, and the just-copied uploads/ object was
+   *  cleaned. The row is in the intended attached state; the modal
+   *  shows "Already attached" instead of "Attached to log row" to make
+   *  the no-op explicit to the operator. */
+  wasDuplicate?: boolean
   // ── Part C: exact-duplicate detection ───────────────────────────────────
   /** SHA-256 of the file bytes (lowercase hex). Computed server-side in
    *  /api/bulk-import/analyze (the buffer is already in memory there for
@@ -532,15 +539,23 @@ export default function BulkImportModal({
       })
       const data = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(data?.error ?? `Commit failed (HTTP ${res.status})`)
-      const results: Array<{ client_row_id: string; status: "ok" | "error"; row_id?: string; error?: string }>
-        = Array.isArray(data?.results) ? data.results : []
+      const results: Array<{
+        client_row_id: string; status: "ok" | "error";
+        row_id?: string; error?: string; was_duplicate?: boolean;
+      }> = Array.isArray(data?.results) ? data.results : []
       let ok = 0, err = 0
       setRows(prev => prev.map(r => {
         const result = results.find(x => x.client_row_id === r.id)
         if (!result) return r.status === "committing" ? { ...r, status: "ready" } : r  // server skipped — restore
         if (result.status === "ok") {
           ok++
-          return { ...r, status: "committed", committedRowId: result.row_id, commitError: undefined }
+          return {
+            ...r,
+            status: "committed",
+            committedRowId: result.row_id,
+            commitError: undefined,
+            wasDuplicate: result.was_duplicate === true,
+          }
         } else {
           err++
           return { ...r, status: "ready", commitError: result.error ?? "Commit failed" }
@@ -769,9 +784,17 @@ export default function BulkImportModal({
                                 <Spinner className="h-3 w-3" /> Committing…
                               </p>
                             )}
-                            {r.status === "committed" && (
+                            {r.status === "committed" && !r.wasDuplicate && (
                               <p className="text-[10px] text-emerald-700 mt-1 font-semibold">
                                 ✓ Attached to log row
+                              </p>
+                            )}
+                            {r.status === "committed" && r.wasDuplicate && (
+                              <p
+                                className="text-[10px] text-[#475569] mt-1 font-semibold flex items-center gap-1"
+                                title="The same file was already attached to this submittal — no new attachment was created. Server-side idempotency guard caught the re-commit."
+                              >
+                                ↺ Already attached (no-op)
                               </p>
                             )}
                             {r.commitError && r.status !== "committed" && (

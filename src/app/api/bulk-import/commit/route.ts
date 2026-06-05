@@ -68,6 +68,11 @@ interface CommitResult {
   row_id?: string
   attached_path?: string
   error?: string
+  /** True when the RPC hit the same-bytes idempotency guard and returned
+   *  a pre-existing attachment row instead of inserting a duplicate.
+   *  The client surfaces this as "Already attached" (the row is in the
+   *  intended state — just nothing new was created this run). */
+  was_duplicate?: boolean
 }
 
 export async function POST(req: NextRequest) {
@@ -239,14 +244,35 @@ export async function POST(req: NextRequest) {
       continue
     }
 
+    // Same-bytes idempotency no-op detection. The RPC's guard returns
+    // the EXISTING attachment row when (submittal_id, file_sha256,
+    // revision_label) already matches a stored attachment. We detect
+    // that by comparing the returned storage_path against the one we
+    // just promoted to. Mismatch = no-op fired:
+    //   - the uploads/ copy we just made is an immediate orphan; delete it
+    //   - the staging copy is no longer needed (bytes are attached via
+    //     the pre-existing row); the regular purge below handles that
+    //   - the result row carries was_duplicate=true so the UI shows
+    //     "Already attached" instead of "Committed"
+    const att = attachment as { storage_path?: string }
+    const wasDuplicate = !!att.storage_path && att.storage_path !== uploadsPath
+    if (wasDuplicate) {
+      const { error: orphanErr } = await supabase.storage
+        .from("submittals")
+        .remove([uploadsPath])
+      if (orphanErr) {
+        console.warn("[bulk-import-commit] orphan uploads cleanup failed for", uploadsPath, orphanErr.message)
+      }
+    }
+
     // Staging auto-purge — closes the historical ~400 MB leak. Now that
-    // the attachment is committed, the staging copy is no longer
-    // referenced (submittal_attachments.storage_path holds the uploads
-    // path, not the staging path). This is an irreversible storage
-    // delete, so we belt-and-suspender the check before firing:
-    //   1) The newly-committed attachment's storage_path equals
-    //      uploadsPath (the row's promoted location) and does NOT equal
-    //      the staging path. Proves the RPC promoted the bytes.
+    // the attachment is committed (or the bytes are accounted for via
+    // an existing row in the dupe-guard case), the staging copy is no
+    // longer referenced. This is an irreversible storage delete, so we
+    // belt-and-suspender the check before firing:
+    //   1) The COMMITTED row's storage_path does NOT equal the staging
+    //      path. Proves the file is represented by a non-staging
+    //      attachment row.
     //   2) The staging path lives under the caller's company staging
     //      dir (already verified above when constructing uploadsPath).
     //   3) Active-reference check: SELECT submittal_attachments where
@@ -256,12 +282,9 @@ export async function POST(req: NextRequest) {
     //      pointed an attachment at the same staging object — we'd
     //      rather leak the file than orphan a live reference.
     // Best-effort delete; failure does not fail the commit (the file is
-    // already in uploads/ and any TTL sweep will catch the orphan later).
-    const att = attachment as { storage_path?: string }
-    if (
-      att.storage_path === uploadsPath &&
-      att.storage_path !== r.staging_path
-    ) {
+    // already represented in the DB and any TTL sweep will catch the
+    // orphan later).
+    if (att.storage_path && att.storage_path !== r.staging_path) {
       const { data: liveRefs, error: refErr } = await supabase
         .from("submittal_attachments")
         .select("id")
@@ -285,7 +308,8 @@ export async function POST(req: NextRequest) {
       client_row_id: cid,
       status: "ok",
       row_id: r.target_row_id,
-      attached_path: uploadsPath,
+      attached_path: att.storage_path,
+      was_duplicate: wasDuplicate,
     })
   }
 
