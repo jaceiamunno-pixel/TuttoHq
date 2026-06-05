@@ -1472,12 +1472,31 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                                         title={proj?.name ?? ""}
                                       >{projLabel}</span>
                                     )}
-                                    <a
-                                      href={file.file_url}
-                                      target="_blank"
-                                      rel="noopener noreferrer"
-                                      className="flex-shrink-0 text-[11px] text-[#7B9BB5] hover:text-[#5A7A94] font-medium px-2 py-0.5 rounded hover:bg-[#7B9BB5]/10 transition-colors"
-                                    >Open</a>
+                                    {file.mime_type === "application/pdf" ? (
+                                      <>
+                                        <a
+                                          href={`/api/download/${file.id}?stripped=1`}
+                                          target="_blank"
+                                          rel="noopener noreferrer"
+                                          title="Library view — front matter (coversheet + architect-stamp page + routing/blanks) auto-stripped when detected. Original is one click away."
+                                          className="flex-shrink-0 text-[11px] text-[#7B9BB5] hover:text-[#5A7A94] font-medium px-2 py-0.5 rounded hover:bg-[#7B9BB5]/10 transition-colors"
+                                        >Open</a>
+                                        <a
+                                          href={`/api/download/${file.id}`}
+                                          target="_blank"
+                                          rel="noopener noreferrer"
+                                          title="Original full PDF — coversheet + stamp + content, exactly as uploaded."
+                                          className="flex-shrink-0 text-[10px] text-[#94A3B8] hover:text-[#475569] font-medium px-1.5 py-0.5 rounded hover:bg-[#0F172A]/[0.04] transition-colors"
+                                        >Original (w/ stamp)</a>
+                                      </>
+                                    ) : (
+                                      <a
+                                        href={file.file_url}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="flex-shrink-0 text-[11px] text-[#7B9BB5] hover:text-[#5A7A94] font-medium px-2 py-0.5 rounded hover:bg-[#7B9BB5]/10 transition-colors"
+                                      >Open</a>
+                                    )}
                                     <button
                                       onClick={() => handleFileOpen(file, div.num, div.name, sec.code, sec.name)}
                                       className="flex-shrink-0 text-[11px] text-[#64748B] hover:text-[#0F172A] font-medium px-2 py-0.5 rounded hover:bg-[#0F172A]/[0.04] transition-colors"
