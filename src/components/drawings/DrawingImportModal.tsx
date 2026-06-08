@@ -69,15 +69,24 @@ export default function DrawingImportModal({ projectId, onClose }: {
     const bid = crypto.randomUUID()
     setBatchId(bid)
     try {
-      const bytes = new Uint8Array(await file.arrayBuffer())
+      // COPY-PER-CONSUMER: pdf.js (getDocumentProxy) takes ownership of and
+      // DETACHES the Uint8Array's ArrayBuffer when it parses. Sharing one
+      // buffer with pdf-lib left PDFDocument.load() reading a neutered buffer
+      // → "No PDF header found at offset 0". Hand each parser its own clone.
+      const ab = await file.arrayBuffer()
+      const bytesForPdfjs  = new Uint8Array(ab.slice(0))
+      const bytesForPdfLib = new Uint8Array(ab.slice(0))
 
-      // Positioned text for every page (unpdf → pdf.js text content).
+      // Positioned text for every page (unpdf → pdf.js text content). The
+      // per-page path below uses pdf.getPage() on this parsed proxy — it never
+      // re-reads bytesForPdfjs, so the detach affects nothing downstream.
       setProgress("Reading drawing set…")
-      const pdf = await getDocumentProxy(bytes)
+      const pdf = await getDocumentProxy(bytesForPdfjs)
       const pageCount = pdf.numPages
 
-      // pdf-lib source for splitting.
-      const srcDoc = await PDFDocument.load(bytes)
+      // pdf-lib source for splitting. copyPages() below reads from this parsed
+      // srcDoc, not from bytesForPdfLib, so it is likewise unaffected.
+      const srcDoc = await PDFDocument.load(bytesForPdfLib)
 
       const staged: ProposedRow[] = []
       const titleReq: { client_row_id: string; titleblock_text: string }[] = []
