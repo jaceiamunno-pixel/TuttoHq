@@ -12,7 +12,7 @@
 //   row 4+   → data rows, tinted by csi_section via SECTION_PALETTE_HEX_THP
 //   cols P/R/S → helper cells driving the Late/On-Time formula
 
-import type { SubmittalRecord, SubcontractorRow, SupplierRow } from "./types"
+import type { SubmittalRecord, SubcontractorRow, SupplierRow, SubcontractorPersonRow, SupplierPersonRow } from "./types"
 import { SECTION_PALETTE_HEX_THP } from "./csi"
 
 // Light-gray cell border applied to every header/data/buffer cell in cols A-N.
@@ -88,15 +88,27 @@ const HELPER_CUTOFF_REF    = `$S$${HELPER_CUTOFF_ROW}`
 // so they activate the moment a user fills in date columns.
 const BUFFER_ROWS = 50
 
+// Mirrors the Submittal Log UI label so the export matches what's on screen:
+// "Firm — Person", or just the firm (firm-only / legacy rows), or "".
 function vendorLabel(
   s: SubmittalRecord,
   subs: SubcontractorRow[],
   suppliers: SupplierRow[],
+  subPeople: SubcontractorPersonRow[],
+  supPeople: SupplierPersonRow[],
 ): string {
-  if (s.vendor_subcontractor_id)
-    return subs.find(v => v.id === s.vendor_subcontractor_id)?.company_name ?? ""
-  if (s.vendor_supplier_id)
-    return suppliers.find(v => v.id === s.vendor_supplier_id)?.company_name ?? ""
+  if (s.vendor_subcontractor_id) {
+    const firm = subs.find(v => v.id === s.vendor_subcontractor_id)?.company_name ?? ""
+    const person = s.vendor_subcontractor_person_id
+      ? subPeople.find(p => p.id === s.vendor_subcontractor_person_id)?.name : null
+    return firm && person ? `${firm} — ${person}` : firm
+  }
+  if (s.vendor_supplier_id) {
+    const firm = suppliers.find(v => v.id === s.vendor_supplier_id)?.company_name ?? ""
+    const person = s.vendor_supplier_person_id
+      ? supPeople.find(p => p.id === s.vendor_supplier_person_id)?.name : null
+    return firm && person ? `${firm} — ${person}` : firm
+  }
   return ""
 }
 
@@ -148,6 +160,8 @@ export interface ExportSubmittalLogArgs {
   gcName: string | null
   vendorSubs: SubcontractorRow[]
   vendorSuppliers: SupplierRow[]
+  vendorSubPeople: SubcontractorPersonRow[]
+  vendorSupPeople: SupplierPersonRow[]
   appOrigin: string
   groupedBySection: boolean
   isSearchMode: boolean
@@ -210,7 +224,7 @@ export async function exportSubmittalLogToExcel(args: ExportSubmittalLogArgs): P
   args.rows.forEach((s, i) => {
     const r = firstDataRow + i
     const row = ws.getRow(r)
-    const vendor = vendorLabel(s, args.vendorSubs, args.vendorSuppliers)
+    const vendor = vendorLabel(s, args.vendorSubs, args.vendorSuppliers, args.vendorSubPeople, args.vendorSupPeople)
     const status = s.review_status ?? "Received"
     const rowBg  = rowBgFor(s.csi_section)
 
