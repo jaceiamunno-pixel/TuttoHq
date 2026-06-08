@@ -1956,3 +1956,70 @@ CREATE POLICY "company-assets: tenant update" ON storage.objects FOR UPDATE TO a
   WITH CHECK (bucket_id = 'company-assets'  AND (storage.foldername(name))[1] = public.get_my_company_id()::text);
 CREATE POLICY "company-assets: tenant delete" ON storage.objects FOR DELETE TO authenticated
   USING       (bucket_id = 'company-assets'  AND (storage.foldername(name))[1] = public.get_my_company_id()::text);
+
+-- ─── ADR-004: Subcontractors/Suppliers Firm→People restructure ────────────────
+-- Additive. Firm = existing subcontractors/suppliers (untouched, incl. legacy
+-- contact_name/phone/email). People = new child tables. Submittals gain nullable
+-- person FKs alongside the existing firm FKs. See 04 - Decisions/ADR-004.
+-- Applied to prod 2026-06-08 (Step 1 DDL, then Step 2 backfill).
+
+-- Step 1 — DDL
+CREATE TABLE IF NOT EXISTS subcontractor_people (
+  id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  subcontractor_id UUID NOT NULL REFERENCES subcontractors(id) ON DELETE CASCADE,
+  name             TEXT,
+  email            TEXT,
+  phone            TEXT,
+  role             TEXT,
+  created_at       TIMESTAMPTZ DEFAULT now(),
+  company_id       UUID REFERENCES companies(id) DEFAULT get_my_company_id()
+);
+ALTER TABLE subcontractor_people ENABLE ROW LEVEL SECURITY;
+CREATE INDEX IF NOT EXISTS idx_subcontractor_people_subcontractor
+  ON subcontractor_people (subcontractor_id);
+CREATE POLICY "subcontractor_people: company select" ON subcontractor_people
+  FOR SELECT TO authenticated USING     (company_id = get_my_company_id());
+CREATE POLICY "subcontractor_people: company insert" ON subcontractor_people
+  FOR INSERT TO authenticated WITH CHECK (company_id = get_my_company_id());
+CREATE POLICY "subcontractor_people: company update" ON subcontractor_people
+  FOR UPDATE TO authenticated USING     (company_id = get_my_company_id())
+                             WITH CHECK (company_id = get_my_company_id());
+CREATE POLICY "subcontractor_people: company delete" ON subcontractor_people
+  FOR DELETE TO authenticated USING     (company_id = get_my_company_id());
+
+CREATE TABLE IF NOT EXISTS supplier_people (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  supplier_id UUID NOT NULL REFERENCES suppliers(id) ON DELETE CASCADE,
+  name        TEXT,
+  email       TEXT,
+  phone       TEXT,
+  role        TEXT,
+  created_at  TIMESTAMPTZ DEFAULT now(),
+  company_id  UUID REFERENCES companies(id) DEFAULT get_my_company_id()
+);
+ALTER TABLE supplier_people ENABLE ROW LEVEL SECURITY;
+CREATE INDEX IF NOT EXISTS idx_supplier_people_supplier
+  ON supplier_people (supplier_id);
+CREATE POLICY "supplier_people: company select" ON supplier_people
+  FOR SELECT TO authenticated USING     (company_id = get_my_company_id());
+CREATE POLICY "supplier_people: company insert" ON supplier_people
+  FOR INSERT TO authenticated WITH CHECK (company_id = get_my_company_id());
+CREATE POLICY "supplier_people: company update" ON supplier_people
+  FOR UPDATE TO authenticated USING     (company_id = get_my_company_id())
+                             WITH CHECK (company_id = get_my_company_id());
+CREATE POLICY "supplier_people: company delete" ON supplier_people
+  FOR DELETE TO authenticated USING     (company_id = get_my_company_id());
+
+ALTER TABLE submittals
+  ADD COLUMN IF NOT EXISTS vendor_subcontractor_person_id UUID
+    REFERENCES subcontractor_people(id) ON DELETE SET NULL;
+ALTER TABLE submittals
+  ADD COLUMN IF NOT EXISTS vendor_supplier_person_id UUID
+    REFERENCES supplier_people(id) ON DELETE SET NULL;
+
+-- Step 2 — backfill (one 'primary' person per existing firm from its contact_*).
+-- Idempotency note: this is a plain INSERT…SELECT; re-running would duplicate.
+-- Already applied once to prod (4 subcontractor rows; 0 suppliers).
+INSERT INTO subcontractor_people (subcontractor_id, name, email, phone, role, company_id)
+SELECT s.id, s.contact_name, s.email, s.phone, 'primary', s.company_id
+FROM subcontractors s;
