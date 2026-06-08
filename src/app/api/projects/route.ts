@@ -6,7 +6,7 @@ export async function GET() {
 
   const { data, error } = await supabase
     .from("projects")
-    .select("id, name, number, location, gc_name, architect, created_at, created_by")
+    .select("id, name, number, location, gc_name, architect, created_at, created_by, base_contract_value")
     .order("created_at", { ascending: true })
 
   if (error) {

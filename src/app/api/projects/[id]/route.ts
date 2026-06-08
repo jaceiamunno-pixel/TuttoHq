@@ -12,24 +12,40 @@ export async function PATCH(
   const { id } = await params
   const body = await req.json()
 
-  const { name, number, location, gc_name, architect } = body
+  const { name, number, location, gc_name, architect, base_contract_value } = body
 
   if (name !== undefined && (typeof name !== "string" || !name.trim())) {
     return NextResponse.json({ error: "Name cannot be empty" }, { status: 400 })
   }
 
-  const updates: Record<string, string | null> = {}
+  // base_contract_value: accept a number, a numeric string, or null/"" (clears it).
+  // Anything non-numeric is rejected rather than silently coerced.
+  let baseContract: number | null | undefined
+  if (base_contract_value !== undefined) {
+    if (base_contract_value === null || base_contract_value === "") {
+      baseContract = null
+    } else {
+      const n = Number(base_contract_value)
+      if (!Number.isFinite(n) || n < 0) {
+        return NextResponse.json({ error: "base_contract_value must be a non-negative number" }, { status: 400 })
+      }
+      baseContract = n
+    }
+  }
+
+  const updates: Record<string, string | number | null> = {}
   if (name !== undefined) updates.name = name.trim()
   if (number !== undefined) updates.number = number?.trim() ?? null
   if (location !== undefined) updates.location = location?.trim() ?? null
   if (gc_name !== undefined) updates.gc_name = gc_name?.trim() ?? null
   if (architect !== undefined) updates.architect = architect?.trim() ?? null
+  if (baseContract !== undefined) updates.base_contract_value = baseContract
 
   const { data, error } = await supabase
     .from("projects")
     .update(updates)
     .eq("id", id)
-    .select("id, name, number, location, gc_name, architect, created_at")
+    .select("id, name, number, location, gc_name, architect, created_at, base_contract_value")
     .single()
 
   if (error) {

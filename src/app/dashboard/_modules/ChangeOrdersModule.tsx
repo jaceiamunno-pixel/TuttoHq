@@ -36,6 +36,8 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
   const [coRespondSaving, setCoRespondSaving]         = useState(false)
   const [coResponseStatus, setCoResponseStatus]       = useState("")
   const [coGeneratingPdf, setCoGeneratingPdf]         = useState(false)
+  const [coBaseValue, setCoBaseValue]                 = useState("")
+  const [coBaseSaving, setCoBaseSaving]               = useState(false)
 
   function loadChangeOrders(pid = globalProjectId) {
     setCoLoading(true)
@@ -52,6 +54,12 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
 
   // Pre-select the current global project whenever the New CO modal opens.
   useEffect(() => { if (showNewCo) setCoProjectId(globalProjectId) }, [showNewCo, globalProjectId])
+
+  // Seed the editable Base Contract value from the currently-selected project.
+  useEffect(() => {
+    const p = appProjects.find(p => p.id === globalProjectId)
+    setCoBaseValue(p?.base_contract_value != null ? String(p.base_contract_value) : "")
+  }, [globalProjectId, appProjects])
 
   async function createCo(e: React.FormEvent) {
     e.preventDefault()
@@ -116,6 +124,28 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
     } finally { setCoRespondSaving(false) }
   }
 
+  // Persist the project's Base Contract value via the existing company-scoped
+  // projects PATCH (RLS gates it to the caller's tenant).
+  async function saveBaseContract() {
+    if (!globalProjectId) return
+    setCoBaseSaving(true)
+    try {
+      const raw = coBaseValue.trim()
+      await fetch(`/api/projects/${globalProjectId}`, {
+        method: "PATCH", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ base_contract_value: raw === "" ? null : raw }),
+      })
+    } finally { setCoBaseSaving(false) }
+  }
+
+  // New Contract value = Base + Σ CO amounts for every status EXCEPT Rejected.
+  const coAmountTotal = changeOrders
+    .filter(c => c.status !== "Rejected")
+    .reduce((s, c) => s + (c.pricing_sum ?? 0), 0)
+  const baseNum = parseFloat(coBaseValue)
+  const newContractValue = (Number.isFinite(baseNum) ? baseNum : 0) + coAmountTotal
+  const fmtUsd = (n: number) => new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(n)
+
   return (
     <>
       {/* Change Orders action bar */}
@@ -125,6 +155,29 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
           <PlusIcon /> New CO
         </button>
       </div>
+
+      {/* Base + New Contract value */}
+      {globalProjectId && (
+        <div className="flex-shrink-0 border-b border-[#E2E8F0] bg-white px-4 py-3 flex flex-wrap items-end gap-4">
+          <div>
+            <label className="block text-[10px] font-bold text-[#64748B] uppercase tracking-widest mb-1">Base Contract Value</label>
+            <div className="flex items-center gap-2">
+              <input type="number" step="0.01" min="0" value={coBaseValue}
+                onChange={e => setCoBaseValue(e.target.value)} placeholder="0.00"
+                className="h-9 w-44 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40 tabular-nums placeholder:text-[#64748B]" />
+              <button onClick={saveBaseContract} disabled={coBaseSaving}
+                className="h-9 px-3 rounded-md bg-[#7B9BB5] text-white text-[12px] font-semibold hover:bg-[#6A8AA4] transition-colors disabled:opacity-50 flex items-center gap-1.5">
+                {coBaseSaving && <SpinnerIcon className="h-3 w-3" />}{coBaseSaving ? "Saving…" : "Save"}
+              </button>
+            </div>
+          </div>
+          <div className="rounded-lg bg-[#F4F5F7] border border-[#E2E8F0] px-4 py-2">
+            <p className="text-[10px] font-bold text-[#64748B] uppercase tracking-widest mb-0.5">New Contract Value</p>
+            <p className="text-[18px] font-bold tabular-nums text-[#0F172A]">{fmtUsd(newContractValue)}</p>
+            <p className="text-[10px] text-[#94A3B8] mt-0.5">Base + COs (excl. Rejected)</p>
+          </div>
+        </div>
+      )}
 
       {/* Change Orders */}
       <div className="flex-1 overflow-y-auto min-h-0">
@@ -138,9 +191,9 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
                 {/* Running totals */}
                 {changeOrders.length > 0 && (() => {
                   const approved = changeOrders.filter(c => c.status === "Approved")
-                  // Pending $ = everything not yet approved (Pending + Not submitted both count).
-                  const pending  = changeOrders.filter(c => c.status !== "Approved")
-                  const open     = changeOrders.filter(c => c.status !== "Approved")
+                  // Pending $ + Open exclude both Approved and Rejected (Rejected counts toward neither).
+                  const pending  = changeOrders.filter(c => !["Approved","Rejected"].includes(c.status))
+                  const open     = changeOrders.filter(c => !["Approved","Rejected"].includes(c.status))
                   const sumApproved = approved.reduce((s, c) => s + (c.pricing_sum ?? 0), 0)
                   const sumPending  = pending.reduce((s,  c) => s + (c.pricing_sum ?? 0), 0)
                   const fmt = (n: number) => new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(n)
@@ -198,6 +251,7 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
                           "Not submitted": "bg-gray-100 text-gray-500",
                           Pending:         "bg-amber-100 text-amber-700",
                           Approved:        "bg-green-100 text-green-700",
+                          Rejected:        "bg-red-100 text-red-700",
                         }
                         const badgeCls = statusColor[c.status] ?? "bg-gray-100 text-gray-500"
                         return (
@@ -236,7 +290,7 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
                   <div className="sm:hidden px-3 py-3 space-y-2">
                     {changeOrders.map(c => {
                       const proj = appProjects.find(p => p.id === c.project_id)
-                      const statusColor: Record<string, string> = { "Not submitted": "bg-gray-100 text-gray-500", Pending: "bg-amber-100 text-amber-700", Approved: "bg-green-100 text-green-700" }
+                      const statusColor: Record<string, string> = { "Not submitted": "bg-gray-100 text-gray-500", Pending: "bg-amber-100 text-amber-700", Approved: "bg-green-100 text-green-700", Rejected: "bg-red-100 text-red-700" }
                       const badgeCls = statusColor[c.status] ?? "bg-gray-100 text-gray-500"
                       return (
                         <div key={c.id} className="bg-white rounded-xl border border-[#E2E8F0] p-3 shadow-sm">
@@ -321,7 +375,7 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
                     <div>
                       <label className={labelCls2}>Status</label>
                       <select value={coStatus} onChange={e => setCoStatus(e.target.value)} className={selCls2}>
-                        {["Not submitted","Pending","Approved"].map(s => <option key={s} value={s}>{s}</option>)}
+                        {["Not submitted","Pending","Approved","Rejected"].map(s => <option key={s} value={s}>{s}</option>)}
                       </select>
                     </div>
                   </div>
@@ -396,6 +450,7 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
                       "Not submitted": "bg-gray-100 text-gray-500",
                       Pending:         "bg-amber-100 text-amber-700",
                       Approved:        "bg-green-100 text-green-700",
+                      Rejected:        "bg-red-100 text-red-700",
                     }
                     return <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-semibold ${statusColor[viewCo.status] ?? "bg-gray-100 text-gray-500"}`}>{viewCo.status}</span>
                   })()}
@@ -488,7 +543,7 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
                     <label className="block text-[11px] font-semibold text-[#64748B] uppercase tracking-widest mb-1">Status</label>
                     <select value={coResponseStatus} onChange={e => setCoResponseStatus(e.target.value)}
                       className="w-full h-9 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40">
-                      {["Not submitted","Pending","Approved"].map(s => <option key={s} value={s}>{s}</option>)}
+                      {["Not submitted","Pending","Approved","Rejected"].map(s => <option key={s} value={s}>{s}</option>)}
                     </select>
                   </div>
                   <div>
