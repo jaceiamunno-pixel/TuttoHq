@@ -77,6 +77,8 @@ export interface SubmittalRecord {
   submittal_type: string | null
   vendor_subcontractor_id: string | null
   vendor_supplier_id: string | null
+  vendor_subcontractor_person_id: string | null
+  vendor_supplier_person_id: string | null
   source: string | null
   spec_section_id: string | null
   // Sub-package workflow (Session I)
@@ -194,6 +196,9 @@ export const SUBMITTAL_TYPE_OPTIONS = [
 ] as const
 export interface SubcontractorRow { id: string; company_name: string; trade: string | null; contact_name?: string | null; email?: string | null }
 export interface SupplierRow { id: string; company_name: string; specialty: string | null; contact_name?: string | null; email?: string | null }
+// People under a firm (ADR-004 Firm→People). FK → parent firm; company-scoped.
+export interface SubcontractorPersonRow { id: string; subcontractor_id: string; name: string | null; email: string | null; phone: string | null; role: string | null }
+export interface SupplierPersonRow { id: string; supplier_id: string; name: string | null; email: string | null; phone: string | null; role: string | null }
 
 // ─── Submittal packages (Session I — outbound dispatch) ──────────────────────
 export type PackageStatus = "draft" | "dispatched" | "partial_received" | "complete"
