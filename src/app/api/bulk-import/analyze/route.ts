@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import { extractPdfPages } from "@/lib/spec-parser"
 import { analyzePdf } from "@/lib/bulk-import-detect"
+import { analyzeCoverSplit } from "@/lib/pdf-strip"
 import { extractRawFormFields, recoverCoversheetFields, extractApprovalStampDate } from "@/lib/bulk-import-form"
 import { hashBufferInNode } from "@/lib/file-hash-node"
 
@@ -95,11 +96,18 @@ export async function POST(req: NextRequest) {
   // than falling back to Text4 (which is the SUBMISSION date, not approval).
   const approvalStamp = await extractApprovalStampDate(buffer)
 
+  // ── Cover split — UNIFIED on findStripPlan / COVER_VOCAB ─────────────────
+  // The same boundary-by-vocabulary detector the Library strip uses, so the
+  // proposed split shown for human confirm matches what on-demand stripping
+  // will actually remove. Needs the buffer (reads AcroForm-widget + /Stamp
+  // signals), so it runs here in the route, not in the pure analyzePdf.
+  const cover = await analyzeCoverSplit(buffer)
+
   // ── Pure detection — no I/O from here on. ───────────────────────────────
   // Section detection is template-agnostic: analyzePdf runs the generic CSI
   // extractor against rawFormFields + coversheet-page text. The recovery
   // struct supplies nice-to-haves only (submitter, title, submittal#, date).
-  const analysis = analyzePdf(fileName, pages, rawFormFields, recovery, approvalStamp)
+  const analysis = analyzePdf(fileName, pages, rawFormFields, recovery, approvalStamp, cover)
 
   // ── SHA-256 for exact-duplicate detection (Part C). Computed here
   // because the buffer is already in memory for text extraction; adding

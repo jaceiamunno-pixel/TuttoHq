@@ -345,166 +345,29 @@ export function detectSubmittalType(
 
 // ─── Coversheet boundary detection ──────────────────────────────────────────
 //
-// Two stacked coversheets per the THP/BAM template (sample of 11 real
-// submittals reviewed 2026-06-01):
+// Cover detection is UNIFIED on `findStripPlan` / COVER_VOCAB (pdf-strip.ts) —
+// the SAME boundary-by-vocabulary detector the Library strip uses. The old
+// two-template fingerprint (`detectCoverSplit`) was retired (2026-06-08) so
+// the review-screen split reflects exactly what on-demand stripping will
+// remove. `analyzePdf` no longer computes a cover split itself; the analyze
+// route computes it via `analyzeCoverSplit(buffer)` (pdf-strip.ts) — which has
+// the buffer needed to read AcroForm-widget and /Stamp signals that pure text
+// can't see — and passes the result in. This module stays pure (no I/O).
 //
-//   Page 1 — Architect review sheet (BAM)
-//     Header: "Submittal / Architecture / Branding+Digital / Interior Design /
-//             Strategic Action" (or just "Submittal" + architect identifier)
-//     Stamp: "Approved (A)" / "Exceptions Noted (EN)" /
-//            "Not Approved (NA)" / "Revise and Resubmit"
-//     Project: "BAM Project Number" (or generic "Project No.")
-//
-//   Page 2 — Submitter coversheet
-//     Labeled fields: "Project Name", "Project Number", "Spec Section Title",
-//                     "Spec Section No.", "Submittal No.", "Date Submitted"
-//
-// The leading run of pages matching one of these templates IS the coversheet.
-// Product content begins at the first page that matches NEITHER.
-//
-// Fallback for scanned cover pages (no text layer): a leading page with
-// very low extractable text is treated as a probable coversheet AND the row
-// is flagged as uncertain. Never guess silently.
-
-/** Char count below which a page is considered "low text" — likely scanned.
- *  Kept tight (30) so that real but sparse product pages aren't mistaken for
- *  blank scanned coversheets. */
-const LOW_TEXT_THRESHOLD = 30
-
-function pageCharCount(t: string): number {
-  return t.replace(/\s+/g, "").length
-}
-
-/** Looks like an architect review sheet (page-1 template)?
- *  Two of: review stamp vocabulary, architect/project header, project-no label. */
-function looksLikeArchitectReview(text: string): boolean {
-  if (!text) return false
-  let hits = 0
-  if (/\b(?:Approved|Exceptions\s+Noted|Not\s+Approved|Revise\s+and\s+Resubmit|Reviewed)\b/i.test(text)) hits++
-  if (/\b(?:Architect(?:ure)?|BAM|Branding|Interior\s+Design|Strategic\s+Action)\b/i.test(text)) hits++
-  if (/\b(?:Project\s*(?:No\.?|Number)|Submittal\s+Review)\b/i.test(text)) hits++
-  return hits >= 2
-}
-
-/** Looks like a submitter coversheet (page-2 template)?
- *  Three of the labeled fields present. */
-function looksLikeSubmitterCoversheet(text: string): boolean {
-  if (!text) return false
-  let hits = 0
-  if (/Spec(?:ification)?\s+Section\s*(?:No\.?|Title|#|Number)/i.test(text)) hits++
-  if (/Submittal\s+(?:No\.?|Number|#)/i.test(text)) hits++
-  if (/Date\s+Submitted/i.test(text)) hits++
-  if (/Project\s+(?:Name|Number|No\.?)/i.test(text)) hits++
-  if (/Submitted\s+(?:By|To)/i.test(text)) hits++
-  return hits >= 3
-}
-
-export type CoverPageKind =
-  | "architect-review"
-  | "submitter-coversheet"
-  | "low-text-leading"
-  | "product"
+// NOTE: this changes ONLY the review NUMBER (human-confirmed in the review UI).
+// Where/when stripping executes is unchanged (commit-time vs on-demand is a
+// separate, deferred decision — out of scope here).
 
 export interface CoverSplitResult {
   /** Number of leading pages that ARE coversheets. coverSplit=2 means pages
-   *  1+2 are cover; page 3 is the first content page. */
+   *  1+2 are cover; page 3 is the first content page. 0 = no leading cover
+   *  run detected. */
   coverSplit: number
-  /** Per-page classification, length = pageCount. */
-  perPage: CoverPageKind[]
-  /** Loud-flag flips when detection is unsure — at least one leading page is
-   *  low-text, or no template matched and we fell back to a generic guess. */
+  /** Flips when detection couldn't find a leading cover run (coverSplit=0),
+   *  so the review row warns the user to set the split manually. */
   uncertain: boolean
   /** Human-readable reason, surfaced in the review table tooltip. */
   reason: string
-}
-
-/**
- * Walks pages from page 1 forward. While the leading page matches an
- * architect or submitter template, count it as cover. Stop at the first
- * "product" page (matches neither). Low-text leading pages are counted as
- * cover BUT flip `uncertain` so the row warns the user.
- *
- * `pageTexts` is 0-indexed; the returned coverSplit and perPage use page
- * positions 1..N implicitly (perPage[i] describes page i+1).
- */
-export function detectCoverSplit(pageTexts: string[]): CoverSplitResult {
-  const perPage: CoverPageKind[] = []
-  let coverSplit = 0
-  let uncertain = false
-  let lowTextLeading = 0
-  let noTemplateMatchYet = true
-  // Once a template page has matched, low-text pages are NOT treated as
-  // leading scanned coversheets anymore — they're sparse product pages
-  // (drawings, mostly-image specs, etc.). The low-text fallback is only for
-  // the very first pages, before any template has confirmed where the
-  // coversheet actually starts.
-  let templateMatched = false
-
-  for (let i = 0; i < pageTexts.length; i++) {
-    const text = pageTexts[i] ?? ""
-    const charCount = pageCharCount(text)
-
-    // Already past the coversheet — anything else is content.
-    if (coverSplit !== i) {
-      perPage.push("product")
-      continue
-    }
-
-    if (charCount < LOW_TEXT_THRESHOLD && !templateMatched) {
-      // Leading low-text page BEFORE any template hit. Probable scanned
-      // coversheet; treat as cover but flag.
-      perPage.push("low-text-leading")
-      coverSplit++
-      uncertain = true
-      lowTextLeading++
-      continue
-    }
-
-    if (looksLikeArchitectReview(text)) {
-      perPage.push("architect-review")
-      coverSplit++
-      templateMatched = true
-      noTemplateMatchYet = false
-      continue
-    }
-    if (looksLikeSubmitterCoversheet(text)) {
-      perPage.push("submitter-coversheet")
-      coverSplit++
-      templateMatched = true
-      noTemplateMatchYet = false
-      continue
-    }
-
-    // First page that matches NEITHER template — product content starts here.
-    perPage.push("product")
-  }
-
-  // Edge cases that should flip uncertainty:
-  //  - No template matched on ANY leading page. Either it's an unrecognized
-  //    architect template, or every cover page was scanned. Coversplit is
-  //    whatever the low-text fallback produced (possibly 0); user must confirm.
-  if (noTemplateMatchYet) uncertain = true
-  //  - Found zero leading pages of any kind — i.e. coverSplit=0. Almost
-  //    certainly wrong for a signed submittal; flag loudly.
-  if (coverSplit === 0) uncertain = true
-  //  - Found ALL pages classified as cover — there's no content left.
-  //    Something is off with the fingerprint or the file is cover-only.
-  if (coverSplit === pageTexts.length && pageTexts.length > 0) uncertain = true
-
-  let reason: string
-  if (coverSplit === 0) {
-    reason = "Couldn't locate a coversheet on page 1 — set the split manually."
-  } else if (coverSplit === pageTexts.length) {
-    reason = "Every page looks like coversheet content — confirm the split."
-  } else if (lowTextLeading > 0) {
-    reason = `${lowTextLeading} leading page${lowTextLeading === 1 ? "" : "s"} had little/no extractable text (probable scanned coversheet). Confirm the split.`
-  } else if (noTemplateMatchYet) {
-    reason = "Coversheet template wasn't recognized — confirm the split."
-  } else {
-    reason = `Coversheet ends after page ${coverSplit}; product content begins page ${coverSplit + 1}.`
-  }
-
-  return { coverSplit, perPage, uncertain, reason }
 }
 
 // ─── Top-level analysis ─────────────────────────────────────────────────────
@@ -914,15 +777,19 @@ export function analyzePdf(
     template: "unknown",
   },
   approvalStamp: ApprovalStampInfo | null = null,
+  // Cover split is now computed by the analyze route via analyzeCoverSplit
+  // (pdf-strip.ts / findStripPlan) — the SAME detector the Library strip uses.
+  // analyzePdf stays pure: it receives the result rather than re-detecting.
+  cover: CoverSplitResult = { coverSplit: 0, uncertain: true, reason: "No cover split computed." },
 ): BulkImportAnalysis {
   const filenameSection = parseSectionFromFilename(filename)
   const page1Text = pageTexts[0] ?? ""
   const page2Text = pageTexts[1] ?? ""
 
-  // Cover split first — the section extractor needs to know which pages
-  // are coversheet so it doesn't grab CSI references out of product
-  // datasheets buried inside the submittal.
-  const cover = detectCoverSplit(pageTexts)
+  // The section extractor needs to know which pages are coversheet so it
+  // doesn't grab CSI references out of product datasheets buried inside the
+  // submittal. Use the passed-in cover split (min 2 pages so a 0/1 detection
+  // still scans the typical 2-page front matter for the section).
   const coverPageTexts = pageTexts.slice(0, Math.max(cover.coverSplit, 2))
 
   // Template-agnostic generic section extraction. Wins over filename

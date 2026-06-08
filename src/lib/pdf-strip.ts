@@ -42,6 +42,7 @@
 import { PDFDocument, PDFDict, PDFArray, PDFName } from "pdf-lib"
 import { extractText, getDocumentProxy } from "unpdf"
 import { extractApprovalStampDate, type ApprovalStampInfo } from "./bulk-import-form"
+import type { CoverSplitResult } from "./bulk-import-detect"
 
 const BLANK_PAGE_CHAR_THRESHOLD = 10
 const STAMP_SCAN_PAGES = 6
@@ -231,6 +232,43 @@ export async function findStripPlan(buffer: Buffer): Promise<StripPlan | null> {
     anchor: stampInRun ? "stamp" : "coversheet",
     stamp: stampInRun,
     totalPages,
+  }
+}
+
+/**
+ * Compute the bulk-import review-table cover split from the SAME detector the
+ * Library strip uses (`findStripPlan` / COVER_VOCAB). The analyze route calls
+ * this so the proposed split shown for human confirm matches exactly what
+ * on-demand stripping will remove later. This NEVER strips — it only reports
+ * the page boundary; all of findStripPlan's guards apply (stop-at-product,
+ * never-strip-last-page, bail-if-page-1-has-no-cover).
+ *
+ *   coverSplit = findStripPlan.stripEndPage (stripStartPage is always 1), i.e.
+ *   the count of leading cover pages. 0 when no leading cover run is found
+ *   (manufacturer datasheet / product-first doc / strip would empty the doc) —
+ *   the review row flags so the user sets the split manually.
+ *
+ * Never throws — a parse failure surfaces as coverSplit=0 / uncertain.
+ */
+export async function analyzeCoverSplit(buffer: Buffer): Promise<CoverSplitResult> {
+  let plan: StripPlan | null = null
+  try {
+    plan = await findStripPlan(buffer)
+  } catch {
+    plan = null
+  }
+  if (!plan) {
+    return {
+      coverSplit: 0,
+      uncertain: true,
+      reason: "No coversheet detected on page 1 — set the split manually if there is front matter to strip.",
+    }
+  }
+  const coverSplit = plan.stripEndPage
+  return {
+    coverSplit,
+    uncertain: false,
+    reason: `Coversheet ends after page ${coverSplit}; product content begins page ${coverSplit + 1}.`,
   }
 }
 
