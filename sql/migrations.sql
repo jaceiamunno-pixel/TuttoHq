@@ -2023,3 +2023,75 @@ ALTER TABLE submittals
 INSERT INTO subcontractor_people (subcontractor_id, name, email, phone, role, company_id)
 SELECT s.id, s.contact_name, s.email, s.phone, 'primary', s.company_id
 FROM subcontractors s;
+
+-- ─── ADR-005: Drawing Log v1 (Phase 1 — NO Bluebeam API) ──────────────────────
+-- Additive. drawing_sheets (one row per sheet) + drawing_revisions (file
+-- versions under a sheet). Company-scoped RLS mirroring subcontractor_people.
+-- Circular FK (sheets.current_revision_id <-> revisions.sheet_id) resolved by
+-- creating both tables first, then adding the back-ref FK last (nullable,
+-- SET NULL). search_vector mirrors the submittals stored-generated pattern.
+-- See 04 - Decisions/ADR-005. Applied to prod 2026-06-08.
+
+CREATE TABLE IF NOT EXISTS drawing_sheets (
+  id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  project_id          UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  company_id          UUID REFERENCES companies(id) DEFAULT get_my_company_id(),
+  discipline          TEXT,
+  sheet_number        TEXT,
+  title               TEXT,
+  current_revision_id UUID,   -- FK added below, after drawing_revisions exists
+  search_vector       TSVECTOR GENERATED ALWAYS AS (
+    to_tsvector('english',
+      COALESCE(sheet_number, '') || ' ' ||
+      COALESCE(title, '')        || ' ' ||
+      COALESCE(discipline, '')
+    )
+  ) STORED,
+  created_at          TIMESTAMPTZ DEFAULT now(),
+  uploaded_by         UUID REFERENCES auth.users(id)
+);
+
+CREATE TABLE IF NOT EXISTS drawing_revisions (
+  id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  sheet_id       UUID NOT NULL REFERENCES drawing_sheets(id) ON DELETE CASCADE,
+  company_id     UUID REFERENCES companies(id) DEFAULT get_my_company_id(),
+  revision_label TEXT,
+  storage_path   TEXT,
+  file_sha256    TEXT,
+  file_size      BIGINT,
+  source         TEXT,   -- 'uploaded' | 'bluebeam-markup' (plain text in v1; no CHECK)
+  created_at     TIMESTAMPTZ DEFAULT now(),
+  uploaded_by    UUID REFERENCES auth.users(id)
+);
+
+ALTER TABLE drawing_sheets
+  ADD CONSTRAINT drawing_sheets_current_revision_fk
+  FOREIGN KEY (current_revision_id) REFERENCES drawing_revisions(id) ON DELETE SET NULL;
+
+ALTER TABLE drawing_sheets ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "drawing_sheets: company select" ON drawing_sheets
+  FOR SELECT TO authenticated USING     (company_id = get_my_company_id());
+CREATE POLICY "drawing_sheets: company insert" ON drawing_sheets
+  FOR INSERT TO authenticated WITH CHECK (company_id = get_my_company_id());
+CREATE POLICY "drawing_sheets: company update" ON drawing_sheets
+  FOR UPDATE TO authenticated USING     (company_id = get_my_company_id())
+                             WITH CHECK (company_id = get_my_company_id());
+CREATE POLICY "drawing_sheets: company delete" ON drawing_sheets
+  FOR DELETE TO authenticated USING     (company_id = get_my_company_id());
+
+ALTER TABLE drawing_revisions ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "drawing_revisions: company select" ON drawing_revisions
+  FOR SELECT TO authenticated USING     (company_id = get_my_company_id());
+CREATE POLICY "drawing_revisions: company insert" ON drawing_revisions
+  FOR INSERT TO authenticated WITH CHECK (company_id = get_my_company_id());
+CREATE POLICY "drawing_revisions: company update" ON drawing_revisions
+  FOR UPDATE TO authenticated USING     (company_id = get_my_company_id())
+                             WITH CHECK (company_id = get_my_company_id());
+CREATE POLICY "drawing_revisions: company delete" ON drawing_revisions
+  FOR DELETE TO authenticated USING     (company_id = get_my_company_id());
+
+CREATE INDEX IF NOT EXISTS idx_drawing_sheets_project    ON drawing_sheets    (project_id);
+CREATE INDEX IF NOT EXISTS idx_drawing_sheets_company    ON drawing_sheets    (company_id);
+CREATE INDEX IF NOT EXISTS idx_drawing_sheets_search     ON drawing_sheets    USING GIN (search_vector);
+CREATE INDEX IF NOT EXISTS idx_drawing_revisions_sheet   ON drawing_revisions (sheet_id);
+CREATE INDEX IF NOT EXISTS idx_drawing_revisions_sha256  ON drawing_revisions (file_sha256);
