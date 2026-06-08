@@ -7,6 +7,12 @@ import { PlusIcon, SpinnerIcon, XIcon } from "../_shared/icons"
 import { DrawingStatusBadge } from "../_shared/badges"
 import { inputCls, labelCls } from "../_shared/ui"
 import { presignAndUpload } from "@/lib/storage-upload"
+import dynamic from "next/dynamic"
+
+// Lazy-loaded: the splitter pulls in pdf-lib + unpdf (~180 kB). Code-split so
+// those load only when a user actually opens the import modal, keeping the
+// dashboard's first-load JS lean. Client-only (browser crypto/File APIs).
+const DrawingImportModal = dynamic(() => import("@/components/drawings/DrawingImportModal"), { ssr: false })
 
 // Drawing Log module — extracted verbatim from dashboard/page.tsx (Step 1 of the split).
 // State, handlers, action bar, content, and modal are unchanged; the only
@@ -35,6 +41,7 @@ export default function DrawingsModule({ globalProjectId, appProjects }: {
   const dwgFileRef    = useRef<HTMLInputElement>(null)
   const [dwgSaving, setDwgSaving]                     = useState(false)
   const [drawingGeneratingPdf, setDrawingGeneratingPdf] = useState(false)
+  const [showImportSet, setShowImportSet]             = useState(false)
 
   function loadDrawings(pid = globalProjectId) {
     setDrawingsLoading(true)
@@ -114,9 +121,16 @@ export default function DrawingsModule({ globalProjectId, appProjects }: {
       {/* Drawing log action bar */}
       <div className="flex-shrink-0 border-b border-[#E2E8F0] bg-white flex items-center justify-between px-4 py-2.5">
         <p className="text-[13px] font-semibold text-[#0F172A]">Drawing Log <span className="text-[#64748B] font-normal ml-1">({drawings.filter(d => d.is_current).length} sheets)</span></p>
-        <button onClick={() => { setShowNewDrawing(true); setAddRevisionFor(null); resetDwgForm() }} className="h-8 px-4 rounded-md bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors flex items-center gap-1.5">
-          <PlusIcon /> Add Drawing
-        </button>
+        <div className="flex items-center gap-2">
+          {globalProjectId && (
+            <button onClick={() => setShowImportSet(true)} className="h-8 px-4 rounded-md border border-[#7B9BB5] text-[#5A7A94] text-[13px] font-semibold hover:bg-[#7B9BB5]/10 transition-colors flex items-center gap-1.5">
+              Import set / Split
+            </button>
+          )}
+          <button onClick={() => { setShowNewDrawing(true); setAddRevisionFor(null); resetDwgForm() }} className="h-8 px-4 rounded-md bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors flex items-center gap-1.5">
+            <PlusIcon /> Add Drawing
+          </button>
+        </div>
       </div>
 
       {/* Drawing log */}
@@ -221,6 +235,11 @@ export default function DrawingsModule({ globalProjectId, appProjects }: {
             )
           })()}
       </div>
+
+      {/* ── Import drawing set (split + confirm) ─────────────────────────── */}
+      {showImportSet && globalProjectId && (
+        <DrawingImportModal projectId={globalProjectId} onClose={() => setShowImportSet(false)} />
+      )}
 
       {/* ── New Drawing / Add Revision modal ─────────────────────────────── */}
       {(showNewDrawing || addRevisionFor) && (
