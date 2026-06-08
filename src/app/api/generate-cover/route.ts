@@ -119,8 +119,17 @@ export async function POST(req: NextRequest) {
   const finalBytes = await mergedDoc.save()
   const filename = submittalId ? "submittal_transmittal.pdf" : "cover_sheet.pdf"
 
-  // Save merged PDF to project submittal log if a project was selected
-  if (projectId) {
+  // Record the generated transmittal onto an EXISTING log row ONLY.
+  //
+  // We never CREATE a submittals row here. Generating a cover for a Library
+  // SHELF item (no existingId) is a download/send action, not a submittal
+  // transaction — it must not file a phantom log row, and must not leave a
+  // phantom PDF under project-submittals/ with no row pointing at it. So the
+  // whole save block is gated on `existingId`: only the project-log
+  // "Cover"/"Transmit" flow (which passes an already-real log row) records
+  // its transmittal here. The shelf-Cover flow falls straight through to the
+  // PDF download below.
+  if (projectId && existingId) {
     try {
       const { data: companyId } = await supabase.rpc("get_my_company_id")
       if (!companyId) throw new Error("No company association")
@@ -132,8 +141,6 @@ export async function POST(req: NextRequest) {
         contentType: "application/pdf",
         upsert: false,
       })
-
-      const targetId = existingId || null
 
       const transmittalFields = {
         send_to_type:           sendToType    || null,
@@ -148,38 +155,14 @@ export async function POST(req: NextRequest) {
 
       const displayTitle = normalizeSubmittalTitle(description) || safeName
 
-      if (targetId) {
-        await supabase.from("submittals").update({
-          file_name:    displayTitle,
-          storage_path: storagePath,
-          mime_type:    "application/pdf",
-          project_id:   projectId,
-          review_status: "Received",
-          ...transmittalFields,
-        }).eq("id", targetId)
-      } else if (submittalId) {
-        const { data: orig } = await supabase.from("submittals")
-          .select("csi_division, division_name, csi_section, section_name, material_name, manufacturer, dimensions")
-          .eq("id", submittalId).maybeSingle()
-
-        await supabase.from("submittals").insert({
-          file_name:     displayTitle,
-          storage_path:  storagePath,
-          mime_type:     "application/pdf",
-          csi_division:  orig?.csi_division  ?? null,
-          division_name: orig?.division_name ?? null,
-          csi_section:   orig?.csi_section   ?? null,
-          section_name:  orig?.section_name  ?? null,
-          material_name: orig?.material_name ?? null,
-          manufacturer:  orig?.manufacturer  ?? null,
-          dimensions:    orig?.dimensions    ?? null,
-          project_id:    projectId,
-          status:        "active",
-          review_status: "Received",
-          uploaded_by:   user.id,
-          ...transmittalFields,
-        })
-      }
+      await supabase.from("submittals").update({
+        file_name:    displayTitle,
+        storage_path: storagePath,
+        mime_type:    "application/pdf",
+        project_id:   projectId,
+        review_status: "Received",
+        ...transmittalFields,
+      }).eq("id", existingId)
     } catch {
       // Non-fatal: PDF still downloads even if DB save fails
     }
