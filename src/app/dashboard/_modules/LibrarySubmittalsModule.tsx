@@ -1486,7 +1486,7 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
 
           {/* Library */}
           {activeModule === "library" && (
-            <div className="px-4 py-4 max-w-4xl">
+            <div className="px-4 py-4 max-w-7xl">
               {libQuery.trim() ? (
                 libSearching && libResults === null ? (
                   <div className="flex items-center gap-2 py-8 text-[13px] text-[#64748B]"><SpinnerIcon className="h-4 w-4" /> Searching…</div>
@@ -1944,7 +1944,7 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                       <span className={`inline-block px-1.5 py-0.5 rounded font-mono text-[11px] font-semibold ${c.chip}`}>{s.csi_section ?? "—"}</span>
                     </td>
                     <td className="px-3 py-1.5">
-                      <div className="flex items-center gap-1.5 max-w-[280px]">
+                      <div className="flex items-center gap-1.5 max-w-[520px]">
                         {hasAttachment ? (
                           <svg className="h-3.5 w-3.5 flex-shrink-0 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-label="Attached">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
