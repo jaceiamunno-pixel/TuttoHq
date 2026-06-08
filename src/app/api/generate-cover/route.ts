@@ -88,14 +88,22 @@ export async function POST(req: NextRequest) {
     try {
       const { data: submittalRow } = await supabase
         .from("submittals")
-        .select("storage_path, mime_type")
+        .select("storage_path, stripped_storage_path, mime_type")
         .eq("id", submittalId)
         .maybeSingle()
 
-      if (submittalRow?.storage_path && submittalRow.mime_type === "application/pdf") {
+      // Build the transmittal on the STRIPPED copy (clean product, old
+      // coversheet removed) when one exists; fall back to the original when
+      // nothing was stripped (raw datasheet — already clean product; or a
+      // deferred image-cover — original is the only content available).
+      // This keeps the merged output [new TuttoHQ cover] → [clean product]
+      // instead of stacking the new cover on top of the old coversheet.
+      const contentPath = submittalRow?.stripped_storage_path || submittalRow?.storage_path
+
+      if (contentPath && submittalRow.mime_type === "application/pdf") {
         const { data: submittalBlob } = await supabase.storage
           .from("submittals")
-          .download(submittalRow.storage_path)
+          .download(contentPath)
 
         if (submittalBlob) {
           const submittalDoc = await PDFDocument.load(await submittalBlob.arrayBuffer())
