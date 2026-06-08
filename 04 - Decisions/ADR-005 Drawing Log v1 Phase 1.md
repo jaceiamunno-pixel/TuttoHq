@@ -36,10 +36,12 @@ Fold drawings into an existing table.
 
 **Option A.** Two additive tables:
 
-- `drawing_sheets` — `project_id` (CASCADE), `company_id` (`DEFAULT get_my_company_id()`), `discipline` / `sheet_number` / `title`, `current_revision_id` (nullable, set after first revision), `search_vector` (STORED generated tsvector over `sheet_number + title + discipline`, mirroring submittals), audit columns.
-- `drawing_revisions` — `sheet_id` (CASCADE), `company_id`, `revision_label`, `storage_path`, **`file_sha256`**, **`file_size`**, `source` (`uploaded` | `bluebeam-markup`, plain text in v1), audit columns.
+- `drawing_sheets` — `project_id` (CASCADE), `company_id` (`DEFAULT get_my_company_id()`), `discipline_prefix` (RAW verbatim prefix) / `discipline` (derived label) / `sheet_number` / `title`, `current_revision_id` (nullable, set after first revision), `search_vector` (STORED generated tsvector over `sheet_number + title + discipline`, mirroring submittals), audit columns.
+- `drawing_revisions` — `sheet_id` (CASCADE), `company_id`, `revision_label`, `storage_path`, **`file_sha256`**, **`file_size`**, `source` (`NOT NULL DEFAULT 'uploaded'`, CHECK `('uploaded','bluebeam-markup')` — Phase-2 ready), audit columns.
 
-Company-scoped RLS on both from creation (4 policies each, mirroring `subcontractor_people`). Indexes: `drawing_sheets(project_id)`, `drawing_sheets(company_id)`, GIN on `drawing_sheets(search_vector)`, `drawing_revisions(sheet_id)`, `drawing_revisions(file_sha256)`.
+Company-scoped RLS on both from creation (4 policies each, mirroring `subcontractor_people`). Indexes: `drawing_sheets(project_id)`, `drawing_sheets(company_id)`, composite `drawing_sheets(project_id, company_id, sheet_number)` (subsystem-4 sheet-existence lookup, NOT unique), GIN on `drawing_sheets(search_vector)`, `drawing_revisions(sheet_id)`, `drawing_revisions(file_sha256)`.
+
+**Correction (2026-06-08, after ba5e556):** independent read-only review found 3 additive divergences from this spec in the first cut; corrected in place (additive ALTER, existing columns/policies/indexes untouched): (1) added `drawing_sheets.discipline_prefix`; (2) `drawing_revisions.source` given `DEFAULT 'uploaded'` + CHECK + NOT NULL; (3) added the composite `(project_id, company_id, sheet_number)` lookup index. Other first-cut choices left as-is by decision (nullable `company_id`/`sheet_number`/`storage_path`; `search_vector` includes `discipline`).
 
 **Circular FK** (`drawing_sheets.current_revision_id` → `drawing_revisions.id` and `drawing_revisions.sheet_id` → `drawing_sheets.id`) resolved by creating both tables first (sheets' `current_revision_id` as a bare nullable column), then adding the back-reference FK last with `ON DELETE SET NULL`.
 

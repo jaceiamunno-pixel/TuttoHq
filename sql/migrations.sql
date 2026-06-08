@@ -2095,3 +2095,25 @@ CREATE INDEX IF NOT EXISTS idx_drawing_sheets_company    ON drawing_sheets    (c
 CREATE INDEX IF NOT EXISTS idx_drawing_sheets_search     ON drawing_sheets    USING GIN (search_vector);
 CREATE INDEX IF NOT EXISTS idx_drawing_revisions_sheet   ON drawing_revisions (sheet_id);
 CREATE INDEX IF NOT EXISTS idx_drawing_revisions_sha256  ON drawing_revisions (file_sha256);
+
+-- ADR-005 subsystem-1 corrective ALTER (applied to prod 2026-06-08, after
+-- ba5e556). Independent read-only review found 3 additive divergences from the
+-- agreed subsystem-1 spec. Additive/reversible; existing columns, policies, and
+-- indexes left intact.
+--   1. drawing_sheets.discipline_prefix — RAW verbatim sheet-number prefix
+--      ('S','A','DM','FP'…), never normalized (derived `discipline` stays).
+--   2. drawing_revisions.source — DEFAULT 'uploaded', CHECK
+--      ('uploaded','bluebeam-markup'), NOT NULL (Phase-2 ready).
+--   3. composite (project_id, company_id, sheet_number) lookup index for the
+--      subsystem-4 "does this sheet already exist?" check (NOT unique —
+--      confirm-first dup handling lands in subsystem 4).
+ALTER TABLE drawing_sheets ADD COLUMN IF NOT EXISTS discipline_prefix TEXT;
+
+ALTER TABLE drawing_revisions ALTER COLUMN source SET DEFAULT 'uploaded';
+UPDATE drawing_revisions SET source = 'uploaded' WHERE source IS NULL;  -- empty; safety no-op
+ALTER TABLE drawing_revisions
+  ADD CONSTRAINT drawing_revisions_source_check CHECK (source IN ('uploaded','bluebeam-markup'));
+ALTER TABLE drawing_revisions ALTER COLUMN source SET NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_drawing_sheets_proj_co_num
+  ON drawing_sheets (project_id, company_id, sheet_number);
