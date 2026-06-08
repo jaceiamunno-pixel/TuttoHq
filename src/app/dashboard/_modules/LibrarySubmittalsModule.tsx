@@ -1260,7 +1260,7 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
     return (
       <div key={file.id} className="flex items-center gap-2 py-1.5 group">
         <span className={`flex-shrink-0 w-1.5 h-1.5 rounded-full ${getDot(file.mime_type)}`} />
-        <span className="flex-1 min-w-0 text-[12px] text-[#0F172A] truncate" title={file.file_name}>{truncateForDisplay(file.file_name)}</span>
+        <span className="flex-1 min-w-0 text-[12px] text-[#0F172A] truncate" title={file.file_name}>{file.file_name}</span>
         {file.source === "spec_ingestion" && file.submittal_type && (
           <span className="flex-shrink-0 text-[10px] text-[#64748B] bg-[#F1F5F9] px-1.5 py-0.5 rounded font-medium">· {file.submittal_type}</span>
         )}
@@ -1558,7 +1558,7 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                                   return (
                                   <div key={file.id} className="flex items-center gap-2 py-1.5 group">
                                     <span className={`flex-shrink-0 w-1.5 h-1.5 rounded-full ${getDot(file.mime_type)}`} />
-                                    <span className="flex-1 min-w-0 text-[12px] text-[#0F172A] truncate" title={file.file_name}>{truncateForDisplay(file.file_name)}</span>
+                                    <span className="flex-1 min-w-0 text-[12px] text-[#0F172A] truncate" title={file.file_name}>{file.file_name}</span>
                                     {file.source === "spec_ingestion" && file.submittal_type && (
                                       <span className="flex-shrink-0 text-[10px] text-[#64748B] bg-[#F1F5F9] px-1.5 py-0.5 rounded font-medium">· {file.submittal_type}</span>
                                     )}
@@ -1958,8 +1958,8 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                           type="button"
                           onClick={() => openDetailModal(s)}
                           title={s.file_name}
-                          className={`text-left truncate hover:underline focus:outline-none focus:underline ${hasAttachment ? "text-[#0F172A] font-medium" : "text-[#94A3B8] italic"}`}>
-                          {truncateForDisplay(s.file_name)}
+                          className={`flex-1 min-w-0 text-left truncate hover:underline focus:outline-none focus:underline ${hasAttachment ? "text-[#0F172A] font-medium" : "text-[#94A3B8] italic"}`}>
+                          {s.file_name}
                         </button>
                         {s.title_locked && (
                           <span title="Title was set manually — automated re-process will not overwrite it"
@@ -2089,8 +2089,8 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                         type="button"
                         onClick={() => openDetailModal(s)}
                         title={s.file_name}
-                        className="text-left text-[13px] font-medium text-[#0F172A] leading-tight truncate hover:underline focus:outline-none">
-                        {truncateForDisplay(s.file_name)}
+                        className="flex-1 min-w-0 text-left text-[13px] font-medium text-[#0F172A] leading-tight truncate hover:underline focus:outline-none">
+                        {s.file_name}
                       </button>
                       {s.title_locked && (
                         <span title="Title was set manually — automated re-process will not overwrite it"
