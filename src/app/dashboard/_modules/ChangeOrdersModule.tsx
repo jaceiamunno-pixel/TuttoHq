@@ -29,7 +29,8 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
   const [coScheduleDays, setCoScheduleDays]           = useState("")
   const [coSubmittedBy, setCoSubmittedBy]             = useState("")
   const [coAssignedTo, setCoAssignedTo]               = useState("")
-  const [coStatus, setCoStatus]                       = useState("Draft")
+  const [coStatus, setCoStatus]                       = useState("Not submitted")
+  const [coAssignedCoNumber, setCoAssignedCoNumber]   = useState("")
   const [coFile, setCoFile]                           = useState<File | null>(null)
   const [coSaving, setCoSaving]                       = useState(false)
   const [coRespondSaving, setCoRespondSaving]         = useState(false)
@@ -61,6 +62,7 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
         qualifications: coQualifications, pricing_sum: coPricingSum,
         schedule_impact: coScheduleImpact, schedule_impact_days: coScheduleDays,
         submitted_by: coSubmittedBy, assigned_to: coAssignedTo, status: coStatus,
+        assigned_co_number: coAssignedCoNumber,
       }
       if (coFile) {
         const { path } = await presignAndUpload("submittals", "change-orders", coFile)
@@ -76,7 +78,7 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
         setShowNewCo(false)
         setCoProjectId(""); setCoProposal(""); setCoQualifications(""); setCoPricingSum("")
         setCoScheduleImpact("TBD"); setCoScheduleDays(""); setCoSubmittedBy(""); setCoAssignedTo("")
-        setCoStatus("Draft"); setCoFile(null)
+        setCoStatus("Not submitted"); setCoAssignedCoNumber(""); setCoFile(null)
         setCoDate(new Date().toISOString().slice(0, 10))
         loadChangeOrders()
       }
@@ -108,7 +110,7 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
     try {
       const res = await fetch(`/api/change-orders/${viewCo.id}`, {
         method: "PATCH", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status: coResponseStatus, assigned_to: coAssignedTo }),
+        body: JSON.stringify({ status: coResponseStatus, assigned_to: coAssignedTo, assigned_co_number: coAssignedCoNumber }),
       })
       if (res.ok) { setViewCo(null); loadChangeOrders() }
     } finally { setCoRespondSaving(false) }
@@ -136,8 +138,9 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
                 {/* Running totals */}
                 {changeOrders.length > 0 && (() => {
                   const approved = changeOrders.filter(c => c.status === "Approved")
-                  const pending  = changeOrders.filter(c => ["Draft","Submitted","Under Review"].includes(c.status))
-                  const open     = changeOrders.filter(c => !["Approved","Rejected","Void"].includes(c.status))
+                  // Pending $ = everything not yet approved (Pending + Not submitted both count).
+                  const pending  = changeOrders.filter(c => c.status !== "Approved")
+                  const open     = changeOrders.filter(c => c.status !== "Approved")
                   const sumApproved = approved.reduce((s, c) => s + (c.pricing_sum ?? 0), 0)
                   const sumPending  = pending.reduce((s,  c) => s + (c.pricing_sum ?? 0), 0)
                   const fmt = (n: number) => new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(n)
@@ -177,7 +180,8 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
             <table className="w-full text-[13px] border-collapse">
                     <thead className="sticky top-0 bg-[#F8F9FA] z-10">
                       <tr className="border-b border-[#E2E8F0]">
-                        <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-20">CO #</th>
+                        <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-20">PCO #</th>
+                        <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-24">CO #</th>
                         <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-32">Project</th>
                         <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest">Proposal</th>
                         <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-28">Pricing</th>
@@ -191,17 +195,15 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
                       {changeOrders.map(c => {
                         const proj = appProjects.find(p => p.id === c.project_id)
                         const statusColor: Record<string, string> = {
-                          Draft:          "bg-gray-100 text-gray-500",
-                          Submitted:      "bg-blue-100 text-blue-700",
-                          "Under Review": "bg-amber-100 text-amber-700",
-                          Approved:       "bg-green-100 text-green-700",
-                          Rejected:       "bg-red-100 text-red-700",
-                          Void:           "bg-gray-100 text-gray-500",
+                          "Not submitted": "bg-gray-100 text-gray-500",
+                          Pending:         "bg-amber-100 text-amber-700",
+                          Approved:        "bg-green-100 text-green-700",
                         }
                         const badgeCls = statusColor[c.status] ?? "bg-gray-100 text-gray-500"
                         return (
                           <tr key={c.id} className="border-b border-[#E2E8F0]/60 hover:bg-[#F8F9FA] transition-colors">
                             <td className="px-4 py-2.5 text-[12px] font-mono text-[#7B9BB5]">{c.co_number}</td>
+                            <td className="px-4 py-2.5 text-[12px] text-[#0F172A]">{c.assigned_co_number || "—"}</td>
                             <td className="px-4 py-2.5 text-[#64748B] text-[12px] truncate">{proj?.name ?? "—"}</td>
                             <td className="px-4 py-2.5 max-w-0"><p className="text-[#0F172A] truncate">{c.proposal ?? "—"}</p></td>
                             <td className="px-4 py-2.5 text-[#0F172A] text-[12px] tabular-nums font-medium">
@@ -216,7 +218,7 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
                             </td>
                             <td className="px-4 py-2.5">
                               <div className="flex items-center gap-1">
-                                <button onClick={() => { setViewCo(c); setCoResponseStatus(c.status); setCoAssignedTo(c.assigned_to ?? "") }}
+                                <button onClick={() => { setViewCo(c); setCoResponseStatus(c.status); setCoAssignedTo(c.assigned_to ?? ""); setCoAssignedCoNumber(c.assigned_co_number ?? "") }}
                                   className="text-[11px] text-[#64748B] hover:text-[#0F172A] px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors">View</button>
                                 <button onClick={() => generateCoPdf(c.id)} disabled={coGeneratingPdf}
                                   className="text-[11px] text-[#7B9BB5] hover:text-[#7B9BB5] px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors disabled:opacity-50">PDF</button>
@@ -234,12 +236,12 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
                   <div className="sm:hidden px-3 py-3 space-y-2">
                     {changeOrders.map(c => {
                       const proj = appProjects.find(p => p.id === c.project_id)
-                      const statusColor: Record<string, string> = { Draft: "bg-gray-100 text-gray-500", Submitted: "bg-blue-100 text-blue-700", "Under Review": "bg-amber-100 text-amber-700", Approved: "bg-green-100 text-green-700", Rejected: "bg-red-100 text-red-700", Void: "bg-gray-100 text-gray-500" }
+                      const statusColor: Record<string, string> = { "Not submitted": "bg-gray-100 text-gray-500", Pending: "bg-amber-100 text-amber-700", Approved: "bg-green-100 text-green-700" }
                       const badgeCls = statusColor[c.status] ?? "bg-gray-100 text-gray-500"
                       return (
                         <div key={c.id} className="bg-white rounded-xl border border-[#E2E8F0] p-3 shadow-sm">
                           <div className="flex items-start justify-between gap-2 mb-1">
-                            <span className="text-[11px] font-mono text-[#7B9BB5]">{c.co_number}</span>
+                            <span className="text-[11px] font-mono text-[#7B9BB5]">{c.co_number}{c.assigned_co_number ? <span className="text-[#64748B]"> · CO {c.assigned_co_number}</span> : null}</span>
                             <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold ${badgeCls}`}>{c.status}</span>
                           </div>
                           <p className="text-[13px] font-medium text-[#0F172A] mb-1 truncate">{c.proposal ?? "—"}</p>
@@ -249,7 +251,7 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
                             <span className="text-[11px] text-[#64748B]">{c.date ? fmtDateOnly(c.date) : ""}</span>
                           </div>
                           <div className="flex items-center gap-1">
-                            <button onClick={() => { setViewCo(c); setCoResponseStatus(c.status); setCoAssignedTo(c.assigned_to ?? "") }} className="text-[11px] text-[#64748B] px-2 py-1 rounded border border-[#E2E8F0] bg-[#F8F9FA]">View</button>
+                            <button onClick={() => { setViewCo(c); setCoResponseStatus(c.status); setCoAssignedTo(c.assigned_to ?? ""); setCoAssignedCoNumber(c.assigned_co_number ?? "") }} className="text-[11px] text-[#64748B] px-2 py-1 rounded border border-[#E2E8F0] bg-[#F8F9FA]">View</button>
                             <button onClick={() => generateCoPdf(c.id)} disabled={coGeneratingPdf} className="text-[11px] text-[#7B9BB5] px-2 py-1 rounded border border-[#E2E8F0] bg-[#F8F9FA] disabled:opacity-50">PDF</button>
                             <button onClick={() => deleteCo(c.id)} className="text-[11px] text-red-400 px-2 py-1 rounded border border-[#E2E8F0] bg-[#F8F9FA]">Del</button>
                           </div>
@@ -319,8 +321,15 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
                     <div>
                       <label className={labelCls2}>Status</label>
                       <select value={coStatus} onChange={e => setCoStatus(e.target.value)} className={selCls2}>
-                        {["Draft","Submitted","Under Review","Approved","Rejected","Void"].map(s => <option key={s} value={s}>{s}</option>)}
+                        {["Not submitted","Pending","Approved"].map(s => <option key={s} value={s}>{s}</option>)}
                       </select>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className={labelCls2}>CO # <span className="text-[#94A3B8] normal-case font-normal tracking-normal">(assigned, optional)</span></label>
+                      <input type="text" value={coAssignedCoNumber} onChange={e => setCoAssignedCoNumber(e.target.value)}
+                        placeholder="Assigned CO number" className={inputCls2} />
                     </div>
                   </div>
                   <div className="grid grid-cols-2 gap-4">
@@ -384,12 +393,9 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
                   <h2 className="text-[16px] font-bold text-[#0F172A]">{viewCo.co_number}</h2>
                   {(() => {
                     const statusColor: Record<string, string> = {
-                      Draft:          "bg-gray-100 text-gray-500",
-                      Submitted:      "bg-blue-100 text-blue-700",
-                      "Under Review": "bg-amber-100 text-amber-700",
-                      Approved:       "bg-green-100 text-green-700",
-                      Rejected:       "bg-red-100 text-red-700",
-                      Void:           "bg-gray-100 text-gray-500",
+                      "Not submitted": "bg-gray-100 text-gray-500",
+                      Pending:         "bg-amber-100 text-amber-700",
+                      Approved:        "bg-green-100 text-green-700",
                     }
                     return <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-semibold ${statusColor[viewCo.status] ?? "bg-gray-100 text-gray-500"}`}>{viewCo.status}</span>
                   })()}
@@ -482,13 +488,19 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
                     <label className="block text-[11px] font-semibold text-[#64748B] uppercase tracking-widest mb-1">Status</label>
                     <select value={coResponseStatus} onChange={e => setCoResponseStatus(e.target.value)}
                       className="w-full h-9 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40">
-                      {["Draft","Submitted","Under Review","Approved","Rejected","Void"].map(s => <option key={s} value={s}>{s}</option>)}
+                      {["Not submitted","Pending","Approved"].map(s => <option key={s} value={s}>{s}</option>)}
                     </select>
                   </div>
                   <div>
                     <label className="block text-[11px] font-semibold text-[#64748B] uppercase tracking-widest mb-1">Assigned To</label>
                     <input type="text" value={coAssignedTo} onChange={e => setCoAssignedTo(e.target.value)}
                       placeholder="Reviewer name"
+                      className="w-full h-9 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40 placeholder:text-[#64748B]" />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-semibold text-[#64748B] uppercase tracking-widest mb-1">CO # <span className="text-[#94A3B8] normal-case font-normal tracking-normal">(assigned)</span></label>
+                    <input type="text" value={coAssignedCoNumber} onChange={e => setCoAssignedCoNumber(e.target.value)}
+                      placeholder="Assigned CO number"
                       className="w-full h-9 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40 placeholder:text-[#64748B]" />
                   </div>
                 </div>

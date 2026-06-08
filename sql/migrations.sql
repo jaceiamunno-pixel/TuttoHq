@@ -2117,3 +2117,25 @@ ALTER TABLE drawing_revisions ALTER COLUMN source SET NOT NULL;
 
 CREATE INDEX IF NOT EXISTS idx_drawing_sheets_proj_co_num
   ON drawing_sheets (project_id, company_id, sheet_number);
+
+-- ─── Change orders: 3-value status + assigned CO number ──────────────────────
+-- Applied to prod 2026-06-08 and verified read-only.
+--
+-- Item 3 — collapse the 6-value status text vocabulary to 3 and migrate live rows.
+--   Old UI values: Draft, Submitted, Under Review, Approved, Rejected, Void.
+--   New vocabulary: 'Not submitted', 'Pending', 'Approved'.
+--   Row mapping (7 live rows): Draft→Not submitted (2), Under Review→Pending (3),
+--   Approved→Approved unchanged (2). Submitted/Rejected/Void had 0 rows.
+--   'Approved' kept byte-for-byte — the approved_at auto-stamp, summary cards,
+--   and green badge styling all key off that literal string.
+ALTER TABLE change_orders ALTER COLUMN status SET DEFAULT 'Not submitted';  -- was 'Draft'
+UPDATE change_orders SET status = 'Not submitted' WHERE status = 'Draft';        -- 2 rows
+UPDATE change_orders SET status = 'Pending'       WHERE status = 'Under Review';  -- 3 rows
+-- Verified post-migration: Approved=2, Pending=3, Not submitted=2; 0 stragglers.
+-- Vocabulary lock (added after 0-straggler verification):
+ALTER TABLE change_orders
+  ADD CONSTRAINT change_orders_status_check CHECK (status IN ('Not submitted','Pending','Approved'));
+
+-- Item 4 — assigned/approved CO number, free-text, independent of co_number
+-- (which is the PCO running count). Nullable, no default. Reverse: DROP COLUMN.
+ALTER TABLE change_orders ADD COLUMN IF NOT EXISTS assigned_co_number TEXT;
