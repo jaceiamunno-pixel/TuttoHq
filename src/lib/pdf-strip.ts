@@ -45,41 +45,48 @@ import { extractApprovalStampDate, type ApprovalStampInfo } from "./bulk-import-
 
 const BLANK_PAGE_CHAR_THRESHOLD = 10
 const STAMP_SCAN_PAGES = 6
-// A submitter coversheet form sits at the very front. Look for its AcroForm
-// widgets within this many leading pages only — a fillable form deeper than
-// this isn't a coversheet, and limiting the scan keeps the anchor to genuine
-// front matter.
-const FORM_SCAN_PAGES = 5
+// A /Stamp annotation makes a page "cover" only when the page is otherwise
+// light on text (a disposition/stamp page), NOT a product page that merely
+// carries a stamp/signature annotation. Above this char count we treat it
+// as product even if it has a stamp.
+const STAMP_PAGE_TEXT_MAX = 600
+// Backstop on the leading cover run — the longest real cover stack observed
+// is 4 pages (GC review-transmittal + GC address + legal disposition +
+// submitter coversheet); Waters stamp stacks reach ~5 (cover + stamp pages +
+// blank). 6 is a safe ceiling; stop-at-product is the real driver.
+const MAX_COVER_PAGES = 6
 
-// TEMPLATE-AGNOSTIC cover vocabulary — generic AIA/CSI submittal-coversheet
-// + architect-review-stamp phrases that span GCs and architects. NOT lifted
-// from any one vendor's form (the previous list was Waters/THP-flavored:
-// "Submittal Disposition Stamp", "Material Sample Transfer", "Quality
-// Control Program" — removed).
-//
-// PHRASES, not bare common words: "Approved"/"Reviewed"/"Submittal" alone
-// appear on real content pages, so we match multi-word phrases that are
-// specific to cover/transmittal/review context. Even so, this is a
-// FALLBACK signal ONLY — it can EXTEND a run already anchored by a
-// structural signal, but never ANCHOR a strip and never override the
-// "page 1 looks like content → bail" guard (see isStructuralCover).
-const COVER_KEYWORDS = new RegExp([
-  "Letter of Transmittal",
-  "Submittal Transmittal",
-  "Transmittal Form",
-  "Transmittal No",
-  "For Approval",
-  "For Review",
-  "Approved as Noted",
-  "No Exceptions Taken",
-  "Revise and Resubmit",
-  "Make Corrections Noted",
-  "Rejected as Noted",
-  "Reviewed for Conformance",
-  "Shop Drawing",
-  "Date Received",
-  "Specification Section",
-  "Spec Section",
+// TEMPLATE-AGNOSTIC submittal-cover vocabulary. Every cover-page TYPE that
+// precedes product content, as generic phrases that span GCs/architects (no
+// vendor names): GC review-transmittal, architect review/disposition stamp
+// language, GC company-name suffixes, the submitter "Submittal Coversheet",
+// labeled submittal/section fields, and the legal-disposition boilerplate.
+// A manufacturer DATASHEET ("…www.x.com  JOB NO.: CUSTOMER: …  part table")
+// matches NONE of these → page 1 isn't cover → nothing is stripped.
+const COVER_VOCAB = new RegExp([
+  // GC transmittal
+  "letter of transmittal",
+  "submittal transmittal",
+  "transmittal (?:form|sheet|cover|no\\.?|#)",
+  "we are (?:sending|transmitting|forwarding)",
+  // architect review / disposition stamp
+  "submittal review stamp",
+  "for your (?:approval|review)\\b",
+  "reviewed (?:for|by)\\b",
+  "no exceptions taken",
+  "revise and resubmit",
+  "make corrections noted",
+  "(?:approved|rejected) as noted",
+  // GC company-name suffixes
+  "\\b(?:design and construction|building company|construction (?:company|managers?|group|co\\.|corp|llc|inc)|builders|general contractor)\\b",
+  // submitter coversheet + labeled fields. (NOTE: "spec section" is NOT
+  // here — manufacturer datasheets routinely print "SPEC SECTION: 10260"
+  // referencing the spec they satisfy, so it's not a cover-only signal.)
+  "submittal cover\\s?sheet",
+  "submittal\\s*(?:no\\.?|number|name)\\s*[:#]",
+  // legal disposition boilerplate
+  "response to this submittal",
+  "change in contract",
 ].join("|"), "i")
 
 export interface StripPlan {
@@ -105,33 +112,6 @@ interface PageMeta {
   formWidgetCount: number
   stampAnnotCount: number
   imageCount: number
-}
-
-function isCoverShaped(meta: PageMeta, text: string): boolean {
-  if (meta.formWidgetCount > 0) return true
-  if (meta.stampAnnotCount > 0) return true
-  // Truly blank: very little text AND no image content
-  if (meta.charCount < BLANK_PAGE_CHAR_THRESHOLD && meta.imageCount === 0) return true
-  // Cover keywords AND no image content (a page with images + cover
-  // keywords is probably product content that happens to mention a
-  // transmittal — keep it). Fallback only — extends a run, never anchors.
-  if (meta.imageCount === 0 && COVER_KEYWORDS.test(text)) return true
-  return false
-}
-
-// STRUCTURAL cover signals ONLY — no keyword text. Used to ANCHOR the
-// no-stamp coversheet strip on page 1. A keyword match must NEVER anchor a
-// strip (content pages legitimately contain "Shop Drawing" / "Spec
-// Section" / etc.), so the anchor decision keys exclusively on hard
-// structural evidence: a fillable form coversheet (any GC), a stamp
-// annotation, or a blank/near-empty page. This IS the "page 1 looks like
-// content → bail" guard: a page-1 with real text/images and no form
-// widgets is not structurally cover-shaped, so no strip happens.
-function isStructuralCover(meta: PageMeta): boolean {
-  if (meta.formWidgetCount > 0) return true
-  if (meta.stampAnnotCount > 0) return true
-  if (meta.charCount < BLANK_PAGE_CHAR_THRESHOLD && meta.imageCount === 0) return true
-  return false
 }
 
 async function collectPageMeta(doc: PDFDocument): Promise<PageMeta[]> {
@@ -175,26 +155,37 @@ async function collectPageMeta(doc: PDFDocument): Promise<PageMeta[]> {
 }
 
 /**
- * Compute the strip plan for a PDF. Two anchors, both template-agnostic:
+ * Compute the strip plan for a PDF — UNIFIED leading-cover-run model
+ * (template-agnostic, text-based so logo images don't defeat it).
  *
- *   1. STAMP-ANCHORED — an architect /Stamp annotation in the first
- *      STAMP_SCAN_PAGES pages. Walk BOTH directions over cover-shaped
- *      pages (handles a stamp that sits mid-front-matter).
+ * Strip the CONTIGUOUS run of cover pages starting at page 1. A page is a
+ * "cover page" when ANY of:
+ *   - it has AcroForm form widgets (a fillable coversheet)
+ *   - it's blank/near-empty (no text, no image)
+ *   - it has a /Stamp annotation AND little text (a disposition/stamp page;
+ *     NOT a product page that merely carries a stamp/signature annotation)
+ *   - its text matches submittal-cover vocabulary (COVER_VOCAB): GC
+ *     transmittal, architect review/disposition stamp, GC company name,
+ *     "Submittal Coversheet", labeled submittal/section fields, or legal
+ *     disposition boilerplate.
  *
- *   2. COVERSHEET-ANCHORED (no stamp) — the document opens with a
- *      structurally cover-shaped page (a fillable form coversheet from
- *      ANY GC, a stamp, or a blank). Strip that LEADING contiguous run.
- *      This catches a submitter coversheet that has no architect stamp.
+ * Because the run must START at page 1 and is contiguous, a stray /Stamp or
+ * signature deep in a product section is NEVER reached — the run already
+ * stopped at the first product page. That is the front-matter constraint,
+ * automatic: a deep stamp can't drive a strip.
  *
  * Returns null (→ serve original) when:
- *   - no stamp AND page 1 is not structurally cover-shaped (content-bail)
- *   - the strip would consume the entire document (never empty the doc)
+ *   - page 1 is not a cover page (protects manufacturer datasheets and any
+ *     product-first document)
+ *   - the strip would leave < 1 page (never empty the doc)
  *   - the PDF can't be parsed (caught by stripFrontMatter)
  *
- * When non-null, the caller generates a PDF containing pages OUTSIDE
+ * Caller generates a PDF containing pages OUTSIDE
  * [stripStartPage..stripEndPage] (1-based, both inclusive).
  */
 export async function findStripPlan(buffer: Buffer): Promise<StripPlan | null> {
+  // Architect-stamp date — kept for StripPlan.stamp metadata only; it no
+  // longer DRIVES the strip (the leading-cover-run does).
   const stamp = await extractApprovalStampDate(buffer, STAMP_SCAN_PAGES)
 
   const pdf = await getDocumentProxy(new Uint8Array(buffer))
@@ -205,65 +196,42 @@ export async function findStripPlan(buffer: Buffer): Promise<StripPlan | null> {
 
   const doc = await PDFDocument.load(buffer, { ignoreEncryption: true })
   const meta = await collectPageMeta(doc)
-  // Populate charCount on meta from page text.
   for (let i = 0; i < meta.length; i++) {
     meta[i].charCount = (pageTexts[i] ?? "").replace(/\s+/g, "").length
   }
 
-  if (stamp) {
-    // ── 1. STAMP-ANCHORED: bidirectional walk over cover-shaped pages.
-    const stampIdx = stamp.page - 1
-    let firstCover = stampIdx
-    while (firstCover - 1 >= 0 && isCoverShaped(meta[firstCover - 1], pageTexts[firstCover - 1] ?? "")) {
-      firstCover--
-    }
-    let lastCover = stampIdx
-    while (lastCover + 1 < totalPages && isCoverShaped(meta[lastCover + 1], pageTexts[lastCover + 1] ?? "")) {
-      lastCover++
-    }
-    const stripStartPage = firstCover + 1
-    const stripEndPage = lastCover + 1
-    if (totalPages - (stripEndPage - stripStartPage + 1) <= 0) return null
-    return { stripStartPage, stripEndPage, anchor: "stamp", stamp, totalPages }
+  const isCoverPage = (i: number): boolean => {
+    const m = meta[i]
+    if (m.formWidgetCount > 0) return true
+    if (m.charCount < BLANK_PAGE_CHAR_THRESHOLD && m.imageCount === 0) return true
+    if (m.stampAnnotCount > 0 && m.charCount < STAMP_PAGE_TEXT_MAX) return true
+    return COVER_VOCAB.test(pageTexts[i] ?? "")
   }
 
-  // ── 2. COVERSHEET-ANCHORED (no stamp).
-  //
-  // 2a. FORM-anchored: a fillable submittal-coversheet form (AcroForm
-  //     /Widget) near the front is a strong, template-agnostic "this is a
-  //     coversheet" signal. Real product datasheets don't carry form
-  //     widgets. A transmittal LETTER commonly precedes the form (logo +
-  //     text, so it isn't structurally cover-shaped on its own) — the form
-  //     right after it disambiguates pages 1..form as front matter. Strip
-  //     page 1 THROUGH the form page, then extend forward over cover-shaped
-  //     pages. The forward stop (first product page) is what protects
-  //     content — a page with images / product text and no widgets isn't
-  //     cover-shaped, so the walk halts there.
-  let formIdx = -1
-  for (let p = 0; p < Math.min(totalPages, FORM_SCAN_PAGES); p++) {
-    if (meta[p].formWidgetCount > 0) { formIdx = p; break }
-  }
-  if (formIdx >= 0) {
-    let lastCover = formIdx
-    while (lastCover + 1 < totalPages && isCoverShaped(meta[lastCover + 1], pageTexts[lastCover + 1] ?? "")) {
-      lastCover++
-    }
-    const stripEndPage = lastCover + 1
-    if (totalPages - stripEndPage <= 0) return null  // never empty the doc
-    return { stripStartPage: 1, stripEndPage, anchor: "coversheet", stamp: null, totalPages }
-  }
+  // Page 1 must be a cover page — otherwise serve the original (datasheets,
+  // product-first docs).
+  if (!isCoverPage(0)) return null
 
-  // 2b. No form: only strip when page 1 is itself STRUCTURALLY cover-shaped
-  //     (a blank/near-empty lead page). Page 1 with real content → bail.
-  //     Keyword-only never anchors (content pages contain cover vocabulary).
-  if (!isStructuralCover(meta[0])) return null
-  let lastCover = 0
-  while (lastCover + 1 < totalPages && isCoverShaped(meta[lastCover + 1], pageTexts[lastCover + 1] ?? "")) {
-    lastCover++
+  // Walk the contiguous leading cover run; stop at the first product page.
+  let last = 0
+  while (
+    last + 1 < totalPages &&        // stay in bounds
+    last + 1 < MAX_COVER_PAGES &&   // backstop cap
+    isCoverPage(last + 1)
+  ) {
+    last++
   }
-  const stripEndPage = lastCover + 1
-  if (totalPages - stripEndPage <= 0) return null
-  return { stripStartPage: 1, stripEndPage, anchor: "coversheet", stamp: null, totalPages }
+  const stripEndPage = last + 1
+  if (totalPages - stripEndPage < 1) return null  // never empty the doc
+
+  const stampInRun = stamp && stamp.page <= stripEndPage ? stamp : null
+  return {
+    stripStartPage: 1,
+    stripEndPage,
+    anchor: stampInRun ? "stamp" : "coversheet",
+    stamp: stampInRun,
+    totalPages,
+  }
 }
 
 /**
