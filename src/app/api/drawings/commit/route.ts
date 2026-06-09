@@ -89,9 +89,46 @@ export async function POST(req: NextRequest) {
   const stagingPrefix = `${companyId}/drawing-staging/`
   const results: CommitResult[] = []
 
+  const sleep = (ms: number) => new Promise<void>(res => setTimeout(res, ms))
+  // Bounded retry on the transient storage steps. A copy→download race can
+  // momentarily return a stale/empty object and trip the sha256 gate; a short
+  // retry stops a transient blip from permanently dropping an APPROVED sheet
+  // (the S-303 class of failure). The integrity contract is unchanged — the
+  // server-recomputed hash must still equal the client-declared hash; we just
+  // allow a few attempts for the copy to settle before failing the row.
+  const copyWithRetry = async (from: string, to: string): Promise<string | null> => {
+    let last = "unknown error"
+    for (let i = 0; i < 3; i++) {
+      const { error } = await supabase.storage.from("submittals").copy(from, to)
+      if (!error) return null
+      last = error.message
+      await sleep(150 * (i + 1))
+    }
+    return last
+  }
+  const downloadAndVerify = async (path: string, expected: string): Promise<{ buf?: Buffer; hash?: string; error?: string }> => {
+    let last = "unknown error"
+    for (let i = 0; i < 3; i++) {
+      const { data: blob, error } = await supabase.storage.from("submittals").download(path)
+      if (error || !blob) { last = error?.message ?? "no blob"; await sleep(150 * (i + 1)); continue }
+      const buf = Buffer.from(await blob.arrayBuffer())
+      const hash = await hashBufferInNode(buf)
+      if (hash === expected) return { buf, hash }
+      last = `stored bytes hash ${hash.slice(0, 12)}… ≠ declared ${expected.slice(0, 12)}… (attempt ${i + 1}/3)`
+      await sleep(150 * (i + 1))
+    }
+    return { error: last }
+  }
+
   for (const r of rows) {
     const cid = typeof r.client_row_id === "string" ? r.client_row_id : ""
-    const fail = (error: string) => results.push({ client_row_id: cid, status: "error", error })
+    // Every failure is logged server-side (row id + sheet number + reason) —
+    // the error must never live only in the HTTP response (S-303's actual
+    // cause was lost that way and is now unrecoverable).
+    const fail = (error: string) => {
+      console.error(`[drawings-commit] row FAILED — client_row_id=${cid} sheet_number=${JSON.stringify(r?.sheet_number ?? null)}: ${error}`)
+      results.push({ client_row_id: cid, status: "error", error })
+    }
 
     if (!cid) { results.push({ client_row_id: "", status: "error", error: "client_row_id missing" }); continue }
     if (!r.staging_path || typeof r.staging_path !== "string") { fail("staging_path missing"); continue }
@@ -121,32 +158,25 @@ export async function POST(req: NextRequest) {
     // 2) Copy staged → final tenant-isolated path.
     const revisionId = randomUUID()
     const finalPath = `${companyId}/drawings/${projectId}/${sheetId}/${revisionId}.pdf`
-    const { error: copyErr } = await supabase.storage
-      .from("submittals")
-      .copy(r.staging_path, finalPath)
+    const copyErr = await copyWithRetry(r.staging_path, finalPath)
     if (copyErr) {
       await supabase.from("drawing_sheets").delete().eq("id", sheetId)
-      fail(`storage copy failed: ${copyErr.message}`)
+      fail(`storage copy failed after retries: ${copyErr}`)
       continue
     }
 
     // 3) FILE-INTEGRITY GATE — recompute SHA-256 on the bytes that actually
     //    landed and compare to the client-declared hash before finalizing.
-    const { data: blob, error: dlErr } = await supabase.storage.from("submittals").download(finalPath)
-    if (dlErr || !blob) {
+    //    Bounded-retried so a copy that hasn't settled yet doesn't drop the row.
+    const dl = await downloadAndVerify(finalPath, r.file_sha256 as string)
+    if (dl.error || !dl.buf || !dl.hash) {
       await supabase.storage.from("submittals").remove([finalPath]).catch(() => {})
       await supabase.from("drawing_sheets").delete().eq("id", sheetId)
-      fail(`integrity check: could not read finalized object (${dlErr?.message ?? "no blob"})`)
+      fail(`integrity check failed after retries: ${dl.error ?? "no bytes"}`)
       continue
     }
-    const finalBuf = Buffer.from(await blob.arrayBuffer())
-    const serverHash = await hashBufferInNode(finalBuf)
-    if (serverHash !== r.file_sha256) {
-      await supabase.storage.from("submittals").remove([finalPath]).catch(() => {})
-      await supabase.from("drawing_sheets").delete().eq("id", sheetId)
-      fail(`integrity check FAILED: stored bytes hash ${serverHash.slice(0, 12)}… ≠ declared ${String(r.file_sha256).slice(0, 12)}…`)
-      continue
-    }
+    const finalBuf = dl.buf
+    const serverHash = dl.hash
     const fileSize = typeof r.file_size === "number" && r.file_size > 0 ? r.file_size : finalBuf.length
 
     // 4) Insert the revision (server-recomputed hash is authoritative).

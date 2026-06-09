@@ -14,6 +14,18 @@ import dynamic from "next/dynamic"
 // dashboard's first-load JS lean. Client-only (browser crypto/File APIs).
 const DrawingImportModal = dynamic(() => import("@/components/drawings/DrawingImportModal"), { ssr: false })
 
+// Committed drawing_sheets (ADR-005 Drawing Log v1) — read/display only.
+interface ImportedSheet {
+  id: string
+  sheet_number: string | null
+  discipline: string | null
+  discipline_prefix: string | null
+  title: string | null
+  revision_label: string | null
+  file_url: string | null
+  created_at: string
+}
+
 // Drawing Log module — extracted verbatim from dashboard/page.tsx (Step 1 of the split).
 // State, handlers, action bar, content, and modal are unchanged; the only
 // difference is the load effect keys on globalProjectId (the module mounts only
@@ -42,6 +54,8 @@ export default function DrawingsModule({ globalProjectId, appProjects }: {
   const [dwgSaving, setDwgSaving]                     = useState(false)
   const [drawingGeneratingPdf, setDrawingGeneratingPdf] = useState(false)
   const [showImportSet, setShowImportSet]             = useState(false)
+  const [importedSheets, setImportedSheets]           = useState<ImportedSheet[]>([])
+  const [importedLoading, setImportedLoading]         = useState(false)
 
   function loadDrawings(pid = globalProjectId) {
     setDrawingsLoading(true)
@@ -53,8 +67,20 @@ export default function DrawingsModule({ globalProjectId, appProjects }: {
       .finally(() => setDrawingsLoading(false))
   }
 
+  // Committed drawing_sheets (splitter output). Separate read from the legacy
+  // drawing_log above — different data model, different table.
+  function loadImportedSheets(pid = globalProjectId) {
+    if (!pid) { setImportedSheets([]); return }
+    setImportedLoading(true)
+    fetch(`/api/drawings/sheets?project_id=${encodeURIComponent(pid)}`)
+      .then(r => r.json())
+      .then(d => setImportedSheets(d.sheets ?? []))
+      .catch(() => setImportedSheets([]))
+      .finally(() => setImportedLoading(false))
+  }
+
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { loadDrawings() }, [globalProjectId])
+  useEffect(() => { loadDrawings(); loadImportedSheets() }, [globalProjectId])
 
   // Pre-select the current global project whenever the New Drawing modal opens.
   useEffect(() => { if (showNewDrawing) setDwgProjectId(globalProjectId) }, [showNewDrawing, globalProjectId])
@@ -135,6 +161,47 @@ export default function DrawingsModule({ globalProjectId, appProjects }: {
 
       {/* Drawing log */}
       <div className="flex-1 overflow-y-auto min-h-0">
+          {/* Imported sheets (drawing_sheets — splitter output). Read/display
+              only; sits above the legacy manual Drawing Log cards. */}
+          {(importedLoading || importedSheets.length > 0) && (
+            <div className="px-4 pt-4">
+              <p className="text-[12px] font-semibold text-[#0F172A] mb-2">
+                Imported sheets <span className="text-[#64748B] font-normal">({importedSheets.length})</span>
+              </p>
+              {importedLoading ? (
+                <div className="flex items-center gap-2 text-[12px] text-[#64748B] py-3"><SpinnerIcon className="h-4 w-4" /> Loading…</div>
+              ) : (
+                <div className="overflow-x-auto border border-[#E2E8F0] rounded-lg">
+                  <table className="w-full text-[12px]">
+                    <thead className="bg-[#F8FAFC] text-[#64748B]">
+                      <tr className="text-left">
+                        <th className="px-3 py-2 w-28">Sheet #</th>
+                        <th className="px-3 py-2 w-36">Discipline</th>
+                        <th className="px-3 py-2">Title</th>
+                        <th className="px-3 py-2 w-24">Revision</th>
+                        <th className="px-3 py-2 w-16"></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {importedSheets.map(s => (
+                        <tr key={s.id} className="border-t border-[#F1F5F9]">
+                          <td className="px-3 py-1.5 font-mono font-semibold text-[#5A7A94]">{s.sheet_number ?? "—"}</td>
+                          <td className="px-3 py-1.5 text-[#0F172A]">{s.discipline ?? (s.discipline_prefix ? `(${s.discipline_prefix})` : "—")}</td>
+                          <td className="px-3 py-1.5 text-[#0F172A] truncate max-w-0">{s.title ?? <span className="text-[#94A3B8]">—</span>}</td>
+                          <td className="px-3 py-1.5 text-[#64748B]">{s.revision_label ?? "—"}</td>
+                          <td className="px-3 py-1.5 text-right">
+                            {s.file_url
+                              ? <a href={s.file_url} target="_blank" rel="noopener noreferrer" className="text-[#7B9BB5] hover:text-[#5A7A94] font-semibold">Open</a>
+                              : <span className="text-[#CBD5E1]">—</span>}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          )}
           {(() => {
             const currentDrawings = drawings.filter(d => d.is_current)
             const allSuperseded   = drawings.filter(d => !d.is_current)
@@ -238,7 +305,7 @@ export default function DrawingsModule({ globalProjectId, appProjects }: {
 
       {/* ── Import drawing set (split + confirm) ─────────────────────────── */}
       {showImportSet && globalProjectId && (
-        <DrawingImportModal projectId={globalProjectId} onClose={() => setShowImportSet(false)} />
+        <DrawingImportModal projectId={globalProjectId} onClose={() => { setShowImportSet(false); loadImportedSheets() }} />
       )}
 
       {/* ── New Drawing / Add Revision modal ─────────────────────────────── */}

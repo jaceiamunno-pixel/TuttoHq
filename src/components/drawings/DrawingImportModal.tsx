@@ -54,7 +54,8 @@ export default function DrawingImportModal({ projectId, onClose }: {
   const [error, setError] = useState<string | null>(null)
   const [rows, setRows] = useState<ProposedRow[]>([])
   const [batchId, setBatchId] = useState<string>("")
-  const [commitSummary, setCommitSummary] = useState<{ ok: number; errors: { page: number; error: string }[] } | null>(null)
+  const [committedCount, setCommittedCount] = useState(0)
+  const [failedRows, setFailedRows] = useState<{ row: ProposedRow; error: string }[]>([])
   const fileRef = useRef<HTMLInputElement>(null)
 
   const updateRow = useCallback((id: string, patch: Partial<ProposedRow>) => {
@@ -179,13 +180,12 @@ export default function DrawingImportModal({ projectId, onClose }: {
     }
   }
 
-  async function commit() {
-    const included = rows.filter(r => r.include)
-    const blank = included.filter(r => !r.sheetNumber.trim())
-    if (blank.length > 0) {
-      setError(`${blank.length} included sheet${blank.length === 1 ? "" : "s"} ${blank.length === 1 ? "has" : "have"} no sheet number — fill or drop before committing.`)
-      return
-    }
+  // Commit a specific set of rows. Used for the initial commit AND for
+  // "Retry failed" (those rows' staged files still exist — staging purges only
+  // on success). A row counts as failed if its result is status:"error" OR if
+  // no result came back for it at all — so an approved sheet can never silently
+  // vanish.
+  async function runCommit(toCommit: ProposedRow[]) {
     setError(null)
     setPhase("committing")
     try {
@@ -194,7 +194,7 @@ export default function DrawingImportModal({ projectId, onClose }: {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           project_id: projectId,
-          rows: included.map(r => ({
+          rows: toCommit.map(r => ({
             client_row_id: r.id,
             staging_path: r.stagingPath,
             file_name: `${r.sheetNumber || r.page}.pdf`,
@@ -211,17 +211,32 @@ export default function DrawingImportModal({ projectId, onClose }: {
       const data = await res.json().catch(() => null)
       if (!res.ok) throw new Error(data?.error ?? `Commit failed (HTTP ${res.status})`)
       const results = (data?.results ?? []) as { client_row_id: string; status: string; error?: string }[]
-      const ok = results.filter(r => r.status === "ok").length
-      const errors = results.filter(r => r.status === "error").map(r => ({
-        page: rows.find(x => x.id === r.client_row_id)?.page ?? 0,
-        error: r.error ?? "unknown",
-      }))
-      setCommitSummary({ ok, errors })
+      const okIds = new Set(results.filter(r => r.status === "ok").map(r => r.client_row_id))
+      const failed = toCommit
+        .filter(r => !okIds.has(r.id))
+        .map(r => ({ row: r, error: results.find(x => x.client_row_id === r.id)?.error ?? "no result returned by server" }))
+      setCommittedCount(c => c + okIds.size)
+      setFailedRows(failed)
       setPhase("done")
     } catch (e) {
       setError(e instanceof Error ? e.message : "Commit failed.")
       setPhase("review")
     }
+  }
+
+  function commit() {
+    const included = rows.filter(r => r.include)
+    const blank = included.filter(r => !r.sheetNumber.trim())
+    if (blank.length > 0) {
+      setError(`${blank.length} included sheet${blank.length === 1 ? "" : "s"} ${blank.length === 1 ? "has" : "have"} no sheet number — fill or drop before committing.`)
+      return
+    }
+    setCommittedCount(0)
+    void runCommit(included)
+  }
+
+  function retryFailed() {
+    void runCommit(failedRows.map(f => f.row))
   }
 
   async function cancel() {
@@ -347,18 +362,30 @@ export default function DrawingImportModal({ projectId, onClose }: {
               <SpinnerIcon className="h-4 w-4" /> Committing & verifying sheets…
             </div>
           )}
-          {phase === "done" && commitSummary && (
-            <div className="py-8 text-center">
-              <p className="text-[15px] font-bold text-[#0F172A]">Committed {commitSummary.ok} sheet{commitSummary.ok === 1 ? "" : "s"}</p>
-              {commitSummary.errors.length > 0 && (
-                <div className="mt-3 text-left mx-auto max-w-md">
-                  <p className="text-[12px] text-red-700 font-semibold mb-1">{commitSummary.errors.length} failed:</p>
-                  <ul className="text-[11px] text-red-600 space-y-0.5">
-                    {commitSummary.errors.map((e, i) => <li key={i}>Page {e.page}: {e.error}</li>)}
-                  </ul>
+          {phase === "done" && (
+            failedRows.length === 0 ? (
+              <div className="py-8 text-center">
+                <p className="text-[15px] font-bold text-emerald-700">✓ Committed {committedCount} sheet{committedCount === 1 ? "" : "s"}</p>
+              </div>
+            ) : (
+              // LOUD partial failure — leads with a warning, never reads as success.
+              <div className="py-6">
+                <div className="px-4 py-3 rounded-md bg-amber-50 border border-amber-300 mb-3">
+                  <p className="text-[14px] font-bold text-amber-800">
+                    {committedCount} committed · {failedRows.length} failed — not everything saved
+                  </p>
+                  <p className="text-[11px] text-amber-700 mt-0.5">The failed sheets are still staged. Use “Retry failed” to commit them, or close and re-import them.</p>
                 </div>
-              )}
-            </div>
+                <ul className="text-[12px] text-[#0F172A] space-y-1 max-h-[40vh] overflow-y-auto">
+                  {failedRows.map((f, i) => (
+                    <li key={i} className="flex gap-2 px-2 py-1 rounded bg-red-50 border border-red-100">
+                      <span className="font-mono text-red-700 flex-shrink-0">p{f.row.page} · {f.row.sheetNumber || "—"}</span>
+                      <span className="text-red-600 truncate" title={f.error}>{f.error}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )
           )}
         </div>
 
@@ -378,7 +405,15 @@ export default function DrawingImportModal({ projectId, onClose }: {
               </button>
             </>
           )}
-          {phase === "done" && (
+          {phase === "done" && failedRows.length > 0 && (
+            <>
+              <button onClick={onClose} className="h-8 px-4 rounded-md border border-[#E2E8F0] text-[13px] text-[#64748B] hover:bg-[#0F172A]/[0.04]">Close anyway</button>
+              <button onClick={retryFailed} className="h-8 px-4 rounded-md bg-amber-600 text-white text-[13px] font-semibold hover:bg-amber-700">
+                Retry failed ({failedRows.length})
+              </button>
+            </>
+          )}
+          {phase === "done" && failedRows.length === 0 && (
             <button onClick={onClose} className="h-8 px-4 rounded-md bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4]">Done</button>
           )}
         </div>
