@@ -12,8 +12,9 @@
 //   row 4+   → data rows, tinted by csi_section via SECTION_PALETTE_HEX_THP
 //   cols P/R/S → helper cells driving the Late/On-Time formula
 
-import type { SubmittalRecord, SubcontractorRow, SupplierRow, SubcontractorPersonRow, SupplierPersonRow } from "./types"
+import type { SubmittalRecord, SubcontractorRow, SupplierRow, SubcontractorPersonRow, SupplierPersonRow, ChangeOrder } from "./types"
 import { SECTION_PALETTE_HEX_THP } from "./csi"
+import { realizedAmount, computeCoTotals } from "./co-math"
 
 // Light-gray cell border applied to every header/data/buffer cell in cols A-N.
 // Required because the section-tint and status fills render *over* Excel's
@@ -368,4 +369,119 @@ export async function exportSubmittalLogToExcel(args: ExportSubmittalLogArgs): P
   void args.groupedBySection
   void args.isSearchMode
   void args.searchQuery
+}
+
+// ─── Change-order (PCO) log export ───────────────────────────────────────────
+// Mirrors the Gilbane PCO-log spreadsheet: per-row Amount (proposed) + Realized
+// (executed) columns, with footer totals (Total Proposed, Revised Contract
+// Value, Open Changes). Reuses the same ExcelJS + Blob-download mechanism as the
+// submittal log. The `rows` passed in were already fetched through the
+// company-scoped GET /api/change-orders?project_id=… (RLS + project filter), so
+// this is a pure client-side formatting of tenant-scoped, current-project data.
+
+export interface ExportChangeOrderLogArgs {
+  rows: ChangeOrder[]
+  projectName: string
+  projectNumber: string | null
+  baseContractValue: number | null
+}
+
+export async function exportChangeOrderLogToExcel(args: ExportChangeOrderLogArgs): Promise<void> {
+  const ExcelJS = (await import("exceljs")).default
+  const wb = new ExcelJS.Workbook()
+  wb.creator = "TuttoHQ"
+  wb.created = new Date()
+  const ws = wb.addWorksheet("Change Orders")
+
+  const MONEY = '$#,##0.00;[Red]-$#,##0.00'
+  const totals = computeCoTotals(args.rows, args.baseContractValue)
+
+  // Column widths: PCO# · Date · Amount · C.O.# · Work Description · Status · Realized
+  ws.columns = [
+    { width: 10 }, { width: 14 }, { width: 16 }, { width: 12 }, { width: 64 }, { width: 16 }, { width: 16 },
+  ]
+
+  // ── Header block ────────────────────────────────────────────────────────────
+  ws.mergeCells(1, 1, 1, 7)
+  const title = ws.getCell(1, 1)
+  title.value = `${args.projectName} — Change Order Log`
+  title.font = { name: "Arial", size: 16, bold: true }
+  title.alignment = { horizontal: "left", vertical: "middle" }
+  ws.getRow(1).height = 22
+
+  ws.getCell(2, 1).value = args.projectNumber ? `Project No: ${args.projectNumber}` : ""
+  ws.getCell(2, 1).font = { name: "Arial", size: 11 }
+  ws.getCell(2, 5).value = "Base Contract Value:"
+  ws.getCell(2, 5).font = { name: "Arial", size: 11, bold: true }
+  ws.getCell(2, 5).alignment = { horizontal: "right" }
+  const baseCell = ws.getCell(2, 6)
+  baseCell.value = args.baseContractValue ?? 0
+  baseCell.numFmt = MONEY
+  baseCell.font = { name: "Arial", size: 11, bold: true }
+
+  // ── Column header row (row 4) ───────────────────────────────────────────────
+  const HEADERS = ["PCO #", "Date", "Amount", "C.O. #", "Work Description", "Status", "Realized"]
+  const headerRow = ws.getRow(4)
+  HEADERS.forEach((h, i) => {
+    const cell = headerRow.getCell(i + 1)
+    cell.value = h
+    cell.font = { name: "Arial", size: 11, bold: true }
+    cell.alignment = { horizontal: i === 4 ? "left" : "center", vertical: "middle" }
+    cell.border = { bottom: { style: "thin", color: { argb: "FF999999" } } }
+  })
+  headerRow.height = 18
+
+  // ── Data rows (row 5+) ──────────────────────────────────────────────────────
+  let r = 5
+  for (const c of args.rows) {
+    const row = ws.getRow(r)
+    row.getCell(1).value = c.co_number
+    const d = parseDate(c.date)
+    if (d) { row.getCell(2).value = d; row.getCell(2).numFmt = "mmm d, yyyy" }
+    row.getCell(3).value = c.pricing_sum ?? 0
+    row.getCell(3).numFmt = MONEY
+    row.getCell(4).value = c.assigned_co_number ?? ""
+    row.getCell(5).value = c.proposal ?? ""
+    row.getCell(6).value = c.status
+    row.getCell(7).value = realizedAmount(c)
+    row.getCell(7).numFmt = MONEY
+    row.getCell(5).alignment = { wrapText: true, vertical: "top" }
+    r++
+  }
+
+  // ── Footer totals ───────────────────────────────────────────────────────────
+  r += 1
+  const footer: [string, number][] = [
+    ["Total Proposed", totals.totalProposed],
+    ["Revised Contract Value", totals.revisedContractValue],
+    ["Open Changes", totals.openChanges],
+  ]
+  for (const [label, value] of footer) {
+    const row = ws.getRow(r)
+    const labelCell = row.getCell(6)
+    labelCell.value = label
+    labelCell.font = { name: "Arial", size: 11, bold: true }
+    labelCell.alignment = { horizontal: "right" }
+    const valCell = row.getCell(7)
+    valCell.value = value
+    valCell.numFmt = MONEY
+    valCell.font = { name: "Arial", size: 11, bold: true }
+    r++
+  }
+
+  ws.views = [{ state: "frozen", ySplit: 4, topLeftCell: "A5" }]
+
+  // ── Trigger download ────────────────────────────────────────────────────────
+  const buf  = await wb.xlsx.writeBuffer()
+  const date = new Date().toISOString().slice(0, 10)
+  const name = `${sanitizeFileName(args.projectName)}_change_order_log_${date}.xlsx`
+  const blob = new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" })
+  const url  = URL.createObjectURL(blob)
+  const a    = document.createElement("a")
+  a.href = url
+  a.download = name
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  URL.revokeObjectURL(url)
 }

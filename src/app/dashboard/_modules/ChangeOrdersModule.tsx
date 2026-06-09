@@ -5,6 +5,8 @@ import type { ChangeOrder, Project } from "../_shared/types"
 import { fmtDateOnly } from "../_shared/format"
 import { PlusIcon, SpinnerIcon } from "../_shared/icons"
 import { presignAndUpload } from "@/lib/storage-upload"
+import { realizedAmount, computeCoTotals } from "../_shared/co-math"
+import { exportChangeOrderLogToExcel } from "../_shared/excel-export"
 
 // Change Orders module — extracted verbatim from dashboard/page.tsx (Step 6 of the split).
 // State, handlers, action bar, content, and both modals are unchanged; the load
@@ -38,6 +40,8 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
   const [coGeneratingPdf, setCoGeneratingPdf]         = useState(false)
   const [coBaseValue, setCoBaseValue]                 = useState("")
   const [coBaseSaving, setCoBaseSaving]               = useState(false)
+  const [coRespAmount, setCoRespAmount]               = useState("")
+  const [coExporting, setCoExporting]                 = useState(false)
 
   function loadChangeOrders(pid = globalProjectId) {
     setCoLoading(true)
@@ -118,7 +122,10 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
     try {
       const res = await fetch(`/api/change-orders/${viewCo.id}`, {
         method: "PATCH", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status: coResponseStatus, assigned_to: coAssignedTo, assigned_co_number: coAssignedCoNumber }),
+        body: JSON.stringify({
+          status: coResponseStatus, assigned_to: coAssignedTo, assigned_co_number: coAssignedCoNumber,
+          pricing_sum: coRespAmount.trim() === "" ? null : parseFloat(coRespAmount),
+        }),
       })
       if (res.ok) { setViewCo(null); loadChangeOrders() }
     } finally { setCoRespondSaving(false) }
@@ -138,31 +145,59 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
     } finally { setCoBaseSaving(false) }
   }
 
-  // New Contract value = Base + Σ CO amounts for every status EXCEPT Rejected.
-  const coAmountTotal = changeOrders
-    .filter(c => c.status !== "Rejected")
-    .reduce((s, c) => s + (c.pricing_sum ?? 0), 0)
+  // Contract math mirrors the Gilbane PCO log (shared co-math is the single
+  // source of truth so the on-screen figures match the exported workbook):
+  //   Total Proposed = Σ amount (all COs)
+  //   Revised Contract Value = Base + Σ realized (numeric C.O.#, not Rejected; credits subtract)
+  //   Open Changes = Σ amount for proposed-but-not-executed rows (not Rejected)
   const baseNum = parseFloat(coBaseValue)
-  const newContractValue = (Number.isFinite(baseNum) ? baseNum : 0) + coAmountTotal
-  const fmtUsd = (n: number) => new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(n)
+  const baseForTotals = Number.isFinite(baseNum) ? baseNum : null
+  const coTotals = computeCoTotals(changeOrders, baseForTotals)
+  const fmtUsd2 = (n: number) => new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n)
+
+  async function handleExportCoLog() {
+    if (!globalProjectId) return
+    const proj = appProjects.find(p => p.id === globalProjectId)
+    setCoExporting(true)
+    try {
+      await exportChangeOrderLogToExcel({
+        rows: changeOrders,
+        projectName: proj?.name ?? "Project",
+        projectNumber: proj?.number ?? null,
+        baseContractValue: baseForTotals,
+      })
+    } finally { setCoExporting(false) }
+  }
 
   return (
     <>
       {/* Change Orders action bar */}
       <div className="flex-shrink-0 border-b border-[#E2E8F0] bg-white flex items-center justify-between px-4 py-2.5 gap-2 min-w-0">
         <p className="text-[13px] font-semibold text-[#0F172A] truncate min-w-0">Change Orders <span className="text-[#64748B] font-normal ml-1">({changeOrders.length})</span></p>
-        <button onClick={() => setShowNewCo(true)} className="h-8 px-4 rounded-md bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors flex items-center gap-1.5 flex-shrink-0 whitespace-nowrap">
-          <PlusIcon /> New CO
-        </button>
+        <div className="flex items-center gap-2 flex-shrink-0">
+          <button onClick={handleExportCoLog} disabled={coExporting || changeOrders.length === 0}
+            title="Download the change-order log as an Excel spreadsheet"
+            className="h-8 px-3 rounded-md border border-[#E2E8F0] text-[12px] font-semibold text-[#64748B] hover:bg-[#0F172A]/[0.04] transition-colors flex items-center gap-1.5 whitespace-nowrap disabled:opacity-60">
+            {coExporting ? <SpinnerIcon className="h-3.5 w-3.5" /> : (
+              <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5 5-5M12 15V3" />
+              </svg>
+            )}
+            <span className="hidden sm:inline">{coExporting ? "Exporting…" : "Download log"}</span>
+          </button>
+          <button onClick={() => setShowNewCo(true)} className="h-8 px-4 rounded-md bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors flex items-center gap-1.5 whitespace-nowrap">
+            <PlusIcon /> New CO
+          </button>
+        </div>
       </div>
 
-      {/* Base + New Contract value */}
+      {/* Contract value summary — mirrors the Gilbane PCO log */}
       {globalProjectId && (
         <div className="flex-shrink-0 border-b border-[#E2E8F0] bg-white px-4 py-3 flex flex-wrap items-end gap-4">
           <div>
             <label className="block text-[10px] font-bold text-[#64748B] uppercase tracking-widest mb-1">Base Contract Value</label>
             <div className="flex items-center gap-2">
-              <input type="number" step="0.01" min="0" value={coBaseValue}
+              <input type="number" step="0.01" value={coBaseValue}
                 onChange={e => setCoBaseValue(e.target.value)} placeholder="0.00"
                 className="h-9 w-44 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40 tabular-nums placeholder:text-[#64748B]" />
               <button onClick={saveBaseContract} disabled={coBaseSaving}
@@ -172,9 +207,19 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
             </div>
           </div>
           <div className="rounded-lg bg-[#F4F5F7] border border-[#E2E8F0] px-4 py-2">
-            <p className="text-[10px] font-bold text-[#64748B] uppercase tracking-widest mb-0.5">New Contract Value</p>
-            <p className="text-[18px] font-bold tabular-nums text-[#0F172A]">{fmtUsd(newContractValue)}</p>
-            <p className="text-[10px] text-[#94A3B8] mt-0.5">Base + COs (excl. Rejected)</p>
+            <p className="text-[10px] font-bold text-[#64748B] uppercase tracking-widest mb-0.5">Total Proposed</p>
+            <p className="text-[18px] font-bold tabular-nums text-[#0F172A]">{fmtUsd2(coTotals.totalProposed)}</p>
+            <p className="text-[10px] text-[#94A3B8] mt-0.5">Σ all proposed amounts</p>
+          </div>
+          <div className="rounded-lg bg-[#F4F5F7] border border-[#E2E8F0] px-4 py-2">
+            <p className="text-[10px] font-bold text-[#64748B] uppercase tracking-widest mb-0.5">Revised Contract Value</p>
+            <p className="text-[18px] font-bold tabular-nums text-green-600">{fmtUsd2(coTotals.revisedContractValue)}</p>
+            <p className="text-[10px] text-[#94A3B8] mt-0.5">Base + realized (executed C.O.#)</p>
+          </div>
+          <div className="rounded-lg bg-[#F4F5F7] border border-[#E2E8F0] px-4 py-2">
+            <p className="text-[10px] font-bold text-[#64748B] uppercase tracking-widest mb-0.5">Open Changes</p>
+            <p className="text-[18px] font-bold tabular-nums text-amber-600">{fmtUsd2(coTotals.openChanges)}</p>
+            <p className="text-[10px] text-[#94A3B8] mt-0.5">Proposed, not yet executed</p>
           </div>
         </div>
       )}
@@ -237,7 +282,8 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
                         <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-24">CO #</th>
                         <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-32">Project</th>
                         <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest">Proposal</th>
-                        <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-28">Pricing</th>
+                        <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-28">Amount</th>
+                        <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-28">Realized</th>
                         <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-20">Sched.</th>
                         <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-24">Date</th>
                         <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-28">Status</th>
@@ -260,8 +306,11 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
                             <td className="px-4 py-2.5 text-[12px] text-[#0F172A]">{c.assigned_co_number || "—"}</td>
                             <td className="px-4 py-2.5 text-[#64748B] text-[12px] truncate">{proj?.name ?? "—"}</td>
                             <td className="px-4 py-2.5 max-w-0"><p className="text-[#0F172A] truncate">{c.proposal ?? "—"}</p></td>
-                            <td className="px-4 py-2.5 text-[#0F172A] text-[12px] tabular-nums font-medium">
-                              {c.pricing_sum != null ? new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(c.pricing_sum) : "—"}
+                            <td className="px-4 py-2.5 text-[12px] tabular-nums font-medium">
+                              {c.pricing_sum != null ? <span className={c.pricing_sum < 0 ? "text-red-600" : "text-[#0F172A]"}>{fmtUsd2(c.pricing_sum)}</span> : <span className="text-[#0F172A]">—</span>}
+                            </td>
+                            <td className="px-4 py-2.5 text-[12px] tabular-nums font-medium text-[#0F172A]">
+                              {fmtUsd2(realizedAmount(c))}
                             </td>
                             <td className="px-4 py-2.5 text-[12px]">
                               <span className={c.schedule_impact === "Yes" ? "text-amber-400" : c.schedule_impact === "No" ? "text-green-400" : "text-[#64748B]"}>{c.schedule_impact ?? "TBD"}</span>
@@ -272,7 +321,7 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
                             </td>
                             <td className="px-4 py-2.5">
                               <div className="flex items-center gap-1">
-                                <button onClick={() => { setViewCo(c); setCoResponseStatus(c.status); setCoAssignedTo(c.assigned_to ?? ""); setCoAssignedCoNumber(c.assigned_co_number ?? "") }}
+                                <button onClick={() => { setViewCo(c); setCoResponseStatus(c.status); setCoAssignedTo(c.assigned_to ?? ""); setCoAssignedCoNumber(c.assigned_co_number ?? ""); setCoRespAmount(c.pricing_sum != null ? String(c.pricing_sum) : "") }}
                                   className="text-[11px] text-[#64748B] hover:text-[#0F172A] px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors">View</button>
                                 <button onClick={() => generateCoPdf(c.id)} disabled={coGeneratingPdf}
                                   className="text-[11px] text-[#7B9BB5] hover:text-[#7B9BB5] px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors disabled:opacity-50">PDF</button>
@@ -301,11 +350,11 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
                           <p className="text-[13px] font-medium text-[#0F172A] mb-1 truncate">{c.proposal ?? "—"}</p>
                           {proj && <p className="text-[11px] text-[#64748B] mb-1">{proj.name}</p>}
                           <div className="flex items-center justify-between mb-2">
-                            <span className="text-[12px] font-semibold text-[#0F172A]">{c.pricing_sum != null ? new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(c.pricing_sum) : "—"}</span>
+                            <span className={`text-[12px] font-semibold ${c.pricing_sum != null && c.pricing_sum < 0 ? "text-red-600" : "text-[#0F172A]"}`}>{c.pricing_sum != null ? fmtUsd2(c.pricing_sum) : "—"}</span>
                             <span className="text-[11px] text-[#64748B]">{c.date ? fmtDateOnly(c.date) : ""}</span>
                           </div>
                           <div className="flex items-center gap-1">
-                            <button onClick={() => { setViewCo(c); setCoResponseStatus(c.status); setCoAssignedTo(c.assigned_to ?? ""); setCoAssignedCoNumber(c.assigned_co_number ?? "") }} className="text-[11px] text-[#64748B] px-2 py-1 rounded border border-[#E2E8F0] bg-[#F8F9FA]">View</button>
+                            <button onClick={() => { setViewCo(c); setCoResponseStatus(c.status); setCoAssignedTo(c.assigned_to ?? ""); setCoAssignedCoNumber(c.assigned_co_number ?? ""); setCoRespAmount(c.pricing_sum != null ? String(c.pricing_sum) : "") }} className="text-[11px] text-[#64748B] px-2 py-1 rounded border border-[#E2E8F0] bg-[#F8F9FA]">View</button>
                             <button onClick={() => generateCoPdf(c.id)} disabled={coGeneratingPdf} className="text-[11px] text-[#7B9BB5] px-2 py-1 rounded border border-[#E2E8F0] bg-[#F8F9FA] disabled:opacity-50">PDF</button>
                             <button onClick={() => deleteCo(c.id)} className="text-[11px] text-red-400 px-2 py-1 rounded border border-[#E2E8F0] bg-[#F8F9FA]">Del</button>
                           </div>
@@ -368,8 +417,8 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div>
-                      <label className={labelCls2}>Pricing Sum ($)</label>
-                      <input type="number" step="0.01" min="0" value={coPricingSum} onChange={e => setCoPricingSum(e.target.value)}
+                      <label className={labelCls2}>Amount ($) <span className="text-[#94A3B8] normal-case font-normal tracking-normal">(− = credit)</span></label>
+                      <input type="number" step="0.01" value={coPricingSum} onChange={e => setCoPricingSum(e.target.value)}
                         placeholder="0.00" className={inputCls2} />
                     </div>
                     <div>
@@ -557,6 +606,12 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
                     <input type="text" value={coAssignedCoNumber} onChange={e => setCoAssignedCoNumber(e.target.value)}
                       placeholder="Assigned CO number"
                       className="w-full h-9 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40 placeholder:text-[#64748B]" />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-semibold text-[#64748B] uppercase tracking-widest mb-1">Amount ($) <span className="text-[#94A3B8] normal-case font-normal tracking-normal">(− = credit)</span></label>
+                    <input type="number" step="0.01" value={coRespAmount} onChange={e => setCoRespAmount(e.target.value)}
+                      placeholder="0.00"
+                      className="w-full h-9 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40 tabular-nums placeholder:text-[#64748B]" />
                   </div>
                 </div>
               </div>
