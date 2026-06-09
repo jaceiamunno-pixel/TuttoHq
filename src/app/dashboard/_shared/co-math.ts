@@ -1,44 +1,33 @@
 // Change-order contract math — the single source of truth shared by the CO
 // module UI and the Excel export, so on-screen figures and the downloaded log
-// can never diverge. Mirrors the Gilbane PCO-log spreadsheet logic exactly.
+// can never diverge.
+//
+// REALIZED is a USER-ENTERED, STORED value (change_orders.realized_amount) — the
+// dollar amount the other side actually accepted. It is NOT derived from the
+// C.O.#. It is null until entered (and only enterable once a C.O.# is assigned).
 
-type CoMathRow = { assigned_co_number: string | null; status: string; pricing_sum: number | null }
-
-// A C.O.# marks an EXECUTED (realized) change only when it is a plain integer —
-// "1", "7", "12". Tag-style numbers like "TA-11"/"TA-12", decimals, negatives,
-// or a blank/null C.O.# are NOT executed.
-export function isExecutedCoNumber(assigned: string | null | undefined): boolean {
-  return !!assigned && /^\d+$/.test(assigned.trim())
-}
-
-// Realized dollar value of one change order: its proposed amount when the C.O.#
-// is a plain integer AND the status is not Rejected; otherwise 0. Credits
-// (negative amounts) carry through unchanged.
-export function realizedAmount(c: CoMathRow): number {
-  if (c.status === "Rejected") return 0
-  if (!isExecutedCoNumber(c.assigned_co_number)) return 0
-  return c.pricing_sum ?? 0
-}
+type CoMathRow = { status: string; pricing_sum: number | null; realized_amount: number | null }
 
 // Round to cents to keep float summation from drifting (e.g. 531664.79999999).
 const round2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100
 
 export interface CoContractTotals {
-  totalProposed: number          // Σ amount over ALL COs
-  sumRealized: number            // Σ realized (executed, numeric C.O.#, not rejected)
+  totalProposed: number          // Σ proposed amount over ALL COs
+  sumRealized: number            // Σ realized_amount over non-Rejected COs (null → 0)
   revisedContractValue: number   // base + Σ realized
-  openChanges: number            // Σ amount for proposed-but-not-executed (not rejected)
+  openChanges: number            // Σ proposed amount where realized not entered (null) and not Rejected
 }
 
 export function computeCoTotals(rows: CoMathRow[], base: number | null): CoContractTotals {
   const totalProposed = rows.reduce((s, c) => s + (c.pricing_sum ?? 0), 0)
-  const sumRealized = rows.reduce((s, c) => s + realizedAmount(c), 0)
-  // Open changes = proposed but not yet executed: a real amount on a row that is
-  // neither Rejected nor carrying a numeric (executed) C.O.#.
+  // Revised: only realized (accepted) values count, on non-Rejected COs.
+  // realized_amount is null until entered, so unrealized COs contribute 0.
+  const sumRealized = rows.reduce(
+    (s, c) => (c.status !== "Rejected" ? s + (c.realized_amount ?? 0) : s), 0)
+  // Open changes: the proposed amount on COs that aren't realized yet
+  // (realized_amount IS NULL) and aren't Rejected.
   const openChanges = rows.reduce(
-    (s, c) => (c.status !== "Rejected" && !isExecutedCoNumber(c.assigned_co_number) ? s + (c.pricing_sum ?? 0) : s),
-    0,
-  )
+    (s, c) => (c.status !== "Rejected" && c.realized_amount == null ? s + (c.pricing_sum ?? 0) : s), 0)
   const baseVal = base ?? 0
   return {
     totalProposed: round2(totalProposed),

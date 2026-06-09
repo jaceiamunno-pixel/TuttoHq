@@ -14,7 +14,7 @@
 
 import type { SubmittalRecord, SubcontractorRow, SupplierRow, SubcontractorPersonRow, SupplierPersonRow, ChangeOrder } from "./types"
 import { SECTION_PALETTE_HEX_THP } from "./csi"
-import { realizedAmount, computeCoTotals } from "./co-math"
+import { computeCoTotals } from "./co-math"
 
 // Light-gray cell border applied to every header/data/buffer cell in cols A-N.
 // Required because the section-tint and status fills render *over* Excel's
@@ -443,8 +443,10 @@ export async function exportChangeOrderLogToExcel(args: ExportChangeOrderLogArgs
     row.getCell(4).value = c.assigned_co_number ?? ""
     row.getCell(5).value = c.proposal ?? ""
     row.getCell(6).value = c.status
-    row.getCell(7).value = realizedAmount(c)
-    row.getCell(7).numFmt = MONEY
+    if (c.realized_amount != null) {
+      row.getCell(7).value = c.realized_amount
+      row.getCell(7).numFmt = MONEY
+    }
     row.getCell(5).alignment = { wrapText: true, vertical: "top" }
     r++
   }

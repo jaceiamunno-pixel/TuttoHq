@@ -5,7 +5,7 @@ import type { ChangeOrder, Project } from "../_shared/types"
 import { fmtDateOnly } from "../_shared/format"
 import { PlusIcon, SpinnerIcon } from "../_shared/icons"
 import { presignAndUpload } from "@/lib/storage-upload"
-import { realizedAmount, computeCoTotals, isExecutedCoNumber } from "../_shared/co-math"
+import { computeCoTotals } from "../_shared/co-math"
 import { exportChangeOrderLogToExcel } from "../_shared/excel-export"
 
 // Change Orders module — extracted verbatim from dashboard/page.tsx (Step 6 of the split).
@@ -41,6 +41,8 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
   const [coBaseValue, setCoBaseValue]                 = useState("")
   const [coBaseSaving, setCoBaseSaving]               = useState(false)
   const [coRespAmount, setCoRespAmount]               = useState("")
+  const [coRealized, setCoRealized]                   = useState("")
+  const [coRespRealized, setCoRespRealized]           = useState("")
   const [coExporting, setCoExporting]                 = useState(false)
 
   function loadChangeOrders(pid = globalProjectId) {
@@ -79,6 +81,8 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
         schedule_impact: coScheduleImpact, schedule_impact_days: coScheduleDays,
         submitted_by: coSubmittedBy, assigned_to: coAssignedTo, status: coStatus,
         assigned_co_number: coAssignedCoNumber,
+        // Realized only counts once a C.O.# is assigned; otherwise send blank → null.
+        realized_amount: coAssignedCoNumber.trim() ? coRealized : "",
       }
       if (coFile) {
         const { path } = await presignAndUpload("submittals", "change-orders", coFile)
@@ -94,7 +98,7 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
         setShowNewCo(false)
         setCoProjectId(""); setCoProposal(""); setCoQualifications(""); setCoPricingSum("")
         setCoScheduleImpact("TBD"); setCoScheduleDays(""); setCoSubmittedBy(""); setCoAssignedTo("")
-        setCoStatus("Not submitted"); setCoAssignedCoNumber(""); setCoFile(null)
+        setCoStatus("Not submitted"); setCoAssignedCoNumber(""); setCoRealized(""); setCoFile(null)
         setCoDate(new Date().toISOString().slice(0, 10))
         loadChangeOrders()
       }
@@ -129,6 +133,8 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
         body: JSON.stringify({
           status: coResponseStatus, assigned_to: coAssignedTo, assigned_co_number: coAssignedCoNumber,
           pricing_sum: coRespAmount.trim() === "" ? null : parseFloat(coRespAmount),
+          // Realized only counts once a C.O.# is assigned; otherwise null.
+          realized_amount: coAssignedCoNumber.trim() && coRespRealized.trim() !== "" ? parseFloat(coRespRealized) : null,
         }),
       })
       if (res.ok) { setViewCo(null); loadChangeOrders() }
@@ -149,11 +155,11 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
     } finally { setCoBaseSaving(false) }
   }
 
-  // Contract math mirrors the Gilbane PCO log (shared co-math is the single
-  // source of truth so the on-screen figures match the exported workbook):
-  //   Total Proposed = Σ amount (all COs)
-  //   Revised Contract Value = Base + Σ realized (numeric C.O.#, not Rejected; credits subtract)
-  //   Open Changes = Σ amount for proposed-but-not-executed rows (not Rejected)
+  // Contract math (shared co-math is the single source of truth so the on-screen
+  // figures match the exported workbook):
+  //   Total Proposed = Σ proposed amount (all COs)
+  //   Revised Contract Value = Base + Σ realized_amount (stored; non-Rejected)
+  //   Open Changes = Σ proposed amount where realized not entered yet (not Rejected)
   const baseNum = parseFloat(coBaseValue)
   const baseForTotals = Number.isFinite(baseNum) ? baseNum : null
   const coTotals = computeCoTotals(changeOrders, baseForTotals)
@@ -220,12 +226,12 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
           <div className="rounded-lg bg-[#F4F5F7] border border-[#E2E8F0] px-4 py-2">
             <p className="text-[10px] font-bold text-[#64748B] uppercase tracking-widest mb-0.5">Revised Contract Value</p>
             <p className="text-[18px] font-bold tabular-nums text-green-600">{fmtUsd2(coTotals.revisedContractValue)}</p>
-            <p className="text-[10px] text-[#94A3B8] mt-0.5">Base + realized (executed C.O.#)</p>
+            <p className="text-[10px] text-[#94A3B8] mt-0.5">Base + realized (accepted) amounts</p>
           </div>
           <div className="rounded-lg bg-[#F4F5F7] border border-[#E2E8F0] px-4 py-2">
             <p className="text-[10px] font-bold text-[#64748B] uppercase tracking-widest mb-0.5">Open Changes</p>
             <p className="text-[18px] font-bold tabular-nums text-amber-600">{fmtUsd2(coTotals.openChanges)}</p>
-            <p className="text-[10px] text-[#94A3B8] mt-0.5">Proposed, not yet executed</p>
+            <p className="text-[10px] text-[#94A3B8] mt-0.5">Proposed, not yet realized</p>
           </div>
         </div>
       )}
@@ -263,7 +269,7 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
                         <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-24">CO #</th>
                         <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-32">Project</th>
                         <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest">Proposal</th>
-                        <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-28">Amount</th>
+                        <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-28">Proposed</th>
                         <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-28">Realized</th>
                         <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-20">Sched.</th>
                         <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-24">Date</th>
@@ -290,8 +296,8 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
                             <td className="px-4 py-2.5 text-[12px] tabular-nums font-medium">
                               {c.pricing_sum != null ? <span className={c.pricing_sum < 0 ? "text-red-600" : "text-[#0F172A]"}>{fmtUsd2(c.pricing_sum)}</span> : <span className="text-[#0F172A]">—</span>}
                             </td>
-                            <td className="px-4 py-2.5 text-[12px] tabular-nums font-medium text-[#0F172A]">
-                              {fmtUsd2(realizedAmount(c))}
+                            <td className="px-4 py-2.5 text-[12px] tabular-nums font-medium">
+                              {c.realized_amount != null ? <span className={c.realized_amount < 0 ? "text-red-600" : "text-[#0F172A]"}>{fmtUsd2(c.realized_amount)}</span> : <span className="text-[#94A3B8]">—</span>}
                             </td>
                             <td className="px-4 py-2.5 text-[12px]">
                               <span className={c.schedule_impact === "Yes" ? "text-amber-400" : c.schedule_impact === "No" ? "text-green-400" : "text-[#64748B]"}>{c.schedule_impact ?? "TBD"}</span>
@@ -302,7 +308,7 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
                             </td>
                             <td className="px-4 py-2.5">
                               <div className="flex items-center gap-1">
-                                <button onClick={() => { setViewCo(c); setCoResponseStatus(c.status); setCoAssignedTo(c.assigned_to ?? ""); setCoAssignedCoNumber(c.assigned_co_number ?? ""); setCoRespAmount(c.pricing_sum != null ? String(c.pricing_sum) : "") }}
+                                <button onClick={() => { setViewCo(c); setCoResponseStatus(c.status); setCoAssignedTo(c.assigned_to ?? ""); setCoAssignedCoNumber(c.assigned_co_number ?? ""); setCoRespAmount(c.pricing_sum != null ? String(c.pricing_sum) : ""); setCoRespRealized(c.realized_amount != null ? String(c.realized_amount) : "") }}
                                   className="text-[11px] text-[#64748B] hover:text-[#0F172A] px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors">View</button>
                                 <button onClick={() => generateCoPdf(c.id)} disabled={coGeneratingPdf}
                                   className="text-[11px] text-[#7B9BB5] hover:text-[#7B9BB5] px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors disabled:opacity-50">PDF</button>
@@ -335,7 +341,7 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
                             <span className="text-[11px] text-[#64748B]">{c.date ? fmtDateOnly(c.date) : ""}</span>
                           </div>
                           <div className="flex items-center gap-1">
-                            <button onClick={() => { setViewCo(c); setCoResponseStatus(c.status); setCoAssignedTo(c.assigned_to ?? ""); setCoAssignedCoNumber(c.assigned_co_number ?? ""); setCoRespAmount(c.pricing_sum != null ? String(c.pricing_sum) : "") }} className="text-[11px] text-[#64748B] px-2 py-1 rounded border border-[#E2E8F0] bg-[#F8F9FA]">View</button>
+                            <button onClick={() => { setViewCo(c); setCoResponseStatus(c.status); setCoAssignedTo(c.assigned_to ?? ""); setCoAssignedCoNumber(c.assigned_co_number ?? ""); setCoRespAmount(c.pricing_sum != null ? String(c.pricing_sum) : ""); setCoRespRealized(c.realized_amount != null ? String(c.realized_amount) : "") }} className="text-[11px] text-[#64748B] px-2 py-1 rounded border border-[#E2E8F0] bg-[#F8F9FA]">View</button>
                             <button onClick={() => generateCoPdf(c.id)} disabled={coGeneratingPdf} className="text-[11px] text-[#7B9BB5] px-2 py-1 rounded border border-[#E2E8F0] bg-[#F8F9FA] disabled:opacity-50">PDF</button>
                             <button onClick={() => deleteCo(c.id)} className="text-[11px] text-red-400 px-2 py-1 rounded border border-[#E2E8F0] bg-[#F8F9FA]">Del</button>
                           </div>
@@ -416,11 +422,12 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
                         placeholder="Assigned CO number" className={inputCls2} />
                     </div>
                     <div>
-                      <label className={labelCls2}>Realized Amount <span className="text-[#94A3B8] normal-case font-normal tracking-normal">(computed)</span></label>
-                      <div className="h-9 px-3 flex items-center rounded-md border border-dashed border-[#E2E8F0] bg-[#F8F9FA] text-[13px] tabular-nums text-[#0F172A]">
-                        {fmtUsd2(realizedAmount({ assigned_co_number: coAssignedCoNumber, status: coStatus, pricing_sum: parseFloat(coPricingSum) || null }))}
-                      </div>
-                      <p className="text-[10px] text-[#94A3B8] mt-0.5">{isExecutedCoNumber(coAssignedCoNumber) && coStatus !== "Rejected" ? "Counts toward Revised Contract Value" : "Not yet executed — counts as $0"}</p>
+                      <label className={labelCls2}>Realized Amount ($) <span className="text-[#94A3B8] normal-case font-normal tracking-normal">(accepted; − = credit)</span></label>
+                      <input type="number" step="0.01" value={coAssignedCoNumber.trim() ? coRealized : ""} disabled={!coAssignedCoNumber.trim()}
+                        onChange={e => setCoRealized(e.target.value)}
+                        placeholder={coAssignedCoNumber.trim() ? "Accepted amount" : "Assign a C.O.# first"}
+                        className={`${inputCls2} disabled:bg-[#F1F5F9] disabled:text-[#94A3B8] disabled:cursor-not-allowed`} />
+                      <p className="text-[10px] text-[#94A3B8] mt-0.5">{coAssignedCoNumber.trim() ? "Counts toward Revised Contract Value" : "Enter a C.O.# to record the accepted amount"}</p>
                     </div>
                   </div>
                   <div className="grid grid-cols-2 gap-4">
@@ -602,11 +609,12 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
                       className="w-full h-9 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40 tabular-nums placeholder:text-[#64748B]" />
                   </div>
                   <div>
-                    <label className="block text-[11px] font-semibold text-[#64748B] uppercase tracking-widest mb-1">Realized Amount <span className="text-[#94A3B8] normal-case font-normal tracking-normal">(computed)</span></label>
-                    <div className="h-9 px-3 flex items-center rounded-md border border-dashed border-[#E2E8F0] bg-[#F8F9FA] text-[13px] tabular-nums text-[#0F172A]">
-                      {fmtUsd2(realizedAmount({ assigned_co_number: coAssignedCoNumber, status: coResponseStatus, pricing_sum: parseFloat(coRespAmount) || null }))}
-                    </div>
-                    <p className="text-[10px] text-[#94A3B8] mt-0.5">{isExecutedCoNumber(coAssignedCoNumber) && coResponseStatus !== "Rejected" ? "Counts toward Revised Contract Value" : "Not yet executed — counts as $0"}</p>
+                    <label className="block text-[11px] font-semibold text-[#64748B] uppercase tracking-widest mb-1">Realized Amount ($) <span className="text-[#94A3B8] normal-case font-normal tracking-normal">(accepted; − = credit)</span></label>
+                    <input type="number" step="0.01" value={coAssignedCoNumber.trim() ? coRespRealized : ""} disabled={!coAssignedCoNumber.trim()}
+                      onChange={e => setCoRespRealized(e.target.value)}
+                      placeholder={coAssignedCoNumber.trim() ? "Accepted amount" : "Assign a C.O.# first"}
+                      className="w-full h-9 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40 tabular-nums placeholder:text-[#64748B] disabled:bg-[#F1F5F9] disabled:text-[#94A3B8] disabled:cursor-not-allowed" />
+                    <p className="text-[10px] text-[#94A3B8] mt-0.5">{coAssignedCoNumber.trim() ? "Counts toward Revised Contract Value" : "Enter a C.O.# to record the accepted amount"}</p>
                   </div>
                 </div>
               </div>

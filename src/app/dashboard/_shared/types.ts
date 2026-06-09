@@ -117,7 +117,7 @@ export interface RFI {
 }
 export interface ChangeOrder {
   id: string; co_number: string; assigned_co_number: string | null; project_id: string | null; date: string | null;
-  proposal: string | null; qualifications: string | null; pricing_sum: number | null;
+  proposal: string | null; qualifications: string | null; pricing_sum: number | null; realized_amount: number | null;
   schedule_impact: string; schedule_impact_days: number | null;
   file_path: string | null; file_name: string | null;
   status: string; submitted_by: string | null; assigned_to: string | null;

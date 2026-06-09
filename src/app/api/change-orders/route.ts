@@ -26,7 +26,12 @@ export async function POST(req: NextRequest) {
 
   const { project_id, date, proposal, qualifications, pricing_sum,
           schedule_impact, schedule_impact_days, submitted_by, assigned_to, status,
-          assigned_co_number } = fields
+          assigned_co_number, realized_amount } = fields
+
+  // Realized is only meaningful once a C.O.# is assigned; otherwise force null.
+  const hasCoNum = typeof assigned_co_number === "string" && assigned_co_number.trim() !== ""
+  const realizedRaw = typeof realized_amount === "string" ? realized_amount.trim() : ""
+  const realizedVal = hasCoNum && realizedRaw !== "" ? parseFloat(realizedRaw) : null
 
   if (!proposal?.trim() && !fields.co_number) {
     return NextResponse.json({ error: "proposal is required" }, { status: 400 })
@@ -59,6 +64,7 @@ export async function POST(req: NextRequest) {
     file_name,
     status:               status || "Not submitted",
     assigned_co_number:   assigned_co_number?.trim() || null,
+    realized_amount:      realizedVal,
     submitted_by:         submitted_by?.trim() || null,
     assigned_to:          assigned_to?.trim() || null,
     uploaded_by:          user.id,
