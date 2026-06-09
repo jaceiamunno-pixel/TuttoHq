@@ -69,6 +69,8 @@ export default function DrawingsModule({ globalProjectId, appProjects }: {
   const [showDeleted, setShowDeleted]                 = useState(false)
   const [deletedSheets, setDeletedSheets]             = useState<ImportedSheet[]>([])
   const [deletedLoading, setDeletedLoading]           = useState(false)
+  const [sheetSearch, setSheetSearch]                 = useState("")
+  const [disciplineFilter, setDisciplineFilter]       = useState("")
 
   function loadDrawings(pid = globalProjectId) {
     setDrawingsLoading(true)
@@ -204,6 +206,19 @@ export default function DrawingsModule({ globalProjectId, appProjects }: {
     } finally { setDrawingGeneratingPdf(false) }
   }
 
+  // Imported-sheets search + discipline filter (client-side over the loaded,
+  // already tenant-scoped list — no new data exposure). Both active = AND.
+  const availableDisciplines = Array.from(
+    new Set(importedSheets.map(s => s.discipline).filter((d): d is string => !!d)),
+  ).sort()
+  const sheetQuery = sheetSearch.trim().toLowerCase()
+  const visibleSheets = importedSheets.filter(s => {
+    if (disciplineFilter && s.discipline !== disciplineFilter) return false
+    if (!sheetQuery) return true
+    return [s.sheet_number, s.title, s.discipline_prefix]
+      .some(v => (v ?? "").toLowerCase().includes(sheetQuery))
+  })
+
   return (
     <>
       {/* Drawing log action bar */}
@@ -237,6 +252,28 @@ export default function DrawingsModule({ globalProjectId, appProjects }: {
                   </button>
                 )}
               </div>
+              {!importedLoading && importedSheets.length > 0 && (
+                <div className="flex flex-wrap items-center gap-2 mb-2">
+                  <input
+                    value={sheetSearch}
+                    onChange={e => setSheetSearch(e.target.value)}
+                    placeholder="Search sheet #, title, prefix…"
+                    className="h-7 px-2 rounded border border-[#E2E8F0] text-[12px] w-56 focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40"
+                  />
+                  <select value={disciplineFilter} onChange={e => setDisciplineFilter(e.target.value)}
+                    className="h-7 px-2 rounded border border-[#E2E8F0] text-[12px] bg-white">
+                    <option value="">All disciplines</option>
+                    {availableDisciplines.map(d => <option key={d} value={d}>{d}</option>)}
+                  </select>
+                  {(sheetQuery || disciplineFilter) && (
+                    <>
+                      <span className="text-[11px] text-[#64748B]">{visibleSheets.length} of {importedSheets.length}</span>
+                      <button onClick={() => { setSheetSearch(""); setDisciplineFilter("") }}
+                        className="text-[11px] text-[#7B9BB5] hover:text-[#5A7A94] font-semibold">Clear</button>
+                    </>
+                  )}
+                </div>
+              )}
               {importedLoading ? (
                 <div className="flex items-center gap-2 text-[12px] text-[#64748B] py-3"><SpinnerIcon className="h-4 w-4" /> Loading…</div>
               ) : (
@@ -252,7 +289,10 @@ export default function DrawingsModule({ globalProjectId, appProjects }: {
                       </tr>
                     </thead>
                     <tbody>
-                      {importedSheets.map(s => editingSheetId === s.id ? (
+                      {visibleSheets.length === 0 && (
+                        <tr><td colSpan={5} className="px-3 py-3 text-[12px] text-[#94A3B8]">No sheets match the current search/filter.</td></tr>
+                      )}
+                      {visibleSheets.map(s => editingSheetId === s.id ? (
                         <tr key={s.id} className="border-t border-[#F1F5F9] bg-[#F8FAFC]">
                           <td className="px-2 py-1.5">
                             <input value={sheetDraft.sheet_number} onChange={e => setSheetDraft(d => ({ ...d, sheet_number: e.target.value }))}
