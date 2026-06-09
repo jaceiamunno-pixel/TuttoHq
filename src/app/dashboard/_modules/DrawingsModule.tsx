@@ -1,6 +1,8 @@
 "use client"
 
-import { useState, useEffect, useRef } from "react"
+import { useState, useEffect, useRef, Fragment } from "react"
+import { hashFileInBrowser } from "@/lib/file-hash"
+import { detectRevision } from "@/lib/drawing-detect"
 import type { DrawingRecord, Project } from "../_shared/types"
 import { fmtDate, nextRevision } from "../_shared/format"
 import { PlusIcon, SpinnerIcon, XIcon } from "../_shared/icons"
@@ -71,6 +73,12 @@ export default function DrawingsModule({ globalProjectId, appProjects }: {
   const [deletedLoading, setDeletedLoading]           = useState(false)
   const [sheetSearch, setSheetSearch]                 = useState("")
   const [disciplineFilter, setDisciplineFilter]       = useState("")
+  const [revFileTarget, setRevFileTarget]             = useState<string | null>(null)
+  const [addingRevId, setAddingRevId]                 = useState<string | null>(null)
+  const [revHistoryFor, setRevHistoryFor]             = useState<string | null>(null)
+  const [revHistory, setRevHistory]                   = useState<{ id: string; revision_label: string | null; created_at: string; is_current: boolean; file_url: string | null }[]>([])
+  const [revHistoryLoading, setRevHistoryLoading]     = useState(false)
+  const revFileRef = useRef<HTMLInputElement>(null)
 
   function loadDrawings(pid = globalProjectId) {
     setDrawingsLoading(true)
@@ -141,6 +149,50 @@ export default function DrawingsModule({ globalProjectId, appProjects }: {
     const next = !showDeleted
     setShowDeleted(next)
     if (next) loadDeletedSheets()
+  }
+
+  // ── Add a revision to an existing sheet (Subsystem 4) ──────────────────────
+  // The target sheet is EXPLICIT (the row's id) — no content matching, so a
+  // revision can't attach to the wrong sheet. The server gives the new file a
+  // fresh path + integrity-checks it; prior revisions/files are preserved.
+  function triggerAddRevision(sheetId: string) {
+    setRevFileTarget(sheetId)
+    revFileRef.current?.click()
+  }
+  async function onRevFileChosen(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    e.target.value = ""
+    const sheetId = revFileTarget
+    setRevFileTarget(null)
+    if (!file || !sheetId) return
+    setAddingRevId(sheetId)
+    try {
+      const sha = await hashFileInBrowser(file)
+      const { path } = await presignAndUpload("submittals", `drawing-staging/${crypto.randomUUID()}`, file)
+      const label = detectRevision("", file.name).label   // filename-derived (e.g. "ADD 2"), else "Rev 0"
+      const res = await fetch(`/api/drawings/sheets/${sheetId}/revisions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ staging_path: path, file_size: file.size, file_sha256: sha, revision_label: label }),
+      })
+      if (res.ok) { loadImportedSheets(); if (revHistoryFor === sheetId) loadRevisions(sheetId) }
+      else { const d = await res.json().catch(() => ({})); alert(d?.error ?? "Add revision failed") }
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Add revision failed")
+    } finally { setAddingRevId(null) }
+  }
+  function loadRevisions(sheetId: string) {
+    setRevHistoryLoading(true)
+    fetch(`/api/drawings/sheets/${sheetId}/revisions`)
+      .then(r => r.json())
+      .then(d => setRevHistory(d.revisions ?? []))
+      .catch(() => setRevHistory([]))
+      .finally(() => setRevHistoryLoading(false))
+  }
+  function toggleRevHistory(sheetId: string) {
+    if (revHistoryFor === sheetId) { setRevHistoryFor(null); return }
+    setRevHistoryFor(sheetId)
+    loadRevisions(sheetId)
   }
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -285,7 +337,7 @@ export default function DrawingsModule({ globalProjectId, appProjects }: {
                         <th className="px-3 py-2 w-36">Discipline</th>
                         <th className="px-3 py-2">Title</th>
                         <th className="px-3 py-2 w-24">Revision</th>
-                        <th className="px-3 py-2 w-40 text-right">Actions</th>
+                        <th className="px-3 py-2 w-64 text-right">Actions</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -324,7 +376,8 @@ export default function DrawingsModule({ globalProjectId, appProjects }: {
                           </td>
                         </tr>
                       ) : (
-                        <tr key={s.id} className="border-t border-[#F1F5F9] hover:bg-[#F8FAFC]">
+                        <Fragment key={s.id}>
+                        <tr className="border-t border-[#F1F5F9] hover:bg-[#F8FAFC]">
                           <td className="px-3 py-1.5 font-mono font-semibold text-[#5A7A94]">
                             <button onClick={() => { setViewerSheet(s); setViewerFull(false) }} className="hover:underline" title="View sheet">{s.sheet_number ?? "—"}</button>
                           </td>
@@ -333,10 +386,35 @@ export default function DrawingsModule({ globalProjectId, appProjects }: {
                           <td className="px-3 py-1.5 text-[#64748B]">{s.revision_label ?? "—"}</td>
                           <td className="px-3 py-1.5 text-right whitespace-nowrap">
                             <button onClick={() => { setViewerSheet(s); setViewerFull(false) }} className="text-[#7B9BB5] hover:text-[#5A7A94] font-semibold">View</button>
+                            <button onClick={() => triggerAddRevision(s.id)} disabled={addingRevId === s.id} className="ml-3 text-[#7B9BB5] hover:text-[#5A7A94] font-semibold disabled:opacity-50">{addingRevId === s.id ? "Adding…" : "Add rev"}</button>
+                            <button onClick={() => toggleRevHistory(s.id)} className="ml-3 text-[#7B9BB5] hover:text-[#5A7A94] font-semibold">{revHistoryFor === s.id ? "Hide" : "Revs"}</button>
                             <button onClick={() => startEditSheet(s)} className="ml-3 text-[#7B9BB5] hover:text-[#5A7A94] font-semibold">Edit</button>
                             <button onClick={() => softDeleteSheet(s)} className="ml-3 text-red-400 hover:text-red-500 font-semibold">Delete</button>
                           </td>
                         </tr>
+                        {revHistoryFor === s.id && (
+                          <tr className="bg-[#F8FAFC]">
+                            <td colSpan={5} className="px-4 py-2">
+                              {revHistoryLoading ? (
+                                <span className="text-[11px] text-[#64748B]">Loading revisions…</span>
+                              ) : revHistory.length === 0 ? (
+                                <span className="text-[11px] text-[#94A3B8]">No revisions.</span>
+                              ) : (
+                                <ul className="space-y-0.5">
+                                  {revHistory.map(rv => (
+                                    <li key={rv.id} className="flex items-center gap-2 text-[11px]">
+                                      <span className="font-mono text-[#5A7A94] w-20">{rv.revision_label ?? "—"}</span>
+                                      {rv.is_current ? <span className="text-[9px] bg-emerald-100 text-emerald-700 px-1 rounded">current</span> : <span className="w-[46px]" />}
+                                      <span className="text-[#94A3B8]">{fmtDate(rv.created_at)}</span>
+                                      {rv.file_url && <a href={rv.file_url} target="_blank" rel="noopener noreferrer" className="text-[#7B9BB5] hover:text-[#5A7A94] font-semibold ml-auto">Open</a>}
+                                    </li>
+                                  ))}
+                                </ul>
+                              )}
+                            </td>
+                          </tr>
+                        )}
+                        </Fragment>
                       ))}
                     </tbody>
                   </table>
@@ -484,6 +562,9 @@ export default function DrawingsModule({ globalProjectId, appProjects }: {
             )
           })()}
       </div>
+
+      {/* Hidden picker for "Add rev" — uploads a new revision to the targeted sheet. */}
+      <input ref={revFileRef} type="file" accept="application/pdf" className="hidden" onChange={onRevFileChosen} />
 
       {/* ── Import drawing set (split + confirm) ─────────────────────────── */}
       {showImportSet && globalProjectId && (
