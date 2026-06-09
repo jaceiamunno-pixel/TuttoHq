@@ -60,3 +60,32 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
   return NextResponse.json({ ok: true, id })
 }
+
+// DELETE /api/drawings/sheets/[id] — SOFT delete (ADR-005 Subsystem 2). Sets
+// drawing_sheets.deleted_at = now() via the authed RLS-scoped client. Does NOT
+// remove the row or any storage file — the sheet drops out of the live list
+// (which filters deleted_at IS NULL) and into "Recently deleted" for 5 days,
+// after which the scheduled purge hard-deletes it. RLS guarantees a caller can
+// only soft-delete sheets in their own company.
+export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+
+  const { id } = await params
+  if (!id) return NextResponse.json({ error: "id required" }, { status: 400 })
+
+  // .select() returns the affected row only if RLS lets the caller see it, so
+  // an empty result = not found / cross-tenant → 404 (no privileged escalation).
+  const { data, error } = await supabase
+    .from("drawing_sheets")
+    .update({ deleted_at: new Date().toISOString() })
+    .eq("id", id)
+    .is("deleted_at", null)            // idempotent: don't re-stamp an already-deleted row
+    .select("id")
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  if (!data || data.length === 0) {
+    return NextResponse.json({ error: "sheet not found or already deleted" }, { status: 404 })
+  }
+  return NextResponse.json({ ok: true, id })
+}

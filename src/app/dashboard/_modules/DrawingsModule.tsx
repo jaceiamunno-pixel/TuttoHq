@@ -27,6 +27,8 @@ interface ImportedSheet {
   revision_label: string | null
   file_url: string | null
   created_at: string
+  deleted_at?: string | null
+  days_remaining?: number | null
 }
 
 // Drawing Log module — extracted verbatim from dashboard/page.tsx (Step 1 of the split).
@@ -64,6 +66,9 @@ export default function DrawingsModule({ globalProjectId, appProjects }: {
   const [editingSheetId, setEditingSheetId]           = useState<string | null>(null)
   const [sheetDraft, setSheetDraft]                   = useState({ sheet_number: "", title: "", discipline: "", discipline_prefix: "", revision_label: "" })
   const [savingSheet, setSavingSheet]                 = useState(false)
+  const [showDeleted, setShowDeleted]                 = useState(false)
+  const [deletedSheets, setDeletedSheets]             = useState<ImportedSheet[]>([])
+  const [deletedLoading, setDeletedLoading]           = useState(false)
 
   function loadDrawings(pid = globalProjectId) {
     setDrawingsLoading(true)
@@ -109,8 +114,35 @@ export default function DrawingsModule({ globalProjectId, appProjects }: {
     } finally { setSavingSheet(false) }
   }
 
+  function loadDeletedSheets(pid = globalProjectId) {
+    if (!pid) { setDeletedSheets([]); return }
+    setDeletedLoading(true)
+    fetch(`/api/drawings/sheets?project_id=${encodeURIComponent(pid)}&deleted=true`)
+      .then(r => r.json())
+      .then(d => setDeletedSheets(d.sheets ?? []))
+      .catch(() => setDeletedSheets([]))
+      .finally(() => setDeletedLoading(false))
+  }
+
+  async function softDeleteSheet(s: ImportedSheet) {
+    if (!confirm(`Delete sheet ${s.sheet_number ?? ""}? It moves to Recently deleted and is permanently removed after 5 days.`)) return
+    const res = await fetch(`/api/drawings/sheets/${s.id}`, { method: "DELETE" })
+    if (res.ok) { loadImportedSheets(); if (showDeleted) loadDeletedSheets() }
+    else { const d = await res.json().catch(() => ({})); alert(d?.error ?? "Delete failed") }
+  }
+  async function restoreSheet(s: ImportedSheet) {
+    const res = await fetch(`/api/drawings/sheets/${s.id}/restore`, { method: "POST" })
+    if (res.ok) { loadDeletedSheets(); loadImportedSheets() }
+    else { const d = await res.json().catch(() => ({})); alert(d?.error ?? "Restore failed") }
+  }
+  function toggleDeleted() {
+    const next = !showDeleted
+    setShowDeleted(next)
+    if (next) loadDeletedSheets()
+  }
+
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { loadDrawings(); loadImportedSheets() }, [globalProjectId])
+  useEffect(() => { loadDrawings(); loadImportedSheets(); loadDeletedSheets(); setShowDeleted(false) }, [globalProjectId])
 
   // Pre-select the current global project whenever the New Drawing modal opens.
   useEffect(() => { if (showNewDrawing) setDwgProjectId(globalProjectId) }, [showNewDrawing, globalProjectId])
@@ -193,11 +225,18 @@ export default function DrawingsModule({ globalProjectId, appProjects }: {
       <div className="flex-1 overflow-y-auto min-h-0">
           {/* Imported sheets (drawing_sheets — splitter output). Read/display
               only; sits above the legacy manual Drawing Log cards. */}
-          {(importedLoading || importedSheets.length > 0) && (
+          {(importedLoading || importedSheets.length > 0 || deletedSheets.length > 0) && (
             <div className="px-4 pt-4">
-              <p className="text-[12px] font-semibold text-[#0F172A] mb-2">
-                Imported sheets <span className="text-[#64748B] font-normal">({importedSheets.length})</span>
-              </p>
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-[12px] font-semibold text-[#0F172A]">
+                  Imported sheets <span className="text-[#64748B] font-normal">({importedSheets.length})</span>
+                </p>
+                {deletedSheets.length > 0 && (
+                  <button onClick={toggleDeleted} className="text-[11px] text-[#64748B] hover:text-[#0F172A] font-semibold">
+                    {showDeleted ? "Hide" : "Show"} recently deleted ({deletedSheets.length})
+                  </button>
+                )}
+              </div>
               {importedLoading ? (
                 <div className="flex items-center gap-2 text-[12px] text-[#64748B] py-3"><SpinnerIcon className="h-4 w-4" /> Loading…</div>
               ) : (
@@ -255,11 +294,52 @@ export default function DrawingsModule({ globalProjectId, appProjects }: {
                           <td className="px-3 py-1.5 text-right whitespace-nowrap">
                             <button onClick={() => { setViewerSheet(s); setViewerFull(false) }} className="text-[#7B9BB5] hover:text-[#5A7A94] font-semibold">View</button>
                             <button onClick={() => startEditSheet(s)} className="ml-3 text-[#7B9BB5] hover:text-[#5A7A94] font-semibold">Edit</button>
+                            <button onClick={() => softDeleteSheet(s)} className="ml-3 text-red-400 hover:text-red-500 font-semibold">Delete</button>
                           </td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
+                </div>
+              )}
+
+              {/* Recently deleted — soft-deleted sheets within the 5-day
+                  recovery window; restorable until the scheduled purge. */}
+              {showDeleted && (
+                <div className="mt-4">
+                  <p className="text-[12px] font-semibold text-[#0F172A] mb-2">Recently deleted <span className="text-[#64748B] font-normal">({deletedSheets.length})</span></p>
+                  {deletedLoading ? (
+                    <div className="flex items-center gap-2 text-[12px] text-[#64748B] py-3"><SpinnerIcon className="h-4 w-4" /> Loading…</div>
+                  ) : deletedSheets.length === 0 ? (
+                    <p className="text-[12px] text-[#94A3B8] py-2">Nothing in the trash.</p>
+                  ) : (
+                    <div className="overflow-x-auto border border-amber-200 rounded-lg bg-amber-50/40">
+                      <table className="w-full text-[12px]">
+                        <thead className="bg-amber-50 text-amber-800">
+                          <tr className="text-left">
+                            <th className="px-3 py-2 w-28">Sheet #</th>
+                            <th className="px-3 py-2">Title</th>
+                            <th className="px-3 py-2 w-36">Time left</th>
+                            <th className="px-3 py-2 w-24 text-right">Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {deletedSheets.map(s => (
+                            <tr key={s.id} className="border-t border-amber-100">
+                              <td className="px-3 py-1.5 font-mono font-semibold text-[#5A7A94]">{s.sheet_number ?? "—"}</td>
+                              <td className="px-3 py-1.5 text-[#0F172A] truncate max-w-0">{s.title ?? <span className="text-[#94A3B8]">—</span>}</td>
+                              <td className="px-3 py-1.5 text-amber-700">
+                                {s.days_remaining != null ? `${s.days_remaining} day${s.days_remaining === 1 ? "" : "s"} left` : "—"}
+                              </td>
+                              <td className="px-3 py-1.5 text-right">
+                                <button onClick={() => restoreSheet(s)} className="text-[#5A7A94] hover:text-[#3F5A70] font-semibold">Restore</button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
                 </div>
               )}
             </div>

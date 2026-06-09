@@ -20,11 +20,23 @@ export async function GET(req: NextRequest) {
   const pid = req.nextUrl.searchParams.get("project_id")
   if (!pid) return NextResponse.json({ sheets: [] })
 
-  const { data: sheets, error } = await supabase
+  // ?deleted=true → the "Recently deleted" view: soft-deleted sheets still
+  // inside the 5-day recovery window. Default → the live list (deleted_at NULL).
+  const wantDeleted = req.nextUrl.searchParams.get("deleted") === "true"
+  const RECOVERY_DAYS = 5
+  const cutoffIso = new Date(Date.now() - RECOVERY_DAYS * 86400_000).toISOString()
+
+  let q = supabase
     .from("drawing_sheets")
-    .select("id, sheet_number, discipline, discipline_prefix, title, current_revision_id, created_at")
+    .select("id, sheet_number, discipline, discipline_prefix, title, current_revision_id, created_at, deleted_at")
     .eq("project_id", pid)
-    .order("sheet_number", { ascending: true })
+  if (wantDeleted) {
+    // Within the window only — anything older is pending hard-purge.
+    q = q.not("deleted_at", "is", null).gte("deleted_at", cutoffIso).order("deleted_at", { ascending: false })
+  } else {
+    q = q.is("deleted_at", null).order("sheet_number", { ascending: true })
+  }
+  const { data: sheets, error } = await q
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
   const rows = sheets ?? []
@@ -53,6 +65,10 @@ export async function GET(req: NextRequest) {
 
   const out = rows.map(s => {
     const rev = s.current_revision_id ? revById.get(s.current_revision_id) : undefined
+    // Whole days left in the 5-day recovery window (only meaningful when deleted).
+    const daysRemaining = s.deleted_at
+      ? Math.max(0, Math.ceil((new Date(s.deleted_at).getTime() + RECOVERY_DAYS * 86400_000 - Date.now()) / 86400_000))
+      : null
     return {
       id: s.id,
       sheet_number: s.sheet_number,
@@ -62,6 +78,8 @@ export async function GET(req: NextRequest) {
       revision_label: rev?.revision_label ?? null,
       file_url: rev?.storage_path ? (urlByPath.get(rev.storage_path) ?? null) : null,
       created_at: s.created_at,
+      deleted_at: s.deleted_at,
+      days_remaining: daysRemaining,
     }
   })
 
