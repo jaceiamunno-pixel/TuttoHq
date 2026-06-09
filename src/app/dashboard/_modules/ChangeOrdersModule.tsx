@@ -5,7 +5,7 @@ import type { ChangeOrder, Project } from "../_shared/types"
 import { fmtDateOnly } from "../_shared/format"
 import { PlusIcon, SpinnerIcon } from "../_shared/icons"
 import { presignAndUpload } from "@/lib/storage-upload"
-import { realizedAmount, computeCoTotals } from "../_shared/co-math"
+import { realizedAmount, computeCoTotals, isExecutedCoNumber } from "../_shared/co-math"
 import { exportChangeOrderLogToExcel } from "../_shared/excel-export"
 
 // Change Orders module — extracted verbatim from dashboard/page.tsx (Step 6 of the split).
@@ -158,6 +158,8 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
   const baseForTotals = Number.isFinite(baseNum) ? baseNum : null
   const coTotals = computeCoTotals(changeOrders, baseForTotals)
   const fmtUsd2 = (n: number) => new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n)
+  // PCO # reads as a plain running count ("001"), not the stored "CO-001".
+  const pcoLabel = (n: string) => (n ?? "").replace(/^CO-/i, "")
 
   async function handleExportCoLog() {
     if (!globalProjectId) return
@@ -281,7 +283,7 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
                         const badgeCls = statusColor[c.status] ?? "bg-gray-100 text-gray-500"
                         return (
                           <tr key={c.id} className="border-b border-[#E2E8F0]/60 hover:bg-[#F8F9FA] transition-colors">
-                            <td className="px-4 py-2.5 text-[12px] font-mono text-[#7B9BB5]">{c.co_number}</td>
+                            <td className="px-4 py-2.5 text-[12px] font-mono text-[#7B9BB5]">{pcoLabel(c.co_number)}</td>
                             <td className="px-4 py-2.5 text-[12px] text-[#0F172A]">{c.assigned_co_number || "—"}</td>
                             <td className="px-4 py-2.5 text-[#64748B] text-[12px] truncate">{proj?.name ?? "—"}</td>
                             <td className="px-4 py-2.5 max-w-0"><p className="text-[#0F172A] truncate">{c.proposal ?? "—"}</p></td>
@@ -323,7 +325,7 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
                       return (
                         <div key={c.id} className="bg-white rounded-xl border border-[#E2E8F0] p-3 shadow-sm">
                           <div className="flex items-start justify-between gap-2 mb-1">
-                            <span className="text-[11px] font-mono text-[#7B9BB5]">{c.co_number}{c.assigned_co_number ? <span className="text-[#64748B]"> · CO {c.assigned_co_number}</span> : null}</span>
+                            <span className="text-[11px] font-mono text-[#7B9BB5]">{pcoLabel(c.co_number)}{c.assigned_co_number ? <span className="text-[#64748B]"> · CO {c.assigned_co_number}</span> : null}</span>
                             <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold ${badgeCls}`}>{c.status}</span>
                           </div>
                           <p className="text-[13px] font-medium text-[#0F172A] mb-1 truncate">{c.proposal ?? "—"}</p>
@@ -396,7 +398,7 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div>
-                      <label className={labelCls2}>Amount ($) <span className="text-[#94A3B8] normal-case font-normal tracking-normal">(− = credit)</span></label>
+                      <label className={labelCls2}>Proposed Amount ($) <span className="text-[#94A3B8] normal-case font-normal tracking-normal">(− = credit)</span></label>
                       <input type="number" step="0.01" value={coPricingSum} onChange={e => setCoPricingSum(e.target.value)}
                         placeholder="0.00" className={inputCls2} />
                     </div>
@@ -412,6 +414,13 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
                       <label className={labelCls2}>CO # <span className="text-[#94A3B8] normal-case font-normal tracking-normal">(assigned, optional)</span></label>
                       <input type="text" value={coAssignedCoNumber} onChange={e => setCoAssignedCoNumber(e.target.value)}
                         placeholder="Assigned CO number" className={inputCls2} />
+                    </div>
+                    <div>
+                      <label className={labelCls2}>Realized Amount <span className="text-[#94A3B8] normal-case font-normal tracking-normal">(computed)</span></label>
+                      <div className="h-9 px-3 flex items-center rounded-md border border-dashed border-[#E2E8F0] bg-[#F8F9FA] text-[13px] tabular-nums text-[#0F172A]">
+                        {fmtUsd2(realizedAmount({ assigned_co_number: coAssignedCoNumber, status: coStatus, pricing_sum: parseFloat(coPricingSum) || null }))}
+                      </div>
+                      <p className="text-[10px] text-[#94A3B8] mt-0.5">{isExecutedCoNumber(coAssignedCoNumber) && coStatus !== "Rejected" ? "Counts toward Revised Contract Value" : "Not yet executed — counts as $0"}</p>
                     </div>
                   </div>
                   <div className="grid grid-cols-2 gap-4">
@@ -472,7 +481,7 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
             <div className="flex items-start justify-between px-6 py-4 border-b border-[#E2E8F0] flex-shrink-0">
               <div>
                 <div className="flex items-center gap-3">
-                  <h2 className="text-[16px] font-bold text-[#0F172A]">{viewCo.co_number}</h2>
+                  <h2 className="text-[16px] font-bold text-[#0F172A]">PCO {pcoLabel(viewCo.co_number)}</h2>
                   {(() => {
                     const statusColor: Record<string, string> = {
                       "Not submitted": "bg-gray-100 text-gray-500",
@@ -587,10 +596,17 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
                       className="w-full h-9 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40 placeholder:text-[#64748B]" />
                   </div>
                   <div>
-                    <label className="block text-[11px] font-semibold text-[#64748B] uppercase tracking-widest mb-1">Amount ($) <span className="text-[#94A3B8] normal-case font-normal tracking-normal">(− = credit)</span></label>
+                    <label className="block text-[11px] font-semibold text-[#64748B] uppercase tracking-widest mb-1">Proposed Amount ($) <span className="text-[#94A3B8] normal-case font-normal tracking-normal">(− = credit)</span></label>
                     <input type="number" step="0.01" value={coRespAmount} onChange={e => setCoRespAmount(e.target.value)}
                       placeholder="0.00"
                       className="w-full h-9 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40 tabular-nums placeholder:text-[#64748B]" />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-semibold text-[#64748B] uppercase tracking-widest mb-1">Realized Amount <span className="text-[#94A3B8] normal-case font-normal tracking-normal">(computed)</span></label>
+                    <div className="h-9 px-3 flex items-center rounded-md border border-dashed border-[#E2E8F0] bg-[#F8F9FA] text-[13px] tabular-nums text-[#0F172A]">
+                      {fmtUsd2(realizedAmount({ assigned_co_number: coAssignedCoNumber, status: coResponseStatus, pricing_sum: parseFloat(coRespAmount) || null }))}
+                    </div>
+                    <p className="text-[10px] text-[#94A3B8] mt-0.5">{isExecutedCoNumber(coAssignedCoNumber) && coResponseStatus !== "Rejected" ? "Counts toward Revised Contract Value" : "Not yet executed — counts as $0"}</p>
                   </div>
                 </div>
               </div>

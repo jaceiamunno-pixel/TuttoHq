@@ -435,7 +435,7 @@ export async function exportChangeOrderLogToExcel(args: ExportChangeOrderLogArgs
   let r = 5
   for (const c of args.rows) {
     const row = ws.getRow(r)
-    row.getCell(1).value = c.co_number
+    row.getCell(1).value = (c.co_number ?? "").replace(/^CO-/i, "")
     const d = parseDate(c.date)
     if (d) { row.getCell(2).value = d; row.getCell(2).numFmt = "mmm d, yyyy" }
     row.getCell(3).value = c.pricing_sum ?? 0
