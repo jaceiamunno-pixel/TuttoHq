@@ -1,12 +1,38 @@
 "use client"
 
-import { useState, useEffect, useRef } from "react"
+import { useState, useEffect, useRef, Fragment } from "react"
+import { hashFileInBrowser } from "@/lib/file-hash"
+import { detectRevision } from "@/lib/drawing-detect"
+import { exportDrawingSheetsToExcel } from "../_shared/excel-export"
 import type { DrawingRecord, Project } from "../_shared/types"
 import { fmtDate, nextRevision } from "../_shared/format"
 import { PlusIcon, SpinnerIcon, XIcon } from "../_shared/icons"
 import { DrawingStatusBadge } from "../_shared/badges"
 import { inputCls, labelCls } from "../_shared/ui"
 import { presignAndUpload } from "@/lib/storage-upload"
+import dynamic from "next/dynamic"
+
+// Lazy-loaded: the splitter pulls in pdf-lib + unpdf (~180 kB). Code-split so
+// those load only when a user actually opens the import modal, keeping the
+// dashboard's first-load JS lean. Client-only (browser crypto/File APIs).
+const DrawingImportModal = dynamic(() => import("@/components/drawings/DrawingImportModal"), { ssr: false })
+
+// Discipline options for the sheet metadata edit (mirrors drawing-detect's map).
+const SHEET_DISCIPLINES = ["Architectural", "Structural", "Mechanical", "Electrical", "Plumbing", "Civil", "Fire Protection", "Demolition", "Landscape", "General", "Telecom"]
+
+// Committed drawing_sheets (ADR-005 Drawing Log v1).
+interface ImportedSheet {
+  id: string
+  sheet_number: string | null
+  discipline: string | null
+  discipline_prefix: string | null
+  title: string | null
+  revision_label: string | null
+  file_url: string | null
+  created_at: string
+  deleted_at?: string | null
+  days_remaining?: number | null
+}
 
 // Drawing Log module — extracted verbatim from dashboard/page.tsx (Step 1 of the split).
 // State, handlers, action bar, content, and modal are unchanged; the only
@@ -35,6 +61,27 @@ export default function DrawingsModule({ globalProjectId, appProjects }: {
   const dwgFileRef    = useRef<HTMLInputElement>(null)
   const [dwgSaving, setDwgSaving]                     = useState(false)
   const [drawingGeneratingPdf, setDrawingGeneratingPdf] = useState(false)
+  const [showImportSet, setShowImportSet]             = useState(false)
+  const [importedSheets, setImportedSheets]           = useState<ImportedSheet[]>([])
+  const [importedLoading, setImportedLoading]         = useState(false)
+  const [viewerSheet, setViewerSheet]                 = useState<ImportedSheet | null>(null)
+  const [viewerFull, setViewerFull]                   = useState(false)
+  const [editingSheetId, setEditingSheetId]           = useState<string | null>(null)
+  const [sheetDraft, setSheetDraft]                   = useState({ sheet_number: "", title: "", discipline: "", discipline_prefix: "", revision_label: "" })
+  const [savingSheet, setSavingSheet]                 = useState(false)
+  const [showDeleted, setShowDeleted]                 = useState(false)
+  const [deletedSheets, setDeletedSheets]             = useState<ImportedSheet[]>([])
+  const [deletedLoading, setDeletedLoading]           = useState(false)
+  const [sheetSearch, setSheetSearch]                 = useState("")
+  const [disciplineFilter, setDisciplineFilter]       = useState("")
+  const [selectedSheetIds, setSelectedSheetIds]       = useState<Set<string>>(new Set())
+  const [exportingSheets, setExportingSheets]         = useState(false)
+  const [revFileTarget, setRevFileTarget]             = useState<string | null>(null)
+  const [addingRevId, setAddingRevId]                 = useState<string | null>(null)
+  const [revHistoryFor, setRevHistoryFor]             = useState<string | null>(null)
+  const [revHistory, setRevHistory]                   = useState<{ id: string; revision_label: string | null; created_at: string; is_current: boolean; file_url: string | null }[]>([])
+  const [revHistoryLoading, setRevHistoryLoading]     = useState(false)
+  const revFileRef = useRef<HTMLInputElement>(null)
 
   function loadDrawings(pid = globalProjectId) {
     setDrawingsLoading(true)
@@ -46,8 +93,113 @@ export default function DrawingsModule({ globalProjectId, appProjects }: {
       .finally(() => setDrawingsLoading(false))
   }
 
+  // Committed drawing_sheets (splitter output). Separate read from the legacy
+  // drawing_log above — different data model, different table.
+  function loadImportedSheets(pid = globalProjectId) {
+    if (!pid) { setImportedSheets([]); return }
+    setImportedLoading(true)
+    fetch(`/api/drawings/sheets?project_id=${encodeURIComponent(pid)}`)
+      .then(r => r.json())
+      .then(d => setImportedSheets(d.sheets ?? []))
+      .catch(() => setImportedSheets([]))
+      .finally(() => setImportedLoading(false))
+  }
+
+  function startEditSheet(s: ImportedSheet) {
+    setEditingSheetId(s.id)
+    setSheetDraft({
+      sheet_number: s.sheet_number ?? "", title: s.title ?? "",
+      discipline: s.discipline ?? "", discipline_prefix: s.discipline_prefix ?? "",
+      revision_label: s.revision_label ?? "",
+    })
+  }
+  async function saveEditSheet(id: string) {
+    if (!sheetDraft.sheet_number.trim()) { alert("Sheet number cannot be blank."); return }
+    setSavingSheet(true)
+    try {
+      const res = await fetch(`/api/drawings/sheets/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(sheetDraft),
+      })
+      if (res.ok) { setEditingSheetId(null); loadImportedSheets() }
+      else { const d = await res.json().catch(() => ({})); alert(d?.error ?? "Save failed") }
+    } finally { setSavingSheet(false) }
+  }
+
+  function loadDeletedSheets(pid = globalProjectId) {
+    if (!pid) { setDeletedSheets([]); return }
+    setDeletedLoading(true)
+    fetch(`/api/drawings/sheets?project_id=${encodeURIComponent(pid)}&deleted=true`)
+      .then(r => r.json())
+      .then(d => setDeletedSheets(d.sheets ?? []))
+      .catch(() => setDeletedSheets([]))
+      .finally(() => setDeletedLoading(false))
+  }
+
+  async function softDeleteSheet(s: ImportedSheet) {
+    if (!confirm(`Delete sheet ${s.sheet_number ?? ""}? It moves to Recently deleted and is permanently removed after 5 days.`)) return
+    const res = await fetch(`/api/drawings/sheets/${s.id}`, { method: "DELETE" })
+    if (res.ok) { loadImportedSheets(); if (showDeleted) loadDeletedSheets() }
+    else { const d = await res.json().catch(() => ({})); alert(d?.error ?? "Delete failed") }
+  }
+  async function restoreSheet(s: ImportedSheet) {
+    const res = await fetch(`/api/drawings/sheets/${s.id}/restore`, { method: "POST" })
+    if (res.ok) { loadDeletedSheets(); loadImportedSheets() }
+    else { const d = await res.json().catch(() => ({})); alert(d?.error ?? "Restore failed") }
+  }
+  function toggleDeleted() {
+    const next = !showDeleted
+    setShowDeleted(next)
+    if (next) loadDeletedSheets()
+  }
+
+  // ── Add a revision to an existing sheet (Subsystem 4) ──────────────────────
+  // The target sheet is EXPLICIT (the row's id) — no content matching, so a
+  // revision can't attach to the wrong sheet. The server gives the new file a
+  // fresh path + integrity-checks it; prior revisions/files are preserved.
+  function triggerAddRevision(sheetId: string) {
+    setRevFileTarget(sheetId)
+    revFileRef.current?.click()
+  }
+  async function onRevFileChosen(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    e.target.value = ""
+    const sheetId = revFileTarget
+    setRevFileTarget(null)
+    if (!file || !sheetId) return
+    setAddingRevId(sheetId)
+    try {
+      const sha = await hashFileInBrowser(file)
+      const { path } = await presignAndUpload("submittals", `drawing-staging/${crypto.randomUUID()}`, file)
+      const label = detectRevision("", file.name).label   // filename-derived (e.g. "ADD 2"), else "Rev 0"
+      const res = await fetch(`/api/drawings/sheets/${sheetId}/revisions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ staging_path: path, file_size: file.size, file_sha256: sha, revision_label: label }),
+      })
+      if (res.ok) { loadImportedSheets(); if (revHistoryFor === sheetId) loadRevisions(sheetId) }
+      else { const d = await res.json().catch(() => ({})); alert(d?.error ?? "Add revision failed") }
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Add revision failed")
+    } finally { setAddingRevId(null) }
+  }
+  function loadRevisions(sheetId: string) {
+    setRevHistoryLoading(true)
+    fetch(`/api/drawings/sheets/${sheetId}/revisions`)
+      .then(r => r.json())
+      .then(d => setRevHistory(d.revisions ?? []))
+      .catch(() => setRevHistory([]))
+      .finally(() => setRevHistoryLoading(false))
+  }
+  function toggleRevHistory(sheetId: string) {
+    if (revHistoryFor === sheetId) { setRevHistoryFor(null); return }
+    setRevHistoryFor(sheetId)
+    loadRevisions(sheetId)
+  }
+
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { loadDrawings() }, [globalProjectId])
+  useEffect(() => { loadDrawings(); loadImportedSheets(); loadDeletedSheets(); setShowDeleted(false); setSelectedSheetIds(new Set()) }, [globalProjectId])
 
   // Pre-select the current global project whenever the New Drawing modal opens.
   useEffect(() => { if (showNewDrawing) setDwgProjectId(globalProjectId) }, [showNewDrawing, globalProjectId])
@@ -109,18 +261,283 @@ export default function DrawingsModule({ globalProjectId, appProjects }: {
     } finally { setDrawingGeneratingPdf(false) }
   }
 
+  // Imported-sheets search + discipline filter (client-side over the loaded,
+  // already tenant-scoped list — no new data exposure). Both active = AND.
+  const availableDisciplines = Array.from(
+    new Set(importedSheets.map(s => s.discipline).filter((d): d is string => !!d)),
+  ).sort()
+  const sheetQuery = sheetSearch.trim().toLowerCase()
+  const visibleSheets = importedSheets.filter(s => {
+    if (disciplineFilter && s.discipline !== disciplineFilter) return false
+    if (!sheetQuery) return true
+    return [s.sheet_number, s.title, s.discipline_prefix]
+      .some(v => (v ?? "").toLowerCase().includes(sheetQuery))
+  })
+  // Group the visible sheets by discipline for sectioned rendering. Encounter
+  // order = sheet_number order (the GET returns sorted), so each group stays
+  // sheet_number-sorted. Null discipline → "Unspecified", listed last.
+  const groupedSheets: [string, ImportedSheet[]][] = (() => {
+    const groups = new Map<string, ImportedSheet[]>()
+    for (const s of visibleSheets) {
+      const key = s.discipline || "Unspecified"
+      const arr = groups.get(key) ?? []
+      arr.push(s)
+      groups.set(key, arr)
+    }
+    return [...groups.entries()].sort(([a], [b]) =>
+      a === "Unspecified" ? 1 : b === "Unspecified" ? -1 : a.localeCompare(b),
+    )
+  })()
+
+  // ── Selection + export-selected ────────────────────────────────────────────
+  const allVisibleSelected = visibleSheets.length > 0 && visibleSheets.every(s => selectedSheetIds.has(s.id))
+  function toggleSelectSheet(id: string) {
+    setSelectedSheetIds(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n })
+  }
+  function setGroupSelected(sheets: ImportedSheet[], on: boolean) {
+    setSelectedSheetIds(prev => { const n = new Set(prev); for (const s of sheets) on ? n.add(s.id) : n.delete(s.id); return n })
+  }
+  function setAllVisibleSelected(on: boolean) {
+    setSelectedSheetIds(prev => { const n = new Set(prev); for (const s of visibleSheets) on ? n.add(s.id) : n.delete(s.id); return n })
+  }
+  async function exportSelectedSheets() {
+    // Selected sheets if any (across the full project, even if filtered out of
+    // view), else the current visible list. Same project + RLS scope as the GET.
+    const chosen = selectedSheetIds.size > 0
+      ? importedSheets.filter(s => selectedSheetIds.has(s.id))
+      : visibleSheets
+    if (chosen.length === 0) return
+    const projectName = appProjects.find(p => p.id === globalProjectId)?.name ?? "Drawing Log"
+    setExportingSheets(true)
+    try {
+      await exportDrawingSheetsToExcel(
+        chosen.map(s => ({ sheet_number: s.sheet_number, discipline: s.discipline, discipline_prefix: s.discipline_prefix, title: s.title, revision_label: s.revision_label })),
+        projectName,
+      )
+    } catch (e) { alert(e instanceof Error ? e.message : "Export failed") }
+    finally { setExportingSheets(false) }
+  }
+
   return (
     <>
       {/* Drawing log action bar */}
       <div className="flex-shrink-0 border-b border-[#E2E8F0] bg-white flex items-center justify-between px-4 py-2.5">
-        <p className="text-[13px] font-semibold text-[#0F172A]">Drawing Log <span className="text-[#64748B] font-normal ml-1">({drawings.filter(d => d.is_current).length} sheets)</span></p>
-        <button onClick={() => { setShowNewDrawing(true); setAddRevisionFor(null); resetDwgForm() }} className="h-8 px-4 rounded-md bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors flex items-center gap-1.5">
-          <PlusIcon /> Add Drawing
-        </button>
+        <p className="text-[13px] font-semibold text-[#0F172A]">Drawing Log <span className="text-[#64748B] font-normal ml-1">({importedSheets.length + drawings.filter(d => d.is_current).length} sheets)</span></p>
+        <div className="flex items-center gap-2">
+          {globalProjectId && (
+            <button onClick={() => setShowImportSet(true)} className="h-8 px-4 rounded-md border border-[#7B9BB5] text-[#5A7A94] text-[13px] font-semibold hover:bg-[#7B9BB5]/10 transition-colors flex items-center gap-1.5">
+              Import set / Split
+            </button>
+          )}
+          <button onClick={() => { setShowNewDrawing(true); setAddRevisionFor(null); resetDwgForm() }} className="h-8 px-4 rounded-md bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors flex items-center gap-1.5">
+            <PlusIcon /> Add Drawing
+          </button>
+        </div>
       </div>
 
       {/* Drawing log */}
       <div className="flex-1 overflow-y-auto min-h-0">
+          {/* Imported sheets (drawing_sheets — splitter output). Read/display
+              only; sits above the legacy manual Drawing Log cards. */}
+          {(importedLoading || importedSheets.length > 0 || deletedSheets.length > 0) && (
+            <div className="px-4 pt-4">
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-[12px] font-semibold text-[#0F172A]">
+                  Imported sheets <span className="text-[#64748B] font-normal">({importedSheets.length})</span>
+                </p>
+                {deletedSheets.length > 0 && (
+                  <button onClick={toggleDeleted} className="text-[11px] text-[#64748B] hover:text-[#0F172A] font-semibold">
+                    {showDeleted ? "Hide" : "Show"} recently deleted ({deletedSheets.length})
+                  </button>
+                )}
+              </div>
+              {!importedLoading && importedSheets.length > 0 && (
+                <div className="flex flex-wrap items-center gap-2 mb-2">
+                  <input
+                    value={sheetSearch}
+                    onChange={e => setSheetSearch(e.target.value)}
+                    placeholder="Search sheet #, title, prefix…"
+                    className="h-7 px-2 rounded border border-[#E2E8F0] text-[12px] w-56 focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40"
+                  />
+                  <select value={disciplineFilter} onChange={e => setDisciplineFilter(e.target.value)}
+                    className="h-7 px-2 rounded border border-[#E2E8F0] text-[12px] bg-white">
+                    <option value="">All disciplines</option>
+                    {availableDisciplines.map(d => <option key={d} value={d}>{d}</option>)}
+                  </select>
+                  {(sheetQuery || disciplineFilter) && (
+                    <>
+                      <span className="text-[11px] text-[#64748B]">{visibleSheets.length} of {importedSheets.length}</span>
+                      <button onClick={() => { setSheetSearch(""); setDisciplineFilter("") }}
+                        className="text-[11px] text-[#7B9BB5] hover:text-[#5A7A94] font-semibold">Clear</button>
+                    </>
+                  )}
+                  <button onClick={exportSelectedSheets} disabled={exportingSheets || (visibleSheets.length === 0 && selectedSheetIds.size === 0)}
+                    className="ml-auto h-7 px-3 rounded-md border border-[#7B9BB5] text-[#5A7A94] text-[11px] font-semibold hover:bg-[#7B9BB5]/10 disabled:opacity-50 transition-colors">
+                    {exportingSheets ? "Exporting…" : selectedSheetIds.size > 0 ? `Export selected (${selectedSheetIds.size})` : "Export all"}
+                  </button>
+                </div>
+              )}
+              {importedLoading ? (
+                <div className="flex items-center gap-2 text-[12px] text-[#64748B] py-3"><SpinnerIcon className="h-4 w-4" /> Loading…</div>
+              ) : (
+                <div className="overflow-x-auto border border-[#E2E8F0] rounded-lg">
+                  <table className="w-full text-[12px]">
+                    <thead className="bg-[#F8FAFC] text-[#64748B] text-[11px] uppercase tracking-[0.04em]">
+                      <tr className="text-left">
+                        <th className="pl-3 pr-1 py-2 w-8">
+                          <input type="checkbox" aria-label="Select all"
+                            checked={allVisibleSelected}
+                            onChange={e => setAllVisibleSelected(e.target.checked)}
+                            className="align-middle accent-[#7B9BB5]" />
+                        </th>
+                        <th className="px-3 py-2 w-32 font-semibold">Sheet #</th>
+                        <th className="px-3 py-2 font-semibold">Title</th>
+                        <th className="px-3 py-2 w-24 font-semibold">Rev</th>
+                        <th className="px-3 py-2 w-56 text-right font-semibold">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {visibleSheets.length === 0 && (
+                        <tr><td colSpan={5} className="px-3 py-4 text-center text-[12px] text-[#94A3B8]">No sheets match the current search/filter.</td></tr>
+                      )}
+                      {groupedSheets.map(([discipline, sheets]) => (
+                        <Fragment key={"grp-" + discipline}>
+                          {/* Discipline section header */}
+                          <tr className="bg-[#EEF2F6] border-t border-[#D9E1EA]">
+                            <td className="pl-3 pr-1 py-1.5 w-8">
+                              <input type="checkbox" aria-label={`Select ${discipline}`}
+                                checked={sheets.every(x => selectedSheetIds.has(x.id))}
+                                onChange={e => setGroupSelected(sheets, e.target.checked)}
+                                className="align-middle accent-[#7B9BB5]" />
+                            </td>
+                            <td colSpan={4} className="px-3 py-1.5 text-[11px] font-bold text-[#475569] uppercase tracking-[0.05em]">
+                              {discipline}
+                              <span className="ml-1.5 inline-flex items-center px-1.5 py-0.5 rounded-full bg-white text-[#64748B] text-[10px] font-bold normal-case">{sheets.length}</span>
+                            </td>
+                          </tr>
+                          {sheets.map(s => editingSheetId === s.id ? (
+                            <tr key={s.id} className="border-t border-[#F1F5F9] bg-amber-50/50">
+                              <td colSpan={5} className="px-3 py-2">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <input value={sheetDraft.sheet_number} onChange={e => setSheetDraft(d => ({ ...d, sheet_number: e.target.value }))}
+                                    className="h-7 px-2 w-24 rounded border border-[#E2E8F0] text-[12px] font-mono" placeholder="Sheet #" />
+                                  <select value={sheetDraft.discipline} onChange={e => setSheetDraft(d => ({ ...d, discipline: e.target.value }))}
+                                    className="h-7 px-1 rounded border border-[#E2E8F0] text-[12px] bg-white">
+                                    <option value="">— discipline —</option>
+                                    {SHEET_DISCIPLINES.map(d => <option key={d} value={d}>{d}</option>)}
+                                  </select>
+                                  <input value={sheetDraft.discipline_prefix} onChange={e => setSheetDraft(d => ({ ...d, discipline_prefix: e.target.value }))}
+                                    className="h-7 px-1 w-12 rounded border border-[#E2E8F0] text-[12px] font-mono" title="Raw prefix" placeholder="pfx" />
+                                  <input value={sheetDraft.title} onChange={e => setSheetDraft(d => ({ ...d, title: e.target.value }))}
+                                    className="h-7 px-2 flex-1 min-w-[160px] rounded border border-[#E2E8F0] text-[12px]" placeholder="Title" />
+                                  <input value={sheetDraft.revision_label} onChange={e => setSheetDraft(d => ({ ...d, revision_label: e.target.value }))}
+                                    className="h-7 px-2 w-24 rounded border border-[#E2E8F0] text-[12px]" placeholder="Rev" />
+                                  <button onClick={() => saveEditSheet(s.id)} disabled={savingSheet}
+                                    className="text-[#5A7A94] font-semibold hover:text-[#3F5A70] disabled:opacity-50">Save</button>
+                                  <button onClick={() => setEditingSheetId(null)} className="text-[#64748B] hover:text-[#0F172A]">Cancel</button>
+                                </div>
+                              </td>
+                            </tr>
+                          ) : (
+                            <Fragment key={s.id}>
+                              <tr className="group border-t border-[#F1F5F9] hover:bg-[#F8FAFC] cursor-pointer"
+                                onClick={() => { setViewerSheet(s); setViewerFull(false) }}>
+                                <td className="pl-3 pr-1 py-2 w-8" onClick={e => e.stopPropagation()}>
+                                  <input type="checkbox" aria-label={`Select ${s.sheet_number ?? "sheet"}`}
+                                    checked={selectedSheetIds.has(s.id)}
+                                    onChange={() => toggleSelectSheet(s.id)}
+                                    className="align-middle accent-[#7B9BB5]" />
+                                </td>
+                                <td className="px-3 py-2 font-mono font-semibold text-[#5A7A94]">{s.sheet_number ?? "—"}</td>
+                                <td className="px-3 py-2 text-[#0F172A] truncate max-w-0">{s.title ?? <span className="text-[#94A3B8]">—</span>}</td>
+                                <td className="px-3 py-2">
+                                  {s.revision_label
+                                    ? <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-[#EEF2F6] text-[#475569] text-[10px] font-semibold">{s.revision_label}</span>
+                                    : <span className="text-[#CBD5E1]">—</span>}
+                                </td>
+                                <td className="px-3 py-2" onClick={e => e.stopPropagation()}>
+                                  <div className="flex items-center justify-end gap-3 whitespace-nowrap text-[#94A3B8]">
+                                    <button onClick={() => { setViewerSheet(s); setViewerFull(false) }} className="hover:text-[#5A7A94] group-hover:text-[#7B9BB5] font-medium transition-colors">View</button>
+                                    <button onClick={() => triggerAddRevision(s.id)} disabled={addingRevId === s.id} className="hover:text-[#5A7A94] group-hover:text-[#7B9BB5] font-medium disabled:opacity-50 transition-colors">{addingRevId === s.id ? "Adding…" : "Add rev"}</button>
+                                    <button onClick={() => toggleRevHistory(s.id)} className="hover:text-[#5A7A94] group-hover:text-[#7B9BB5] font-medium transition-colors">{revHistoryFor === s.id ? "Hide" : "Revs"}</button>
+                                    <button onClick={() => startEditSheet(s)} className="hover:text-[#5A7A94] group-hover:text-[#7B9BB5] font-medium transition-colors">Edit</button>
+                                    <span className="text-[#E2E8F0]">|</span>
+                                    <button onClick={() => softDeleteSheet(s)} className="hover:text-red-500 group-hover:text-red-400 font-medium transition-colors">Delete</button>
+                                  </div>
+                                </td>
+                              </tr>
+                              {revHistoryFor === s.id && (
+                                <tr className="bg-[#F8FAFC]">
+                                  <td colSpan={5} className="px-4 py-2 border-l-2 border-[#7B9BB5]/30">
+                                    {revHistoryLoading ? (
+                                      <span className="text-[11px] text-[#64748B]">Loading revisions…</span>
+                                    ) : revHistory.length === 0 ? (
+                                      <span className="text-[11px] text-[#94A3B8]">No revisions.</span>
+                                    ) : (
+                                      <ul className="space-y-0.5">
+                                        {revHistory.map(rv => (
+                                          <li key={rv.id} className="flex items-center gap-2 text-[11px]">
+                                            <span className="font-mono text-[#5A7A94] w-20">{rv.revision_label ?? "—"}</span>
+                                            {rv.is_current ? <span className="text-[9px] bg-emerald-100 text-emerald-700 px-1 rounded">current</span> : <span className="w-[46px]" />}
+                                            <span className="text-[#94A3B8]">{fmtDate(rv.created_at)}</span>
+                                            {rv.file_url && <a href={rv.file_url} target="_blank" rel="noopener noreferrer" className="text-[#7B9BB5] hover:text-[#5A7A94] font-semibold ml-auto">Open</a>}
+                                          </li>
+                                        ))}
+                                      </ul>
+                                    )}
+                                  </td>
+                                </tr>
+                              )}
+                            </Fragment>
+                          ))}
+                        </Fragment>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              {/* Recently deleted — soft-deleted sheets within the 5-day
+                  recovery window; restorable until the scheduled purge. */}
+              {showDeleted && (
+                <div className="mt-4">
+                  <p className="text-[12px] font-semibold text-[#0F172A] mb-2">Recently deleted <span className="text-[#64748B] font-normal">({deletedSheets.length})</span></p>
+                  {deletedLoading ? (
+                    <div className="flex items-center gap-2 text-[12px] text-[#64748B] py-3"><SpinnerIcon className="h-4 w-4" /> Loading…</div>
+                  ) : deletedSheets.length === 0 ? (
+                    <p className="text-[12px] text-[#94A3B8] py-2">Nothing in the trash.</p>
+                  ) : (
+                    <div className="overflow-x-auto border border-amber-200 rounded-lg bg-amber-50/40">
+                      <table className="w-full text-[12px]">
+                        <thead className="bg-amber-50 text-amber-800">
+                          <tr className="text-left">
+                            <th className="px-3 py-2 w-28">Sheet #</th>
+                            <th className="px-3 py-2">Title</th>
+                            <th className="px-3 py-2 w-36">Time left</th>
+                            <th className="px-3 py-2 w-24 text-right">Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {deletedSheets.map(s => (
+                            <tr key={s.id} className="border-t border-amber-100">
+                              <td className="px-3 py-1.5 font-mono font-semibold text-[#5A7A94]">{s.sheet_number ?? "—"}</td>
+                              <td className="px-3 py-1.5 text-[#0F172A] truncate max-w-0">{s.title ?? <span className="text-[#94A3B8]">—</span>}</td>
+                              <td className="px-3 py-1.5 text-amber-700">
+                                {s.days_remaining != null ? `${s.days_remaining} day${s.days_remaining === 1 ? "" : "s"} left` : "—"}
+                              </td>
+                              <td className="px-3 py-1.5 text-right">
+                                <button onClick={() => restoreSheet(s)} className="text-[#5A7A94] hover:text-[#3F5A70] font-semibold">Restore</button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
           {(() => {
             const currentDrawings = drawings.filter(d => d.is_current)
             const allSuperseded   = drawings.filter(d => !d.is_current)
@@ -221,6 +638,44 @@ export default function DrawingsModule({ globalProjectId, appProjects }: {
             )
           })()}
       </div>
+
+      {/* Hidden picker for "Add rev" — uploads a new revision to the targeted sheet. */}
+      <input ref={revFileRef} type="file" accept="application/pdf" className="hidden" onChange={onRevFileChosen} />
+
+      {/* ── Import drawing set (split + confirm) ─────────────────────────── */}
+      {showImportSet && globalProjectId && (
+        <DrawingImportModal projectId={globalProjectId} onClose={() => { setShowImportSet(false); loadImportedSheets() }} />
+      )}
+
+      {/* ── Sheet viewer (read-only PDF preview + full-screen) ───────────── */}
+      {viewerSheet && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center"
+          onClick={e => { if (e.target === e.currentTarget) setViewerSheet(null) }}>
+          <div className={`bg-white shadow-2xl flex flex-col ${viewerFull ? "fixed inset-2 rounded-lg" : "w-[88vw] h-[88vh] rounded-xl"}`}>
+            <div className="flex-shrink-0 flex items-center justify-between px-4 py-2.5 border-b border-[#E2E8F0]">
+              <p className="text-[13px] font-semibold text-[#0F172A] truncate">
+                <span className="font-mono text-[#5A7A94]">{viewerSheet.sheet_number ?? "—"}</span>
+                {viewerSheet.title ? <span className="text-[#64748B] font-normal ml-2">{viewerSheet.title}</span> : null}
+                {viewerSheet.revision_label ? <span className="text-[#94A3B8] font-normal ml-2">· {viewerSheet.revision_label}</span> : null}
+              </p>
+              <div className="flex items-center gap-3 flex-shrink-0">
+                {viewerSheet.file_url && (
+                  <a href={viewerSheet.file_url} target="_blank" rel="noopener noreferrer" className="text-[12px] text-[#7B9BB5] hover:text-[#5A7A94] font-semibold">Open in new tab</a>
+                )}
+                <button onClick={() => setViewerFull(f => !f)} className="text-[12px] text-[#7B9BB5] hover:text-[#5A7A94] font-semibold">
+                  {viewerFull ? "Exit full screen" : "Full screen"}
+                </button>
+                <button onClick={() => setViewerSheet(null)} className="text-[#64748B] hover:text-[#0F172A]"><XIcon className="h-4 w-4" /></button>
+              </div>
+            </div>
+            <div className="flex-1 min-h-0 bg-[#F1F3F5]">
+              {viewerSheet.file_url
+                ? <iframe src={`${viewerSheet.file_url}#view=Fit`} title={viewerSheet.sheet_number ?? "sheet"} className="w-full h-full border-none" />
+                : <div className="flex items-center justify-center h-full text-[13px] text-[#94A3B8]">No file attached to this sheet.</div>}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── New Drawing / Add Revision modal ─────────────────────────────── */}
       {(showNewDrawing || addRevisionFor) && (

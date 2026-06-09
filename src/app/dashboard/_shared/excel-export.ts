@@ -369,3 +369,69 @@ export async function exportSubmittalLogToExcel(args: ExportSubmittalLogArgs): P
   void args.isSearchMode
   void args.searchQuery
 }
+
+// ─── Drawing Log (ADR-005) export ───────────────────────────────────────────
+// Exports the given drawing sheets (the caller passes the selected set, or all
+// when none are selected — same current-project + company-RLS scope as the
+// list). Reuses the same dynamic-imported ExcelJS + Blob-download mechanism as
+// the submittal log. Rows arrive already ordered (grouped by discipline,
+// sheet_number within); we render them in that order.
+
+export interface DrawingSheetExportRow {
+  sheet_number: string | null
+  discipline: string | null
+  discipline_prefix: string | null
+  title: string | null
+  revision_label: string | null
+}
+
+export async function exportDrawingSheetsToExcel(
+  rows: DrawingSheetExportRow[],
+  projectName: string,
+): Promise<void> {
+  const ExcelJS = (await import("exceljs")).default
+  const wb = new ExcelJS.Workbook()
+  wb.creator = "TuttoHQ"
+  wb.created = new Date()
+  const ws = wb.addWorksheet("Drawing Log")
+
+  ws.mergeCells("A1:D1")
+  const title = ws.getCell("A1")
+  title.value = `${projectName.trim() || "Drawing Log"} — Drawing Log`
+  title.font = { bold: true, size: 16 }
+  ws.getRow(1).height = 24
+
+  const header = ["SHEET #", "DISCIPLINE", "TITLE", "REVISION"]
+  const hr = ws.getRow(3)
+  header.forEach((h, i) => {
+    const c = hr.getCell(i + 1)
+    c.value = h
+    c.font = { bold: true, size: 11 }
+    c.alignment = { horizontal: "left" }
+    c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF1F5F9" } }
+  })
+
+  let r = 4
+  for (const row of rows) {
+    const dr = ws.getRow(r++)
+    dr.getCell(1).value = row.sheet_number ?? ""
+    dr.getCell(1).font = { name: "Consolas", size: 11 }
+    dr.getCell(2).value = row.discipline ?? (row.discipline_prefix ? `(${row.discipline_prefix})` : "")
+    dr.getCell(3).value = row.title ?? ""
+    dr.getCell(4).value = row.revision_label ?? ""
+  }
+  ws.columns = [{ width: 16 }, { width: 18 }, { width: 52 }, { width: 14 }]
+
+  const buf  = await wb.xlsx.writeBuffer()
+  const date = new Date().toISOString().slice(0, 10)
+  const name = `${sanitizeFileName(projectName)}_drawing_log_${date}.xlsx`
+  const blob = new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" })
+  const url  = URL.createObjectURL(blob)
+  const a    = document.createElement("a")
+  a.href = url
+  a.download = name
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  URL.revokeObjectURL(url)
+}
