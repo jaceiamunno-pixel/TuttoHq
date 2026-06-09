@@ -46,10 +46,12 @@ const MODULE_EMPTY_LABEL: Record<Exclude<ModuleId, "library">, string> = {
 // Project selector — the primary navigation control. Always visible (slim
 // sidebar on desktop, top bar on mobile), one-click dropdown, typeahead search
 // once there are 10+ projects, and shows the job number for disambiguation.
-function ProjectSelector({ projects, value, onChange }: {
+function ProjectSelector({ projects, value, onChange, favorites, onToggleFavorite }: {
   projects: Project[]
   value: string
   onChange: (id: string) => void
+  favorites: Set<string>
+  onToggleFavorite: (id: string) => void
 }) {
   const [open, setOpen]     = useState(false)
   const [search, setSearch] = useState("")
@@ -70,9 +72,14 @@ function ProjectSelector({ projects, value, onChange }: {
 
   const showSearch = projects.length >= 10
   const q = search.trim().toLowerCase()
-  const matches = q
+  const matched = q
     ? projects.filter(p => `${p.name} ${p.number ?? ""}`.toLowerCase().includes(q))
     : projects
+  // Favorites float to the top. Array.sort is stable, so order within each
+  // group is preserved (server order). Per-user — favorites is keyed by user.
+  const matches = matched.slice().sort(
+    (a, b) => (favorites.has(a.id) ? 0 : 1) - (favorites.has(b.id) ? 0 : 1)
+  )
   const items: { id: string; name: string; number: string | null }[] = [
     { id: "", name: "All Projects", number: null },
     ...matches.map(p => ({ id: p.id, name: p.name, number: p.number ?? null })),
@@ -103,15 +110,32 @@ function ProjectSelector({ projects, value, onChange }: {
             </div>
           )}
           <div className="max-h-[60vh] overflow-y-auto">
-            {items.map(p => (
-              <button
-                key={p.id || "__all__"}
-                onClick={() => { onChange(p.id); setOpen(false); setSearch("") }}
-                className={`w-full text-left px-3 py-2 text-[12px] truncate transition-colors ${value === p.id ? "bg-[#7B9BB5]/20 text-white" : "text-[#94A3B8] hover:bg-white/[0.06] hover:text-white"}`}
-              >
-                {p.name}{p.number ? ` — ${p.number}` : ""}
-              </button>
-            ))}
+            {items.map(p => {
+              const fav = !!p.id && favorites.has(p.id)
+              return (
+              <div key={p.id || "__all__"} className="flex items-center group/proj">
+                <button
+                  onClick={() => { onChange(p.id); setOpen(false); setSearch("") }}
+                  className={`flex-1 min-w-0 text-left px-3 py-2 text-[12px] truncate transition-colors ${value === p.id ? "bg-[#7B9BB5]/20 text-white" : "text-[#94A3B8] hover:bg-white/[0.06] hover:text-white"}`}
+                >
+                  {p.name}{p.number ? ` — ${p.number}` : ""}
+                </button>
+                {p.id && (
+                  <button
+                    type="button"
+                    onClick={e => { e.stopPropagation(); onToggleFavorite(p.id) }}
+                    title={fav ? "Unfavorite" : "Favorite"}
+                    aria-label={fav ? "Unfavorite project" : "Favorite project"}
+                    className={`flex-shrink-0 px-2 py-2 transition-colors ${fav ? "text-amber-400" : "text-[#475569] hover:text-[#94A3B8] opacity-0 group-hover/proj:opacity-100"}`}
+                  >
+                    <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill={fav ? "currentColor" : "none"} stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M11.48 3.5l2.3 4.66 5.14.75-3.72 3.62.88 5.12-4.6-2.42-4.6 2.42.88-5.12L4.04 8.9l5.14-.75 2.3-4.65z" />
+                    </svg>
+                  </button>
+                )}
+              </div>
+              )
+            })}
             {items.length === 1 && q && (
               <p className="px-3 py-3 text-[12px] text-[#64748B]">No projects match.</p>
             )}
@@ -139,6 +163,11 @@ export default function Home() {
   const [globalProjectId, setGlobalProjectId] = useState<string>("")
   const [mobileNavOpen, setMobileNavOpen]   = useState(false)
 
+  // Per-user project favorites — surfaced to the top of the project selector.
+  // Stored in localStorage keyed by the signed-in user's email so a shared
+  // browser keeps each user's favorites separate (per-user, not company-wide).
+  const [favoriteProjectIds, setFavoriteProjectIds] = useState<Set<string>>(new Set())
+
   // Hydrate active module + project from localStorage on mount. Done in an
   // effect (not useState initializer) so SSR and the client agree on the
   // first paint, then the client upgrades to the stored values.
@@ -165,6 +194,27 @@ export default function Home() {
       window.localStorage.removeItem("tuttohq:dashboard:global-project-id")
     }
   }, [globalProjectId])
+
+  // Hydrate per-user project favorites once the signed-in user is known.
+  useEffect(() => {
+    if (typeof window === "undefined" || !userEmail) return
+    try {
+      const raw = window.localStorage.getItem(`tuttohq:project-favorites:${userEmail}`)
+      if (raw) setFavoriteProjectIds(new Set(JSON.parse(raw) as string[]))
+    } catch { /* ignore malformed */ }
+  }, [userEmail])
+
+  function toggleFavorite(id: string) {
+    if (!userEmail) return
+    setFavoriteProjectIds(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id); else next.add(id)
+      try {
+        window.localStorage.setItem(`tuttohq:project-favorites:${userEmail}`, JSON.stringify([...next]))
+      } catch { /* ignore quota */ }
+      return next
+    })
+  }
 
   // Submittals sub-view — kept in the shell so it survives LibrarySubmittalsModule
   // unmounting (e.g. when switching to Library and back).
@@ -244,7 +294,7 @@ export default function Home() {
         <div className="flex items-center gap-2 flex-shrink-0">{logo}</div>
         {appProjects.length > 0 && (
           <div className="flex-1 min-w-0">
-            <ProjectSelector projects={appProjects} value={globalProjectId} onChange={setGlobalProjectId} />
+            <ProjectSelector projects={appProjects} value={globalProjectId} onChange={setGlobalProjectId} favorites={favoriteProjectIds} onToggleFavorite={toggleFavorite} />
           </div>
         )}
         <button
@@ -297,7 +347,7 @@ export default function Home() {
           {appProjects.length > 0 && (
             <div className="flex-shrink-0 px-3 pt-4 pb-3">
               <p className="text-[10px] font-bold text-[#64748B] uppercase tracking-widest px-0.5 mb-1.5">Project</p>
-              <ProjectSelector projects={appProjects} value={globalProjectId} onChange={setGlobalProjectId} />
+              <ProjectSelector projects={appProjects} value={globalProjectId} onChange={setGlobalProjectId} favorites={favoriteProjectIds} onToggleFavorite={toggleFavorite} />
             </div>
           )}
 
