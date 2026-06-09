@@ -103,7 +103,7 @@ export interface BatchItemDupeMatch {
 }
 export interface BatchItem { id: string; file: File; status: BatchStatus; divNum: string; divName: string; secCode: string; secName: string; nameMatl: string; nameMfr: string; nameDims: string; customName: string; expanded: boolean; errorMsg?: string; storagePath?: string; fileSha256?: string; dupeMatch?: BatchItemDupeMatch }
 
-export interface Project { id: string; name: string; number: string | null; location: string | null; gc_name: string | null; architect: string | null; short_id?: string | null }
+export interface Project { id: string; name: string; number: string | null; location: string | null; gc_name: string | null; architect: string | null; short_id?: string | null; base_contract_value?: number | null }
 export interface TeamMember { id: string; name: string; title: string | null; email: string | null }
 export interface RFI {
   id: string; rfi_number: string; subject: string; description: string | null;
@@ -116,8 +116,8 @@ export interface RFI {
   created_at: string; uploaded_by: string;
 }
 export interface ChangeOrder {
-  id: string; co_number: string; project_id: string | null; date: string | null;
-  proposal: string | null; qualifications: string | null; pricing_sum: number | null;
+  id: string; co_number: string; assigned_co_number: string | null; project_id: string | null; date: string | null;
+  proposal: string | null; qualifications: string | null; pricing_sum: number | null; realized_amount: number | null;
   schedule_impact: string; schedule_impact_days: number | null;
   file_path: string | null; file_name: string | null;
   status: string; submitted_by: string | null; assigned_to: string | null;

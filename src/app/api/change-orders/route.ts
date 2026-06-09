@@ -25,7 +25,13 @@ export async function POST(req: NextRequest) {
   const fields: Record<string, string | null> = await req.json().catch(() => ({}))
 
   const { project_id, date, proposal, qualifications, pricing_sum,
-          schedule_impact, schedule_impact_days, submitted_by, assigned_to, status } = fields
+          schedule_impact, schedule_impact_days, submitted_by, assigned_to, status,
+          assigned_co_number, realized_amount } = fields
+
+  // Realized is only meaningful once a C.O.# is assigned; otherwise force null.
+  const hasCoNum = typeof assigned_co_number === "string" && assigned_co_number.trim() !== ""
+  const realizedRaw = typeof realized_amount === "string" ? realized_amount.trim() : ""
+  const realizedVal = hasCoNum && realizedRaw !== "" ? parseFloat(realizedRaw) : null
 
   if (!proposal?.trim() && !fields.co_number) {
     return NextResponse.json({ error: "proposal is required" }, { status: 400 })
@@ -56,7 +62,9 @@ export async function POST(req: NextRequest) {
     schedule_impact_days: schedule_impact_days ? parseInt(schedule_impact_days) : null,
     file_path,
     file_name,
-    status:               status || "Draft",
+    status:               status || "Not submitted",
+    assigned_co_number:   assigned_co_number?.trim() || null,
+    realized_amount:      realizedVal,
     submitted_by:         submitted_by?.trim() || null,
     assigned_to:          assigned_to?.trim() || null,
     uploaded_by:          user.id,

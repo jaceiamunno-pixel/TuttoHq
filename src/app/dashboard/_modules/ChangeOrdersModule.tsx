@@ -5,6 +5,8 @@ import type { ChangeOrder, Project } from "../_shared/types"
 import { fmtDateOnly } from "../_shared/format"
 import { PlusIcon, SpinnerIcon } from "../_shared/icons"
 import { presignAndUpload } from "@/lib/storage-upload"
+import { computeCoTotals } from "../_shared/co-math"
+import { exportChangeOrderLogToExcel } from "../_shared/excel-export"
 
 // Change Orders module — extracted verbatim from dashboard/page.tsx (Step 6 of the split).
 // State, handlers, action bar, content, and both modals are unchanged; the load
@@ -29,19 +31,30 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
   const [coScheduleDays, setCoScheduleDays]           = useState("")
   const [coSubmittedBy, setCoSubmittedBy]             = useState("")
   const [coAssignedTo, setCoAssignedTo]               = useState("")
-  const [coStatus, setCoStatus]                       = useState("Draft")
+  const [coStatus, setCoStatus]                       = useState("Not submitted")
+  const [coAssignedCoNumber, setCoAssignedCoNumber]   = useState("")
   const [coFile, setCoFile]                           = useState<File | null>(null)
   const [coSaving, setCoSaving]                       = useState(false)
   const [coRespondSaving, setCoRespondSaving]         = useState(false)
   const [coResponseStatus, setCoResponseStatus]       = useState("")
   const [coGeneratingPdf, setCoGeneratingPdf]         = useState(false)
+  const [coBaseValue, setCoBaseValue]                 = useState("")
+  const [coBaseSaving, setCoBaseSaving]               = useState(false)
+  const [coRespAmount, setCoRespAmount]               = useState("")
+  const [coRealized, setCoRealized]                   = useState("")
+  const [coRespRealized, setCoRespRealized]           = useState("")
+  const [coExporting, setCoExporting]                 = useState(false)
 
   function loadChangeOrders(pid = globalProjectId) {
     setCoLoading(true)
     const qs = pid ? `?project_id=${encodeURIComponent(pid)}` : ""
     fetch(`/api/change-orders${qs}`)
       .then(r => r.json())
-      .then(d => setChangeOrders(d.changeOrders ?? []))
+      // Sort ascending by PCO # (zero-padded co_number; lexical order = numeric,
+      // 001→028) so the log reads oldest-first like a real PCO log; new COs append
+      // at the bottom. created_at can diverge from the PCO sequence if back-dated.
+      .then(d => setChangeOrders([...(d.changeOrders ?? [])].sort(
+        (a: ChangeOrder, b: ChangeOrder) => (a.co_number ?? "").localeCompare(b.co_number ?? ""))))
       .catch(() => setChangeOrders([]))
       .finally(() => setCoLoading(false))
   }
@@ -52,6 +65,12 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
   // Pre-select the current global project whenever the New CO modal opens.
   useEffect(() => { if (showNewCo) setCoProjectId(globalProjectId) }, [showNewCo, globalProjectId])
 
+  // Seed the editable Base Contract value from the currently-selected project.
+  useEffect(() => {
+    const p = appProjects.find(p => p.id === globalProjectId)
+    setCoBaseValue(p?.base_contract_value != null ? String(p.base_contract_value) : "")
+  }, [globalProjectId, appProjects])
+
   async function createCo(e: React.FormEvent) {
     e.preventDefault()
     setCoSaving(true)
@@ -61,6 +80,9 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
         qualifications: coQualifications, pricing_sum: coPricingSum,
         schedule_impact: coScheduleImpact, schedule_impact_days: coScheduleDays,
         submitted_by: coSubmittedBy, assigned_to: coAssignedTo, status: coStatus,
+        assigned_co_number: coAssignedCoNumber,
+        // Realized only counts once a C.O.# is assigned; otherwise send blank → null.
+        realized_amount: coAssignedCoNumber.trim() ? coRealized : "",
       }
       if (coFile) {
         const { path } = await presignAndUpload("submittals", "change-orders", coFile)
@@ -76,7 +98,7 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
         setShowNewCo(false)
         setCoProjectId(""); setCoProposal(""); setCoQualifications(""); setCoPricingSum("")
         setCoScheduleImpact("TBD"); setCoScheduleDays(""); setCoSubmittedBy(""); setCoAssignedTo("")
-        setCoStatus("Draft"); setCoFile(null)
+        setCoStatus("Not submitted"); setCoAssignedCoNumber(""); setCoRealized(""); setCoFile(null)
         setCoDate(new Date().toISOString().slice(0, 10))
         loadChangeOrders()
       }
@@ -108,10 +130,55 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
     try {
       const res = await fetch(`/api/change-orders/${viewCo.id}`, {
         method: "PATCH", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status: coResponseStatus, assigned_to: coAssignedTo }),
+        body: JSON.stringify({
+          status: coResponseStatus, assigned_to: coAssignedTo, assigned_co_number: coAssignedCoNumber,
+          pricing_sum: coRespAmount.trim() === "" ? null : parseFloat(coRespAmount),
+          // Realized only counts once a C.O.# is assigned; otherwise null.
+          realized_amount: coAssignedCoNumber.trim() && coRespRealized.trim() !== "" ? parseFloat(coRespRealized) : null,
+        }),
       })
       if (res.ok) { setViewCo(null); loadChangeOrders() }
     } finally { setCoRespondSaving(false) }
+  }
+
+  // Persist the project's Base Contract value via the existing company-scoped
+  // projects PATCH (RLS gates it to the caller's tenant).
+  async function saveBaseContract() {
+    if (!globalProjectId) return
+    setCoBaseSaving(true)
+    try {
+      const raw = coBaseValue.trim()
+      await fetch(`/api/projects/${globalProjectId}`, {
+        method: "PATCH", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ base_contract_value: raw === "" ? null : raw }),
+      })
+    } finally { setCoBaseSaving(false) }
+  }
+
+  // Contract math (shared co-math is the single source of truth so the on-screen
+  // figures match the exported workbook):
+  //   Total Proposed = Σ proposed amount (all COs)
+  //   Revised Contract Value = Base + Σ realized_amount (stored; non-Rejected)
+  //   Open Changes = Σ proposed amount where realized not entered yet (not Rejected)
+  const baseNum = parseFloat(coBaseValue)
+  const baseForTotals = Number.isFinite(baseNum) ? baseNum : null
+  const coTotals = computeCoTotals(changeOrders, baseForTotals)
+  const fmtUsd2 = (n: number) => new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n)
+  // PCO # reads as a plain running count ("001"), not the stored "CO-001".
+  const pcoLabel = (n: string) => (n ?? "").replace(/^CO-/i, "")
+
+  async function handleExportCoLog() {
+    if (!globalProjectId) return
+    const proj = appProjects.find(p => p.id === globalProjectId)
+    setCoExporting(true)
+    try {
+      await exportChangeOrderLogToExcel({
+        rows: changeOrders,
+        projectName: proj?.name ?? "Project",
+        projectNumber: proj?.number ?? null,
+        baseContractValue: baseForTotals,
+      })
+    } finally { setCoExporting(false) }
   }
 
   return (
@@ -119,10 +186,55 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
       {/* Change Orders action bar */}
       <div className="flex-shrink-0 border-b border-[#E2E8F0] bg-white flex items-center justify-between px-4 py-2.5 gap-2 min-w-0">
         <p className="text-[13px] font-semibold text-[#0F172A] truncate min-w-0">Change Orders <span className="text-[#64748B] font-normal ml-1">({changeOrders.length})</span></p>
-        <button onClick={() => setShowNewCo(true)} className="h-8 px-4 rounded-md bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors flex items-center gap-1.5 flex-shrink-0 whitespace-nowrap">
-          <PlusIcon /> New CO
-        </button>
+        <div className="flex items-center gap-2 flex-shrink-0">
+          <button onClick={handleExportCoLog} disabled={coExporting || changeOrders.length === 0}
+            title="Download the change-order log as an Excel spreadsheet"
+            className="h-8 px-3 rounded-md border border-[#E2E8F0] text-[12px] font-semibold text-[#64748B] hover:bg-[#0F172A]/[0.04] transition-colors flex items-center gap-1.5 whitespace-nowrap disabled:opacity-60">
+            {coExporting ? <SpinnerIcon className="h-3.5 w-3.5" /> : (
+              <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5 5-5M12 15V3" />
+              </svg>
+            )}
+            <span className="hidden sm:inline">{coExporting ? "Exporting…" : "Download log"}</span>
+          </button>
+          <button onClick={() => setShowNewCo(true)} className="h-8 px-4 rounded-md bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors flex items-center gap-1.5 whitespace-nowrap">
+            <PlusIcon /> New CO
+          </button>
+        </div>
       </div>
+
+      {/* Contract value summary — mirrors the Gilbane PCO log */}
+      {globalProjectId && (
+        <div className="flex-shrink-0 border-b border-[#E2E8F0] bg-white px-4 py-3 flex flex-wrap items-end gap-4">
+          <div>
+            <label className="block text-[10px] font-bold text-[#64748B] uppercase tracking-widest mb-1">Base Contract Value</label>
+            <div className="flex items-center gap-2">
+              <input type="number" step="0.01" value={coBaseValue}
+                onChange={e => setCoBaseValue(e.target.value)} placeholder="0.00"
+                className="h-9 w-44 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40 tabular-nums placeholder:text-[#64748B]" />
+              <button onClick={saveBaseContract} disabled={coBaseSaving}
+                className="h-9 px-3 rounded-md bg-[#7B9BB5] text-white text-[12px] font-semibold hover:bg-[#6A8AA4] transition-colors disabled:opacity-50 flex items-center gap-1.5">
+                {coBaseSaving && <SpinnerIcon className="h-3 w-3" />}{coBaseSaving ? "Saving…" : "Save"}
+              </button>
+            </div>
+          </div>
+          <div className="rounded-lg bg-[#F4F5F7] border border-[#E2E8F0] px-4 py-2">
+            <p className="text-[10px] font-bold text-[#64748B] uppercase tracking-widest mb-0.5">Total Proposed</p>
+            <p className="text-[18px] font-bold tabular-nums text-[#0F172A]">{fmtUsd2(coTotals.totalProposed)}</p>
+            <p className="text-[10px] text-[#94A3B8] mt-0.5">Σ all proposed amounts</p>
+          </div>
+          <div className="rounded-lg bg-[#F4F5F7] border border-[#E2E8F0] px-4 py-2">
+            <p className="text-[10px] font-bold text-[#64748B] uppercase tracking-widest mb-0.5">Revised Contract Value</p>
+            <p className="text-[18px] font-bold tabular-nums text-green-600">{fmtUsd2(coTotals.revisedContractValue)}</p>
+            <p className="text-[10px] text-[#94A3B8] mt-0.5">Base + realized (accepted) amounts</p>
+          </div>
+          <div className="rounded-lg bg-[#F4F5F7] border border-[#E2E8F0] px-4 py-2">
+            <p className="text-[10px] font-bold text-[#64748B] uppercase tracking-widest mb-0.5">Open Changes</p>
+            <p className="text-[18px] font-bold tabular-nums text-amber-600">{fmtUsd2(coTotals.openChanges)}</p>
+            <p className="text-[10px] text-[#94A3B8] mt-0.5">Proposed, not yet realized</p>
+          </div>
+        </div>
+      )}
 
       {/* Change Orders */}
       <div className="flex-1 overflow-y-auto min-h-0">
@@ -133,30 +245,6 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
               </div>
             ) : (
               <div className="flex flex-col min-h-full">
-                {/* Running totals */}
-                {changeOrders.length > 0 && (() => {
-                  const approved = changeOrders.filter(c => c.status === "Approved")
-                  const pending  = changeOrders.filter(c => ["Draft","Submitted","Under Review"].includes(c.status))
-                  const open     = changeOrders.filter(c => !["Approved","Rejected","Void"].includes(c.status))
-                  const sumApproved = approved.reduce((s, c) => s + (c.pricing_sum ?? 0), 0)
-                  const sumPending  = pending.reduce((s,  c) => s + (c.pricing_sum ?? 0), 0)
-                  const fmt = (n: number) => new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(n)
-                  return (
-                    <div className="flex items-stretch gap-3 px-4 py-3 border-b border-[#E2E8F0] flex-shrink-0">
-                      {[
-                        { label: "Total COs", value: String(changeOrders.length), muted: false },
-                        { label: "Approved", value: fmt(sumApproved), muted: false, green: true },
-                        { label: "Pending", value: fmt(sumPending), muted: true },
-                        { label: "Open", value: String(open.length), muted: open.length > 0 },
-                      ].map(({ label, value, green }) => (
-                        <div key={label} className="flex-1 rounded-lg bg-[#F4F5F7] border border-[#E2E8F0] px-3 py-2">
-                          <p className="text-[10px] font-bold text-[#64748B] uppercase tracking-widest mb-1">{label}</p>
-                          <p className={`text-[15px] font-bold tabular-nums ${green ? "text-green-400" : "text-[#0F172A]"}`}>{value}</p>
-                        </div>
-                      ))}
-                    </div>
-                  )
-                })()}
                 {changeOrders.length === 0 ? (
                   <div className="flex flex-col items-center justify-center flex-1 py-24 text-center">
                     <div className="w-14 h-14 rounded-2xl bg-[#7B9BB5]/10 border border-[#7B9BB5]/20 flex items-center justify-center mb-4">
@@ -177,10 +265,12 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
             <table className="w-full text-[13px] border-collapse">
                     <thead className="sticky top-0 bg-[#F8F9FA] z-10">
                       <tr className="border-b border-[#E2E8F0]">
-                        <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-20">CO #</th>
+                        <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-20">PCO #</th>
+                        <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-24">CO #</th>
                         <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-32">Project</th>
                         <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest">Proposal</th>
-                        <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-28">Pricing</th>
+                        <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-28">Proposed</th>
+                        <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-28">Realized</th>
                         <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-20">Sched.</th>
                         <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-24">Date</th>
                         <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-28">Status</th>
@@ -191,21 +281,23 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
                       {changeOrders.map(c => {
                         const proj = appProjects.find(p => p.id === c.project_id)
                         const statusColor: Record<string, string> = {
-                          Draft:          "bg-gray-100 text-gray-500",
-                          Submitted:      "bg-blue-100 text-blue-700",
-                          "Under Review": "bg-amber-100 text-amber-700",
-                          Approved:       "bg-green-100 text-green-700",
-                          Rejected:       "bg-red-100 text-red-700",
-                          Void:           "bg-gray-100 text-gray-500",
+                          "Not submitted": "bg-gray-100 text-gray-500",
+                          Pending:         "bg-amber-100 text-amber-700",
+                          Approved:        "bg-green-100 text-green-700",
+                          Rejected:        "bg-red-100 text-red-700",
                         }
                         const badgeCls = statusColor[c.status] ?? "bg-gray-100 text-gray-500"
                         return (
                           <tr key={c.id} className="border-b border-[#E2E8F0]/60 hover:bg-[#F8F9FA] transition-colors">
-                            <td className="px-4 py-2.5 text-[12px] font-mono text-[#7B9BB5]">{c.co_number}</td>
+                            <td className="px-4 py-2.5 text-[12px] font-mono text-[#7B9BB5]">{pcoLabel(c.co_number)}</td>
+                            <td className="px-4 py-2.5 text-[12px] text-[#0F172A]">{c.assigned_co_number || "—"}</td>
                             <td className="px-4 py-2.5 text-[#64748B] text-[12px] truncate">{proj?.name ?? "—"}</td>
                             <td className="px-4 py-2.5 max-w-0"><p className="text-[#0F172A] truncate">{c.proposal ?? "—"}</p></td>
-                            <td className="px-4 py-2.5 text-[#0F172A] text-[12px] tabular-nums font-medium">
-                              {c.pricing_sum != null ? new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(c.pricing_sum) : "—"}
+                            <td className="px-4 py-2.5 text-[12px] tabular-nums font-medium">
+                              {c.pricing_sum != null ? <span className={c.pricing_sum < 0 ? "text-red-600" : "text-[#0F172A]"}>{fmtUsd2(c.pricing_sum)}</span> : <span className="text-[#0F172A]">—</span>}
+                            </td>
+                            <td className="px-4 py-2.5 text-[12px] tabular-nums font-medium">
+                              {c.realized_amount != null ? <span className={c.realized_amount < 0 ? "text-red-600" : "text-[#0F172A]"}>{fmtUsd2(c.realized_amount)}</span> : <span className="text-[#94A3B8]">—</span>}
                             </td>
                             <td className="px-4 py-2.5 text-[12px]">
                               <span className={c.schedule_impact === "Yes" ? "text-amber-400" : c.schedule_impact === "No" ? "text-green-400" : "text-[#64748B]"}>{c.schedule_impact ?? "TBD"}</span>
@@ -216,7 +308,7 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
                             </td>
                             <td className="px-4 py-2.5">
                               <div className="flex items-center gap-1">
-                                <button onClick={() => { setViewCo(c); setCoResponseStatus(c.status); setCoAssignedTo(c.assigned_to ?? "") }}
+                                <button onClick={() => { setViewCo(c); setCoResponseStatus(c.status); setCoAssignedTo(c.assigned_to ?? ""); setCoAssignedCoNumber(c.assigned_co_number ?? ""); setCoRespAmount(c.pricing_sum != null ? String(c.pricing_sum) : ""); setCoRespRealized(c.realized_amount != null ? String(c.realized_amount) : "") }}
                                   className="text-[11px] text-[#64748B] hover:text-[#0F172A] px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors">View</button>
                                 <button onClick={() => generateCoPdf(c.id)} disabled={coGeneratingPdf}
                                   className="text-[11px] text-[#7B9BB5] hover:text-[#7B9BB5] px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors disabled:opacity-50">PDF</button>
@@ -234,22 +326,22 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
                   <div className="sm:hidden px-3 py-3 space-y-2">
                     {changeOrders.map(c => {
                       const proj = appProjects.find(p => p.id === c.project_id)
-                      const statusColor: Record<string, string> = { Draft: "bg-gray-100 text-gray-500", Submitted: "bg-blue-100 text-blue-700", "Under Review": "bg-amber-100 text-amber-700", Approved: "bg-green-100 text-green-700", Rejected: "bg-red-100 text-red-700", Void: "bg-gray-100 text-gray-500" }
+                      const statusColor: Record<string, string> = { "Not submitted": "bg-gray-100 text-gray-500", Pending: "bg-amber-100 text-amber-700", Approved: "bg-green-100 text-green-700", Rejected: "bg-red-100 text-red-700" }
                       const badgeCls = statusColor[c.status] ?? "bg-gray-100 text-gray-500"
                       return (
                         <div key={c.id} className="bg-white rounded-xl border border-[#E2E8F0] p-3 shadow-sm">
                           <div className="flex items-start justify-between gap-2 mb-1">
-                            <span className="text-[11px] font-mono text-[#7B9BB5]">{c.co_number}</span>
+                            <span className="text-[11px] font-mono text-[#7B9BB5]">{pcoLabel(c.co_number)}{c.assigned_co_number ? <span className="text-[#64748B]"> · CO {c.assigned_co_number}</span> : null}</span>
                             <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold ${badgeCls}`}>{c.status}</span>
                           </div>
                           <p className="text-[13px] font-medium text-[#0F172A] mb-1 truncate">{c.proposal ?? "—"}</p>
                           {proj && <p className="text-[11px] text-[#64748B] mb-1">{proj.name}</p>}
                           <div className="flex items-center justify-between mb-2">
-                            <span className="text-[12px] font-semibold text-[#0F172A]">{c.pricing_sum != null ? new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(c.pricing_sum) : "—"}</span>
+                            <span className={`text-[12px] font-semibold ${c.pricing_sum != null && c.pricing_sum < 0 ? "text-red-600" : "text-[#0F172A]"}`}>{c.pricing_sum != null ? fmtUsd2(c.pricing_sum) : "—"}</span>
                             <span className="text-[11px] text-[#64748B]">{c.date ? fmtDateOnly(c.date) : ""}</span>
                           </div>
                           <div className="flex items-center gap-1">
-                            <button onClick={() => { setViewCo(c); setCoResponseStatus(c.status); setCoAssignedTo(c.assigned_to ?? "") }} className="text-[11px] text-[#64748B] px-2 py-1 rounded border border-[#E2E8F0] bg-[#F8F9FA]">View</button>
+                            <button onClick={() => { setViewCo(c); setCoResponseStatus(c.status); setCoAssignedTo(c.assigned_to ?? ""); setCoAssignedCoNumber(c.assigned_co_number ?? ""); setCoRespAmount(c.pricing_sum != null ? String(c.pricing_sum) : ""); setCoRespRealized(c.realized_amount != null ? String(c.realized_amount) : "") }} className="text-[11px] text-[#64748B] px-2 py-1 rounded border border-[#E2E8F0] bg-[#F8F9FA]">View</button>
                             <button onClick={() => generateCoPdf(c.id)} disabled={coGeneratingPdf} className="text-[11px] text-[#7B9BB5] px-2 py-1 rounded border border-[#E2E8F0] bg-[#F8F9FA] disabled:opacity-50">PDF</button>
                             <button onClick={() => deleteCo(c.id)} className="text-[11px] text-red-400 px-2 py-1 rounded border border-[#E2E8F0] bg-[#F8F9FA]">Del</button>
                           </div>
@@ -312,15 +404,30 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div>
-                      <label className={labelCls2}>Pricing Sum ($)</label>
-                      <input type="number" step="0.01" min="0" value={coPricingSum} onChange={e => setCoPricingSum(e.target.value)}
+                      <label className={labelCls2}>Proposed Amount ($) <span className="text-[#94A3B8] normal-case font-normal tracking-normal">(− = credit)</span></label>
+                      <input type="number" step="0.01" value={coPricingSum} onChange={e => setCoPricingSum(e.target.value)}
                         placeholder="0.00" className={inputCls2} />
                     </div>
                     <div>
                       <label className={labelCls2}>Status</label>
                       <select value={coStatus} onChange={e => setCoStatus(e.target.value)} className={selCls2}>
-                        {["Draft","Submitted","Under Review","Approved","Rejected","Void"].map(s => <option key={s} value={s}>{s}</option>)}
+                        {["Not submitted","Pending","Approved","Rejected"].map(s => <option key={s} value={s}>{s}</option>)}
                       </select>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className={labelCls2}>CO # <span className="text-[#94A3B8] normal-case font-normal tracking-normal">(assigned, optional)</span></label>
+                      <input type="text" value={coAssignedCoNumber} onChange={e => setCoAssignedCoNumber(e.target.value)}
+                        placeholder="Assigned CO number" className={inputCls2} />
+                    </div>
+                    <div>
+                      <label className={labelCls2}>Realized Amount ($) <span className="text-[#94A3B8] normal-case font-normal tracking-normal">(accepted; − = credit)</span></label>
+                      <input type="number" step="0.01" value={coAssignedCoNumber.trim() ? coRealized : ""} disabled={!coAssignedCoNumber.trim()}
+                        onChange={e => setCoRealized(e.target.value)}
+                        placeholder={coAssignedCoNumber.trim() ? "Accepted amount" : "Assign a C.O.# first"}
+                        className={`${inputCls2} disabled:bg-[#F1F5F9] disabled:text-[#94A3B8] disabled:cursor-not-allowed`} />
+                      <p className="text-[10px] text-[#94A3B8] mt-0.5">{coAssignedCoNumber.trim() ? "Counts toward Revised Contract Value" : "Enter a C.O.# to record the accepted amount"}</p>
                     </div>
                   </div>
                   <div className="grid grid-cols-2 gap-4">
@@ -381,15 +488,13 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
             <div className="flex items-start justify-between px-6 py-4 border-b border-[#E2E8F0] flex-shrink-0">
               <div>
                 <div className="flex items-center gap-3">
-                  <h2 className="text-[16px] font-bold text-[#0F172A]">{viewCo.co_number}</h2>
+                  <h2 className="text-[16px] font-bold text-[#0F172A]">PCO {pcoLabel(viewCo.co_number)}</h2>
                   {(() => {
                     const statusColor: Record<string, string> = {
-                      Draft:          "bg-gray-100 text-gray-500",
-                      Submitted:      "bg-blue-100 text-blue-700",
-                      "Under Review": "bg-amber-100 text-amber-700",
-                      Approved:       "bg-green-100 text-green-700",
-                      Rejected:       "bg-red-100 text-red-700",
-                      Void:           "bg-gray-100 text-gray-500",
+                      "Not submitted": "bg-gray-100 text-gray-500",
+                      Pending:         "bg-amber-100 text-amber-700",
+                      Approved:        "bg-green-100 text-green-700",
+                      Rejected:        "bg-red-100 text-red-700",
                     }
                     return <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-semibold ${statusColor[viewCo.status] ?? "bg-gray-100 text-gray-500"}`}>{viewCo.status}</span>
                   })()}
@@ -482,7 +587,7 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
                     <label className="block text-[11px] font-semibold text-[#64748B] uppercase tracking-widest mb-1">Status</label>
                     <select value={coResponseStatus} onChange={e => setCoResponseStatus(e.target.value)}
                       className="w-full h-9 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40">
-                      {["Draft","Submitted","Under Review","Approved","Rejected","Void"].map(s => <option key={s} value={s}>{s}</option>)}
+                      {["Not submitted","Pending","Approved","Rejected"].map(s => <option key={s} value={s}>{s}</option>)}
                     </select>
                   </div>
                   <div>
@@ -490,6 +595,26 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
                     <input type="text" value={coAssignedTo} onChange={e => setCoAssignedTo(e.target.value)}
                       placeholder="Reviewer name"
                       className="w-full h-9 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40 placeholder:text-[#64748B]" />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-semibold text-[#64748B] uppercase tracking-widest mb-1">CO # <span className="text-[#94A3B8] normal-case font-normal tracking-normal">(assigned)</span></label>
+                    <input type="text" value={coAssignedCoNumber} onChange={e => setCoAssignedCoNumber(e.target.value)}
+                      placeholder="Assigned CO number"
+                      className="w-full h-9 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40 placeholder:text-[#64748B]" />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-semibold text-[#64748B] uppercase tracking-widest mb-1">Proposed Amount ($) <span className="text-[#94A3B8] normal-case font-normal tracking-normal">(− = credit)</span></label>
+                    <input type="number" step="0.01" value={coRespAmount} onChange={e => setCoRespAmount(e.target.value)}
+                      placeholder="0.00"
+                      className="w-full h-9 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40 tabular-nums placeholder:text-[#64748B]" />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-semibold text-[#64748B] uppercase tracking-widest mb-1">Realized Amount ($) <span className="text-[#94A3B8] normal-case font-normal tracking-normal">(accepted; − = credit)</span></label>
+                    <input type="number" step="0.01" value={coAssignedCoNumber.trim() ? coRespRealized : ""} disabled={!coAssignedCoNumber.trim()}
+                      onChange={e => setCoRespRealized(e.target.value)}
+                      placeholder={coAssignedCoNumber.trim() ? "Accepted amount" : "Assign a C.O.# first"}
+                      className="w-full h-9 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40 tabular-nums placeholder:text-[#64748B] disabled:bg-[#F1F5F9] disabled:text-[#94A3B8] disabled:cursor-not-allowed" />
+                    <p className="text-[10px] text-[#94A3B8] mt-0.5">{coAssignedCoNumber.trim() ? "Counts toward Revised Contract Value" : "Enter a C.O.# to record the accepted amount"}</p>
                   </div>
                 </div>
               </div>

@@ -10,7 +10,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   const updates = await req.json()
 
   const allowed = [
-    "co_number", "date", "proposal", "qualifications", "pricing_sum",
+    "co_number", "assigned_co_number", "date", "proposal", "qualifications", "pricing_sum", "realized_amount",
     "schedule_impact", "schedule_impact_days", "file_path", "file_name",
     "status", "submitted_by", "assigned_to", "generated_pdf_path", "approved_at",
   ]
