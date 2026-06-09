@@ -14,7 +14,10 @@ import dynamic from "next/dynamic"
 // dashboard's first-load JS lean. Client-only (browser crypto/File APIs).
 const DrawingImportModal = dynamic(() => import("@/components/drawings/DrawingImportModal"), { ssr: false })
 
-// Committed drawing_sheets (ADR-005 Drawing Log v1) — read/display only.
+// Discipline options for the sheet metadata edit (mirrors drawing-detect's map).
+const SHEET_DISCIPLINES = ["Architectural", "Structural", "Mechanical", "Electrical", "Plumbing", "Civil", "Fire Protection", "Demolition", "Landscape", "General", "Telecom"]
+
+// Committed drawing_sheets (ADR-005 Drawing Log v1).
 interface ImportedSheet {
   id: string
   sheet_number: string | null
@@ -56,6 +59,11 @@ export default function DrawingsModule({ globalProjectId, appProjects }: {
   const [showImportSet, setShowImportSet]             = useState(false)
   const [importedSheets, setImportedSheets]           = useState<ImportedSheet[]>([])
   const [importedLoading, setImportedLoading]         = useState(false)
+  const [viewerSheet, setViewerSheet]                 = useState<ImportedSheet | null>(null)
+  const [viewerFull, setViewerFull]                   = useState(false)
+  const [editingSheetId, setEditingSheetId]           = useState<string | null>(null)
+  const [sheetDraft, setSheetDraft]                   = useState({ sheet_number: "", title: "", discipline: "", discipline_prefix: "", revision_label: "" })
+  const [savingSheet, setSavingSheet]                 = useState(false)
 
   function loadDrawings(pid = globalProjectId) {
     setDrawingsLoading(true)
@@ -77,6 +85,28 @@ export default function DrawingsModule({ globalProjectId, appProjects }: {
       .then(d => setImportedSheets(d.sheets ?? []))
       .catch(() => setImportedSheets([]))
       .finally(() => setImportedLoading(false))
+  }
+
+  function startEditSheet(s: ImportedSheet) {
+    setEditingSheetId(s.id)
+    setSheetDraft({
+      sheet_number: s.sheet_number ?? "", title: s.title ?? "",
+      discipline: s.discipline ?? "", discipline_prefix: s.discipline_prefix ?? "",
+      revision_label: s.revision_label ?? "",
+    })
+  }
+  async function saveEditSheet(id: string) {
+    if (!sheetDraft.sheet_number.trim()) { alert("Sheet number cannot be blank."); return }
+    setSavingSheet(true)
+    try {
+      const res = await fetch(`/api/drawings/sheets/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(sheetDraft),
+      })
+      if (res.ok) { setEditingSheetId(null); loadImportedSheets() }
+      else { const d = await res.json().catch(() => ({})); alert(d?.error ?? "Save failed") }
+    } finally { setSavingSheet(false) }
   }
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -179,20 +209,52 @@ export default function DrawingsModule({ globalProjectId, appProjects }: {
                         <th className="px-3 py-2 w-36">Discipline</th>
                         <th className="px-3 py-2">Title</th>
                         <th className="px-3 py-2 w-24">Revision</th>
-                        <th className="px-3 py-2 w-16"></th>
+                        <th className="px-3 py-2 w-40 text-right">Actions</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {importedSheets.map(s => (
-                        <tr key={s.id} className="border-t border-[#F1F5F9]">
-                          <td className="px-3 py-1.5 font-mono font-semibold text-[#5A7A94]">{s.sheet_number ?? "—"}</td>
+                      {importedSheets.map(s => editingSheetId === s.id ? (
+                        <tr key={s.id} className="border-t border-[#F1F5F9] bg-[#F8FAFC]">
+                          <td className="px-2 py-1.5">
+                            <input value={sheetDraft.sheet_number} onChange={e => setSheetDraft(d => ({ ...d, sheet_number: e.target.value }))}
+                              className="w-full h-7 px-2 rounded border border-[#E2E8F0] text-[12px] font-mono" placeholder="Sheet #" />
+                          </td>
+                          <td className="px-2 py-1.5">
+                            <div className="flex gap-1">
+                              <select value={sheetDraft.discipline} onChange={e => setSheetDraft(d => ({ ...d, discipline: e.target.value }))}
+                                className="flex-1 h-7 px-1 rounded border border-[#E2E8F0] text-[12px] bg-white">
+                                <option value="">—</option>
+                                {SHEET_DISCIPLINES.map(d => <option key={d} value={d}>{d}</option>)}
+                              </select>
+                              <input value={sheetDraft.discipline_prefix} onChange={e => setSheetDraft(d => ({ ...d, discipline_prefix: e.target.value }))}
+                                className="w-10 h-7 px-1 rounded border border-[#E2E8F0] text-[12px] font-mono" title="Raw prefix" placeholder="pfx" />
+                            </div>
+                          </td>
+                          <td className="px-2 py-1.5">
+                            <input value={sheetDraft.title} onChange={e => setSheetDraft(d => ({ ...d, title: e.target.value }))}
+                              className="w-full h-7 px-2 rounded border border-[#E2E8F0] text-[12px]" placeholder="Title" />
+                          </td>
+                          <td className="px-2 py-1.5">
+                            <input value={sheetDraft.revision_label} onChange={e => setSheetDraft(d => ({ ...d, revision_label: e.target.value }))}
+                              className="w-full h-7 px-2 rounded border border-[#E2E8F0] text-[12px]" placeholder="Rev" />
+                          </td>
+                          <td className="px-3 py-1.5 text-right whitespace-nowrap">
+                            <button onClick={() => saveEditSheet(s.id)} disabled={savingSheet}
+                              className="text-[#5A7A94] font-semibold hover:text-[#3F5A70] disabled:opacity-50">Save</button>
+                            <button onClick={() => setEditingSheetId(null)} className="ml-3 text-[#64748B] hover:text-[#0F172A]">Cancel</button>
+                          </td>
+                        </tr>
+                      ) : (
+                        <tr key={s.id} className="border-t border-[#F1F5F9] hover:bg-[#F8FAFC]">
+                          <td className="px-3 py-1.5 font-mono font-semibold text-[#5A7A94]">
+                            <button onClick={() => { setViewerSheet(s); setViewerFull(false) }} className="hover:underline" title="View sheet">{s.sheet_number ?? "—"}</button>
+                          </td>
                           <td className="px-3 py-1.5 text-[#0F172A]">{s.discipline ?? (s.discipline_prefix ? `(${s.discipline_prefix})` : "—")}</td>
                           <td className="px-3 py-1.5 text-[#0F172A] truncate max-w-0">{s.title ?? <span className="text-[#94A3B8]">—</span>}</td>
                           <td className="px-3 py-1.5 text-[#64748B]">{s.revision_label ?? "—"}</td>
-                          <td className="px-3 py-1.5 text-right">
-                            {s.file_url
-                              ? <a href={s.file_url} target="_blank" rel="noopener noreferrer" className="text-[#7B9BB5] hover:text-[#5A7A94] font-semibold">Open</a>
-                              : <span className="text-[#CBD5E1]">—</span>}
+                          <td className="px-3 py-1.5 text-right whitespace-nowrap">
+                            <button onClick={() => { setViewerSheet(s); setViewerFull(false) }} className="text-[#7B9BB5] hover:text-[#5A7A94] font-semibold">View</button>
+                            <button onClick={() => startEditSheet(s)} className="ml-3 text-[#7B9BB5] hover:text-[#5A7A94] font-semibold">Edit</button>
                           </td>
                         </tr>
                       ))}
@@ -306,6 +368,36 @@ export default function DrawingsModule({ globalProjectId, appProjects }: {
       {/* ── Import drawing set (split + confirm) ─────────────────────────── */}
       {showImportSet && globalProjectId && (
         <DrawingImportModal projectId={globalProjectId} onClose={() => { setShowImportSet(false); loadImportedSheets() }} />
+      )}
+
+      {/* ── Sheet viewer (read-only PDF preview + full-screen) ───────────── */}
+      {viewerSheet && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center"
+          onClick={e => { if (e.target === e.currentTarget) setViewerSheet(null) }}>
+          <div className={`bg-white shadow-2xl flex flex-col ${viewerFull ? "fixed inset-2 rounded-lg" : "w-[88vw] h-[88vh] rounded-xl"}`}>
+            <div className="flex-shrink-0 flex items-center justify-between px-4 py-2.5 border-b border-[#E2E8F0]">
+              <p className="text-[13px] font-semibold text-[#0F172A] truncate">
+                <span className="font-mono text-[#5A7A94]">{viewerSheet.sheet_number ?? "—"}</span>
+                {viewerSheet.title ? <span className="text-[#64748B] font-normal ml-2">{viewerSheet.title}</span> : null}
+                {viewerSheet.revision_label ? <span className="text-[#94A3B8] font-normal ml-2">· {viewerSheet.revision_label}</span> : null}
+              </p>
+              <div className="flex items-center gap-3 flex-shrink-0">
+                {viewerSheet.file_url && (
+                  <a href={viewerSheet.file_url} target="_blank" rel="noopener noreferrer" className="text-[12px] text-[#7B9BB5] hover:text-[#5A7A94] font-semibold">Open in new tab</a>
+                )}
+                <button onClick={() => setViewerFull(f => !f)} className="text-[12px] text-[#7B9BB5] hover:text-[#5A7A94] font-semibold">
+                  {viewerFull ? "Exit full screen" : "Full screen"}
+                </button>
+                <button onClick={() => setViewerSheet(null)} className="text-[#64748B] hover:text-[#0F172A]"><XIcon className="h-4 w-4" /></button>
+              </div>
+            </div>
+            <div className="flex-1 min-h-0 bg-[#F1F3F5]">
+              {viewerSheet.file_url
+                ? <iframe src={`${viewerSheet.file_url}#view=Fit`} title={viewerSheet.sheet_number ?? "sheet"} className="w-full h-full border-none" />
+                : <div className="flex items-center justify-center h-full text-[13px] text-[#94A3B8]">No file attached to this sheet.</div>}
+            </div>
+          </div>
+        </div>
       )}
 
       {/* ── New Drawing / Add Revision modal ─────────────────────────────── */}
