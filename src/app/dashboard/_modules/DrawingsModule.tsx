@@ -270,12 +270,27 @@ export default function DrawingsModule({ globalProjectId, appProjects }: {
     return [s.sheet_number, s.title, s.discipline_prefix]
       .some(v => (v ?? "").toLowerCase().includes(sheetQuery))
   })
+  // Group the visible sheets by discipline for sectioned rendering. Encounter
+  // order = sheet_number order (the GET returns sorted), so each group stays
+  // sheet_number-sorted. Null discipline → "Unspecified", listed last.
+  const groupedSheets: [string, ImportedSheet[]][] = (() => {
+    const groups = new Map<string, ImportedSheet[]>()
+    for (const s of visibleSheets) {
+      const key = s.discipline || "Unspecified"
+      const arr = groups.get(key) ?? []
+      arr.push(s)
+      groups.set(key, arr)
+    }
+    return [...groups.entries()].sort(([a], [b]) =>
+      a === "Unspecified" ? 1 : b === "Unspecified" ? -1 : a.localeCompare(b),
+    )
+  })()
 
   return (
     <>
       {/* Drawing log action bar */}
       <div className="flex-shrink-0 border-b border-[#E2E8F0] bg-white flex items-center justify-between px-4 py-2.5">
-        <p className="text-[13px] font-semibold text-[#0F172A]">Drawing Log <span className="text-[#64748B] font-normal ml-1">({drawings.filter(d => d.is_current).length} sheets)</span></p>
+        <p className="text-[13px] font-semibold text-[#0F172A]">Drawing Log <span className="text-[#64748B] font-normal ml-1">({importedSheets.length + drawings.filter(d => d.is_current).length} sheets)</span></p>
         <div className="flex items-center gap-2">
           {globalProjectId && (
             <button onClick={() => setShowImportSet(true)} className="h-8 px-4 rounded-md border border-[#7B9BB5] text-[#5A7A94] text-[13px] font-semibold hover:bg-[#7B9BB5]/10 transition-colors flex items-center gap-1.5">
@@ -331,89 +346,92 @@ export default function DrawingsModule({ globalProjectId, appProjects }: {
               ) : (
                 <div className="overflow-x-auto border border-[#E2E8F0] rounded-lg">
                   <table className="w-full text-[12px]">
-                    <thead className="bg-[#F8FAFC] text-[#64748B]">
+                    <thead className="bg-[#F8FAFC] text-[#64748B] text-[11px] uppercase tracking-[0.04em]">
                       <tr className="text-left">
-                        <th className="px-3 py-2 w-28">Sheet #</th>
-                        <th className="px-3 py-2 w-36">Discipline</th>
-                        <th className="px-3 py-2">Title</th>
-                        <th className="px-3 py-2 w-24">Revision</th>
-                        <th className="px-3 py-2 w-64 text-right">Actions</th>
+                        <th className="px-3 py-2 w-32 font-semibold">Sheet #</th>
+                        <th className="px-3 py-2 font-semibold">Title</th>
+                        <th className="px-3 py-2 w-24 font-semibold">Revision</th>
+                        <th className="px-3 py-2 w-64 text-right font-semibold">Actions</th>
                       </tr>
                     </thead>
                     <tbody>
                       {visibleSheets.length === 0 && (
-                        <tr><td colSpan={5} className="px-3 py-3 text-[12px] text-[#94A3B8]">No sheets match the current search/filter.</td></tr>
+                        <tr><td colSpan={4} className="px-3 py-4 text-center text-[12px] text-[#94A3B8]">No sheets match the current search/filter.</td></tr>
                       )}
-                      {visibleSheets.map(s => editingSheetId === s.id ? (
-                        <tr key={s.id} className="border-t border-[#F1F5F9] bg-[#F8FAFC]">
-                          <td className="px-2 py-1.5">
-                            <input value={sheetDraft.sheet_number} onChange={e => setSheetDraft(d => ({ ...d, sheet_number: e.target.value }))}
-                              className="w-full h-7 px-2 rounded border border-[#E2E8F0] text-[12px] font-mono" placeholder="Sheet #" />
-                          </td>
-                          <td className="px-2 py-1.5">
-                            <div className="flex gap-1">
-                              <select value={sheetDraft.discipline} onChange={e => setSheetDraft(d => ({ ...d, discipline: e.target.value }))}
-                                className="flex-1 h-7 px-1 rounded border border-[#E2E8F0] text-[12px] bg-white">
-                                <option value="">—</option>
-                                {SHEET_DISCIPLINES.map(d => <option key={d} value={d}>{d}</option>)}
-                              </select>
-                              <input value={sheetDraft.discipline_prefix} onChange={e => setSheetDraft(d => ({ ...d, discipline_prefix: e.target.value }))}
-                                className="w-10 h-7 px-1 rounded border border-[#E2E8F0] text-[12px] font-mono" title="Raw prefix" placeholder="pfx" />
-                            </div>
-                          </td>
-                          <td className="px-2 py-1.5">
-                            <input value={sheetDraft.title} onChange={e => setSheetDraft(d => ({ ...d, title: e.target.value }))}
-                              className="w-full h-7 px-2 rounded border border-[#E2E8F0] text-[12px]" placeholder="Title" />
-                          </td>
-                          <td className="px-2 py-1.5">
-                            <input value={sheetDraft.revision_label} onChange={e => setSheetDraft(d => ({ ...d, revision_label: e.target.value }))}
-                              className="w-full h-7 px-2 rounded border border-[#E2E8F0] text-[12px]" placeholder="Rev" />
-                          </td>
-                          <td className="px-3 py-1.5 text-right whitespace-nowrap">
-                            <button onClick={() => saveEditSheet(s.id)} disabled={savingSheet}
-                              className="text-[#5A7A94] font-semibold hover:text-[#3F5A70] disabled:opacity-50">Save</button>
-                            <button onClick={() => setEditingSheetId(null)} className="ml-3 text-[#64748B] hover:text-[#0F172A]">Cancel</button>
-                          </td>
-                        </tr>
-                      ) : (
-                        <Fragment key={s.id}>
-                        <tr className="border-t border-[#F1F5F9] hover:bg-[#F8FAFC]">
-                          <td className="px-3 py-1.5 font-mono font-semibold text-[#5A7A94]">
-                            <button onClick={() => { setViewerSheet(s); setViewerFull(false) }} className="hover:underline" title="View sheet">{s.sheet_number ?? "—"}</button>
-                          </td>
-                          <td className="px-3 py-1.5 text-[#0F172A]">{s.discipline ?? (s.discipline_prefix ? `(${s.discipline_prefix})` : "—")}</td>
-                          <td className="px-3 py-1.5 text-[#0F172A] truncate max-w-0">{s.title ?? <span className="text-[#94A3B8]">—</span>}</td>
-                          <td className="px-3 py-1.5 text-[#64748B]">{s.revision_label ?? "—"}</td>
-                          <td className="px-3 py-1.5 text-right whitespace-nowrap">
-                            <button onClick={() => { setViewerSheet(s); setViewerFull(false) }} className="text-[#7B9BB5] hover:text-[#5A7A94] font-semibold">View</button>
-                            <button onClick={() => triggerAddRevision(s.id)} disabled={addingRevId === s.id} className="ml-3 text-[#7B9BB5] hover:text-[#5A7A94] font-semibold disabled:opacity-50">{addingRevId === s.id ? "Adding…" : "Add rev"}</button>
-                            <button onClick={() => toggleRevHistory(s.id)} className="ml-3 text-[#7B9BB5] hover:text-[#5A7A94] font-semibold">{revHistoryFor === s.id ? "Hide" : "Revs"}</button>
-                            <button onClick={() => startEditSheet(s)} className="ml-3 text-[#7B9BB5] hover:text-[#5A7A94] font-semibold">Edit</button>
-                            <button onClick={() => softDeleteSheet(s)} className="ml-3 text-red-400 hover:text-red-500 font-semibold">Delete</button>
-                          </td>
-                        </tr>
-                        {revHistoryFor === s.id && (
-                          <tr className="bg-[#F8FAFC]">
-                            <td colSpan={5} className="px-4 py-2">
-                              {revHistoryLoading ? (
-                                <span className="text-[11px] text-[#64748B]">Loading revisions…</span>
-                              ) : revHistory.length === 0 ? (
-                                <span className="text-[11px] text-[#94A3B8]">No revisions.</span>
-                              ) : (
-                                <ul className="space-y-0.5">
-                                  {revHistory.map(rv => (
-                                    <li key={rv.id} className="flex items-center gap-2 text-[11px]">
-                                      <span className="font-mono text-[#5A7A94] w-20">{rv.revision_label ?? "—"}</span>
-                                      {rv.is_current ? <span className="text-[9px] bg-emerald-100 text-emerald-700 px-1 rounded">current</span> : <span className="w-[46px]" />}
-                                      <span className="text-[#94A3B8]">{fmtDate(rv.created_at)}</span>
-                                      {rv.file_url && <a href={rv.file_url} target="_blank" rel="noopener noreferrer" className="text-[#7B9BB5] hover:text-[#5A7A94] font-semibold ml-auto">Open</a>}
-                                    </li>
-                                  ))}
-                                </ul>
-                              )}
+                      {groupedSheets.map(([discipline, sheets]) => (
+                        <Fragment key={"grp-" + discipline}>
+                          {/* Discipline section header */}
+                          <tr className="bg-[#EEF2F6] border-t border-[#D9E1EA]">
+                            <td colSpan={4} className="px-3 py-1.5 text-[11px] font-bold text-[#475569] uppercase tracking-[0.05em]">
+                              {discipline} <span className="text-[#94A3B8] font-semibold normal-case">({sheets.length})</span>
                             </td>
                           </tr>
-                        )}
+                          {sheets.map(s => editingSheetId === s.id ? (
+                            <tr key={s.id} className="border-t border-[#F1F5F9] bg-amber-50/50">
+                              <td colSpan={4} className="px-3 py-2">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <input value={sheetDraft.sheet_number} onChange={e => setSheetDraft(d => ({ ...d, sheet_number: e.target.value }))}
+                                    className="h-7 px-2 w-24 rounded border border-[#E2E8F0] text-[12px] font-mono" placeholder="Sheet #" />
+                                  <select value={sheetDraft.discipline} onChange={e => setSheetDraft(d => ({ ...d, discipline: e.target.value }))}
+                                    className="h-7 px-1 rounded border border-[#E2E8F0] text-[12px] bg-white">
+                                    <option value="">— discipline —</option>
+                                    {SHEET_DISCIPLINES.map(d => <option key={d} value={d}>{d}</option>)}
+                                  </select>
+                                  <input value={sheetDraft.discipline_prefix} onChange={e => setSheetDraft(d => ({ ...d, discipline_prefix: e.target.value }))}
+                                    className="h-7 px-1 w-12 rounded border border-[#E2E8F0] text-[12px] font-mono" title="Raw prefix" placeholder="pfx" />
+                                  <input value={sheetDraft.title} onChange={e => setSheetDraft(d => ({ ...d, title: e.target.value }))}
+                                    className="h-7 px-2 flex-1 min-w-[160px] rounded border border-[#E2E8F0] text-[12px]" placeholder="Title" />
+                                  <input value={sheetDraft.revision_label} onChange={e => setSheetDraft(d => ({ ...d, revision_label: e.target.value }))}
+                                    className="h-7 px-2 w-24 rounded border border-[#E2E8F0] text-[12px]" placeholder="Rev" />
+                                  <button onClick={() => saveEditSheet(s.id)} disabled={savingSheet}
+                                    className="text-[#5A7A94] font-semibold hover:text-[#3F5A70] disabled:opacity-50">Save</button>
+                                  <button onClick={() => setEditingSheetId(null)} className="text-[#64748B] hover:text-[#0F172A]">Cancel</button>
+                                </div>
+                              </td>
+                            </tr>
+                          ) : (
+                            <Fragment key={s.id}>
+                              <tr className="border-t border-[#F1F5F9] hover:bg-[#F8FAFC]">
+                                <td className="px-3 py-2 font-mono font-semibold text-[#5A7A94]">
+                                  <button onClick={() => { setViewerSheet(s); setViewerFull(false) }} className="hover:underline" title="View sheet">{s.sheet_number ?? "—"}</button>
+                                </td>
+                                <td className="px-3 py-2 text-[#0F172A] truncate max-w-0">{s.title ?? <span className="text-[#94A3B8]">—</span>}</td>
+                                <td className="px-3 py-2 text-[#64748B]">{s.revision_label ?? "—"}</td>
+                                <td className="px-3 py-2">
+                                  <div className="flex items-center justify-end gap-3 whitespace-nowrap">
+                                    <button onClick={() => { setViewerSheet(s); setViewerFull(false) }} className="text-[#7B9BB5] hover:text-[#5A7A94] font-semibold">View</button>
+                                    <button onClick={() => triggerAddRevision(s.id)} disabled={addingRevId === s.id} className="text-[#7B9BB5] hover:text-[#5A7A94] font-semibold disabled:opacity-50">{addingRevId === s.id ? "Adding…" : "Add rev"}</button>
+                                    <button onClick={() => toggleRevHistory(s.id)} className="text-[#7B9BB5] hover:text-[#5A7A94] font-semibold">{revHistoryFor === s.id ? "Hide" : "Revs"}</button>
+                                    <button onClick={() => startEditSheet(s)} className="text-[#7B9BB5] hover:text-[#5A7A94] font-semibold">Edit</button>
+                                    <span className="text-[#E2E8F0]">|</span>
+                                    <button onClick={() => softDeleteSheet(s)} className="text-red-400 hover:text-red-500 font-semibold">Delete</button>
+                                  </div>
+                                </td>
+                              </tr>
+                              {revHistoryFor === s.id && (
+                                <tr className="bg-[#F8FAFC]">
+                                  <td colSpan={4} className="px-4 py-2 border-l-2 border-[#7B9BB5]/30">
+                                    {revHistoryLoading ? (
+                                      <span className="text-[11px] text-[#64748B]">Loading revisions…</span>
+                                    ) : revHistory.length === 0 ? (
+                                      <span className="text-[11px] text-[#94A3B8]">No revisions.</span>
+                                    ) : (
+                                      <ul className="space-y-0.5">
+                                        {revHistory.map(rv => (
+                                          <li key={rv.id} className="flex items-center gap-2 text-[11px]">
+                                            <span className="font-mono text-[#5A7A94] w-20">{rv.revision_label ?? "—"}</span>
+                                            {rv.is_current ? <span className="text-[9px] bg-emerald-100 text-emerald-700 px-1 rounded">current</span> : <span className="w-[46px]" />}
+                                            <span className="text-[#94A3B8]">{fmtDate(rv.created_at)}</span>
+                                            {rv.file_url && <a href={rv.file_url} target="_blank" rel="noopener noreferrer" className="text-[#7B9BB5] hover:text-[#5A7A94] font-semibold ml-auto">Open</a>}
+                                          </li>
+                                        ))}
+                                      </ul>
+                                    )}
+                                  </td>
+                                </tr>
+                              )}
+                            </Fragment>
+                          ))}
                         </Fragment>
                       ))}
                     </tbody>
