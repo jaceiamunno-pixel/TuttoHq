@@ -48,7 +48,11 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
     const qs = pid ? `?project_id=${encodeURIComponent(pid)}` : ""
     fetch(`/api/change-orders${qs}`)
       .then(r => r.json())
-      .then(d => setChangeOrders(d.changeOrders ?? []))
+      // Sort ascending by PCO # (zero-padded co_number; lexical order = numeric,
+      // 001→028) so the log reads oldest-first like a real PCO log; new COs append
+      // at the bottom. created_at can diverge from the PCO sequence if back-dated.
+      .then(d => setChangeOrders([...(d.changeOrders ?? [])].sort(
+        (a: ChangeOrder, b: ChangeOrder) => (a.co_number ?? "").localeCompare(b.co_number ?? ""))))
       .catch(() => setChangeOrders([]))
       .finally(() => setCoLoading(false))
   }
@@ -233,31 +237,6 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
               </div>
             ) : (
               <div className="flex flex-col min-h-full">
-                {/* Running totals */}
-                {changeOrders.length > 0 && (() => {
-                  const approved = changeOrders.filter(c => c.status === "Approved")
-                  // Pending $ + Open exclude both Approved and Rejected (Rejected counts toward neither).
-                  const pending  = changeOrders.filter(c => !["Approved","Rejected"].includes(c.status))
-                  const open     = changeOrders.filter(c => !["Approved","Rejected"].includes(c.status))
-                  const sumApproved = approved.reduce((s, c) => s + (c.pricing_sum ?? 0), 0)
-                  const sumPending  = pending.reduce((s,  c) => s + (c.pricing_sum ?? 0), 0)
-                  const fmt = (n: number) => new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(n)
-                  return (
-                    <div className="flex items-stretch gap-3 px-4 py-3 border-b border-[#E2E8F0] flex-shrink-0">
-                      {[
-                        { label: "Total COs", value: String(changeOrders.length), muted: false },
-                        { label: "Approved", value: fmt(sumApproved), muted: false, green: true },
-                        { label: "Pending", value: fmt(sumPending), muted: true },
-                        { label: "Open", value: String(open.length), muted: open.length > 0 },
-                      ].map(({ label, value, green }) => (
-                        <div key={label} className="flex-1 rounded-lg bg-[#F4F5F7] border border-[#E2E8F0] px-3 py-2">
-                          <p className="text-[10px] font-bold text-[#64748B] uppercase tracking-widest mb-1">{label}</p>
-                          <p className={`text-[15px] font-bold tabular-nums ${green ? "text-green-400" : "text-[#0F172A]"}`}>{value}</p>
-                        </div>
-                      ))}
-                    </div>
-                  )
-                })()}
                 {changeOrders.length === 0 ? (
                   <div className="flex flex-col items-center justify-center flex-1 py-24 text-center">
                     <div className="w-14 h-14 rounded-2xl bg-[#7B9BB5]/10 border border-[#7B9BB5]/20 flex items-center justify-center mb-4">
