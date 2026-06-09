@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef, Fragment } from "react"
 import { hashFileInBrowser } from "@/lib/file-hash"
 import { detectRevision } from "@/lib/drawing-detect"
+import { exportDrawingSheetsToExcel } from "../_shared/excel-export"
 import type { DrawingRecord, Project } from "../_shared/types"
 import { fmtDate, nextRevision } from "../_shared/format"
 import { PlusIcon, SpinnerIcon, XIcon } from "../_shared/icons"
@@ -73,6 +74,8 @@ export default function DrawingsModule({ globalProjectId, appProjects }: {
   const [deletedLoading, setDeletedLoading]           = useState(false)
   const [sheetSearch, setSheetSearch]                 = useState("")
   const [disciplineFilter, setDisciplineFilter]       = useState("")
+  const [selectedSheetIds, setSelectedSheetIds]       = useState<Set<string>>(new Set())
+  const [exportingSheets, setExportingSheets]         = useState(false)
   const [revFileTarget, setRevFileTarget]             = useState<string | null>(null)
   const [addingRevId, setAddingRevId]                 = useState<string | null>(null)
   const [revHistoryFor, setRevHistoryFor]             = useState<string | null>(null)
@@ -196,7 +199,7 @@ export default function DrawingsModule({ globalProjectId, appProjects }: {
   }
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { loadDrawings(); loadImportedSheets(); loadDeletedSheets(); setShowDeleted(false) }, [globalProjectId])
+  useEffect(() => { loadDrawings(); loadImportedSheets(); loadDeletedSheets(); setShowDeleted(false); setSelectedSheetIds(new Set()) }, [globalProjectId])
 
   // Pre-select the current global project whenever the New Drawing modal opens.
   useEffect(() => { if (showNewDrawing) setDwgProjectId(globalProjectId) }, [showNewDrawing, globalProjectId])
@@ -286,6 +289,35 @@ export default function DrawingsModule({ globalProjectId, appProjects }: {
     )
   })()
 
+  // ── Selection + export-selected ────────────────────────────────────────────
+  const allVisibleSelected = visibleSheets.length > 0 && visibleSheets.every(s => selectedSheetIds.has(s.id))
+  function toggleSelectSheet(id: string) {
+    setSelectedSheetIds(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n })
+  }
+  function setGroupSelected(sheets: ImportedSheet[], on: boolean) {
+    setSelectedSheetIds(prev => { const n = new Set(prev); for (const s of sheets) on ? n.add(s.id) : n.delete(s.id); return n })
+  }
+  function setAllVisibleSelected(on: boolean) {
+    setSelectedSheetIds(prev => { const n = new Set(prev); for (const s of visibleSheets) on ? n.add(s.id) : n.delete(s.id); return n })
+  }
+  async function exportSelectedSheets() {
+    // Selected sheets if any (across the full project, even if filtered out of
+    // view), else the current visible list. Same project + RLS scope as the GET.
+    const chosen = selectedSheetIds.size > 0
+      ? importedSheets.filter(s => selectedSheetIds.has(s.id))
+      : visibleSheets
+    if (chosen.length === 0) return
+    const projectName = appProjects.find(p => p.id === globalProjectId)?.name ?? "Drawing Log"
+    setExportingSheets(true)
+    try {
+      await exportDrawingSheetsToExcel(
+        chosen.map(s => ({ sheet_number: s.sheet_number, discipline: s.discipline, discipline_prefix: s.discipline_prefix, title: s.title, revision_label: s.revision_label })),
+        projectName,
+      )
+    } catch (e) { alert(e instanceof Error ? e.message : "Export failed") }
+    finally { setExportingSheets(false) }
+  }
+
   return (
     <>
       {/* Drawing log action bar */}
@@ -339,6 +371,10 @@ export default function DrawingsModule({ globalProjectId, appProjects }: {
                         className="text-[11px] text-[#7B9BB5] hover:text-[#5A7A94] font-semibold">Clear</button>
                     </>
                   )}
+                  <button onClick={exportSelectedSheets} disabled={exportingSheets || (visibleSheets.length === 0 && selectedSheetIds.size === 0)}
+                    className="ml-auto h-7 px-3 rounded-md border border-[#7B9BB5] text-[#5A7A94] text-[11px] font-semibold hover:bg-[#7B9BB5]/10 disabled:opacity-50 transition-colors">
+                    {exportingSheets ? "Exporting…" : selectedSheetIds.size > 0 ? `Export selected (${selectedSheetIds.size})` : "Export all"}
+                  </button>
                 </div>
               )}
               {importedLoading ? (
@@ -348,27 +384,40 @@ export default function DrawingsModule({ globalProjectId, appProjects }: {
                   <table className="w-full text-[12px]">
                     <thead className="bg-[#F8FAFC] text-[#64748B] text-[11px] uppercase tracking-[0.04em]">
                       <tr className="text-left">
+                        <th className="pl-3 pr-1 py-2 w-8">
+                          <input type="checkbox" aria-label="Select all"
+                            checked={allVisibleSelected}
+                            onChange={e => setAllVisibleSelected(e.target.checked)}
+                            className="align-middle accent-[#7B9BB5]" />
+                        </th>
                         <th className="px-3 py-2 w-32 font-semibold">Sheet #</th>
                         <th className="px-3 py-2 font-semibold">Title</th>
-                        <th className="px-3 py-2 w-24 font-semibold">Revision</th>
-                        <th className="px-3 py-2 w-64 text-right font-semibold">Actions</th>
+                        <th className="px-3 py-2 w-24 font-semibold">Rev</th>
+                        <th className="px-3 py-2 w-56 text-right font-semibold">Actions</th>
                       </tr>
                     </thead>
                     <tbody>
                       {visibleSheets.length === 0 && (
-                        <tr><td colSpan={4} className="px-3 py-4 text-center text-[12px] text-[#94A3B8]">No sheets match the current search/filter.</td></tr>
+                        <tr><td colSpan={5} className="px-3 py-4 text-center text-[12px] text-[#94A3B8]">No sheets match the current search/filter.</td></tr>
                       )}
                       {groupedSheets.map(([discipline, sheets]) => (
                         <Fragment key={"grp-" + discipline}>
                           {/* Discipline section header */}
                           <tr className="bg-[#EEF2F6] border-t border-[#D9E1EA]">
+                            <td className="pl-3 pr-1 py-1.5 w-8">
+                              <input type="checkbox" aria-label={`Select ${discipline}`}
+                                checked={sheets.every(x => selectedSheetIds.has(x.id))}
+                                onChange={e => setGroupSelected(sheets, e.target.checked)}
+                                className="align-middle accent-[#7B9BB5]" />
+                            </td>
                             <td colSpan={4} className="px-3 py-1.5 text-[11px] font-bold text-[#475569] uppercase tracking-[0.05em]">
-                              {discipline} <span className="text-[#94A3B8] font-semibold normal-case">({sheets.length})</span>
+                              {discipline}
+                              <span className="ml-1.5 inline-flex items-center px-1.5 py-0.5 rounded-full bg-white text-[#64748B] text-[10px] font-bold normal-case">{sheets.length}</span>
                             </td>
                           </tr>
                           {sheets.map(s => editingSheetId === s.id ? (
                             <tr key={s.id} className="border-t border-[#F1F5F9] bg-amber-50/50">
-                              <td colSpan={4} className="px-3 py-2">
+                              <td colSpan={5} className="px-3 py-2">
                                 <div className="flex flex-wrap items-center gap-2">
                                   <input value={sheetDraft.sheet_number} onChange={e => setSheetDraft(d => ({ ...d, sheet_number: e.target.value }))}
                                     className="h-7 px-2 w-24 rounded border border-[#E2E8F0] text-[12px] font-mono" placeholder="Sheet #" />
@@ -391,26 +440,35 @@ export default function DrawingsModule({ globalProjectId, appProjects }: {
                             </tr>
                           ) : (
                             <Fragment key={s.id}>
-                              <tr className="border-t border-[#F1F5F9] hover:bg-[#F8FAFC]">
-                                <td className="px-3 py-2 font-mono font-semibold text-[#5A7A94]">
-                                  <button onClick={() => { setViewerSheet(s); setViewerFull(false) }} className="hover:underline" title="View sheet">{s.sheet_number ?? "—"}</button>
+                              <tr className="group border-t border-[#F1F5F9] hover:bg-[#F8FAFC] cursor-pointer"
+                                onClick={() => { setViewerSheet(s); setViewerFull(false) }}>
+                                <td className="pl-3 pr-1 py-2 w-8" onClick={e => e.stopPropagation()}>
+                                  <input type="checkbox" aria-label={`Select ${s.sheet_number ?? "sheet"}`}
+                                    checked={selectedSheetIds.has(s.id)}
+                                    onChange={() => toggleSelectSheet(s.id)}
+                                    className="align-middle accent-[#7B9BB5]" />
                                 </td>
+                                <td className="px-3 py-2 font-mono font-semibold text-[#5A7A94]">{s.sheet_number ?? "—"}</td>
                                 <td className="px-3 py-2 text-[#0F172A] truncate max-w-0">{s.title ?? <span className="text-[#94A3B8]">—</span>}</td>
-                                <td className="px-3 py-2 text-[#64748B]">{s.revision_label ?? "—"}</td>
                                 <td className="px-3 py-2">
-                                  <div className="flex items-center justify-end gap-3 whitespace-nowrap">
-                                    <button onClick={() => { setViewerSheet(s); setViewerFull(false) }} className="text-[#7B9BB5] hover:text-[#5A7A94] font-semibold">View</button>
-                                    <button onClick={() => triggerAddRevision(s.id)} disabled={addingRevId === s.id} className="text-[#7B9BB5] hover:text-[#5A7A94] font-semibold disabled:opacity-50">{addingRevId === s.id ? "Adding…" : "Add rev"}</button>
-                                    <button onClick={() => toggleRevHistory(s.id)} className="text-[#7B9BB5] hover:text-[#5A7A94] font-semibold">{revHistoryFor === s.id ? "Hide" : "Revs"}</button>
-                                    <button onClick={() => startEditSheet(s)} className="text-[#7B9BB5] hover:text-[#5A7A94] font-semibold">Edit</button>
+                                  {s.revision_label
+                                    ? <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-[#EEF2F6] text-[#475569] text-[10px] font-semibold">{s.revision_label}</span>
+                                    : <span className="text-[#CBD5E1]">—</span>}
+                                </td>
+                                <td className="px-3 py-2" onClick={e => e.stopPropagation()}>
+                                  <div className="flex items-center justify-end gap-3 whitespace-nowrap text-[#94A3B8]">
+                                    <button onClick={() => { setViewerSheet(s); setViewerFull(false) }} className="hover:text-[#5A7A94] group-hover:text-[#7B9BB5] font-medium transition-colors">View</button>
+                                    <button onClick={() => triggerAddRevision(s.id)} disabled={addingRevId === s.id} className="hover:text-[#5A7A94] group-hover:text-[#7B9BB5] font-medium disabled:opacity-50 transition-colors">{addingRevId === s.id ? "Adding…" : "Add rev"}</button>
+                                    <button onClick={() => toggleRevHistory(s.id)} className="hover:text-[#5A7A94] group-hover:text-[#7B9BB5] font-medium transition-colors">{revHistoryFor === s.id ? "Hide" : "Revs"}</button>
+                                    <button onClick={() => startEditSheet(s)} className="hover:text-[#5A7A94] group-hover:text-[#7B9BB5] font-medium transition-colors">Edit</button>
                                     <span className="text-[#E2E8F0]">|</span>
-                                    <button onClick={() => softDeleteSheet(s)} className="text-red-400 hover:text-red-500 font-semibold">Delete</button>
+                                    <button onClick={() => softDeleteSheet(s)} className="hover:text-red-500 group-hover:text-red-400 font-medium transition-colors">Delete</button>
                                   </div>
                                 </td>
                               </tr>
                               {revHistoryFor === s.id && (
                                 <tr className="bg-[#F8FAFC]">
-                                  <td colSpan={4} className="px-4 py-2 border-l-2 border-[#7B9BB5]/30">
+                                  <td colSpan={5} className="px-4 py-2 border-l-2 border-[#7B9BB5]/30">
                                     {revHistoryLoading ? (
                                       <span className="text-[11px] text-[#64748B]">Loading revisions…</span>
                                     ) : revHistory.length === 0 ? (
