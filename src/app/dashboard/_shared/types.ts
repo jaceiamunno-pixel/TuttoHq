@@ -123,6 +123,10 @@ export interface ChangeOrder {
   status: string; submitted_by: string | null; assigned_to: string | null;
   generated_pdf_path: string | null; approved_at: string | null;
   created_at: string; uploaded_by: string;
+  // PCO builder (Phase 0+). has_pco_detail distinguishes builder-created PCOs
+  // (pricing_sum is derived + read-only in the log) from manual log rows.
+  has_pco_detail?: boolean; description_of_work?: string | null; oh_p_percent?: number | null; fee_percent?: number | null;
+  pco_backup_pdf_path?: string | null; pco_cover_pdf_path?: string | null;
 }
 export interface PunchItem { id: string; item_number: string; description: string; location: string | null; assigned_to: string | null; due_date: string | null; priority: string; status: string; notes: string | null; project_id: string | null; created_at: string; completed_at: string | null; uploaded_by: string; generated_pdf_path?: string | null; file_name?: string | null; file_path?: string | null }
 export interface DailyReport { id: string; report_date: string; project_id: string | null; prepared_by: string | null; weather_conditions: string | null; temperature: string | null; manpower_count: number | null; work_performed: string | null; equipment: string | null; materials_delivered: string | null; visitors: string | null; issues_delays: string | null; safety_notes: string | null; created_at: string; uploaded_by: string; generated_pdf_path?: string | null; file_name?: string | null; file_path?: string | null }

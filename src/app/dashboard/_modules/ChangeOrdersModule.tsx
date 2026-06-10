@@ -7,6 +7,7 @@ import { PlusIcon, SpinnerIcon } from "../_shared/icons"
 import { presignAndUpload } from "@/lib/storage-upload"
 import { computeCoTotals } from "../_shared/co-math"
 import { exportChangeOrderLogToExcel } from "../_shared/excel-export"
+import PcoBuilder from "./PcoBuilder"
 
 // Change Orders module — extracted verbatim from dashboard/page.tsx (Step 6 of the split).
 // State, handlers, action bar, content, and both modals are unchanged; the load
@@ -44,6 +45,9 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
   const [coRealized, setCoRealized]                   = useState("")
   const [coRespRealized, setCoRespRealized]           = useState("")
   const [coExporting, setCoExporting]                 = useState(false)
+  const [showPco, setShowPco]                         = useState(false)
+  const [editPcoId, setEditPcoId]                     = useState<string | null>(null)
+  const [pcoPdfBusyId, setPcoPdfBusyId]               = useState<string | null>(null)
 
   function loadChangeOrders(pid = globalProjectId) {
     setCoLoading(true)
@@ -124,18 +128,35 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
     } finally { setCoGeneratingPdf(false) }
   }
 
+  // Regenerate + open a builder PCO's cover or backup PDF. The route overwrites
+  // the fixed paths and returns fresh signed URLs, so this is always current.
+  async function openPcoPdf(coId: string, which: "cover" | "backup") {
+    setPcoPdfBusyId(coId)
+    try {
+      const res = await fetch(`/api/change-orders/pco/${coId}/pdf`, { method: "POST" })
+      const d = await res.json().catch(() => ({}))
+      const url = which === "cover" ? d.cover_url : d.backup_url
+      if (res.ok && url) { window.open(url, "_blank"); loadChangeOrders() }
+    } finally { setPcoPdfBusyId(null) }
+  }
+
   async function saveCoStatus() {
     if (!viewCo) return
     setCoRespondSaving(true)
     try {
+      // pricing_sum on a builder PCO is derived (edited via the PCO builder), so
+      // the response modal must not rewrite it — omit it from the PATCH entirely.
+      const body: Record<string, string | number | null> = {
+        status: coResponseStatus, assigned_to: coAssignedTo, assigned_co_number: coAssignedCoNumber,
+        // Realized only counts once a C.O.# is assigned; otherwise null.
+        realized_amount: coAssignedCoNumber.trim() && coRespRealized.trim() !== "" ? parseFloat(coRespRealized) : null,
+      }
+      if (!viewCo.has_pco_detail) {
+        body.pricing_sum = coRespAmount.trim() === "" ? null : parseFloat(coRespAmount)
+      }
       const res = await fetch(`/api/change-orders/${viewCo.id}`, {
         method: "PATCH", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          status: coResponseStatus, assigned_to: coAssignedTo, assigned_co_number: coAssignedCoNumber,
-          pricing_sum: coRespAmount.trim() === "" ? null : parseFloat(coRespAmount),
-          // Realized only counts once a C.O.# is assigned; otherwise null.
-          realized_amount: coAssignedCoNumber.trim() && coRespRealized.trim() !== "" ? parseFloat(coRespRealized) : null,
-        }),
+        body: JSON.stringify(body),
       })
       if (res.ok) { setViewCo(null); loadChangeOrders() }
     } finally { setCoRespondSaving(false) }
@@ -197,11 +218,28 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
             )}
             <span className="hidden sm:inline">{coExporting ? "Exporting…" : "Download log"}</span>
           </button>
-          <button onClick={() => setShowNewCo(true)} className="h-8 px-4 rounded-md bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors flex items-center gap-1.5 whitespace-nowrap">
+          <button onClick={() => setShowNewCo(true)} className="h-8 px-3 rounded-md border border-[#E2E8F0] text-[13px] font-semibold text-[#0F172A] hover:bg-[#0F172A]/[0.04] transition-colors flex items-center gap-1.5 whitespace-nowrap">
             <PlusIcon /> New CO
+          </button>
+          <button onClick={() => setShowPco(true)} disabled={!globalProjectId}
+            title={globalProjectId ? "Build a priced PCO with a cover sheet" : "Select a project first"}
+            className="h-8 px-4 rounded-md bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors flex items-center gap-1.5 whitespace-nowrap disabled:opacity-50">
+            <PlusIcon /> New PCO
           </button>
         </div>
       </div>
+
+      {(showPco || editPcoId) && (() => {
+        const p = appProjects.find(x => x.id === globalProjectId)
+        return p ? (
+          <PcoBuilder
+            project={p}
+            pcoId={editPcoId}
+            onClose={() => { setShowPco(false); setEditPcoId(null) }}
+            onSaved={() => loadChangeOrders()}
+          />
+        ) : null
+      })()}
 
       {/* Contract value summary — mirrors the Gilbane PCO log */}
       {globalProjectId && (
@@ -254,9 +292,14 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
                     </div>
                     <p className="text-[15px] font-bold text-[#0F172A]">No change orders yet</p>
                     <p className="text-[13px] text-[#64748B] mt-1.5">Create your first change order to track scope changes.</p>
-                    <button onClick={() => setShowNewCo(true)} className="mt-5 h-9 px-5 rounded-lg bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors inline-flex items-center gap-2">
-                      <PlusIcon /> New CO
-                    </button>
+                    <div className="mt-5 flex items-center gap-2">
+                      <button onClick={() => setShowNewCo(true)} className="h-9 px-5 rounded-lg border border-[#E2E8F0] text-[13px] font-semibold text-[#0F172A] hover:bg-[#0F172A]/[0.04] transition-colors inline-flex items-center gap-2">
+                        <PlusIcon /> New CO
+                      </button>
+                      <button onClick={() => setShowPco(true)} disabled={!globalProjectId} className="h-9 px-5 rounded-lg bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors inline-flex items-center gap-2 disabled:opacity-50">
+                        <PlusIcon /> New PCO
+                      </button>
+                    </div>
                   </div>
                 ) : (
                   <>
@@ -289,10 +332,12 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
                         const badgeCls = statusColor[c.status] ?? "bg-gray-100 text-gray-500"
                         return (
                           <tr key={c.id} className="border-b border-[#E2E8F0]/60 hover:bg-[#F8F9FA] transition-colors">
-                            <td className="px-4 py-2.5 text-[12px] font-mono text-[#7B9BB5]">{pcoLabel(c.co_number)}</td>
+                            <td className="px-4 py-2.5 text-[12px] font-mono text-[#7B9BB5] whitespace-nowrap">{pcoLabel(c.co_number)}{c.has_pco_detail && <span className="ml-1.5 px-1 py-0.5 rounded bg-[#7B9BB5]/10 text-[#5A7A94] text-[9px] font-sans font-semibold align-middle">PCO</span>}</td>
                             <td className="px-4 py-2.5 text-[12px] text-[#0F172A]">{c.assigned_co_number || "—"}</td>
                             <td className="px-4 py-2.5 text-[#64748B] text-[12px] truncate">{proj?.name ?? "—"}</td>
-                            <td className="px-4 py-2.5 max-w-0"><p className="text-[#0F172A] truncate">{c.proposal ?? "—"}</p></td>
+                            <td className="px-4 py-2.5 align-top min-w-[220px]">
+                              <p className="text-[13px] text-[#0F172A] leading-relaxed whitespace-pre-wrap break-words">{c.proposal ?? "—"}</p>
+                            </td>
                             <td className="px-4 py-2.5 text-[12px] tabular-nums font-medium">
                               {c.pricing_sum != null ? <span className={c.pricing_sum < 0 ? "text-red-600" : "text-[#0F172A]"}>{fmtUsd2(c.pricing_sum)}</span> : <span className="text-[#0F172A]">—</span>}
                             </td>
@@ -308,10 +353,23 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
                             </td>
                             <td className="px-4 py-2.5">
                               <div className="flex items-center gap-1">
+                                {c.has_pco_detail && (
+                                  <button onClick={() => setEditPcoId(c.id)}
+                                    className="text-[11px] text-[#7B9BB5] hover:text-[#5A7A94] px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors">Edit</button>
+                                )}
                                 <button onClick={() => { setViewCo(c); setCoResponseStatus(c.status); setCoAssignedTo(c.assigned_to ?? ""); setCoAssignedCoNumber(c.assigned_co_number ?? ""); setCoRespAmount(c.pricing_sum != null ? String(c.pricing_sum) : ""); setCoRespRealized(c.realized_amount != null ? String(c.realized_amount) : "") }}
                                   className="text-[11px] text-[#64748B] hover:text-[#0F172A] px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors">View</button>
-                                <button onClick={() => generateCoPdf(c.id)} disabled={coGeneratingPdf}
-                                  className="text-[11px] text-[#7B9BB5] hover:text-[#7B9BB5] px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors disabled:opacity-50">PDF</button>
+                                {c.has_pco_detail ? (
+                                  <>
+                                    <button onClick={() => openPcoPdf(c.id, "cover")} disabled={pcoPdfBusyId === c.id}
+                                      className="text-[11px] text-[#7B9BB5] px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors disabled:opacity-50">Cover</button>
+                                    <button onClick={() => openPcoPdf(c.id, "backup")} disabled={pcoPdfBusyId === c.id}
+                                      className="text-[11px] text-[#7B9BB5] px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors disabled:opacity-50">Backup</button>
+                                  </>
+                                ) : (
+                                  <button onClick={() => generateCoPdf(c.id)} disabled={coGeneratingPdf}
+                                    className="text-[11px] text-[#7B9BB5] hover:text-[#7B9BB5] px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors disabled:opacity-50">PDF</button>
+                                )}
                                 <button onClick={() => deleteCo(c.id)}
                                   className="text-[11px] text-red-400/60 hover:text-red-400 px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors">Del</button>
                               </div>
@@ -334,15 +392,25 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
                             <span className="text-[11px] font-mono text-[#7B9BB5]">{pcoLabel(c.co_number)}{c.assigned_co_number ? <span className="text-[#64748B]"> · CO {c.assigned_co_number}</span> : null}</span>
                             <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold ${badgeCls}`}>{c.status}</span>
                           </div>
-                          <p className="text-[13px] font-medium text-[#0F172A] mb-1 truncate">{c.proposal ?? "—"}</p>
+                          <p className="text-[13px] font-medium text-[#0F172A] mb-1 leading-relaxed whitespace-pre-wrap break-words">{c.proposal ?? "—"}</p>
                           {proj && <p className="text-[11px] text-[#64748B] mb-1">{proj.name}</p>}
                           <div className="flex items-center justify-between mb-2">
                             <span className={`text-[12px] font-semibold ${c.pricing_sum != null && c.pricing_sum < 0 ? "text-red-600" : "text-[#0F172A]"}`}>{c.pricing_sum != null ? fmtUsd2(c.pricing_sum) : "—"}</span>
                             <span className="text-[11px] text-[#64748B]">{c.date ? fmtDateOnly(c.date) : ""}</span>
                           </div>
                           <div className="flex items-center gap-1">
+                            {c.has_pco_detail && (
+                              <button onClick={() => setEditPcoId(c.id)} className="text-[11px] text-[#7B9BB5] px-2 py-1 rounded border border-[#E2E8F0] bg-[#F8F9FA]">Edit</button>
+                            )}
                             <button onClick={() => { setViewCo(c); setCoResponseStatus(c.status); setCoAssignedTo(c.assigned_to ?? ""); setCoAssignedCoNumber(c.assigned_co_number ?? ""); setCoRespAmount(c.pricing_sum != null ? String(c.pricing_sum) : ""); setCoRespRealized(c.realized_amount != null ? String(c.realized_amount) : "") }} className="text-[11px] text-[#64748B] px-2 py-1 rounded border border-[#E2E8F0] bg-[#F8F9FA]">View</button>
-                            <button onClick={() => generateCoPdf(c.id)} disabled={coGeneratingPdf} className="text-[11px] text-[#7B9BB5] px-2 py-1 rounded border border-[#E2E8F0] bg-[#F8F9FA] disabled:opacity-50">PDF</button>
+                            {c.has_pco_detail ? (
+                              <>
+                                <button onClick={() => openPcoPdf(c.id, "cover")} disabled={pcoPdfBusyId === c.id} className="text-[11px] text-[#7B9BB5] px-2 py-1 rounded border border-[#E2E8F0] bg-[#F8F9FA] disabled:opacity-50">Cover</button>
+                                <button onClick={() => openPcoPdf(c.id, "backup")} disabled={pcoPdfBusyId === c.id} className="text-[11px] text-[#7B9BB5] px-2 py-1 rounded border border-[#E2E8F0] bg-[#F8F9FA] disabled:opacity-50">Backup</button>
+                              </>
+                            ) : (
+                              <button onClick={() => generateCoPdf(c.id)} disabled={coGeneratingPdf} className="text-[11px] text-[#7B9BB5] px-2 py-1 rounded border border-[#E2E8F0] bg-[#F8F9FA] disabled:opacity-50">PDF</button>
+                            )}
                             <button onClick={() => deleteCo(c.id)} className="text-[11px] text-red-400 px-2 py-1 rounded border border-[#E2E8F0] bg-[#F8F9FA]">Del</button>
                           </div>
                         </div>
@@ -603,10 +671,11 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
                       className="w-full h-9 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40 placeholder:text-[#64748B]" />
                   </div>
                   <div>
-                    <label className="block text-[11px] font-semibold text-[#64748B] uppercase tracking-widest mb-1">Proposed Amount ($) <span className="text-[#94A3B8] normal-case font-normal tracking-normal">(− = credit)</span></label>
+                    <label className="block text-[11px] font-semibold text-[#64748B] uppercase tracking-widest mb-1">Proposed Amount ($) <span className="text-[#94A3B8] normal-case font-normal tracking-normal">{viewCo?.has_pco_detail ? "(from PCO)" : "(− = credit)"}</span></label>
                     <input type="number" step="0.01" value={coRespAmount} onChange={e => setCoRespAmount(e.target.value)}
-                      placeholder="0.00"
-                      className="w-full h-9 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40 tabular-nums placeholder:text-[#64748B]" />
+                      disabled={!!viewCo?.has_pco_detail} placeholder="0.00"
+                      className="w-full h-9 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40 tabular-nums placeholder:text-[#64748B] disabled:bg-[#F1F5F9] disabled:text-[#94A3B8] disabled:cursor-not-allowed" />
+                    {viewCo?.has_pco_detail && <p className="text-[10px] text-[#94A3B8] mt-0.5">Derived from the PCO — use Edit to change pricing.</p>}
                   </div>
                   <div>
                     <label className="block text-[11px] font-semibold text-[#64748B] uppercase tracking-widest mb-1">Realized Amount ($) <span className="text-[#94A3B8] normal-case font-normal tracking-normal">(accepted; − = credit)</span></label>

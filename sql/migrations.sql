@@ -2139,3 +2139,117 @@ ALTER TABLE change_orders
 -- Item 4 — assigned/approved CO number, free-text, independent of co_number
 -- (which is the PCO running count). Nullable, no default. Reverse: DROP COLUMN.
 ALTER TABLE change_orders ADD COLUMN IF NOT EXISTS assigned_co_number TEXT;
+
+-- =============================================================================
+-- PCO BUILDER -- Phase 0 migration (additive only). Applied to prod 2026-06-10.
+-- New: labor_rates, change_order_line_items
+-- Alters: change_orders (+5), company_settings (+4), user_profiles (+1 col)
+-- New fn: set_my_signature (SECURITY DEFINER -- the sole authenticated write
+--   path to user_profiles.signature_storage_path; preserves the invariant that
+--   ALL user_profiles writes go through SECURITY DEFINER. No UPDATE policy and
+--   no authenticated table/column UPDATE grant are added -- a bare own-row
+--   UPDATE policy would have let users self-assign role='admin' since
+--   authenticated holds full-column UPDATE on user_profiles per relacl.)
+-- Touches no existing columns, CHECKs, or the CO status/realized_amount model.
+-- =============================================================================
+
+-- --- 1. labor_rates: company-level rate book (PCOs snapshot from it) ----------
+CREATE TABLE IF NOT EXISTS labor_rates (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  company_id  UUID REFERENCES companies(id) DEFAULT get_my_company_id(),
+  role_name   TEXT NOT NULL,
+  reg_rate    NUMERIC(10,2),
+  ot_rate     NUMERIC(10,2),
+  dt_rate     NUMERIC(10,2),
+  sort_order  INTEGER,
+  active      BOOLEAN NOT NULL DEFAULT true,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_labor_rates_company ON labor_rates(company_id);
+
+ALTER TABLE labor_rates ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "labor_rates: company select" ON labor_rates;
+DROP POLICY IF EXISTS "labor_rates: company insert" ON labor_rates;
+DROP POLICY IF EXISTS "labor_rates: company update" ON labor_rates;
+DROP POLICY IF EXISTS "labor_rates: company delete" ON labor_rates;
+CREATE POLICY "labor_rates: company select" ON labor_rates FOR SELECT TO authenticated USING     (company_id = get_my_company_id());
+CREATE POLICY "labor_rates: company insert" ON labor_rates FOR INSERT TO authenticated WITH CHECK (company_id = get_my_company_id());
+CREATE POLICY "labor_rates: company update" ON labor_rates FOR UPDATE TO authenticated USING     (company_id = get_my_company_id()) WITH CHECK (company_id = get_my_company_id());
+CREATE POLICY "labor_rates: company delete" ON labor_rates FOR DELETE TO authenticated USING     (company_id = get_my_company_id());
+
+-- --- 2. change_order_line_items: pricing backup rows for a PCO ----------------
+-- Line total is COMPUTED in app code (never stored). category drives which
+-- column group is meaningful. Cascades when its parent change_order is deleted.
+CREATE TABLE IF NOT EXISTS change_order_line_items (
+  id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  change_order_id  UUID NOT NULL REFERENCES change_orders(id) ON DELETE CASCADE,
+  company_id       UUID REFERENCES companies(id) DEFAULT get_my_company_id(),
+  category         TEXT NOT NULL CHECK (category IN ('labor','material','subcontractor')),
+  description      TEXT,            -- labor: role-name snapshot; material: item; sub: firm/description
+  -- labor columns:
+  qty_reg          NUMERIC,
+  rate_reg         NUMERIC(10,2),
+  qty_ot           NUMERIC,
+  rate_ot          NUMERIC(10,2),
+  qty_dt           NUMERIC,
+  rate_dt          NUMERIC(10,2),
+  -- material columns:
+  qty              NUMERIC,
+  unit             TEXT,
+  unit_price       NUMERIC(12,2),
+  note             TEXT,            -- THP free-text ref col (e.g. "CO #20")
+  -- subcontractor columns:
+  amount           NUMERIC(12,2),
+  sort_order       INTEGER,
+  created_at       TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_coli_change_order ON change_order_line_items(change_order_id);
+CREATE INDEX IF NOT EXISTS idx_coli_company      ON change_order_line_items(company_id);
+
+ALTER TABLE change_order_line_items ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "coli: company select" ON change_order_line_items;
+DROP POLICY IF EXISTS "coli: company insert" ON change_order_line_items;
+DROP POLICY IF EXISTS "coli: company update" ON change_order_line_items;
+DROP POLICY IF EXISTS "coli: company delete" ON change_order_line_items;
+CREATE POLICY "coli: company select" ON change_order_line_items FOR SELECT TO authenticated USING     (company_id = get_my_company_id());
+CREATE POLICY "coli: company insert" ON change_order_line_items FOR INSERT TO authenticated WITH CHECK (company_id = get_my_company_id());
+CREATE POLICY "coli: company update" ON change_order_line_items FOR UPDATE TO authenticated USING     (company_id = get_my_company_id()) WITH CHECK (company_id = get_my_company_id());
+CREATE POLICY "coli: company delete" ON change_order_line_items FOR DELETE TO authenticated USING     (company_id = get_my_company_id());
+
+-- --- 3. change_orders: additive PCO columns (nullable; no existing col touched)
+ALTER TABLE change_orders
+  ADD COLUMN IF NOT EXISTS description_of_work  TEXT,
+  ADD COLUMN IF NOT EXISTS oh_p_percent         NUMERIC(5,4),
+  ADD COLUMN IF NOT EXISTS pco_backup_pdf_path  TEXT,
+  ADD COLUMN IF NOT EXISTS pco_cover_pdf_path   TEXT,
+  ADD COLUMN IF NOT EXISTS has_pco_detail       BOOLEAN NOT NULL DEFAULT false;
+
+-- --- 4. company_settings: cover header + OH&P default (logo_path already exists)
+ALTER TABLE company_settings
+  ADD COLUMN IF NOT EXISTS address_line1         TEXT,
+  ADD COLUMN IF NOT EXISTS address_line2         TEXT,
+  ADD COLUMN IF NOT EXISTS phone                 TEXT,
+  ADD COLUMN IF NOT EXISTS default_oh_p_percent  NUMERIC(5,4);
+
+-- --- 5. user_profiles: per-user signature image path (RPC write path) --------
+-- Storage path is company-scoped: {company_id}/signatures/{user_id}.png.
+-- Writes go ONLY through set_my_signature() below, preserving the invariant
+-- that every user_profiles write is via a SECURITY DEFINER function. No UPDATE
+-- policy / no authenticated UPDATE grant is added (would expose role column).
+ALTER TABLE user_profiles
+  ADD COLUMN IF NOT EXISTS signature_storage_path TEXT;
+
+CREATE OR REPLACE FUNCTION set_my_signature(p_path TEXT)
+RETURNS void
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  UPDATE user_profiles
+  SET signature_storage_path = p_path
+  WHERE user_id = auth.uid();
+$$;
+
+REVOKE ALL ON FUNCTION set_my_signature(TEXT) FROM public, anon;
+GRANT EXECUTE ON FUNCTION set_my_signature(TEXT) TO authenticated;
