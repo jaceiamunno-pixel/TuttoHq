@@ -34,18 +34,23 @@ export interface PcoTotals {
   hoursReg: number; hoursOt: number; hoursDt: number
   materialsSubtotal: number
   subSubtotal: number
-  ohpBase: number   // labor + materials (the base OH&P is applied to)
+  ohpBase: number      // labor + materials (the base OH&P is applied to)
   ohpAmount: number
-  grandTotal: number
+  preFeeTotal: number  // labor + materials + OH&P + subcontractor — the BACKUP grand total (no fee)
+  feeAmount: number    // fee% of preFeeTotal — shown on backup, ADDED only on the cover
+  grandTotal: number   // preFeeTotal + fee — the COVER total, == stored pricing_sum
 }
 
-// ohpPercent is a FRACTION (0.15 == 15%), matching company_settings.default_oh_p_percent
-// and change_orders.oh_p_percent.
+// ohpPercent / feePercent are FRACTIONS (0.15 == 15%). Fee is a percent of the
+// full pre-fee total (labor + materials + OH&P + subcontractor). IMPORTANT: fee
+// is NOT part of preFeeTotal (the backup grand total) — it is only added into
+// grandTotal (the cover total / pricing_sum).
 export function computePcoTotals(
   labor: PcoLaborLine[],
   materials: PcoMaterialLine[],
   subs: PcoSubLine[],
   ohpPercent: number | null,
+  feePercent: number | null = null,
 ): PcoTotals {
   const laborSubtotal     = round2(labor.reduce((s, l) => s + laborLineTotal(l), 0))
   const hoursReg          = round2(labor.reduce((s, l) => s + n0(l.qty_reg), 0))
@@ -55,6 +60,8 @@ export function computePcoTotals(
   const subSubtotal       = round2(subs.reduce((s, x) => s + n0(x.amount), 0))
   const ohpBase           = round2(laborSubtotal + materialsSubtotal)
   const ohpAmount         = round2(n0(ohpPercent) * ohpBase)
-  const grandTotal        = round2(laborSubtotal + materialsSubtotal + ohpAmount + subSubtotal)
-  return { laborSubtotal, hoursReg, hoursOt, hoursDt, materialsSubtotal, subSubtotal, ohpBase, ohpAmount, grandTotal }
+  const preFeeTotal       = round2(laborSubtotal + materialsSubtotal + ohpAmount + subSubtotal)
+  const feeAmount         = round2(n0(feePercent) * preFeeTotal)
+  const grandTotal        = round2(preFeeTotal + feeAmount)
+  return { laborSubtotal, hoursReg, hoursOt, hoursDt, materialsSubtotal, subSubtotal, ohpBase, ohpAmount, preFeeTotal, feeAmount, grandTotal }
 }

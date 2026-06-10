@@ -34,7 +34,7 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
   const { id } = await params
 
   const { data: co } = await supabase.from("change_orders")
-    .select("id, co_number, project_id, date, proposal, description_of_work, schedule_impact_days, oh_p_percent, submitted_by, signer_title, signer_signature_path, has_pco_detail")
+    .select("id, co_number, project_id, date, proposal, description_of_work, schedule_impact_days, oh_p_percent, fee_percent, submitted_by, signer_title, signer_signature_path, has_pco_detail")
     .eq("id", id).maybeSingle()
   if (!co) return NextResponse.json({ error: "Change order not found" }, { status: 404 })
   if (!co.has_pco_detail) return NextResponse.json({ error: "Not a builder PCO" }, { status: 409 })
@@ -51,7 +51,7 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
   const laborInputs: PcoLaborLine[] = laborRows.map(l => ({ qty_reg: l.qty_reg, rate_reg: l.rate_reg, qty_ot: l.qty_ot, rate_ot: l.rate_ot, qty_dt: l.qty_dt, rate_dt: l.rate_dt }))
   const materialInputs: PcoMaterialLine[] = materialRows.map(m => ({ qty: m.qty, unit_price: m.unit_price }))
   const subInputs: PcoSubLine[] = subRows.map(s => ({ amount: s.amount }))
-  const totals = computePcoTotals(laborInputs, materialInputs, subInputs, co.oh_p_percent)
+  const totals = computePcoTotals(laborInputs, materialInputs, subInputs, co.oh_p_percent, co.fee_percent)
 
   // Project + company context
   let project: Record<string, string | null> = {}
@@ -86,6 +86,7 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
   const pcoLabel = `PCO ${pcoNum}`
   const dateLong = co.date ? new Date(co.date + "T00:00:00").toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" }) : ""
   const ohpPct = +(Number(co.oh_p_percent ?? 0) * 100).toFixed(4)
+  const feePct = +(Number(co.fee_percent ?? 0) * 100).toFixed(4)
 
   // ── Backup PDF — THP-style full-grid worksheet ──────────────────────────────
   const backup = await PDFBuilder.create({ documentType: "PCO Pricing Backup", documentNumber: pcoLabel, logoBytes })
@@ -143,11 +144,14 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
     backup.paragraph("—", { muted: true })
   }
 
-  // OH&P (% on labor+materials) + GRAND TOTAL — yellow rows, like THP.
+  // OH&P + GRAND TOTAL (pre-fee) + Fee — yellow rows. The backup Grand Total
+  // EXCLUDES the fee; Fee is shown as a percent-of-total reference only (it is
+  // added into the cover's TOTAL, not here).
   backup.spacer(2)
   backup.gridTable([], [
     [`OH&P (${ohpPct}%)`, usd(totals.ohpAmount)],
-    ["Grand Total", usd(totals.grandTotal)],
+    ["Grand Total", usd(totals.preFeeTotal)],
+    [`Fee (${feePct}%)`, usd(totals.feeAmount)],
   ], [442, 84], { align: ["left", "right"], highlight: () => true })
   const backupBytes = await backup.save()
 
@@ -173,6 +177,7 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
     ["Material & Equipment", usd(totals.materialsSubtotal)],
     [`OH&P (${ohpPct}%)`, usd(totals.ohpAmount)],
     ["Subcontractor", usd(totals.subSubtotal)],
+    [`Fee (${feePct}%)`, usd(totals.feeAmount)],
     ["TOTAL", usd(totals.grandTotal)],
   ], [400, 126], { align: ["left", "right"], highlight: r => r[0] === "TOTAL" })
 

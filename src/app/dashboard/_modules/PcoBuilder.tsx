@@ -64,6 +64,8 @@ export default function PcoBuilder({ project, pcoId, onClose, onSaved }: {
   const [materials, setMaterials] = useState<MaterialRow[]>([emptyMaterial()])
   const [subs, setSubs] = useState<SubRow[]>([emptySub()])
   const [ohpPercentInput, setOhpPercentInput] = useState("") // percent (e.g. "15")
+  const [feePercentInput, setFeePercentInput] = useState("") // percent; % of pre-fee total
+  const [rateBook, setRateBook] = useState<ActiveRate[]>([]) // labor-role typeahead source
 
   // Cover fields
   const [title, setTitle] = useState("")
@@ -82,14 +84,17 @@ export default function PcoBuilder({ project, pcoId, onClose, onSaved }: {
   useEffect(() => {
     let cancelled = false
     async function init() {
-      const [settings, sig, authName] = await Promise.all([
+      const [settings, sig, authName, ratesRes] = await Promise.all([
         fetch("/api/settings").then(r => r.json()).catch(() => ({})),
         fetch("/api/profile/signature").then(r => r.json()).catch(() => ({})),
         getAuthName(),
+        fetch("/api/labor-rates").then(r => r.json()).catch(() => ({ rates: [] })),
       ])
       if (cancelled) return
       setCompany({ logoUrl: settings.logo_url ?? null, address1: settings.address_line1 ?? "", address2: settings.address_line2 ?? "", phone: settings.phone ?? "" })
       setSignatureUrl(sig.signature_url ?? null)
+      const allRates: ActiveRate[] = ratesRes.rates ?? []
+      setRateBook(allRates)
 
       if (pcoId) {
         const d = await fetch(`/api/change-orders/pco/${pcoId}`).then(r => r.json()).catch(() => null)
@@ -102,17 +107,15 @@ export default function PcoBuilder({ project, pcoId, onClose, onSaved }: {
         setDescriptionOfWork(co.description_of_work ?? "")
         setScheduleDays(co.schedule_impact_days != null ? String(co.schedule_impact_days) : "0")
         setOhpPercentInput(co.oh_p_percent != null ? String(+(co.oh_p_percent * 100).toFixed(4)) : "")
+        setFeePercentInput(co.fee_percent != null ? String(+(co.fee_percent * 100).toFixed(4)) : "")
         setSignerName(co.submitted_by ?? authName)
         setSignerTitle(co.signer_title ?? "")
         if (co.date) setDate(co.date)
         setPcoDisplay(co.co_number ?? "—")
       } else {
-        const [rates, numRes] = await Promise.all([
-          fetch("/api/labor-rates").then(r => r.json()).catch(() => ({ rates: [] })),
-          fetch(`/api/change-orders/next-number?project_id=${encodeURIComponent(project.id)}`).then(r => r.json()).catch(() => ({ display: "001" })),
-        ])
+        const numRes = await fetch(`/api/change-orders/next-number?project_id=${encodeURIComponent(project.id)}`).then(r => r.json()).catch(() => ({ display: "001" }))
         if (cancelled) return
-        const active: ActiveRate[] = (rates.rates ?? []).filter((r: ActiveRate) => r.active)
+        const active: ActiveRate[] = allRates.filter(r => r.active)
         setLabor(active.length
           ? active.map(r => ({ id: rid("l"), description: r.role_name, qty_reg: 0, rate_reg: r.reg_rate, qty_ot: 0, rate_ot: r.ot_rate, qty_dt: 0, rate_dt: r.dt_rate }))
           : [emptyLabor()])
@@ -128,15 +131,30 @@ export default function PcoBuilder({ project, pcoId, onClose, onSaved }: {
 
   const ohpFraction = ohpPercentInput.trim() === "" ? 0 : Number(ohpPercentInput) / 100
   const ohpValid = ohpPercentInput.trim() === "" || (Number.isFinite(Number(ohpPercentInput)) && Number(ohpPercentInput) >= 0)
+  const feeFraction = feePercentInput.trim() === "" ? 0 : Number(feePercentInput) / 100
+  const feeValid = feePercentInput.trim() === "" || (Number.isFinite(Number(feePercentInput)) && Number(feePercentInput) >= 0)
 
   const totals = useMemo(
-    () => computePcoTotals(labor, materials, subs, Number.isFinite(ohpFraction) ? ohpFraction : 0),
-    [labor, materials, subs, ohpFraction],
+    () => computePcoTotals(labor, materials, subs, Number.isFinite(ohpFraction) ? ohpFraction : 0, Number.isFinite(feeFraction) ? feeFraction : 0),
+    [labor, materials, subs, ohpFraction, feeFraction],
   )
 
   function setLaborField(id: string, field: keyof LaborRow, value: string | number | null) {
     setLabor(prev => prev.map(r => (r.id === id ? { ...r, [field]: value } : r)))
   }
+  // Role typeahead: setting the role name to a known rate-book role auto-fills
+  // its rates (only when the row's rates are still blank, so manual edits stick).
+  function onRoleChange(rowId: string, name: string) {
+    setLabor(prev => prev.map(r => {
+      if (r.id !== rowId) return r
+      const match = rateBook.find(rb => rb.role_name.trim().toLowerCase() === name.trim().toLowerCase())
+      const ratesEmpty = [r.rate_reg, r.rate_ot, r.rate_dt].every(v => v == null || v === 0)
+      return match && ratesEmpty
+        ? { ...r, description: name, rate_reg: match.reg_rate, rate_ot: match.ot_rate, rate_dt: match.dt_rate }
+        : { ...r, description: name }
+    }))
+  }
+  const roleOptions = [...new Set(rateBook.map(r => r.role_name).filter(Boolean))]
   function setMaterialField(id: string, field: keyof MaterialRow, value: string | number | null) {
     setMaterials(prev => prev.map(r => (r.id === id ? { ...r, [field]: value } : r)))
   }
@@ -155,6 +173,7 @@ export default function PcoBuilder({ project, pcoId, onClose, onSaved }: {
         description_of_work: descriptionOfWork.trim() || null,
         schedule_impact_days: scheduleDays.trim() === "" ? 0 : parseInt(scheduleDays, 10),
         oh_p_percent: ohpPercentInput.trim() === "" ? null : Number(ohpPercentInput) / 100,
+        fee_percent: feePercentInput.trim() === "" ? null : Number(feePercentInput) / 100,
         signer_name: signerName.trim() || null,
         signer_title: signerTitle.trim() || null,
         labor: labor.map(({ id: _id, ...r }) => r),
@@ -240,7 +259,10 @@ export default function PcoBuilder({ project, pcoId, onClose, onSaved }: {
 
             {/* LABOR */}
             <div className="bg-white rounded-xl border border-[#E2E8F0] p-4">
-              <SectionHeader title="Labor" hint="Rates are snapshotted — editing them here won't change your rate book." />
+              <SectionHeader title="Labor" hint="Pick a saved role or type a new one — new roles are remembered." />
+              <datalist id="pco-role-options">
+                {roleOptions.map(n => <option key={n} value={n} />)}
+              </datalist>
               <div className="overflow-x-auto">
                 <table className="w-full min-w-[760px] text-[13px]">
                   <thead>
@@ -260,8 +282,8 @@ export default function PcoBuilder({ project, pcoId, onClose, onSaved }: {
                     {labor.map(row => (
                       <tr key={row.id} className="border-b border-[#F1F5F9]">
                         <td className="py-1.5 pr-2">
-                          <input className={`${cell} w-full`} value={row.description} placeholder="Role"
-                            onChange={e => setLaborField(row.id, "description", e.target.value)} />
+                          <input className={`${cell} w-full`} value={row.description} placeholder="Role" list="pco-role-options"
+                            onChange={e => onRoleChange(row.id, e.target.value)} />
                         </td>
                         {(["qty_reg", "rate_reg", "qty_ot", "rate_ot", "qty_dt", "rate_dt"] as const).map(f => (
                           <td key={f} className="py-1.5 px-1">
@@ -386,9 +408,9 @@ export default function PcoBuilder({ project, pcoId, onClose, onSaved }: {
                 className="mt-2 h-7 px-2.5 rounded-md border border-[#E2E8F0] text-[12px] font-medium text-[#0F172A] hover:bg-[#F4F5F7]">+ Add subcontractor row</button>
             </div>
 
-            {/* OH&P + summary */}
+            {/* OH&P + Fee + summary */}
             <div className="bg-white rounded-xl border border-[#E2E8F0] p-4">
-              <div className="flex flex-wrap items-end gap-4 mb-3">
+              <div className="flex flex-wrap items-end gap-5 mb-3">
                 <div>
                   <label className="block text-[11px] font-semibold text-[#0F172A] mb-1">OH&amp;P %</label>
                   <div className="relative w-28">
@@ -396,9 +418,16 @@ export default function PcoBuilder({ project, pcoId, onClose, onSaved }: {
                       value={ohpPercentInput} placeholder="0" onChange={e => setOhpPercentInput(e.target.value)} />
                     <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[12px] text-[#64748B]">%</span>
                   </div>
+                  <p className="text-[10px] text-[#94A3B8] mt-1">on {usd(totals.ohpBase)} (labor + materials)</p>
                 </div>
-                <div className="text-[12px] text-[#64748B]">
-                  on {usd(totals.ohpBase)} (labor + materials) = <span className="font-semibold text-[#0F172A]">{usd(totals.ohpAmount)}</span>
+                <div>
+                  <label className="block text-[11px] font-semibold text-[#0F172A] mb-1">Fee %</label>
+                  <div className="relative w-28">
+                    <input className={`${cell} w-full pr-6 ${feeValid ? "" : "border-red-300"}`} type="number" step="0.1"
+                      value={feePercentInput} placeholder="0" onChange={e => setFeePercentInput(e.target.value)} />
+                    <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[12px] text-[#64748B]">%</span>
+                  </div>
+                  <p className="text-[10px] text-[#94A3B8] mt-1">on {usd(totals.preFeeTotal)} (total) — cover only</p>
                 </div>
               </div>
               <div className="border-t border-[#E2E8F0] pt-3 space-y-1.5 max-w-[360px] ml-auto text-[13px]">
@@ -406,6 +435,11 @@ export default function PcoBuilder({ project, pcoId, onClose, onSaved }: {
                 <Line label="Material / Equipment" value={usd(totals.materialsSubtotal)} />
                 <Line label="OH&P" value={usd(totals.ohpAmount)} />
                 <Line label="Subcontractor" value={usd(totals.subSubtotal)} />
+                <div className="flex items-center justify-between pt-1 border-t border-[#F1F5F9]">
+                  <span className="text-[#64748B]">Backup total (no fee)</span>
+                  <span className="tabular-nums font-medium text-[#0F172A]">{usd(totals.preFeeTotal)}</span>
+                </div>
+                <Line label="Fee" value={usd(totals.feeAmount)} />
               </div>
             </div>
           </div>
@@ -491,8 +525,9 @@ export default function PcoBuilder({ project, pcoId, onClose, onSaved }: {
               <div className="py-4 border-b border-[#E2E8F0] space-y-1.5 text-[12px] max-w-[320px] ml-auto">
                 <Line label="Labor" value={usd(totals.laborSubtotal)} />
                 <Line label="Material & Equipment" value={usd(totals.materialsSubtotal)} />
-                {totals.ohpAmount !== 0 && <Line label="OH&P" value={usd(totals.ohpAmount)} />}
+                <Line label="OH&P" value={usd(totals.ohpAmount)} />
                 <Line label="Subcontractor" value={usd(totals.subSubtotal)} />
+                <Line label="Fee" value={usd(totals.feeAmount)} />
                 <div className="flex items-center justify-between pt-1.5 border-t border-[#E2E8F0] font-bold text-[13px]">
                   <span>TOTAL</span><span className="tabular-nums">{usd(totals.grandTotal)}</span>
                 </div>

@@ -125,7 +125,7 @@ export interface ChangeOrder {
   created_at: string; uploaded_by: string;
   // PCO builder (Phase 0+). has_pco_detail distinguishes builder-created PCOs
   // (pricing_sum is derived + read-only in the log) from manual log rows.
-  has_pco_detail?: boolean; description_of_work?: string | null; oh_p_percent?: number | null;
+  has_pco_detail?: boolean; description_of_work?: string | null; oh_p_percent?: number | null; fee_percent?: number | null;
   pco_backup_pdf_path?: string | null; pco_cover_pdf_path?: string | null;
 }
 export interface PunchItem { id: string; item_number: string; description: string; location: string | null; assigned_to: string | null; due_date: string | null; priority: string; status: string; notes: string | null; project_id: string | null; created_at: string; completed_at: string | null; uploaded_by: string; generated_pdf_path?: string | null; file_name?: string | null; file_path?: string | null }

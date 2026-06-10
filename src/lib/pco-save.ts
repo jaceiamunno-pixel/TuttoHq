@@ -25,6 +25,7 @@ export interface PcoSaveBody {
   materials?: PcoMaterialInput[]
   subs?: PcoSubInput[]
   oh_p_percent?: number | null // FRACTION (0.15 == 15%)
+  fee_percent?: number | null  // FRACTION; % of the full pre-fee total
 }
 
 const arr = <T>(v: T[] | undefined): T[] => (Array.isArray(v) ? v : [])
@@ -35,8 +36,8 @@ const numOrNull = (v: unknown): number | null => {
 }
 const txt = (v: unknown): string | null => (typeof v === "string" && v.trim() ? v.trim() : null)
 
-// pricing_sum = grand total, recomputed from the submitted lines (never trusted
-// from the client).
+// pricing_sum = grand total (INCLUDES fee — this is the cover total), recomputed
+// from the submitted lines (never trusted from the client).
 export function computePcoPricingSum(body: PcoSaveBody): number {
   return computePcoTotals(
     arr(body.labor).map(l => ({
@@ -47,6 +48,7 @@ export function computePcoPricingSum(body: PcoSaveBody): number {
     arr(body.materials).map(m => ({ qty: numOrNull(m.qty), unit_price: numOrNull(m.unit_price) })),
     arr(body.subs).map(s => ({ amount: numOrNull(s.amount) })),
     numOrNull(body.oh_p_percent),
+    numOrNull(body.fee_percent),
   ).grandTotal
 }
 
@@ -61,6 +63,28 @@ function materialIsBlank(m: PcoMaterialInput): boolean {
 }
 function subIsBlank(s: PcoSubInput): boolean {
   return !txt(s.description) && numOrNull(s.amount) === null
+}
+
+// New labor roles to add to the company rate book ("create" from the builder
+// typeahead): any labor line whose role name isn't already in the book. Rates
+// snapshot from the line so the role shows up pre-priced next time. Pure — the
+// route fetches existing names + does the insert.
+export function newLaborRoleRows(
+  body: PcoSaveBody,
+  existingRoleNames: string[],
+): { role_name: string; reg_rate: number | null; ot_rate: number | null; dt_rate: number | null; active: boolean }[] {
+  const have = new Set(existingRoleNames.map(r => r.trim().toLowerCase()))
+  const seen = new Set<string>()
+  const rows: { role_name: string; reg_rate: number | null; ot_rate: number | null; dt_rate: number | null; active: boolean }[] = []
+  for (const l of arr(body.labor)) {
+    const name = txt(l.description)
+    if (!name) continue
+    const key = name.toLowerCase()
+    if (have.has(key) || seen.has(key)) continue
+    seen.add(key)
+    rows.push({ role_name: name, reg_rate: numOrNull(l.rate_reg), ot_rate: numOrNull(l.rate_ot), dt_rate: numOrNull(l.rate_dt), active: true })
+  }
+  return rows
 }
 
 // Build the line-item objects for one PCO, in display order. These are passed

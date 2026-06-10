@@ -335,7 +335,12 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
                             <td className="px-4 py-2.5 text-[12px] font-mono text-[#7B9BB5] whitespace-nowrap">{pcoLabel(c.co_number)}{c.has_pco_detail && <span className="ml-1.5 px-1 py-0.5 rounded bg-[#7B9BB5]/10 text-[#5A7A94] text-[9px] font-sans font-semibold align-middle">PCO</span>}</td>
                             <td className="px-4 py-2.5 text-[12px] text-[#0F172A]">{c.assigned_co_number || "—"}</td>
                             <td className="px-4 py-2.5 text-[#64748B] text-[12px] truncate">{proj?.name ?? "—"}</td>
-                            <td className="px-4 py-2.5 max-w-0"><p className="text-[#0F172A] truncate">{c.proposal ?? "—"}</p></td>
+                            <td className="px-4 py-2.5 align-top min-w-[220px]">
+                              <p className="text-[13px] text-[#0F172A] leading-relaxed whitespace-pre-wrap break-words">{c.proposal ?? "—"}</p>
+                              {c.has_pco_detail && c.description_of_work && (
+                                <p className="text-[12px] text-[#64748B] leading-relaxed whitespace-pre-wrap break-words mt-1">{c.description_of_work}</p>
+                              )}
+                            </td>
                             <td className="px-4 py-2.5 text-[12px] tabular-nums font-medium">
                               {c.pricing_sum != null ? <span className={c.pricing_sum < 0 ? "text-red-600" : "text-[#0F172A]"}>{fmtUsd2(c.pricing_sum)}</span> : <span className="text-[#0F172A]">—</span>}
                             </td>
@@ -390,7 +395,10 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
                             <span className="text-[11px] font-mono text-[#7B9BB5]">{pcoLabel(c.co_number)}{c.assigned_co_number ? <span className="text-[#64748B]"> · CO {c.assigned_co_number}</span> : null}</span>
                             <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold ${badgeCls}`}>{c.status}</span>
                           </div>
-                          <p className="text-[13px] font-medium text-[#0F172A] mb-1 truncate">{c.proposal ?? "—"}</p>
+                          <p className="text-[13px] font-medium text-[#0F172A] mb-1 leading-relaxed whitespace-pre-wrap break-words">{c.proposal ?? "—"}</p>
+                          {c.has_pco_detail && c.description_of_work && (
+                            <p className="text-[12px] text-[#64748B] mb-1 leading-relaxed whitespace-pre-wrap break-words">{c.description_of_work}</p>
+                          )}
                           {proj && <p className="text-[11px] text-[#64748B] mb-1">{proj.name}</p>}
                           <div className="flex items-center justify-between mb-2">
                             <span className={`text-[12px] font-semibold ${c.pricing_sum != null && c.pricing_sum < 0 ? "text-red-600" : "text-[#0F172A]"}`}>{c.pricing_sum != null ? fmtUsd2(c.pricing_sum) : "—"}</span>
