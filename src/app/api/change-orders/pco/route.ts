@@ -36,18 +36,24 @@ export async function POST(req: NextRequest) {
     ? 0 : parseInt(String(body.schedule_impact_days), 10)
   const ohp = body.oh_p_percent === null || body.oh_p_percent === undefined ? null : Number(body.oh_p_percent)
 
+  // Snapshot the SAVER's signature path (SELECT-own) so a later regeneration
+  // embeds this signer's signature, not the regenerating user's. Looked up
+  // server-side — never trusted from the client.
+  const { data: prof } = await supabase.from("user_profiles").select("signature_storage_path").maybeSingle()
+
   const { data, error } = await supabase.rpc("save_pco", {
-    p_id:            null,
-    p_project_id:    projectId,
-    p_date:          body.date || null,
-    p_title:         title,
-    p_description:   typeof body.description_of_work === "string" ? body.description_of_work.trim() || null : null,
-    p_pricing_sum:   pricing_sum,
-    p_schedule_days: Number.isFinite(schedDays) ? schedDays : 0,
-    p_ohp:           ohp,
-    p_signer_name:   typeof body.signer_name === "string" ? body.signer_name.trim() || null : null,
-    p_signer_title:  typeof body.signer_title === "string" ? body.signer_title.trim() || null : null,
-    p_line_items:    lineItems,
+    p_id:                    null,
+    p_project_id:            projectId,
+    p_date:                  body.date || null,
+    p_title:                 title,
+    p_description:           typeof body.description_of_work === "string" ? body.description_of_work.trim() || null : null,
+    p_pricing_sum:           pricing_sum,
+    p_schedule_days:         Number.isFinite(schedDays) ? schedDays : 0,
+    p_ohp:                   ohp,
+    p_signer_name:           typeof body.signer_name === "string" ? body.signer_name.trim() || null : null,
+    p_signer_title:          typeof body.signer_title === "string" ? body.signer_title.trim() || null : null,
+    p_signer_signature_path: prof?.signature_storage_path ?? null,
+    p_line_items:            lineItems,
   })
   if (error) {
     console.error("save_pco (create) failed:", error)

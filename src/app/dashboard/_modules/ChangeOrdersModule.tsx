@@ -47,6 +47,7 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
   const [coExporting, setCoExporting]                 = useState(false)
   const [showPco, setShowPco]                         = useState(false)
   const [editPcoId, setEditPcoId]                     = useState<string | null>(null)
+  const [pcoPdfBusyId, setPcoPdfBusyId]               = useState<string | null>(null)
 
   function loadChangeOrders(pid = globalProjectId) {
     setCoLoading(true)
@@ -125,6 +126,18 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
         loadChangeOrders()
       }
     } finally { setCoGeneratingPdf(false) }
+  }
+
+  // Regenerate + open a builder PCO's cover or backup PDF. The route overwrites
+  // the fixed paths and returns fresh signed URLs, so this is always current.
+  async function openPcoPdf(coId: string, which: "cover" | "backup") {
+    setPcoPdfBusyId(coId)
+    try {
+      const res = await fetch(`/api/change-orders/pco/${coId}/pdf`, { method: "POST" })
+      const d = await res.json().catch(() => ({}))
+      const url = which === "cover" ? d.cover_url : d.backup_url
+      if (res.ok && url) { window.open(url, "_blank"); loadChangeOrders() }
+    } finally { setPcoPdfBusyId(null) }
   }
 
   async function saveCoStatus() {
@@ -344,8 +357,17 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
                                 )}
                                 <button onClick={() => { setViewCo(c); setCoResponseStatus(c.status); setCoAssignedTo(c.assigned_to ?? ""); setCoAssignedCoNumber(c.assigned_co_number ?? ""); setCoRespAmount(c.pricing_sum != null ? String(c.pricing_sum) : ""); setCoRespRealized(c.realized_amount != null ? String(c.realized_amount) : "") }}
                                   className="text-[11px] text-[#64748B] hover:text-[#0F172A] px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors">View</button>
-                                <button onClick={() => generateCoPdf(c.id)} disabled={coGeneratingPdf}
-                                  className="text-[11px] text-[#7B9BB5] hover:text-[#7B9BB5] px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors disabled:opacity-50">PDF</button>
+                                {c.has_pco_detail ? (
+                                  <>
+                                    <button onClick={() => openPcoPdf(c.id, "cover")} disabled={pcoPdfBusyId === c.id}
+                                      className="text-[11px] text-[#7B9BB5] px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors disabled:opacity-50">Cover</button>
+                                    <button onClick={() => openPcoPdf(c.id, "backup")} disabled={pcoPdfBusyId === c.id}
+                                      className="text-[11px] text-[#7B9BB5] px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors disabled:opacity-50">Backup</button>
+                                  </>
+                                ) : (
+                                  <button onClick={() => generateCoPdf(c.id)} disabled={coGeneratingPdf}
+                                    className="text-[11px] text-[#7B9BB5] hover:text-[#7B9BB5] px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors disabled:opacity-50">PDF</button>
+                                )}
                                 <button onClick={() => deleteCo(c.id)}
                                   className="text-[11px] text-red-400/60 hover:text-red-400 px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors">Del</button>
                               </div>
@@ -379,7 +401,14 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
                               <button onClick={() => setEditPcoId(c.id)} className="text-[11px] text-[#7B9BB5] px-2 py-1 rounded border border-[#E2E8F0] bg-[#F8F9FA]">Edit</button>
                             )}
                             <button onClick={() => { setViewCo(c); setCoResponseStatus(c.status); setCoAssignedTo(c.assigned_to ?? ""); setCoAssignedCoNumber(c.assigned_co_number ?? ""); setCoRespAmount(c.pricing_sum != null ? String(c.pricing_sum) : ""); setCoRespRealized(c.realized_amount != null ? String(c.realized_amount) : "") }} className="text-[11px] text-[#64748B] px-2 py-1 rounded border border-[#E2E8F0] bg-[#F8F9FA]">View</button>
-                            <button onClick={() => generateCoPdf(c.id)} disabled={coGeneratingPdf} className="text-[11px] text-[#7B9BB5] px-2 py-1 rounded border border-[#E2E8F0] bg-[#F8F9FA] disabled:opacity-50">PDF</button>
+                            {c.has_pco_detail ? (
+                              <>
+                                <button onClick={() => openPcoPdf(c.id, "cover")} disabled={pcoPdfBusyId === c.id} className="text-[11px] text-[#7B9BB5] px-2 py-1 rounded border border-[#E2E8F0] bg-[#F8F9FA] disabled:opacity-50">Cover</button>
+                                <button onClick={() => openPcoPdf(c.id, "backup")} disabled={pcoPdfBusyId === c.id} className="text-[11px] text-[#7B9BB5] px-2 py-1 rounded border border-[#E2E8F0] bg-[#F8F9FA] disabled:opacity-50">Backup</button>
+                              </>
+                            ) : (
+                              <button onClick={() => generateCoPdf(c.id)} disabled={coGeneratingPdf} className="text-[11px] text-[#7B9BB5] px-2 py-1 rounded border border-[#E2E8F0] bg-[#F8F9FA] disabled:opacity-50">PDF</button>
+                            )}
                             <button onClick={() => deleteCo(c.id)} className="text-[11px] text-red-400 px-2 py-1 rounded border border-[#E2E8F0] bg-[#F8F9FA]">Del</button>
                           </div>
                         </div>

@@ -428,13 +428,17 @@ export class PDFBuilder {
   }
 
   private wrapText(text: string, size: number, maxW: number): string[] {
+    return this.wrapTextWith(this.reg, text, size, maxW)
+  }
+
+  private wrapTextWith(font: PDFFont, text: string, size: number, maxW: number): string[] {
     const lines: string[] = []
     for (const paragraph of text.split(/\r?\n/)) {
       const words = paragraph.split(/\s+/).filter(Boolean)
       let cur = ""
       for (const word of words) {
         const next = cur ? `${cur} ${word}` : word
-        if (this.reg.widthOfTextAtSize(next, size) <= maxW) {
+        if (font.widthOfTextAtSize(next, size) <= maxW) {
           cur = next
         } else {
           if (cur) lines.push(cur)
@@ -444,6 +448,40 @@ export class PDFBuilder {
       lines.push(cur)
     }
     return lines
+  }
+
+  // ── Plain paragraph + inline image (letter-style content, e.g. PCO cover) ─────
+  /** A word-wrapped paragraph with no divider/title. Honors \n. */
+  paragraph(body?: string | null, opts: { size?: number; bold?: boolean; gap?: number; muted?: boolean } = {}) {
+    if (!body || !body.trim()) return
+    const size = opts.size ?? PDF.size.body
+    const font = opts.bold ? this.bold : this.reg
+    const color = opts.muted ? PDF.color.muted : PDF.color.ink
+    const lineH = size + 5
+    for (const line of this.wrapTextWith(font, body.trim(), size, this.CW)) {
+      this.ensureSpace(lineH)
+      this.page.drawText(line, { x: this.M, y: this.y - (size + 1), size, font, color })
+      this.y -= lineH
+    }
+    this.spacer(opts.gap ?? 4)
+  }
+
+  /** Draw an embedded image (PNG/JPG) at the cursor, scaled to fit maxW×maxH.
+   *  Advances the cursor. Returns false if the bytes can't be decoded. */
+  async image(bytes: ArrayBuffer | Uint8Array, opts: { maxW?: number; maxH?: number; align?: "left" | "center" | "right" } = {}): Promise<boolean> {
+    const img = await this.embedImage(bytes)
+    if (!img) return false
+    const maxW = opts.maxW ?? this.CW
+    const maxH = opts.maxH ?? 60
+    const scale = Math.min(maxW / img.width, maxH / img.height, 1)
+    const dw = img.width * scale, dh = img.height * scale
+    this.ensureSpace(dh + 4)
+    let x = this.M
+    if (opts.align === "center") x = this.M + (this.CW - dw) / 2
+    else if (opts.align === "right") x = this.M + this.CW - dw
+    this.page.drawImage(img, { x, y: this.y - dh, width: dw, height: dh })
+    this.y -= dh + 4
+    return true
   }
 
   // ── Table ───────────────────────────────────────────────────────────────────

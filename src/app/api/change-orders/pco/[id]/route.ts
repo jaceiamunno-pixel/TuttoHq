@@ -64,18 +64,23 @@ export async function PUT(
     ? 0 : parseInt(String(body.schedule_impact_days), 10)
   const ohp = body.oh_p_percent === null || body.oh_p_percent === undefined ? null : Number(body.oh_p_percent)
 
+  // Re-snapshot the saver's signature on each save (the person saving signs this
+  // revision). SELECT-own; never trusted from the client.
+  const { data: prof } = await supabase.from("user_profiles").select("signature_storage_path").maybeSingle()
+
   const { data, error } = await supabase.rpc("save_pco", {
-    p_id:            id,
-    p_project_id:    null,                                  // unused on the update path
-    p_date:          body.date || null,
-    p_title:         title,
-    p_description:   typeof body.description_of_work === "string" ? body.description_of_work.trim() || null : null,
-    p_pricing_sum:   pricing_sum,
-    p_schedule_days: Number.isFinite(schedDays) ? schedDays : 0,
-    p_ohp:           ohp,
-    p_signer_name:   typeof body.signer_name === "string" ? body.signer_name.trim() || null : null,
-    p_signer_title:  typeof body.signer_title === "string" ? body.signer_title.trim() || null : null,
-    p_line_items:    lineItems,
+    p_id:                    id,
+    p_project_id:            null,                          // unused on the update path
+    p_date:                  body.date || null,
+    p_title:                 title,
+    p_description:           typeof body.description_of_work === "string" ? body.description_of_work.trim() || null : null,
+    p_pricing_sum:           pricing_sum,
+    p_schedule_days:         Number.isFinite(schedDays) ? schedDays : 0,
+    p_ohp:                   ohp,
+    p_signer_name:           typeof body.signer_name === "string" ? body.signer_name.trim() || null : null,
+    p_signer_title:          typeof body.signer_title === "string" ? body.signer_title.trim() || null : null,
+    p_signer_signature_path: prof?.signature_storage_path ?? null,
+    p_line_items:            lineItems,
   })
   if (error) {
     // no_data_found (SQLSTATE P0002) → missing or non-builder row.

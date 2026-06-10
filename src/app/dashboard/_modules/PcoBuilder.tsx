@@ -165,9 +165,25 @@ export default function PcoBuilder({ project, pcoId, onClose, onSaved }: {
         : await fetch("/api/change-orders/pco", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) })
       const d = await res.json().catch(() => ({}))
       if (!res.ok) { setSaveError(d.error ?? "Save failed"); return }
+      // Regenerate the two PDFs (overwrite fixed paths). Non-fatal: the save
+      // already succeeded, so a PDF hiccup must not block closing.
+      const savedId = pcoId ?? d.id
+      if (savedId) { try { await fetch(`/api/change-orders/pco/${savedId}/pdf`, { method: "POST" }) } catch { /* non-fatal */ } }
       onSaved()
       onClose()
     } finally { setSaving(false) }
+  }
+
+  const [pdfBusy, setPdfBusy] = useState<null | "cover" | "backup">(null)
+  async function downloadPdf(which: "cover" | "backup") {
+    if (!pcoId) return
+    setPdfBusy(which)
+    try {
+      const res = await fetch(`/api/change-orders/pco/${pcoId}/pdf`, { method: "POST" })
+      const d = await res.json().catch(() => ({}))
+      const url = which === "cover" ? d.cover_url : d.backup_url
+      if (res.ok && url) window.open(url, "_blank")
+    } finally { setPdfBusy(null) }
   }
 
   const cell = "h-8 px-2 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]"
@@ -425,6 +441,21 @@ export default function PcoBuilder({ project, pcoId, onClose, onSaved }: {
                   </div>
                 </div>
               </div>
+
+              {pcoId && (
+                <div className="bg-white rounded-xl border border-[#E2E8F0] p-4 flex flex-wrap items-center gap-2">
+                  <span className="text-[12px] font-semibold text-[#0F172A] mr-1">Documents</span>
+                  <button onClick={() => downloadPdf("cover")} disabled={pdfBusy !== null}
+                    className="h-8 px-3 rounded-md border border-[#E2E8F0] text-[12px] font-medium text-[#0F172A] hover:bg-[#F4F5F7] disabled:opacity-50">
+                    {pdfBusy === "cover" ? "Opening…" : "Cover PDF"}
+                  </button>
+                  <button onClick={() => downloadPdf("backup")} disabled={pdfBusy !== null}
+                    className="h-8 px-3 rounded-md border border-[#E2E8F0] text-[12px] font-medium text-[#0F172A] hover:bg-[#F4F5F7] disabled:opacity-50">
+                    {pdfBusy === "backup" ? "Opening…" : "Backup PDF"}
+                  </button>
+                  <span className="text-[11px] text-[#94A3B8] basis-full">Regenerated from the latest saved data.</span>
+                </div>
+              )}
             </div>
 
             {/* Live cover preview */}
