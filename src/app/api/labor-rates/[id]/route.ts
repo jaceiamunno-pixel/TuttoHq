@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
-import { parseRate } from "../route"
+import { parseRate } from "@/lib/labor-rates"
 
 // PATCH / DELETE a single labor rate. Admin-only (writes to the company rate
 // book). RLS scopes the row to the caller's company, so a cross-tenant id is a
