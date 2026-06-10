@@ -45,7 +45,8 @@ async function getAuthName(): Promise<string> {
   try {
     const sb = createClient()
     const { data: { user } } = await sb.auth.getUser()
-    return (user?.user_metadata?.full_name as string) || user?.email || ""
+    // Name only — never default to the email (it would land on the PCO cover).
+    return (user?.user_metadata?.full_name as string) || ""
   } catch { return "" }
 }
 

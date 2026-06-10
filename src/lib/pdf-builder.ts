@@ -451,8 +451,8 @@ export class PDFBuilder {
   }
 
   // ── Plain paragraph + inline image (letter-style content, e.g. PCO cover) ─────
-  /** A word-wrapped paragraph with no divider/title. Honors \n. */
-  paragraph(body?: string | null, opts: { size?: number; bold?: boolean; gap?: number; muted?: boolean } = {}) {
+  /** A word-wrapped paragraph with no divider/title. Honors \n and alignment. */
+  paragraph(body?: string | null, opts: { size?: number; bold?: boolean; gap?: number; muted?: boolean; align?: "left" | "right" } = {}) {
     if (!body || !body.trim()) return
     const size = opts.size ?? PDF.size.body
     const font = opts.bold ? this.bold : this.reg
@@ -460,7 +460,8 @@ export class PDFBuilder {
     const lineH = size + 5
     for (const line of this.wrapTextWith(font, body.trim(), size, this.CW)) {
       this.ensureSpace(lineH)
-      this.page.drawText(line, { x: this.M, y: this.y - (size + 1), size, font, color })
+      const x = opts.align === "right" ? this.M + this.CW - font.widthOfTextAtSize(line, size) : this.M
+      this.page.drawText(line, { x, y: this.y - (size + 1), size, font, color })
       this.y -= lineH
     }
     this.spacer(opts.gap ?? 4)

@@ -90,46 +90,59 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
     { label: "Date", value: dateLong },
   ]])
 
+  const ohpPct = +(Number(co.oh_p_percent ?? 0) * 100).toFixed(4)
+
+  // LABOR — one row per line item, separate qty/rate columns per tier. Rates are
+  // the snapshotted line-item values (never live labor_rates).
+  backup.sectionDivider("Labor")
   const laborDisplay = laborRows.filter(l => laborLineTotal(l) !== 0 || [l.qty_reg, l.qty_ot, l.qty_dt].some(q => n0(q) !== 0))
   if (laborDisplay.length) {
-    backup.sectionDivider("Labor")
-    const cols = [168, 96, 92, 92, 78]
+    const cols = [118, 48, 58, 48, 58, 48, 58, 90]
     const rows = laborDisplay.map(l => [
       l.description ?? "—",
-      `${hrs(n0(l.qty_reg))} @ ${usd(n0(l.rate_reg))}`,
-      `${hrs(n0(l.qty_ot))} @ ${usd(n0(l.rate_ot))}`,
-      `${hrs(n0(l.qty_dt))} @ ${usd(n0(l.rate_dt))}`,
+      hrs(n0(l.qty_reg)), usd(n0(l.rate_reg)),
+      hrs(n0(l.qty_ot)),  usd(n0(l.rate_ot)),
+      hrs(n0(l.qty_dt)),  usd(n0(l.rate_dt)),
       usd(laborLineTotal(l)),
     ])
-    rows.push(["Subtotal", `${hrs(totals.hoursReg)} h`, `${hrs(totals.hoursOt)} h`, `${hrs(totals.hoursDt)} h`, usd(totals.laborSubtotal)])
-    backup.table(["Role", "Reg (h @ $)", "1.5× (h @ $)", "2× (h @ $)", "Total"], rows, cols, r => r[0] === "Subtotal")
+    rows.push(["Subtotal", hrs(totals.hoursReg), "", hrs(totals.hoursOt), "", hrs(totals.hoursDt), "", usd(totals.laborSubtotal)])
+    backup.table(["Role", "Reg qty", "Reg rate", "1.5× qty", "1.5× rate", "2× qty", "2× rate", "Total"], rows, cols, r => r[0] === "Subtotal")
+  } else {
+    backup.paragraph("—", { muted: true })
   }
 
+  // MATERIAL / EQUIPMENT
+  backup.sectionDivider("Material / Equipment")
   const matDisplay = materialRows.filter(m => materialLineTotal(m) !== 0 || (m.description ?? "").trim() !== "")
   if (matDisplay.length) {
-    backup.sectionDivider("Material / Equipment")
     const cols = [168, 50, 48, 86, 96, 78]
     const rows = matDisplay.map(m => [
       m.description ?? "—", hrs(n0(m.qty)), m.unit ?? "", usd(n0(m.unit_price)), m.note ?? "", usd(materialLineTotal(m)),
     ])
     rows.push(["Materials Subtotal", "", "", "", "", usd(totals.materialsSubtotal)])
     backup.table(["Description", "Qty", "Unit", "Unit price", "Note", "Total"], rows, cols, r => r[0] === "Materials Subtotal")
+  } else {
+    backup.paragraph("—", { muted: true })
   }
 
+  // SUBCONTRACTOR
+  backup.sectionDivider("Subcontractor")
   const subDisplay = subRows.filter(s => n0(s.amount) !== 0 || (s.description ?? "").trim() !== "")
   if (subDisplay.length) {
-    backup.sectionDivider("Subcontractor")
     const cols = [430, 96]
     const rows = subDisplay.map(s => [s.description ?? "—", usd(n0(s.amount))])
     rows.push(["Subcontractor Total", usd(totals.subSubtotal)])
-    backup.table(["Firm / description", "Amount"], rows, cols, r => r[0] === "Subcontractor Total")
+    backup.table(["Name", "Amount"], rows, cols, r => r[0] === "Subcontractor Total")
+  } else {
+    backup.paragraph("—", { muted: true })
   }
 
+  // SUMMARY — OH&P shows the percent applied (to labor + materials only).
   backup.sectionDivider("Summary")
   backup.fieldGrid([
     [{ label: "Labor", value: usd(totals.laborSubtotal) }],
     [{ label: "Material / Equipment", value: usd(totals.materialsSubtotal) }],
-    [{ label: "OH&P", value: usd(totals.ohpAmount) }],
+    [{ label: `OH&P (${ohpPct}%)`, value: usd(totals.ohpAmount) }],
     [{ label: "Subcontractor", value: usd(totals.subSubtotal) }],
   ])
   backup.pricingBlock(usd(totals.grandTotal), false)
@@ -137,8 +150,10 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
 
   // ── Cover PDF ───────────────────────────────────────────────────────────────
   const cover = await PDFBuilder.create({ documentType: "Proposed Change Order", documentNumber: pcoLabel, logoBytes, brandName: project.gc_name })
+  // Letterhead: company address right-aligned under the logo (which the header
+  // draws top-right).
   const addr = [settings?.address_line1, settings?.address_line2, settings?.phone].filter(Boolean).join("\n")
-  if (addr) cover.paragraph(addr, { size: 9, muted: true, gap: 6 })
+  if (addr) cover.paragraph(addr, { size: 9, muted: true, align: "right", gap: 8 })
 
   if (project.name || project.number) {
     cover.projectBlock({ name: project.name, number: project.number, location: project.location, gc_name: project.gc_name, architect: project.architect })
@@ -148,14 +163,15 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
   if (co.proposal) cover.paragraph(co.proposal, { bold: true, size: 12, gap: 6 })
   cover.textBlock("Description of Work", co.description_of_work)
 
+  // Pricing Summary — all five lines always (Labor / M&E / OH&P / Subcontractor
+  // / TOTAL). TOTAL == saved pricing_sum since both come from computePcoTotals.
   cover.sectionDivider("Pricing Summary")
-  const summary = [
+  cover.fieldGrid([
     [{ label: "Labor", value: usd(totals.laborSubtotal) }],
     [{ label: "Material & Equipment", value: usd(totals.materialsSubtotal) }],
-  ]
-  if (totals.ohpAmount !== 0) summary.push([{ label: "OH&P", value: usd(totals.ohpAmount) }])
-  summary.push([{ label: "Subcontractor", value: usd(totals.subSubtotal) }])
-  cover.fieldGrid(summary)
+    [{ label: `OH&P (${ohpPct}%)`, value: usd(totals.ohpAmount) }],
+    [{ label: "Subcontractor", value: usd(totals.subSubtotal) }],
+  ])
   cover.pricingBlock(usd(totals.grandTotal), false)
 
   const days = co.schedule_impact_days ?? 0
@@ -165,9 +181,12 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
   cover.spacer(6)
   cover.paragraph(schedSentence, { gap: 12 })
 
+  // Never print an email as the signer name (submitted_by can default from the
+  // auth identity). Suppress anything that looks like an email address.
+  const signerName = co.submitted_by && !/\S+@\S+\.\S+/.test(co.submitted_by) ? co.submitted_by : ""
   cover.paragraph("Sincerely,", { gap: 4 })
   if (sigBytes) await cover.image(sigBytes, { maxH: 46, maxW: 200 })
-  cover.paragraph(co.submitted_by ?? "", { bold: true, gap: 1 })
+  cover.paragraph(signerName, { bold: true, gap: 1 })
   cover.paragraph(co.signer_title ?? "", { muted: true })
   const coverBytes = await cover.save()
 
