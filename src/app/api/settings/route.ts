@@ -6,7 +6,7 @@ export async function GET() {
 
   const { data: settings } = await supabase
     .from("company_settings")
-    .select("logo_path, cover_page_path")
+    .select("logo_path, cover_page_path, address_line1, address_line2, phone, default_oh_p_percent")
     .maybeSingle()
 
   let logo_url: string | null = null
@@ -20,7 +20,64 @@ export async function GET() {
   return NextResponse.json({
     logo_url,
     has_cover_page: !!settings?.cover_page_path,
+    address_line1: settings?.address_line1 ?? null,
+    address_line2: settings?.address_line2 ?? null,
+    phone: settings?.phone ?? null,
+    default_oh_p_percent: settings?.default_oh_p_percent ?? null,
   })
+}
+
+// PATCH /api/settings — company cover-header fields (address/phone) and the
+// default OH&P percent used to prefill the PCO builder. Admin-only, matching
+// the logo/cover POST gate above (company-wide identity + pricing config).
+// default_oh_p_percent is stored as a fraction (0.15 == 15%); validated 0..1.
+export async function PATCH(req: NextRequest) {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+
+  const { data: role } = await supabase.rpc("get_my_role")
+  if (role !== "admin") return NextResponse.json({ error: "Admin role required" }, { status: 403 })
+
+  const body = await req.json().catch(() => null)
+  if (!body) return NextResponse.json({ error: "Invalid request body" }, { status: 400 })
+
+  const updates: Record<string, string | number | null> = {}
+
+  for (const key of ["address_line1", "address_line2", "phone"] as const) {
+    if (body[key] === undefined) continue
+    updates[key] = typeof body[key] === "string" && body[key].trim() ? body[key].trim() : null
+  }
+
+  if (body.default_oh_p_percent !== undefined) {
+    if (body.default_oh_p_percent === null || body.default_oh_p_percent === "") {
+      updates.default_oh_p_percent = null
+    } else {
+      const n = Number(body.default_oh_p_percent)
+      if (!Number.isFinite(n) || n < 0 || n > 1) {
+        return NextResponse.json({ error: "default_oh_p_percent must be a fraction between 0 and 1" }, { status: 400 })
+      }
+      updates.default_oh_p_percent = n
+    }
+  }
+
+  if (Object.keys(updates).length === 0) {
+    return NextResponse.json({ error: "No fields to update" }, { status: 400 })
+  }
+
+  const { data: existing } = await supabase.from("company_settings").select("id").maybeSingle()
+  if (existing) {
+    const { error } = await supabase
+      .from("company_settings")
+      .update({ ...updates, updated_at: new Date().toISOString() })
+      .eq("id", existing.id)
+    if (error) return NextResponse.json({ error: "Failed to save company details" }, { status: 500 })
+  } else {
+    const { error } = await supabase.from("company_settings").insert(updates)
+    if (error) return NextResponse.json({ error: "Failed to save company details" }, { status: 500 })
+  }
+
+  return NextResponse.json({ ok: true })
 }
 
 // The logo / cover-page file was already PUT straight to the `company-assets`

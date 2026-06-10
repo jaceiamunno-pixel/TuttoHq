@@ -6,6 +6,9 @@ import Papa from "papaparse"
 import { createClient } from "@/lib/supabase/client"
 import { DivisionChecklist, SectionAccordion, isDefaultInScopeDivision } from "@/components/scope-selection"
 import ProjectSpecBooks from "@/components/project-spec-books"
+import LaborRatesTab from "@/components/labor-rates-tab"
+import ProfileSignature from "@/components/profile-signature"
+import CompanyDetailsCard from "@/components/company-details-card"
 import type { TocEntry, TocDivision } from "@/lib/scope-types"
 import { uploadFileToSignedUrl, presignAndUpload } from "@/lib/storage-upload"
 import {
@@ -18,7 +21,7 @@ import {
 
 // "team" = the multi-user accounts tab (Phase 3).
 // "contacts" = the legacy team_members directory (renamed from "team").
-type Tab = "company" | "team" | "contacts" | "projects" | "subcontractors" | "suppliers" | "cms" | "gmail"
+type Tab = "company" | "labor" | "profile" | "team" | "contacts" | "projects" | "subcontractors" | "suppliers" | "cms" | "gmail"
 
 interface AccountMember {
   user_id:   string
@@ -318,7 +321,7 @@ export default function SettingsPage() {
         setTimeout(() => setGmailMessage(null), 8000)
       }
       window.history.replaceState({}, "", "/settings?tab=gmail")
-    } else if (tabParam && ["company", "team", "contacts", "projects", "subcontractors", "suppliers", "cms"].includes(tabParam)) {
+    } else if (tabParam && ["company", "labor", "profile", "team", "contacts", "projects", "subcontractors", "suppliers", "cms"].includes(tabParam)) {
       setActiveTab(tabParam as Tab)
     }
   }, [])
@@ -1266,6 +1269,8 @@ export default function SettingsPage() {
 
   const tabs: { key: Tab; label: string }[] = [
     { key: "company",        label: "Company" },
+    { key: "labor",          label: "Labor Rates" },
+    { key: "profile",        label: "Profile" },
     { key: "team",           label: "Team" },
     { key: "contacts",       label: "Contacts" },
     { key: "projects",       label: "Projects" },
@@ -1476,6 +1481,8 @@ export default function SettingsPage() {
                     )
                   })()}
                 </div>
+
+                <CompanyDetailsCard canEdit={currentRole === "admin"} />
               </>
             )}
 
@@ -1485,6 +1492,14 @@ export default function SettingsPage() {
               </div>
             )}
           </div>
+        )}
+
+        {activeTab === "labor" && (
+          <LaborRatesTab canEdit={currentRole === "admin"} />
+        )}
+
+        {activeTab === "profile" && (
+          <ProfileSignature />
         )}
 
         {activeTab === "team" && (
