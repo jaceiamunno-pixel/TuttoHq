@@ -7,6 +7,7 @@ import { PlusIcon, SpinnerIcon } from "../_shared/icons"
 import { presignAndUpload } from "@/lib/storage-upload"
 import { computeCoTotals } from "../_shared/co-math"
 import { exportChangeOrderLogToExcel } from "../_shared/excel-export"
+import PcoBuilder from "./PcoBuilder"
 
 // Change Orders module — extracted verbatim from dashboard/page.tsx (Step 6 of the split).
 // State, handlers, action bar, content, and both modals are unchanged; the load
@@ -44,6 +45,7 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
   const [coRealized, setCoRealized]                   = useState("")
   const [coRespRealized, setCoRespRealized]           = useState("")
   const [coExporting, setCoExporting]                 = useState(false)
+  const [showPco, setShowPco]                         = useState(false)
 
   function loadChangeOrders(pid = globalProjectId) {
     setCoLoading(true)
@@ -197,11 +199,21 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
             )}
             <span className="hidden sm:inline">{coExporting ? "Exporting…" : "Download log"}</span>
           </button>
-          <button onClick={() => setShowNewCo(true)} className="h-8 px-4 rounded-md bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors flex items-center gap-1.5 whitespace-nowrap">
+          <button onClick={() => setShowNewCo(true)} className="h-8 px-3 rounded-md border border-[#E2E8F0] text-[13px] font-semibold text-[#0F172A] hover:bg-[#0F172A]/[0.04] transition-colors flex items-center gap-1.5 whitespace-nowrap">
             <PlusIcon /> New CO
+          </button>
+          <button onClick={() => setShowPco(true)} disabled={!globalProjectId}
+            title={globalProjectId ? "Build a priced PCO with a cover sheet" : "Select a project first"}
+            className="h-8 px-4 rounded-md bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors flex items-center gap-1.5 whitespace-nowrap disabled:opacity-50">
+            <PlusIcon /> New PCO
           </button>
         </div>
       </div>
+
+      {showPco && (() => {
+        const p = appProjects.find(x => x.id === globalProjectId)
+        return p ? <PcoBuilder project={p} onClose={() => setShowPco(false)} /> : null
+      })()}
 
       {/* Contract value summary — mirrors the Gilbane PCO log */}
       {globalProjectId && (
@@ -254,9 +266,14 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
                     </div>
                     <p className="text-[15px] font-bold text-[#0F172A]">No change orders yet</p>
                     <p className="text-[13px] text-[#64748B] mt-1.5">Create your first change order to track scope changes.</p>
-                    <button onClick={() => setShowNewCo(true)} className="mt-5 h-9 px-5 rounded-lg bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors inline-flex items-center gap-2">
-                      <PlusIcon /> New CO
-                    </button>
+                    <div className="mt-5 flex items-center gap-2">
+                      <button onClick={() => setShowNewCo(true)} className="h-9 px-5 rounded-lg border border-[#E2E8F0] text-[13px] font-semibold text-[#0F172A] hover:bg-[#0F172A]/[0.04] transition-colors inline-flex items-center gap-2">
+                        <PlusIcon /> New CO
+                      </button>
+                      <button onClick={() => setShowPco(true)} disabled={!globalProjectId} className="h-9 px-5 rounded-lg bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors inline-flex items-center gap-2 disabled:opacity-50">
+                        <PlusIcon /> New PCO
+                      </button>
+                    </div>
                   </div>
                 ) : (
                   <>
