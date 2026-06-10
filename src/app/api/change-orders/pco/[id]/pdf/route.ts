@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
-import { PDFBuilder } from "@/lib/pdf-builder"
+import { PDFBuilder, PDF } from "@/lib/pdf-builder"
 import { computePcoTotals, laborLineTotal, materialLineTotal,
          type PcoLaborLine, type PcoMaterialLine, type PcoSubLine } from "@/app/dashboard/_shared/pco-math"
 
@@ -79,112 +79,114 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
   const { data: companyId } = await supabase.rpc("get_my_company_id")
   if (!companyId) return NextResponse.json({ error: "No company association" }, { status: 500 })
 
-  const pcoLabel = `PCO ${(co.co_number ?? "").replace(/^CO-/i, "")}`
-  const dateLong = co.date ? new Date(co.date + "T00:00:00").toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" }) : ""
+  const { data: companyRow } = await supabase.from("companies").select("name").eq("id", companyId).maybeSingle()
+  const companyName = companyRow?.name ?? project.gc_name ?? null
 
-  // ── Backup PDF ──────────────────────────────────────────────────────────────
+  const pcoNum = (co.co_number ?? "").replace(/^CO-/i, "")
+  const pcoLabel = `PCO ${pcoNum}`
+  const dateLong = co.date ? new Date(co.date + "T00:00:00").toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" }) : ""
+  const ohpPct = +(Number(co.oh_p_percent ?? 0) * 100).toFixed(4)
+
+  // ── Backup PDF — THP-style full-grid worksheet ──────────────────────────────
   const backup = await PDFBuilder.create({ documentType: "PCO Pricing Backup", documentNumber: pcoLabel, logoBytes })
   backup.fieldGrid([[
-    { label: "PCO #", value: (co.co_number ?? "").replace(/^CO-/i, "") },
+    { label: "PCO #", value: pcoNum },
     { label: "Job #", value: project.number },
     { label: "Date", value: dateLong },
   ]])
 
-  const ohpPct = +(Number(co.oh_p_percent ?? 0) * 100).toFixed(4)
-
-  // LABOR — one row per line item, separate qty/rate columns per tier. Rates are
-  // the snapshotted line-item values (never live labor_rates).
+  // LABOR — full snapshotted roster (every saved line incl. 0-qty), Qty/Unit/Rate
+  // per tier, total-hours row + yellow Labor Subtotal. Rates are snapshots.
   backup.sectionDivider("Labor")
-  const laborDisplay = laborRows.filter(l => laborLineTotal(l) !== 0 || [l.qty_reg, l.qty_ot, l.qty_dt].some(q => n0(q) !== 0))
-  if (laborDisplay.length) {
-    const cols = [118, 48, 58, 48, 58, 48, 58, 90]
-    const rows = laborDisplay.map(l => [
+  if (laborRows.length) {
+    const cols = [110, 38, 34, 58, 38, 58, 38, 58, 94]
+    const align: ("left" | "right")[] = ["left", "right", "left", "right", "right", "right", "right", "right", "right"]
+    const rows = laborRows.map(l => [
       l.description ?? "—",
-      hrs(n0(l.qty_reg)), usd(n0(l.rate_reg)),
+      hrs(n0(l.qty_reg)), "hrs", usd(n0(l.rate_reg)),
       hrs(n0(l.qty_ot)),  usd(n0(l.rate_ot)),
       hrs(n0(l.qty_dt)),  usd(n0(l.rate_dt)),
       usd(laborLineTotal(l)),
     ])
-    rows.push(["Subtotal", hrs(totals.hoursReg), "", hrs(totals.hoursOt), "", hrs(totals.hoursDt), "", usd(totals.laborSubtotal)])
-    backup.table(["Role", "Reg qty", "Reg rate", "1.5× qty", "1.5× rate", "2× qty", "2× rate", "Total"], rows, cols, r => r[0] === "Subtotal")
+    rows.push(["Total Hours", hrs(totals.hoursReg), "", "", hrs(totals.hoursOt), "", hrs(totals.hoursDt), "", ""])
+    rows.push(["Labor Subtotal", "", "", "", "", "", "", "", usd(totals.laborSubtotal)])
+    backup.gridTable(["Labor", "Qty", "Unit", "Reg Rate", "Qty", "1.5× Rate", "Qty", "2× Rate", "Total"], rows, cols,
+      { align, highlight: r => r[0] === "Labor Subtotal" })
   } else {
     backup.paragraph("—", { muted: true })
   }
 
   // MATERIAL / EQUIPMENT
   backup.sectionDivider("Material / Equipment")
-  const matDisplay = materialRows.filter(m => materialLineTotal(m) !== 0 || (m.description ?? "").trim() !== "")
-  if (matDisplay.length) {
-    const cols = [168, 50, 48, 86, 96, 78]
-    const rows = matDisplay.map(m => [
+  if (materialRows.length) {
+    const cols = [150, 44, 44, 80, 124, 84]
+    const align: ("left" | "right")[] = ["left", "right", "left", "right", "left", "right"]
+    const rows = materialRows.map(m => [
       m.description ?? "—", hrs(n0(m.qty)), m.unit ?? "", usd(n0(m.unit_price)), m.note ?? "", usd(materialLineTotal(m)),
     ])
     rows.push(["Materials Subtotal", "", "", "", "", usd(totals.materialsSubtotal)])
-    backup.table(["Description", "Qty", "Unit", "Unit price", "Note", "Total"], rows, cols, r => r[0] === "Materials Subtotal")
+    backup.gridTable(["Material / Equipment", "Qty", "Unit", "Unit Price", "Note", "Total"], rows, cols,
+      { align, highlight: r => r[0] === "Materials Subtotal" })
   } else {
     backup.paragraph("—", { muted: true })
   }
 
   // SUBCONTRACTOR
   backup.sectionDivider("Subcontractor")
-  const subDisplay = subRows.filter(s => n0(s.amount) !== 0 || (s.description ?? "").trim() !== "")
-  if (subDisplay.length) {
-    const cols = [430, 96]
-    const rows = subDisplay.map(s => [s.description ?? "—", usd(n0(s.amount))])
-    rows.push(["Subcontractor Total", usd(totals.subSubtotal)])
-    backup.table(["Name", "Amount"], rows, cols, r => r[0] === "Subcontractor Total")
+  if (subRows.length) {
+    const cols = [442, 84]
+    const align: ("left" | "right")[] = ["left", "right"]
+    const rows = subRows.map(s => [s.description ?? "—", usd(n0(s.amount))])
+    rows.push(["Subcontractor Subtotal", usd(totals.subSubtotal)])
+    backup.gridTable(["Name", "Amount"], rows, cols, { align, highlight: r => r[0] === "Subcontractor Subtotal" })
   } else {
     backup.paragraph("—", { muted: true })
   }
 
-  // SUMMARY — OH&P shows the percent applied (to labor + materials only).
-  backup.sectionDivider("Summary")
-  backup.fieldGrid([
-    [{ label: "Labor", value: usd(totals.laborSubtotal) }],
-    [{ label: "Material / Equipment", value: usd(totals.materialsSubtotal) }],
-    [{ label: `OH&P (${ohpPct}%)`, value: usd(totals.ohpAmount) }],
-    [{ label: "Subcontractor", value: usd(totals.subSubtotal) }],
-  ])
-  backup.pricingBlock(usd(totals.grandTotal), false)
+  // OH&P (% on labor+materials) + GRAND TOTAL — yellow rows, like THP.
+  backup.spacer(2)
+  backup.gridTable([], [
+    [`OH&P (${ohpPct}%)`, usd(totals.ohpAmount)],
+    ["Grand Total", usd(totals.grandTotal)],
+  ], [442, 84], { align: ["left", "right"], highlight: () => true })
   const backupBytes = await backup.save()
 
-  // ── Cover PDF ───────────────────────────────────────────────────────────────
-  const cover = await PDFBuilder.create({ documentType: "Proposed Change Order", documentNumber: pcoLabel, logoBytes, brandName: project.gc_name })
-  // Letterhead: company address right-aligned under the logo (which the header
-  // draws top-right).
-  const addr = [settings?.address_line1, settings?.address_line2, settings?.phone].filter(Boolean).join("\n")
-  if (addr) cover.paragraph(addr, { size: 9, muted: true, align: "right", gap: 8 })
+  // ── Cover PDF — THP-style letterhead letter ─────────────────────────────────
+  const cover = await PDFBuilder.create({ documentType: "", noHeader: true })
+  await cover.letterhead({ logoBytes, companyName, phone: settings?.phone })
 
-  if (project.name || project.number) {
-    cover.projectBlock({ name: project.name, number: project.number, location: project.location, gc_name: project.gc_name, architect: project.architect })
+  cover.letterField("Date", dateLong)
+  cover.letterField("Project", [project.name, project.location].filter(Boolean).join("\n"))
+  cover.letterField("PCO #", pcoNum)
+  cover.letterField("Title", co.proposal)
+
+  if (co.description_of_work && co.description_of_work.trim()) {
+    cover.paragraph("Description of Work:", { bold: true, size: PDF.size.label, gap: 3 })
+    cover.paragraph(co.description_of_work, { gap: 12 })
   }
-  cover.fieldGrid([[{ label: "PCO #", value: (co.co_number ?? "").replace(/^CO-/i, "") }, { label: "Date", value: dateLong }]])
 
-  if (co.proposal) cover.paragraph(co.proposal, { bold: true, size: 12, gap: 6 })
-  cover.textBlock("Description of Work", co.description_of_work)
-
-  // Pricing Summary — all five lines always (Labor / M&E / OH&P / Subcontractor
-  // / TOTAL). TOTAL == saved pricing_sum since both come from computePcoTotals.
-  cover.sectionDivider("Pricing Summary")
-  cover.fieldGrid([
-    [{ label: "Labor", value: usd(totals.laborSubtotal) }],
-    [{ label: "Material & Equipment", value: usd(totals.materialsSubtotal) }],
-    [{ label: `OH&P (${ohpPct}%)`, value: usd(totals.ohpAmount) }],
-    [{ label: "Subcontractor", value: usd(totals.subSubtotal) }],
-  ])
-  cover.pricingBlock(usd(totals.grandTotal), false)
+  // Pricing summary — bordered table, all five lines; TOTAL highlighted and ==
+  // pricing_sum (both come from computePcoTotals).
+  cover.paragraph("Pricing Summary:", { bold: true, size: PDF.size.label, gap: 4 })
+  cover.gridTable([], [
+    ["Labor", usd(totals.laborSubtotal)],
+    ["Material & Equipment", usd(totals.materialsSubtotal)],
+    [`OH&P (${ohpPct}%)`, usd(totals.ohpAmount)],
+    ["Subcontractor", usd(totals.subSubtotal)],
+    ["TOTAL", usd(totals.grandTotal)],
+  ], [400, 126], { align: ["left", "right"], highlight: r => r[0] === "TOTAL" })
 
   const days = co.schedule_impact_days ?? 0
   const schedSentence = days === 0
     ? "As a result of this PCO the project schedule will not be impacted."
     : `As a result of this PCO the project schedule will be ${days > 0 ? "increased" : "decreased"} by ${Math.abs(days)} day${Math.abs(days) === 1 ? "" : "s"}.`
   cover.spacer(6)
-  cover.paragraph(schedSentence, { gap: 12 })
+  cover.paragraph(schedSentence, { gap: 16 })
 
   // Never print an email as the signer name (submitted_by can default from the
   // auth identity). Suppress anything that looks like an email address.
   const signerName = co.submitted_by && !/\S+@\S+\.\S+/.test(co.submitted_by) ? co.submitted_by : ""
-  cover.paragraph("Sincerely,", { gap: 4 })
+  cover.paragraph("Sincerely,", { gap: 6 })
   if (sigBytes) await cover.image(sigBytes, { maxH: 46, maxW: 200 })
   cover.paragraph(signerName, { bold: true, gap: 1 })
   cover.paragraph(co.signer_title ?? "", { muted: true })

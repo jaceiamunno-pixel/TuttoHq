@@ -25,6 +25,7 @@ export const PDF = {
     white:      rgb(1, 1, 1),
     green:      rgb(0.06, 0.46, 0.18),
     greenLight: rgb(0.88, 0.96, 0.90),
+    highlight:  rgb(1, 0.965, 0.55),       // THP-style yellow for subtotal/total cells
   },
 
   size: {
@@ -66,6 +67,9 @@ export interface PDFDocMeta {
   logoBytes?: ArrayBuffer | null
   /** Company name — drawn top-right in place of the logo when no logo is set. */
   brandName?: string | null
+  /** Skip the standard header entirely (for letter-style docs that draw their
+   *  own letterhead, e.g. the PCO cover). */
+  noHeader?: boolean
 }
 
 /** Project metadata for the shared PDFProjectBlock. */
@@ -165,7 +169,8 @@ export class PDFBuilder {
 
     builder.page = builder.doc.addPage([builder.W, builder.H])
     builder.pages.push(builder.page)
-    await builder.drawHeader(true)
+    if (meta.noHeader) builder.y = builder.H - PDF.topMargin
+    else await builder.drawHeader(true)
     return builder
   }
 
@@ -483,6 +488,91 @@ export class PDFBuilder {
     this.page.drawImage(img, { x, y: this.y - dh, width: dw, height: dh })
     this.y -= dh + 4
     return true
+  }
+
+  // ── Letterhead — custom header for letter-style docs (e.g. PCO cover) ─────────
+  /** Logo left, company name centered, phone right, thick rule beneath. */
+  async letterhead(opts: { logoBytes?: ArrayBuffer | null; companyName?: string | null; phone?: string | null }) {
+    const top = this.H - PDF.topMargin
+    let logoBottom = top - 12
+    if (opts.logoBytes) {
+      const img = await this.embedImage(opts.logoBytes)
+      if (img) {
+        const scale = Math.min(46 / img.height, 150 / img.width, 1)
+        const dw = img.width * scale, dh = img.height * scale
+        this.page.drawImage(img, { x: this.M, y: top - dh, width: dw, height: dh })
+        logoBottom = top - dh
+      }
+    }
+    if (opts.companyName) {
+      const w = this.bold.widthOfTextAtSize(opts.companyName, 13)
+      this.page.drawText(opts.companyName, { x: this.M + (this.CW - w) / 2, y: top - 22, size: 13, font: this.bold, color: PDF.color.ink })
+    }
+    if (opts.phone) {
+      const w = this.reg.widthOfTextAtSize(opts.phone, 8.5)
+      this.page.drawText(opts.phone, { x: this.M + this.CW - w, y: top - 9, size: 8.5, font: this.reg, color: PDF.color.label })
+    }
+    const ruleY = Math.min(logoBottom, top - 34) - 6
+    this.page.drawLine({ start: { x: this.M, y: ruleY }, end: { x: this.M + this.CW, y: ruleY }, thickness: 1.5, color: PDF.color.ink })
+    this.y = ruleY - 16
+  }
+
+  /** Bold uppercase label + value (value wraps and may span lines). */
+  letterField(label: string, value?: string | null, opts: { labelW?: number; gap?: number } = {}) {
+    const labelW = opts.labelW ?? 96
+    const lines = value && value.trim() ? this.wrapTextWith(this.reg, value.trim(), PDF.size.value, this.CW - labelW) : ["—"]
+    const lineH = PDF.size.value + 5
+    this.ensureSpace(lines.length * lineH)
+    this.page.drawText(label.toUpperCase(), { x: this.M, y: this.y - (PDF.size.value + 1), size: PDF.size.label, font: this.bold, color: PDF.color.label })
+    let ly = this.y
+    for (const line of lines) {
+      this.page.drawText(line, { x: this.M + labelW, y: ly - (PDF.size.value + 1), size: PDF.size.value, font: this.reg, color: PDF.color.ink })
+      ly -= lineH
+    }
+    this.y = ly
+    this.spacer(opts.gap ?? 6)
+  }
+
+  // ── Grid table — full cell borders, per-column alignment, row highlight ───────
+  private drawGridRow(values: string[], colW: number[], o: { header?: boolean; bold?: boolean; fill?: ReturnType<typeof rgb> | null; align?: ("left" | "right")[] }) {
+    const h = o.header ? 20 : 18
+    if (this.y - h < this.bottomLimit) this.pageBreak()
+    const fy = this.y - h
+    const fill = o.header ? PDF.color.fieldFill : o.fill
+    if (fill) this.page.drawRectangle({ x: this.M, y: fy, width: this.CW, height: h, color: fill })
+    const font = o.header || o.bold ? this.bold : this.reg
+    const size = o.header ? 7.5 : 8.5
+    const color = o.header ? PDF.color.ruleStrong : PDF.color.ink
+    let cx = this.M
+    values.forEach((v, i) => {
+      const raw = o.header ? (v ?? "").toUpperCase() : (v ?? "")
+      const disp = clip(font, raw, colW[i] - 12, size)
+      const right = o.align?.[i] === "right"
+      const dw = font.widthOfTextAtSize(disp, size)
+      this.page.drawText(disp, { x: right ? cx + colW[i] - 6 - dw : cx + 6, y: fy + (h - size) / 2, size, font, color })
+      if (i > 0) this.page.drawLine({ start: { x: cx, y: fy }, end: { x: cx, y: fy + h }, thickness: 0.5, color: PDF.color.rule })
+      cx += colW[i]
+    })
+    const border: [number, number, number, number][] = [
+      [this.M, fy, this.M + this.CW, fy], [this.M, fy + h, this.M + this.CW, fy + h],
+      [this.M, fy, this.M, fy + h], [this.M + this.CW, fy, this.M + this.CW, fy + h],
+    ]
+    for (const [x1, y1, x2, y2] of border) {
+      this.page.drawLine({ start: { x: x1, y: y1 }, end: { x: x2, y: y2 }, thickness: 0.5, color: PDF.color.rule })
+    }
+    this.y -= h
+  }
+
+  /** A fully-bordered table. `align` sets per-column text alignment; `highlight`
+   *  fills + bolds matching rows (yellow subtotal/total rows). Pass [] headers to
+   *  skip the header row. */
+  gridTable(headers: string[], rows: string[][], colW: number[], opts: { align?: ("left" | "right")[]; highlight?: (r: string[]) => boolean } = {}) {
+    if (headers.length) this.drawGridRow(headers, colW, { header: true, align: opts.align })
+    for (const r of rows) {
+      const hl = opts.highlight?.(r) ?? false
+      this.drawGridRow(r, colW, { align: opts.align, fill: hl ? PDF.color.highlight : null, bold: hl })
+    }
+    this.spacer(6)
   }
 
   // ── Table ───────────────────────────────────────────────────────────────────
