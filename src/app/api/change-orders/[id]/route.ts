@@ -9,6 +9,13 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   const { id } = await params
   const updates = await req.json()
 
+  // Imported PCOs are frozen — reject any content mutation server-side (the DB
+  // trigger is the hard backstop; this returns a clean 403). DELETE is unaffected.
+  const { data: existing } = await supabase.from("change_orders").select("origin").eq("id", id).maybeSingle()
+  if (existing?.origin === "imported") {
+    return NextResponse.json({ error: "This PCO was imported and is frozen; it cannot be edited." }, { status: 403 })
+  }
+
   const allowed = [
     "co_number", "assigned_co_number", "date", "proposal", "qualifications", "pricing_sum", "realized_amount",
     "schedule_impact", "schedule_impact_days", "file_path", "file_name",
