@@ -431,20 +431,29 @@ export default function DailyModule({ globalProjectId, appProjects, teamMembers 
   // The critical contract is: the photo→report link MUST exist locally and
   // immediately, before any network call. So:
   //
-  //   1. crypto.randomUUID() synchronously produces the report's durable
-  //      identity. Used as BOTH the local photo target AND the eventual
-  //      server PK (/api/daily-reports POST upserts on client_id).
-  //   2. tagDraftWithSavedReport(draftId, clientReportId) runs FIRST,
-  //      stamping every draft photo with savedReportId = clientReportId
-  //      in one IDB transaction. Photos are now sync-runner-visible
-  //      regardless of what happens next.
-  //   3. putPendingDailyReport() queues the report's form bag in IDB.
-  //      Even if the user closes the tab right now, the report (and its
-  //      already-linked photos) will be drained on next open.
+  //   1. The report's durable identity IS the draft id (draftId). Reusing
+  //      it — rather than minting a fresh UUID per submit — makes a retry
+  //      after a partial failure upsert the SAME server row instead of
+  //      creating a duplicate (route.ts upserts onConflict:"id"). Draft
+  //      ids are crypto.randomUUID(), so the server's UUID_RE matches.
+  //      Falls back to a fresh UUID only when there is no draft.
+  //   2. putPendingDailyReport() queues the report's form bag in IDB
+  //      FIRST. It writes PENDING_REPORTS_STORE, which shares no scope
+  //      with the photo store, so it lands even while a photo-write storm
+  //      keeps the photo store busy. Even if the user closes the tab right
+  //      now, the report will be drained on next open.
+  //   3. tagDraftWithSavedReport(draftId, clientReportId) then stamps every
+  //      draft photo with savedReportId in one IDB transaction. Its scope
+  //      overlaps the photo store, so it can stall under an ingestion storm
+  //      — hence it runs AFTER the report is already queued. The idempotent
+  //      retry re-tags safely: cursor.update is skipped when savedReportId
+  //      already matches.
   //   4. Optimistic POST. On 2xx → remove the pending row (server has
   //      it). On non-2xx or throw (offline) → leave it; drainReportsOnce
   //      retries with backoff. The UI doesn't block on this — the form
   //      closes and the report appears in the list either way.
+  //   5. Any uncaught failure surfaces in dailySaveError with the form kept
+  //      open and the draft intact, so Retry re-runs against the same id.
   //
   // Net effect: an offline create is locally indistinguishable from an
   // online one. Sync runner does the eventual upload, idempotently.
@@ -453,7 +462,8 @@ export default function DailyModule({ globalProjectId, appProjects, teamMembers 
     setDailySaving(true)
     setDailySaveError("")
     setDailyPhotoUploadError("")
-    const clientReportId = crypto.randomUUID()
+    // Reuse the draft id as the report id so a retry upserts the same row.
+    const clientReportId = draftId ?? crypto.randomUUID()
     try {
       const dailyFields: Record<string, string> = { report_date: dailyDate, project_id: dailyProjectId, prepared_by: dailyPreparedBy, weather_conditions: dailyWeather, temperature: dailyTemp, manpower_count: dailyManpower, work_performed: dailyWorkPerformed, equipment: dailyEquipment, materials_delivered: dailyMaterials, visitors: dailyVisitors, issues_delays: dailyIssues, safety_notes: dailySafety }
       const fields: Record<string, string> = {}
@@ -474,7 +484,14 @@ export default function DailyModule({ globalProjectId, appProjects, teamMembers 
         }
       }
 
-      // ─── LOCAL LINK FIRST, then queue the pending POST. ────────────────
+      // ─── Queue the pending POST FIRST (PENDING_REPORTS_STORE has no scope
+      //     overlap with the photo store, so it lands even under an ingestion
+      //     storm), THEN link the photos. See header note for why. ─────────
+      await putPendingDailyReport({
+        id: clientReportId,
+        fields,
+        createdAt: draftCreatedAt || Date.now(),
+      })
       if (draftId) {
         try {
           await tagDraftWithSavedReport(draftId, clientReportId)
@@ -482,11 +499,6 @@ export default function DailyModule({ globalProjectId, appProjects, teamMembers 
           console.error("[daily create] tagDraftWithSavedReport failed", err)
         }
       }
-      await putPendingDailyReport({
-        id: clientReportId,
-        fields,
-        createdAt: Date.now(),
-      })
 
       // ─── Optimistic POST. Pending row stays on any failure. ────────────
       try {
@@ -527,6 +539,16 @@ export default function DailyModule({ globalProjectId, appProjects, teamMembers 
       await refreshPendingReports()
       refreshSyncingCounts()
       drainPhotoQueue().catch(() => {})
+    } catch (err) {
+      // Any uncaught failure on the create path — most likely an IndexedDB
+      // write rejecting/stalling while photos are still being ingested —
+      // lands here instead of vanishing as an unhandled rejection. Surface
+      // it loudly, keep the form open, and DO NOT reset the draft, so the
+      // user's Retry re-runs createDaily against the same draftId (= report
+      // id) and the server upsert collapses both attempts onto one row.
+      console.error("[daily create] failed", err)
+      const msg = err instanceof Error ? err.message : "unknown error"
+      setDailySaveError(`Could not create the report (${msg}). Your photos are saved — tap "Create Report" to retry.`)
     } finally { setDailySaving(false) }
   }
 
@@ -892,7 +914,11 @@ export default function DailyModule({ globalProjectId, appProjects, teamMembers 
                   )}
                 </div>
                 <div className="flex items-center justify-between gap-2 px-6 py-4 border-t border-[#E2E8F0] flex-shrink-0">
-                  {!isEdit && dailySaveError ? (
+                  {!isEdit && photoCompressProgress ? (
+                    <p className="text-[12px] text-[#64748B] flex-1 mr-2 flex items-center gap-1.5">
+                      <SpinnerIcon className="h-3 w-3" /> Processing {Math.min(photoCompressProgress.done + 1, photoCompressProgress.total)} of {photoCompressProgress.total} photos… Create enables when done.
+                    </p>
+                  ) : !isEdit && dailySaveError ? (
                     <p className="text-[12px] text-red-500 flex-1 mr-2">{dailySaveError}</p>
                   ) : <span />}
                   <div className="flex gap-2 flex-shrink-0">
@@ -900,7 +926,7 @@ export default function DailyModule({ globalProjectId, appProjects, teamMembers 
                       className="h-8 px-4 rounded-md border border-[#E2E8F0] text-[13px] text-[#64748B] hover:bg-[#0F172A]/[0.04] transition-colors">
                       Cancel
                     </button>
-                    <button type="submit" disabled={isEdit ? dailyEditSaving : dailySaving}
+                    <button type="submit" disabled={isEdit ? dailyEditSaving : (dailySaving || !!photoCompressProgress || dailyPhotoUploading)}
                       className="h-8 px-4 rounded-md bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors disabled:opacity-50 flex items-center gap-2">
                       {(isEdit ? dailyEditSaving : dailySaving) && <SpinnerIcon className="h-3 w-3" />}
                       {isEdit ? (dailyEditSaving ? "Saving…" : "Save Changes") : (dailySaving ? "Creating…" : "Create Report")}
