@@ -56,7 +56,7 @@ async function walkEntry(entry: FileSystemEntry, acc: File[]): Promise<void> {
 interface Card {
   id: string
   pco: ParsedPco          // editable copy
-  staticFlags: PcoFlag[]  // cover/backup PCO# mismatch — resolved only by excluding
+  staticFlags: PcoFlag[]  // file-level number flags (cover≠backup notice; cover-missing block)
   excluded: boolean
   committed: boolean
   committing: boolean
@@ -70,7 +70,12 @@ const STATUS_OPTIONS = ["Not submitted", "Pending", "Approved"]
 interface CommitResult { imported: number; total: number; failures: { pco_number: string; reason: string }[] }
 
 // Flags that block commit and can ONLY be cleared by excluding the file.
-const EXCLUDE_ONLY: PcoFlag["code"][] = ["pco_number_mismatch", "collision", "unsupported_value"]
+const EXCLUDE_ONLY: PcoFlag["code"][] = ["pco_number_unverified", "collision", "unsupported_value"]
+
+// Informational-only flags: shown to the reviewer but they do NOT block commit.
+// The cover≠backup number notice is here — the cover # is authoritative, so a
+// stale backup number is expected and a card carrying only this notice is clean.
+const NON_BLOCKING: PcoFlag["code"][] = ["pco_number_mismatch"]
 
 export default function PcoImportModal({ project, onClose, onImported }: {
   project: Project
@@ -100,7 +105,10 @@ export default function PcoImportModal({ project, onClose, onImported }: {
     return f
   }
 
-  const committable = (card: Card) => !card.excluded && !card.committed && liveFlags(card).length === 0
+  // A card is committable when it has no BLOCKING flags (non-blocking notices,
+  // e.g. the cover≠backup number notice, don't count against it).
+  const blockingFlags = (card: Card) => liveFlags(card).filter(f => !NON_BLOCKING.includes(f.code))
+  const committable = (card: Card) => !card.excluded && !card.committed && blockingFlags(card).length === 0
 
   // Live computed totals (mirrors the server + the generated PDF).
   function totalsOf(p: ParsedPco) {
@@ -176,7 +184,10 @@ export default function PcoImportModal({ project, onClose, onImported }: {
           }
           return { id: cid(), pco: stub, staticFlags: r.fileFlags, excluded: true, committed: false, committing: false, error: null, status: "Not submitted" }
         }
-        const staticFlags = r.pco.flags.filter(f => f.code === "pco_number_mismatch")
+        // Cover/backup number flags are file-level (not recomputable from edits),
+        // so they ride along as static: the non-blocking cover≠backup notice and
+        // the blocking cover-missing fallback.
+        const staticFlags = r.pco.flags.filter(f => f.code === "pco_number_mismatch" || f.code === "pco_number_unverified")
         return { id: cid(), pco: r.pco, staticFlags, excluded: false, committed: false, committing: false, error: null, status: "Not submitted" }
       })
       setCards(prev => [...prev, ...newCards])
@@ -305,11 +316,12 @@ export default function PcoImportModal({ project, onClose, onImported }: {
 
           {cards.map(card => {
             const flags = liveFlags(card)
+            const blocking = flags.filter(f => !NON_BLOCKING.includes(f.code))
             const { t, computed } = totalsOf(card.pco)
             const p = card.pco
             const ok = committable(card)
             return (
-              <div key={card.id} className={`bg-white rounded-xl border p-4 ${card.excluded ? "border-[#E2E8F0] opacity-60" : flags.length ? "border-amber-300" : "border-green-300"}`}>
+              <div key={card.id} className={`bg-white rounded-xl border p-4 ${card.excluded ? "border-[#E2E8F0] opacity-60" : blocking.length ? "border-amber-300" : "border-green-300"}`}>
                 {/* Card header */}
                 <div className="flex items-start justify-between gap-3 mb-3">
                   <div className="min-w-0">
@@ -334,15 +346,17 @@ export default function PcoImportModal({ project, onClose, onImported }: {
                   </div>
                 </div>
 
-                {/* Flags — volatile_date is a neutral CONFIRM prompt (nothing is
-                    wrong); everything else is an amber error. */}
+                {/* Flags — volatile_date and the cover≠backup number notice are
+                    neutral blue informational prompts (nothing is wrong); real
+                    errors are amber. */}
                 {flags.length > 0 && !card.excluded && (
                   <div className="mb-3 space-y-1">
                     {flags.map((f, i) => {
-                      const confirm = f.code === "volatile_date"
+                      const info = f.code === "volatile_date" || f.code === "pco_number_mismatch"
+                      const label = f.code === "volatile_date" ? "Confirm date" : f.code === "pco_number_mismatch" ? "Note" : f.code.replace(/_/g, " ")
                       return (
-                        <div key={i} className={`flex items-start gap-2 text-[11px] rounded-md px-2 py-1 border ${confirm ? "text-blue-800 bg-blue-50 border-blue-200" : "text-amber-800 bg-amber-50 border-amber-200"}`}>
-                          <span className="font-semibold uppercase tracking-wide shrink-0">{confirm ? "Confirm date" : f.code.replace(/_/g, " ")}</span>
+                        <div key={i} className={`flex items-start gap-2 text-[11px] rounded-md px-2 py-1 border ${info ? "text-blue-800 bg-blue-50 border-blue-200" : "text-amber-800 bg-amber-50 border-amber-200"}`}>
+                          <span className="font-semibold uppercase tracking-wide shrink-0">{label}</span>
                           <span>{f.message}</span>
                           {EXCLUDE_ONLY.includes(f.code) && <span className="text-amber-600 italic ml-auto shrink-0">exclude to proceed</span>}
                         </div>

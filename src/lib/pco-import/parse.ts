@@ -121,9 +121,18 @@ export async function parseWorkbookFile(file: File): Promise<ParsedFileResult> {
 
   const flags: PcoFlag[] = []
 
-  // Cross-check: Cover PCO # must equal Backup PCO #.
-  if (cover.pcoNumber && backup.pcoNumber && cover.pcoNumber !== backup.pcoNumber) {
-    flags.push({ code: "pco_number_mismatch", message: `Cover PCO # (${cover.pcoNumber}) ≠ Backup PCO # (${backup.pcoNumber}). Resolve before committing.` })
+  // PCO #: the COVER SHEET is authoritative everywhere (row number, collision
+  // key, prem-time matching). THP workbooks are copied from prior PCOs, so the
+  // Backup Template's number is often stale — cover# ≠ backup# is a NORMAL
+  // condition, surfaced as a non-blocking notice. Only when the cover carries no
+  // number at all do we fall back to the backup#, and then it can't be trusted →
+  // a hard block.
+  if (cover.pcoNumber) {
+    if (backup.pcoNumber && backup.pcoNumber !== cover.pcoNumber) {
+      flags.push({ code: "pco_number_mismatch", message: `Backup sheet shows PCO ${backup.pcoNumber} — using cover PCO ${cover.pcoNumber}.` })
+    }
+  } else if (backup.pcoNumber) {
+    flags.push({ code: "pco_number_unverified", message: `Cover Sheet PCO # is missing; falling back to the Backup PCO # (${backup.pcoNumber}), which can't be verified. Exclude unless the number is confirmed.` })
   }
 
   const stated: StatedPricing = {

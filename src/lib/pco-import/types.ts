@@ -6,7 +6,8 @@
 // artifacts (e.g. 2704.6099999999997).
 
 export type PcoFlagCode =
-  | "pco_number_mismatch"   // Cover Sheet PCO # ≠ Backup Template PCO #
+  | "pco_number_mismatch"   // Cover # ≠ Backup # — NON-BLOCKING notice (cover is authoritative; stale backup copy is normal)
+  | "pco_number_unverified" // Cover # missing entirely; fell back to backup # — BLOCKING (no trustworthy number)
   | "math_mismatch"         // recomputed subtotal/total ≠ stated value (> tolerance)
   | "collision"             // PCO # already exists in this project's log
   | "missing_fields"        // a required field could not be located
