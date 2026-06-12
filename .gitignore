@@ -10,3 +10,9 @@ tsconfig.tsbuildinfo
 
 # Local debugging / Excel-export harness
 scripts/
+
+# Local PDF render artifacts (screenshot tooling)
+scripts/out/
+
+# Local Claude Code state
+.claude/

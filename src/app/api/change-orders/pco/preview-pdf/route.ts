@@ -29,7 +29,7 @@ export async function POST(req: NextRequest) {
 
   // Company letterhead context.
   const { data: settings } = await supabase.from("company_settings")
-    .select("logo_path, phone").maybeSingle()
+    .select("logo_path, phone, address_line1, address_line2").maybeSingle()
   let logoBytes: ArrayBuffer | null = null
   if (settings?.logo_path) {
     const { data: blob } = await supabase.storage.from("company-assets").download(settings.logo_path)
@@ -44,7 +44,12 @@ export async function POST(req: NextRequest) {
 
   const docData = payloadToDocData(body, { name: project.name, number: project.number, location: project.location })
   // Imported PCOs carry no TuttoHQ signer signature asset (historical signer).
-  const { cover, backup } = await buildPcoDocuments(docData, { logoBytes, sigBytes: null, companyName, phone: settings?.phone ?? null })
+  const { cover, backup } = await buildPcoDocuments(docData, {
+    logoBytes, sigBytes: null, companyName,
+    phone: settings?.phone ?? null,
+    addressLine1: settings?.address_line1 ?? null,
+    addressLine2: settings?.address_line2 ?? null,
+  })
 
   const bytes = which === "backup" ? backup : cover
   return new NextResponse(Buffer.from(bytes), {

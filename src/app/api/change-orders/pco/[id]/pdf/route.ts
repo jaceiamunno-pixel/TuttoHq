@@ -92,7 +92,12 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
     projectLocation: project.location ?? null,
   }
 
-  const { backup: backupBytes, cover: coverBytes } = await buildPcoDocuments(docData, { logoBytes, sigBytes, companyName, phone: settings?.phone ?? null })
+  const { backup: backupBytes, cover: coverBytes } = await buildPcoDocuments(docData, {
+    logoBytes, sigBytes, companyName,
+    phone: settings?.phone ?? null,
+    addressLine1: settings?.address_line1 ?? null,
+    addressLine2: settings?.address_line2 ?? null,
+  })
 
   // ── Store at fixed paths + return fresh signed URLs ──────────────────────────
   const backupPath = `${companyId}/change-orders/${id}/backup.pdf`
