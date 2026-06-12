@@ -5,6 +5,7 @@ import Link from "next/link"
 import Papa from "papaparse"
 import { createClient } from "@/lib/supabase/client"
 import { DivisionChecklist, SectionAccordion, isDefaultInScopeDivision } from "@/components/scope-selection"
+import { CSI_DIVISIONS } from "@/app/dashboard/_shared/csi"
 import ProjectSpecBooks from "@/components/project-spec-books"
 import LaborRatesTab from "@/components/labor-rates-tab"
 import ProfileSignature from "@/components/profile-signature"
@@ -233,6 +234,8 @@ export default function SettingsPage() {
   const [scopeExistingDocIds, setScopeExistingDocIds] = useState<string[]>([])
   const [wizardProjectName, setWizardProjectName] = useState("")
   const [scopedProjectIds, setScopedProjectIds]   = useState<Set<string>>(new Set())
+  const [wizardEditScope, setWizardEditScope] = useState(false)   // editing scope already set on a project
+  const [scopeClearing, setScopeClearing]     = useState(false)   // DELETE in flight on the clear path
 
   const [subcontractors, setSubcontractors] = useState<Subcontractor[]>([])
   const [subsLoading, setSubsLoading]       = useState(false)
@@ -750,11 +753,13 @@ export default function SettingsPage() {
     setScopeSaving(false)
     setWizardScopeOnly(false); setWizardProjectName("")
     setScopeChecking(false); setScopeExistingDocIds([])
+    setWizardEditScope(false); setScopeClearing(false)
   }
 
-  // Launch the wizard for an existing project's "Set scope" action. If the
-  // project already has spec books uploaded, scope is read straight from their
-  // tables of contents — the user is not asked to upload again.
+  // Launch the wizard for an existing project's "Set scope" / "Edit scope"
+  // action. When scope is already set we reload the saved selections so the user
+  // can modify or clear them; otherwise, if the project has spec books uploaded,
+  // scope is read straight from their tables of contents (no re-upload needed).
   async function openScopeWizard(p: Project) {
     resetWizard()
     setEditingProject(null)
@@ -766,8 +771,68 @@ export default function SettingsPage() {
     setWizardStep(1)
     setShowProjectForm(true)
     setScopeChecking(true)
-    await loadScopeFromExistingBooks(p.id)
+    const alreadyScoped = scopedProjectIds.has(p.id)
+    // Editing: pre-fill from the saved scope rows. Fall back to reading the spec
+    // books only if the saved scope can't be loaded (e.g. it was cleared in a
+    // concurrent session).
+    const loaded = alreadyScoped ? await loadSavedScope(p.id) : false
+    if (loaded) setWizardEditScope(true)
+    else await loadScopeFromExistingBooks(p.id)
     setScopeChecking(false)
+  }
+
+  // Reconstructs the wizard from a project's saved project_scope_sections rows.
+  // Those rows are a full snapshot of the TOC (every section, in or out of
+  // scope), so they reproduce both the section list and the exact selections.
+  // Lands on the section-refinement step (step 3) with everything pre-checked.
+  // Returns false when the project has no saved scope rows.
+  async function loadSavedScope(projectId: string): Promise<boolean> {
+    try {
+      const r = await fetch(`/api/projects/${projectId}/scope`)
+      if (!r.ok) return false
+      const d = await r.json()
+      const rows: { spec_number: string; spec_title: string; division_code: string; in_scope: boolean }[] = d.scope ?? []
+      if (rows.length === 0) return false
+
+      const sections: TocEntry[] = rows
+        .map(s => ({ specNumber: s.spec_number, specTitle: s.spec_title, divisionCode: s.division_code }))
+        .sort((a, b) => a.specNumber.localeCompare(b.specNumber))
+
+      const counts = new Map<string, number>()
+      for (const s of sections) counts.set(s.divisionCode, (counts.get(s.divisionCode) ?? 0) + 1)
+      const divisions: TocDivision[] = [...counts.entries()]
+        .map(([code, sectionCount]) => ({
+          code,
+          name: CSI_DIVISIONS.find(dv => dv.num === code)?.name ?? `Division ${code}`,
+          sectionCount,
+        }))
+        .sort((a, b) => a.code.localeCompare(b.code))
+
+      const inScopeSections = new Set(rows.filter(s => s.in_scope).map(s => s.spec_number))
+      const inScopeDivisions = new Set(sections.filter(s => inScopeSections.has(s.specNumber)).map(s => s.divisionCode))
+
+      // Re-parsing the project's spec books applies any new scope; harmless when
+      // they're already parsed (the parse route no-ops on parsed volumes).
+      try {
+        const sb = await fetch(`/api/spec-books?project_id=${encodeURIComponent(projectId)}`)
+        if (sb.ok) {
+          const sbData = await sb.json()
+          setScopeExistingDocIds((sbData.documents ?? []).map((doc: { id: string }) => doc.id))
+        }
+      } catch { /* non-fatal: scope still saves without a re-parse */ }
+
+      setTocSections(sections)
+      setTocDivisions(divisions)
+      setScopeDivisions(inScopeDivisions)
+      setScopeSections(inScopeSections)
+      // No in-scope divisions yet → start at division selection; otherwise jump
+      // straight to section refinement where the current selections are visible.
+      setWizardStep(inScopeDivisions.size > 0 ? 3 : 2)
+      return true
+    } catch (err) {
+      console.error("[settings] saved scope load failed", err)
+      return false
+    }
   }
 
   // Reads scope from spec books already uploaded to the project. Advances to
@@ -958,13 +1023,39 @@ export default function SettingsPage() {
       for (const id of parseIds) {
         fetch(`/api/spec-books/${id}/parse`, { method: "POST" }).catch(() => {})
       }
-      flashProject("Project scope saved — spec book is parsing in the background")
+      flashProject(parseIds.length > 0
+        ? "Project scope saved — spec book is parsing in the background"
+        : "Project scope saved")
       loadScopeStatus()
       cancelProjectForm()
     } catch (err) {
       setTocError(err instanceof Error ? err.message : "Failed to save scope")
     } finally {
       setScopeSaving(false)
+    }
+  }
+
+  // Clears every scope row for the project, returning it to the "not yet scoped"
+  // state. Destructive (removes all selections), so it confirms first. Spec
+  // sections / staged submittals already ingested are left untouched.
+  async function clearScope() {
+    if (!wizardProjectId) return
+    if (!window.confirm("Clear this project's scope? All section selections will be removed and the project returns to the unscoped state. Already-ingested submittals are not affected.")) return
+    setScopeClearing(true)
+    setTocError(null)
+    try {
+      const res = await fetch(`/api/projects/${wizardProjectId}/scope`, { method: "DELETE" })
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}))
+        throw new Error(d.error ?? "Failed to clear scope")
+      }
+      flashProject("Project scope cleared")
+      loadScopeStatus()
+      cancelProjectForm()
+    } catch (err) {
+      setTocError(err instanceof Error ? err.message : "Failed to clear scope")
+    } finally {
+      setScopeClearing(false)
     }
   }
 
@@ -2001,7 +2092,7 @@ export default function SettingsPage() {
                     {editingProject
                       ? "Edit project"
                       : wizardScopeOnly
-                        ? `Set project scope — ${wizardProjectName}`
+                        ? `${wizardEditScope ? "Edit" : "Set"} project scope — ${wizardProjectName}`
                         : wizardStep > 1
                           ? `New project — Step ${wizardStep} of 3`
                           : "New project"}
@@ -2253,25 +2344,39 @@ export default function SettingsPage() {
                   {!editingProject && wizardStep === 2 && (
                     <div className="space-y-3">
                       <p className="text-[12px] text-[#64748B]">
-                        Check the divisions this project owns — {tocDivisions.length} found in the spec book. Divisions 01–12 and 14 are pre-selected.
+                        {wizardEditScope
+                          ? `Check the divisions this project owns — ${tocDivisions.length} in the current scope.`
+                          : `Check the divisions this project owns — ${tocDivisions.length} found in the spec book. Divisions 01–12 and 14 are pre-selected.`}
                       </p>
                       <DivisionChecklist divisions={tocDivisions} checked={scopeDivisions} onToggle={toggleScopeDivision} />
-                      <div className="flex justify-end gap-2 pt-1">
-                        <button
-                          type="button"
-                          onClick={cancelProjectForm}
-                          className="h-8 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#64748B] hover:text-[#0F172A] hover:bg-[#F4F5F7]/[0.05] transition-colors"
-                        >
-                          Close
-                        </button>
-                        <button
-                          type="button"
-                          onClick={goToSectionStep}
-                          disabled={scopeDivisions.size === 0}
-                          className="h-8 px-4 rounded-md bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors disabled:opacity-50"
-                        >
-                          Next: refine sections
-                        </button>
+                      <div className="flex items-center justify-between gap-2 pt-1">
+                        {wizardEditScope ? (
+                          <button
+                            type="button"
+                            onClick={clearScope}
+                            disabled={scopeClearing || scopeSaving}
+                            className="h-8 px-3 rounded-md border border-red-200 text-[13px] text-red-600 hover:bg-red-50 transition-colors disabled:opacity-50"
+                          >
+                            {scopeClearing ? "Clearing…" : "Clear scope"}
+                          </button>
+                        ) : <span />}
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={cancelProjectForm}
+                            className="h-8 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#64748B] hover:text-[#0F172A] hover:bg-[#F4F5F7]/[0.05] transition-colors"
+                          >
+                            Close
+                          </button>
+                          <button
+                            type="button"
+                            onClick={goToSectionStep}
+                            disabled={scopeDivisions.size === 0}
+                            className="h-8 px-4 rounded-md bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors disabled:opacity-50"
+                          >
+                            Next: refine sections
+                          </button>
+                        </div>
                       </div>
                     </div>
                   )}
@@ -2292,23 +2397,35 @@ export default function SettingsPage() {
                       {tocError && (
                         <div className="rounded-md bg-red-50 border border-red-200 px-3 py-2 text-[12px] text-red-600">{tocError}</div>
                       )}
-                      <div className="flex justify-end gap-2 pt-1">
-                        <button
-                          type="button"
-                          onClick={() => setWizardStep(2)}
-                          disabled={scopeSaving}
-                          className="h-8 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#64748B] hover:text-[#0F172A] hover:bg-[#F4F5F7]/[0.05] transition-colors disabled:opacity-50"
-                        >
-                          ← Back
-                        </button>
-                        <button
-                          type="button"
-                          onClick={finishScope}
-                          disabled={scopeSaving}
-                          className="h-8 px-4 rounded-md bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors disabled:opacity-50"
-                        >
-                          {scopeSaving ? "Saving…" : `Finish — ${scopeSections.size} section${scopeSections.size === 1 ? "" : "s"} in scope`}
-                        </button>
+                      <div className="flex items-center justify-between gap-2 pt-1">
+                        {wizardEditScope ? (
+                          <button
+                            type="button"
+                            onClick={clearScope}
+                            disabled={scopeClearing || scopeSaving}
+                            className="h-8 px-3 rounded-md border border-red-200 text-[13px] text-red-600 hover:bg-red-50 transition-colors disabled:opacity-50"
+                          >
+                            {scopeClearing ? "Clearing…" : "Clear scope"}
+                          </button>
+                        ) : <span />}
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setWizardStep(2)}
+                            disabled={scopeSaving}
+                            className="h-8 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#64748B] hover:text-[#0F172A] hover:bg-[#F4F5F7]/[0.05] transition-colors disabled:opacity-50"
+                          >
+                            ← Back
+                          </button>
+                          <button
+                            type="button"
+                            onClick={finishScope}
+                            disabled={scopeSaving}
+                            className="h-8 px-4 rounded-md bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors disabled:opacity-50"
+                          >
+                            {scopeSaving ? "Saving…" : `Finish — ${scopeSections.size} section${scopeSections.size === 1 ? "" : "s"} in scope`}
+                          </button>
+                        </div>
                       </div>
                     </div>
                   )}
@@ -2447,14 +2564,12 @@ export default function SettingsPage() {
                               </svg>
                               Spec books{sbCount != null ? ` (${sbCount})` : ""}
                             </button>
-                            {!scopedProjectIds.has(p.id) && (
-                              <button
-                                onClick={() => openScopeWizard(p)}
-                                className="text-[11px] font-semibold text-[#7B9BB5] hover:text-[#6A8AA4] px-2 py-1 rounded hover:bg-[#F4F5F7]/[0.08] transition-colors whitespace-nowrap"
-                              >
-                                Set scope
-                              </button>
-                            )}
+                            <button
+                              onClick={() => openScopeWizard(p)}
+                              className="text-[11px] font-semibold text-[#7B9BB5] hover:text-[#6A8AA4] px-2 py-1 rounded hover:bg-[#F4F5F7]/[0.08] transition-colors whitespace-nowrap"
+                            >
+                              {scopedProjectIds.has(p.id) ? "Edit scope" : "Set scope"}
+                            </button>
                             <div className="flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
                               <button
                                 onClick={() => openEditProject(p)}

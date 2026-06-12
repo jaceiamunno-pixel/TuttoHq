@@ -66,3 +66,22 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   return NextResponse.json({ ok: true, count: rows.length })
 }
+
+// DELETE /api/projects/[id]/scope — removes every scope row for the project,
+// returning it to the clean "not yet scoped" state (same as a fresh project:
+// Spec Book Ingestion falls back to ingesting all sections). Leaves already
+// ingested spec_sections / staged_submittals untouched.
+export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+
+  const { id } = await params
+  const { error } = await supabase
+    .from("project_scope_sections")
+    .delete()
+    .eq("project_id", id)
+
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json({ ok: true })
+}
