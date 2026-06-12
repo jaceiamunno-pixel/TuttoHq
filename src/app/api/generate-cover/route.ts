@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import { PDFDocument } from "pdf-lib"
 import { type SubmittalCoversheetProps } from "@/components/submittals/SubmittalCoversheet"
-import { buildCoversheetPdf } from "@/lib/coversheet-pdf"
+import { buildCoversheetPdf, type CoversheetReviewer } from "@/lib/coversheet-pdf"
 import { normalizeSubmittalTitle } from "@/lib/title-normalize"
 
 export const maxDuration = 60
@@ -59,6 +59,39 @@ export async function POST(req: NextRequest) {
     if (logoBlob) logoBytes = await logoBlob.arrayBuffer()
   }
 
+  // ── Reviewer stamp identity — resolved SERVER-SIDE from the session. The
+  // generating user's full name and their company name are NEVER taken from the
+  // client; we read them from the authenticated user's own user_profiles row and
+  // the companies table for their company_id.
+  const { data: companyId } = await supabase.rpc("get_my_company_id")
+  let stampCompanyName = ""
+  if (companyId) {
+    const { data: companyRow } = await supabase
+      .from("companies").select("name").eq("id", companyId).maybeSingle()
+    stampCompanyName = companyRow?.name ?? ""
+  }
+  const { data: profile } = await supabase
+    .from("user_profiles").select("full_name").maybeSingle()
+  const reviewedByName = profile?.full_name ?? ""
+
+  // Stamp's Submittal No. — "{spec section}-{submittal}.{revision}" (e.g.
+  // "07 84 40-7.0"). Omit any part that's missing; an empty string omits the row.
+  const secPart = (specSectionNo ?? "").trim()
+  const subInt = parseInt(String(submittalNo ?? ""), 10)
+  const numPart = Number.isFinite(subInt)
+    ? `${subInt}.${parseInt(String(revisionNo ?? "0"), 10) || 0}`
+    : ""
+  const stampSubmittalNo = [secPart, numPart].filter(Boolean).join("-")
+
+  const reviewer: CoversheetReviewer = {
+    company:       stampCompanyName,
+    projectName:   projectName   || "",
+    projectNumber: projectNumber || "",
+    submittalNo:   stampSubmittalNo,
+    reviewedBy:    reviewedByName,
+    date:          new Date().toLocaleDateString("en-US"),
+  }
+
   const coversheetProps: SubmittalCoversheetProps = {
     gcName:                gcName         || "",
     projectName:           projectName    || "",
@@ -76,7 +109,7 @@ export async function POST(req: NextRequest) {
     copyTo:                copyTo         || "",
   }
 
-  const coverBytes = await buildCoversheetPdf(coversheetProps, logoBytes)
+  const coverBytes = await buildCoversheetPdf(coversheetProps, logoBytes, reviewer)
 
   // Merge cover page with original submittal PDF (if any)
   const mergedDoc = await PDFDocument.create()

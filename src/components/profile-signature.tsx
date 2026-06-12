@@ -14,6 +14,11 @@ export default function ProfileSignature() {
   const [message, setMessage] = useState<{ text: string; ok: boolean } | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
+  // Full name — appears as "Reviewed By" on submittal review stamps.
+  const [fullName, setFullName] = useState("")
+  const [savedName, setSavedName] = useState<string | null>(null)
+  const [savingName, setSavingName] = useState(false)
+
   function flash(text: string, ok = true) {
     setMessage({ text, ok })
     setTimeout(() => setMessage(null), 3500)
@@ -25,7 +30,34 @@ export default function ProfileSignature() {
       .then((d: { signature_url?: string | null }) => setSignatureUrl(d.signature_url ?? null))
       .catch(() => {})
       .finally(() => setLoading(false))
+    fetch("/api/profile")
+      .then(r => r.json())
+      .then((d: { full_name?: string | null }) => {
+        setSavedName(d.full_name ?? null)
+        setFullName(d.full_name ?? "")
+      })
+      .catch(() => {})
   }, [])
+
+  async function handleSaveName() {
+    const next = fullName.trim()
+    if (!next) { flash("Name cannot be empty", false); return }
+    setSavingName(true)
+    try {
+      const res = await fetch("/api/profile", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ full_name: next }),
+      })
+      const d = await res.json().catch(() => ({}))
+      if (!res.ok) { flash(d.error ?? "Could not save name", false); return }
+      setSavedName(d.full_name ?? next)
+      setFullName(d.full_name ?? next)
+      flash("Name saved")
+    } finally {
+      setSavingName(false)
+    }
+  }
 
   async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
@@ -61,6 +93,31 @@ export default function ProfileSignature() {
 
   return (
     <div className="space-y-4">
+      <div className="bg-white rounded-xl border border-[#E2E8F0] p-5">
+        <h2 className="text-[14px] font-semibold text-[#0F172A] mb-0.5">Full name</h2>
+        <p className="text-[12px] text-[#64748B] mb-4">
+          Appears as <span className="font-medium text-[#0F172A]">Reviewed By</span> on the review
+          stamp of submittal cover sheets you generate.
+        </p>
+        <div className="flex items-center gap-2 max-w-md">
+          <input
+            type="text"
+            value={fullName}
+            onChange={e => setFullName(e.target.value)}
+            maxLength={120}
+            placeholder="e.g. Jane Smith"
+            className="flex-1 h-9 px-3 rounded-md border border-[#E2E8F0] bg-white text-[13px] text-[#0F172A] placeholder-[#94A3B8] focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40"
+          />
+          <button
+            onClick={handleSaveName}
+            disabled={savingName || fullName.trim() === (savedName ?? "")}
+            className="h-9 px-4 rounded-md bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors disabled:opacity-50"
+          >
+            {savingName ? "Saving…" : "Save"}
+          </button>
+        </div>
+      </div>
+
       <div className="bg-white rounded-xl border border-[#E2E8F0] p-5">
         <h2 className="text-[14px] font-semibold text-[#0F172A] mb-0.5">Signature</h2>
         <p className="text-[12px] text-[#64748B] mb-4">
