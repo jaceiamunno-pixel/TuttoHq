@@ -58,6 +58,13 @@ export async function PUT(
   const title = typeof body.title === "string" ? body.title.trim() : ""
   if (!title) return NextResponse.json({ error: "A title is required" }, { status: 400 })
 
+  // Imported PCOs are frozen — the builder must never re-save one. Clean 403
+  // (the save_pco UPDATE would also be rejected by the DB freeze trigger).
+  const { data: existing } = await supabase.from("change_orders").select("origin").eq("id", id).maybeSingle()
+  if (existing?.origin === "imported") {
+    return NextResponse.json({ error: "This PCO was imported and is frozen; it cannot be edited." }, { status: 403 })
+  }
+
   const pricing_sum = computePcoPricingSum(body)            // recomputed, never trusted
   const lineItems = buildLineItemRows(body)
   const schedDays = body.schedule_impact_days === undefined || body.schedule_impact_days === null || body.schedule_impact_days === ""

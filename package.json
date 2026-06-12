@@ -5,7 +5,9 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start"
+    "start": "next start",
+    "fixture:pco-042": "node scripts/make-thp-pco-042-fixture.mjs",
+    "verify:pco-import": "node --experimental-strip-types --import ./scripts/pco-import-register.mjs scripts/verify-pco-import.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.95.1",

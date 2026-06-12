@@ -127,6 +127,10 @@ export interface ChangeOrder {
   // (pricing_sum is derived + read-only in the log) from manual log rows.
   has_pco_detail?: boolean; description_of_work?: string | null; oh_p_percent?: number | null; fee_percent?: number | null;
   pco_backup_pdf_path?: string | null; pco_cover_pdf_path?: string | null;
+  // 'imported' rows are FROZEN — historical PCOs brought in from legacy
+  // workbooks. They render in the log but show no Edit affordance and the
+  // server rejects any update.
+  origin?: "manual" | "imported";
 }
 export interface PunchItem { id: string; item_number: string; description: string; location: string | null; assigned_to: string | null; due_date: string | null; priority: string; status: string; notes: string | null; project_id: string | null; created_at: string; completed_at: string | null; uploaded_by: string; generated_pdf_path?: string | null; file_name?: string | null; file_path?: string | null }
 export interface DailyReport { id: string; report_date: string; project_id: string | null; prepared_by: string | null; weather_conditions: string | null; temperature: string | null; manpower_count: number | null; work_performed: string | null; equipment: string | null; materials_delivered: string | null; visitors: string | null; issues_delays: string | null; safety_notes: string | null; created_at: string; uploaded_by: string; generated_pdf_path?: string | null; file_name?: string | null; file_path?: string | null }
