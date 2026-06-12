@@ -57,7 +57,9 @@ export default function PcoImportModal({ project, onClose, onImported }: {
     const f: PcoFlag[] = [...card.staticFlags]
     if (!p.pcoNumber) f.push({ code: "missing_fields", field: "PCO #", message: "PCO # is required." })
     if (!p.title) f.push({ code: "missing_fields", field: "Title", message: "Title is required." })
-    if (!p.dateISO) f.push({ code: "missing_fields", field: "Date", message: "Date is required." })
+    if (!p.dateISO) f.push(p.dateSuggestion
+      ? { code: "volatile_date", field: "Date", message: `Date is a TODAY()/NOW() formula (showed ${p.dateSuggestion}). Enter or confirm the PCO date.` }
+      : { code: "missing_fields", field: "Date", message: "Date is required." })
     if (p.labor.length === 0 && p.materials.length === 0) f.push({ code: "missing_fields", field: "Line items", message: "At least one labor or material line is required." })
     if (p.pcoNumber && collisionKeys.has(numericKey(p.pcoNumber))) f.push({ code: "collision", message: `PCO #${p.pcoNumber} already exists in this project.` })
     const { flags } = reconcile(p.labor, p.materials, p.stated)
@@ -96,7 +98,7 @@ export default function PcoImportModal({ project, onClose, onImported }: {
           // Hard parse failure → an excluded error card carrying the file flags.
           const stub: ParsedPco = {
             sourceFileName: r.fileName, sourceSheetCover: null, sourceSheetBackup: null,
-            pcoNumber: null, pcoNumberRaw: null, project: null, dateISO: null, title: r.fileName,
+            pcoNumber: null, pcoNumberRaw: null, project: null, dateISO: null, dateSuggestion: null, title: r.fileName,
             descriptionOfWork: null, scheduleImpactDays: null, signerName: null, signerTitle: null,
             jobNumber: null, labor: [], materials: [],
             stated: { coverLabor: null, coverMaterials: null, coverSubcontractor: null, coverFee: null, coverBond: null, coverTotal: null, backupLaborSubtotal: null, backupMaterialsSubtotal: null, backupOhpAmount: null, backupGrandTotal: null },
@@ -281,7 +283,13 @@ export default function PcoImportModal({ project, onClose, onImported }: {
                     {/* Header editable fields */}
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3">
                       <Field label="PCO #" value={p.pcoNumber ?? ""} onChange={v => patchPco(card.id, x => ({ ...x, pcoNumber: v.trim() || null }))} />
-                      <Field label="Date" type="date" value={p.dateISO ?? ""} onChange={v => patchPco(card.id, x => ({ ...x, dateISO: v || null }))} />
+                      <div>
+                        <Field label="Date" type="date" value={p.dateISO ?? ""} onChange={v => patchPco(card.id, x => ({ ...x, dateISO: v || null }))} />
+                        {!p.dateISO && p.dateSuggestion && (
+                          <button onClick={() => patchPco(card.id, x => ({ ...x, dateISO: x.dateSuggestion }))}
+                            className="mt-0.5 text-[10px] text-amber-700 hover:underline">TODAY() showed {p.dateSuggestion} — use it</button>
+                        )}
+                      </div>
                       <Field label="Job #" value={p.jobNumber ?? ""} onChange={v => patchPco(card.id, x => ({ ...x, jobNumber: v.trim() || null }))} />
                       <Field label="Schedule days" type="number" value={p.scheduleImpactDays != null ? String(p.scheduleImpactDays) : ""} onChange={v => patchPco(card.id, x => ({ ...x, scheduleImpactDays: v.trim() === "" ? null : parseInt(v, 10) }))} />
                       <div className="col-span-2 sm:col-span-4">

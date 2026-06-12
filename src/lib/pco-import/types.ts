@@ -10,6 +10,7 @@ export type PcoFlagCode =
   | "math_mismatch"         // recomputed subtotal/total ≠ stated value (> tolerance)
   | "collision"             // PCO # already exists in this project's log
   | "missing_fields"        // a required field could not be located
+  | "volatile_date"         // the only date is a TODAY()/NOW() formula — must confirm
   | "unsupported_value"     // a value with no TuttoHQ model slot (e.g. Bond ≠ 0)
   | "parse_error"           // the file/sheet could not be read at all
 
@@ -75,7 +76,8 @@ export interface ParsedPco {
   pcoNumberRaw: string | null
   // cover fields
   project: string | null
-  dateISO: string | null        // 'YYYY-MM-DD'
+  dateISO: string | null        // 'YYYY-MM-DD' — null when only a volatile date exists
+  dateSuggestion: string | null // cached value of a volatile TODAY()/NOW() date (a hint, never auto-used)
   title: string | null
   descriptionOfWork: string | null
   scheduleImpactDays: number | null

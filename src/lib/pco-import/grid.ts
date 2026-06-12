@@ -9,6 +9,7 @@
 export interface GridCell {
   text: string          // trimmed display text ("" when empty)
   num: number | null    // numeric value when the source cell was a number
+  volatile?: boolean    // cell was a volatile formula (TODAY()/NOW()) — never trust as data
 }
 export type Grid = GridCell[][]
 export interface Coord { r: number; c: number }

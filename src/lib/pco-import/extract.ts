@@ -5,9 +5,15 @@
 // Design notes:
 // - Labels are matched by normalized text, values read from neighbours — never
 //   from fixed coordinates (real files have shifting layouts + renamed sheets).
-// - The three labor Qty columns are ambiguous by header alone ("Qty" x3), so we
-//   anchor each Qty to the column immediately LEFT of its (uniquely named) Rate
-//   column (Reg / 1.5× / 2×).
+// - Sections are LABEL-BOUNDED: Labor header → 'Total Hours', Material header →
+//   'Materials Subtotal'. Blank rows inside a section are tolerated.
+// - Labor Qty/Rate columns are mapped by detecting the Qty headers and the
+//   (uniquely named) Rate headers INDEPENDENTLY and pairing them left-to-right,
+//   so a "Unit" column BETWEEN qty and rate (real THP layout) doesn't misalign
+//   them. The header band excludes data rows (firstDataRow-1) so data like "hrs"
+//   can't be mistaken for a header.
+// - Formula cells are resolved to cached results in parse.ts; a volatile date
+//   (TODAY()/NOW()) is flagged and never used (the date comes from the Cover).
 // - Currency is rounded to cents at read time (source cells carry float noise).
 // - The integrity check (recompute vs stated, ±$0.05) is the safety net for any
 //   column-mapping miss: a mismatch flags the PCO rather than committing bad data.
@@ -20,7 +26,7 @@ import type {
 } from "./types"
 import {
   type Grid, type Coord, at, cellNum, cellText, round2, normLabel,
-  findLabelCell, findRows, readLabeledText, readLabeledNumber,
+  findLabelCell, findRows, valueRightOf, readLabeledText, readLabeledNumber,
 } from "./grid"
 
 const PRICE_TOLERANCE = 0.05
@@ -68,6 +74,18 @@ export function toISODate(text: string): string | null {
   return null
 }
 
+// Read a date from a "Date" label. A volatile cell (TODAY()/NOW()) is NEVER
+// returned as the real date; its cached value comes back as a hint only, so the
+// reviewer can confirm it. (In real THP files BOTH sheets' dates are =TODAY().)
+function readLabeledDate(grid: Grid): { iso: string | null; volatileCached: string | null } {
+  const coord = findLabelCell(grid, isExact("date"))
+  if (!coord) return { iso: null, volatileCached: null }
+  const cell = valueRightOf(grid, coord, 6)
+  if (!cell) return { iso: null, volatileCached: null }
+  if (cell.volatile) return { iso: null, volatileCached: toISODate(cell.text) }
+  return { iso: toISODate(cell.text), volatileCached: null }
+}
+
 // ── column mapping for a table band ─────────────────────────────────────────
 // Scan the header band [headerRow .. headerRow+depth] and return, per spec key,
 // the first column whose header text matches.
@@ -98,43 +116,73 @@ function leftmostTextColumn(grid: Grid, startRow: number, endRow: number): numbe
   return Number.isFinite(best) ? best : 0
 }
 
+// First row in [start,end) that carries any numeric cell — i.e. the first DATA
+// row of a table. Everything between the header and it is header/blank.
+function firstNumericRow(grid: Grid, start: number, end: number): number | null {
+  for (let r = start; r < end; r++) {
+    const row = grid[r]; if (!row) continue
+    for (let c = 0; c < row.length; c++) if (cellNum(at(grid, r, c)) != null) return r
+  }
+  return null
+}
+
+// Map the labor Qty/Rate columns from a header band [headerRow..bandEnd] (data
+// rows excluded). Qty columns and the uniquely-named Rate columns are detected
+// INDEPENDENTLY and paired left-to-right, so a Unit column sitting between a
+// Qty and its Rate (real THP layout: C=Qty, D=Unit, E=Reg Rate) doesn't
+// misalign them. Tier order positionally = reg, ot (1.5×/"1-1/2"), dt (2×).
+function mapLaborColumns(grid: Grid, headerRow: number, bandEnd: number): {
+  tiers: { qty: number; rate: number }[]; total: number | undefined
+} {
+  const width = Math.max(0, ...grid.slice(headerRow, bandEnd + 1).map(row => row?.length ?? 0))
+  const qtyCols: number[] = []
+  const rateCols: number[] = []
+  let total: number | undefined
+  for (let c = 0; c < width; c++) {
+    let isQty = false, isRate = false
+    for (let r = headerRow; r <= bandEnd; r++) {
+      const n = normLabel(cellText(at(grid, r, c)))
+      if (!n) continue
+      if (n.includes("rate")) isRate = true
+      else if (n === "qty" || n === "quantity" || n === "hours" || n === "hrs" || n === "hr" || n.includes("qty")) isQty = true
+      if (total === undefined && (n === "total" || n.includes("line total") || n.includes("amount") || n.includes("extension"))) total = c
+    }
+    if (isRate) rateCols.push(c)
+    else if (isQty) qtyCols.push(c)
+  }
+  qtyCols.sort((a, b) => a - b); rateCols.sort((a, b) => a - b)
+  const tiers: { qty: number; rate: number }[] = []
+  for (let i = 0; i < Math.min(qtyCols.length, rateCols.length); i++) tiers.push({ qty: qtyCols[i], rate: rateCols[i] })
+  return { tiers, total }
+}
+
 // ── LABOR table ─────────────────────────────────────────────────────────────
 export function extractLabor(grid: Grid): { lines: ParsedLaborLine[]; statedSubtotal: number | null; dropped: number } {
   const header = findLabelCell(grid, n => n === "labor" || n.endsWith(" labor") || n.startsWith("labor"))
-  const totalHoursRows = findRows(grid, isLabel("total hours"))
   if (!header) return { lines: [], statedSubtotal: null, dropped: 0 }
-  const startRow = header.r + 1
-  const endRow = totalHoursRows.find(r => r > header.r) ?? grid.length
-
-  // Rate columns are uniquely named; each Qty is the column immediately to its left.
-  // Rate columns are uniquely named (Reg / 1.5× / 2×); tolerant of two-row
-  // group headers ("Regular" over "Rate") and unicode ("1.5×", "2×").
-  const cols = mapColumns(grid, header.r, 2, [
-    { key: "regRate", match: n => /\breg/.test(n) || n.includes("regular") || n.includes("straight") },
-    { key: "otRate",  match: n => n.includes("1.5") || /\bot\b/.test(n) || n.includes("overtime") || n.includes("time and a half") },
-    { key: "dtRate",  match: n => n.includes("2x") || n.includes("2.0") || n.includes("2×") || /\bdt\b/.test(n) || n.includes("double") || (n.includes("2") && n.includes("rate")) },
-    { key: "total",   match: n => n === "total" || n.includes("line total") || n.includes("amount") || n.includes("extension") },
-  ])
-  const roleCol = leftmostTextColumn(grid, startRow, endRow)
-  const qtyOf = (rateCol: number | undefined) => (rateCol != null && rateCol > 0 ? rateCol - 1 : undefined)
-  const regQty = qtyOf(cols.regRate), otQty = qtyOf(cols.otRate), dtQty = qtyOf(cols.dtRate)
+  // Label-bounded: data ends at 'Total Hours'. firstData is the first numeric
+  // row after the header (skips a blank/merged row); the header band excludes it.
+  const endRow = findRows(grid, isLabel("total hours")).find(r => r > header.r) ?? grid.length
+  const firstData = firstNumericRow(grid, header.r + 1, endRow) ?? header.r + 1
+  const { tiers, total } = mapLaborColumns(grid, header.r, firstData - 1)
+  const [reg, ot, dt] = tiers
+  const roleCol = leftmostTextColumn(grid, firstData, endRow)
 
   const lines: ParsedLaborLine[] = []
   let dropped = 0
-  for (let r = startRow; r < endRow; r++) {
+  for (let r = firstData; r < endRow; r++) {
     const role = cellText(at(grid, r, roleCol)).trim()
-    const qr = regQty != null ? cellNum(at(grid, r, regQty)) : null
-    const rr = cols.regRate != null ? cellNum(at(grid, r, cols.regRate)) : null
-    const qo = otQty != null ? cellNum(at(grid, r, otQty)) : null
-    const ro = cols.otRate != null ? cellNum(at(grid, r, cols.otRate)) : null
-    const qd = dtQty != null ? cellNum(at(grid, r, dtQty)) : null
-    const rd = cols.dtRate != null ? cellNum(at(grid, r, cols.dtRate)) : null
-    const lt = cols.total != null ? cellNum(at(grid, r, cols.total)) : null
+    const qr = reg ? cellNum(at(grid, r, reg.qty))  : null
+    const rr = reg ? cellNum(at(grid, r, reg.rate)) : null
+    const qo = ot  ? cellNum(at(grid, r, ot.qty))   : null
+    const ro = ot  ? cellNum(at(grid, r, ot.rate))  : null
+    const qd = dt  ? cellNum(at(grid, r, dt.qty))   : null
+    const rd = dt  ? cellNum(at(grid, r, dt.rate))  : null
+    const lt = total != null ? cellNum(at(grid, r, total)) : null
     const allNull = [qr, rr, qo, ro, qd, rd, lt].every(v => v == null)
-    if (!role && allNull) continue                 // spacer row
+    if (!role && allNull) continue                       // blank row inside the section
     // Drop rows where every quantity is 0 (or absent).
-    const qtys = [qr, qo, qd].map(v => v ?? 0)
-    if (qtys.every(q => q === 0)) { dropped++; continue }
+    if ([qr, qo, qd].every(q => (q ?? 0) === 0)) { dropped++; continue }
     lines.push({
       role: role || null,
       qty_reg: qr, rate_reg: rr != null ? round2(rr) : rr,
@@ -215,6 +263,7 @@ export interface CoverFields {
   pcoNumber: string | null
   project: string | null
   dateISO: string | null
+  dateVolatileCached: string | null
   title: string | null
   descriptionOfWork: string | null
   scheduleImpactDays: number | null
@@ -226,8 +275,7 @@ export interface CoverFields {
 export function extractCover(grid: Grid): CoverFields {
   const pco = extractPcoNumber(grid)
   const project = labelText(grid, isLabel("project"))
-  const dateCoord = findLabelCell(grid, isExact("date"))
-  const dateISO = dateCoord ? toISODate(readLabeledText(grid, dateCoord, 6)) : null
+  const date = readLabeledDate(grid)
   const title = labelText(grid, isExact("title", "pco title", "subject"))
   const descriptionOfWork = labelText(grid, isLabel("description"))
   const scheduleImpactDays = numberByLabel(grid, isLabel("schedule"), 8)
@@ -246,7 +294,8 @@ export function extractCover(grid: Grid): CoverFields {
   }
   return {
     pcoNumberRaw: pco.raw, pcoNumber: pco.normalized,
-    project, dateISO, title, descriptionOfWork, scheduleImpactDays,
+    project, dateISO: date.iso, dateVolatileCached: date.volatileCached,
+    title, descriptionOfWork, scheduleImpactDays,
     signerName, signerTitle, cover,
   }
 }
@@ -280,6 +329,7 @@ export interface BackupFields {
   pcoNumber: string | null
   jobNumber: string | null
   dateISO: string | null
+  dateVolatileCached: string | null
   labor: ParsedLaborLine[]
   materials: ParsedMaterialLine[]
   backup: Pick<StatedPricing, "backupLaborSubtotal" | "backupMaterialsSubtotal" | "backupOhpAmount" | "backupGrandTotal">
@@ -288,9 +338,9 @@ export interface BackupFields {
 
 export function extractBackup(grid: Grid): BackupFields {
   const pco = extractPcoNumber(grid)
-  const jobNumber = labelText(grid, n => n === "job" || n.includes("job #") || n.includes("job no") || n.includes("job number") || n.includes("project no") || n.includes("project #"))
-  const dateCoord = findLabelCell(grid, isExact("date"))
-  const dateISO = dateCoord ? toISODate(readLabeledText(grid, dateCoord, 6)) : null
+  // 'THP Job #:' normalizes to 'thp job' (the # is stripped), so match on 'job'.
+  const jobNumber = labelText(grid, n => n.includes("job") || n.includes("project no") || n.includes("project #"))
+  const date = readLabeledDate(grid)
   const labor = extractLabor(grid)
   const materials = extractMaterials(grid)
   const backup = {
@@ -301,7 +351,7 @@ export function extractBackup(grid: Grid): BackupFields {
   }
   return {
     pcoNumberRaw: pco.raw, pcoNumber: pco.normalized,
-    jobNumber, dateISO,
+    jobNumber, dateISO: date.iso, dateVolatileCached: date.volatileCached,
     labor: labor.lines, materials: materials.lines, backup,
     dropped: labor.dropped + materials.dropped,
   }

@@ -18,24 +18,32 @@ function isoFromDate(d: Date): string {
   return `${y}-${m}-${day}`
 }
 
+// Every read resolves formula/shared-formula cells to their cached result
+// uniformly (the THP backup computes line totals, subtotals, OH&P, grand total
+// via formulas). A volatile date formula (TODAY()/NOW()) is flagged so the
+// parser never trusts it as a real date.
 function normalizeCellValue(value: unknown): GridCell {
   if (value == null) return { text: "", num: null }
-  if (typeof value === "number") return { text: Number.isFinite(value) ? String(value) : "", num: Number.isFinite(value) ? value : null }
+  if (typeof value === "number") return Number.isFinite(value) ? { text: String(value), num: value } : { text: "", num: null }
   if (typeof value === "boolean") return { text: value ? "TRUE" : "FALSE", num: null }
   if (typeof value === "string") return { text: value.trim(), num: null }
   if (value instanceof Date) return { text: isoFromDate(value), num: null }
   if (typeof value === "object") {
     const v = value as Record<string, unknown>
-    // Formula cell: { formula, result }
-    if ("result" in v) return normalizeCellValue(v.result)
     // Rich text: { richText: [{ text }] }
     if (Array.isArray(v.richText)) return { text: (v.richText as { text?: string }[]).map(t => t.text ?? "").join("").trim(), num: null }
+    // Formula or shared-formula cell → cached result (or empty if uncomputed).
+    if ("formula" in v || "sharedFormula" in v) {
+      const formulaText = typeof v.formula === "string" ? v.formula : ""
+      const base = "result" in v ? normalizeCellValue(v.result) : { text: "", num: null }
+      return /\b(today|now)\s*\(/i.test(formulaText) ? { ...base, volatile: true } : base
+    }
+    if ("result" in v) return normalizeCellValue(v.result)
     // Hyperlink: { text, hyperlink }
     if (typeof v.text === "string") return { text: (v.text as string).trim(), num: null }
     // Error cell: { error }
-    if ("error" in v) return { text: "", num: null }
   }
-  return { text: String(value).trim(), num: null }
+  return { text: "", num: null }   // unknown object → empty (never "[object Object]")
 }
 
 // exceljs worksheet → dense 0-based Grid (capped to keep PCO sheets small).
@@ -83,8 +91,10 @@ export async function parseWorkbookFile(file: File): Promise<ParsedFileResult> {
   }
 
   const isPrem = (name: string) => norm(name).includes("prem")
-  const coverByName = sheets.find(s => norm(s.name).includes("cover"))
-  const backupByName = sheets.find(s => norm(s.name).includes("backup"))
+  // Exclude prem-time sheets from name matching too — real files carry
+  // "Prem.Time Cover Sheet" / "Prem.Time Bckp Sheet" that would otherwise win.
+  const coverByName = sheets.find(s => !isPrem(s.name) && norm(s.name).includes("cover"))
+  const backupByName = sheets.find(s => !isPrem(s.name) && norm(s.name).includes("backup"))
   const coverSheet = coverByName ?? sheets.find(s => !isPrem(s.name) && looksLikeCover(s.grid))
   const backupSheet = backupByName ?? sheets.find(s => !isPrem(s.name) && s !== coverSheet && looksLikeBackup(s.grid))
 
@@ -134,11 +144,22 @@ export async function parseWorkbookFile(file: File): Promise<ParsedFileResult> {
 
   if (backup.dropped > 0) notes.push(`Dropped ${backup.dropped} zero-quantity row${backup.dropped === 1 ? "" : "s"}.`)
 
+  // Date: a static (non-volatile) date is used as-is. If the only date is a
+  // volatile TODAY()/NOW() formula (the real THP files use =TODAY() on BOTH
+  // sheets), it is NEVER trusted — the card is flagged and the cached value is
+  // surfaced as a confirm-able suggestion.
+  const staticDate = cover.dateISO ?? backup.dateISO
+  const dateSuggestion = cover.dateVolatileCached ?? backup.dateVolatileCached ?? null
+
   // Required fields for a committable PCO.
   const pcoNumber = cover.pcoNumber ?? backup.pcoNumber
   if (!pcoNumber) flags.push({ code: "missing_fields", field: "PCO #", message: "PCO # could not be read." })
   if (!cover.title) flags.push({ code: "missing_fields", field: "Title", message: "Title could not be read." })
-  if (!cover.dateISO && !backup.dateISO) flags.push({ code: "missing_fields", field: "Date", message: "Date could not be read." })
+  if (!staticDate) {
+    flags.push(dateSuggestion
+      ? { code: "volatile_date", field: "Date", message: `The only date in the file is a TODAY()/NOW() formula (showed ${dateSuggestion}). Confirm the PCO date before committing.` }
+      : { code: "missing_fields", field: "Date", message: "Date could not be read." })
+  }
   if (backup.labor.length === 0 && backup.materials.length === 0) flags.push({ code: "missing_fields", field: "Line items", message: "No labor or material lines were found." })
 
   const pco: ParsedPco = {
@@ -148,7 +169,8 @@ export async function parseWorkbookFile(file: File): Promise<ParsedFileResult> {
     pcoNumber,
     pcoNumberRaw: cover.pcoNumberRaw ?? backup.pcoNumberRaw,
     project: cover.project,
-    dateISO: cover.dateISO ?? backup.dateISO,
+    dateISO: staticDate,
+    dateSuggestion,
     title: cover.title,
     descriptionOfWork: cover.descriptionOfWork,
     scheduleImpactDays: cover.scheduleImpactDays,
