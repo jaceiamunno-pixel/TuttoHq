@@ -46,6 +46,7 @@ export interface PcoDocData {
   subs: PcoDocSub[]
   ohpPercent: number | null
   feePercent: number | null
+  texturaFee: number | null         // flat cover Textura fee; rendered only when non-zero
   scheduleImpactDays: number | null
   signerName: string | null
   signerTitle: string | null
@@ -307,7 +308,7 @@ export async function buildPcoDocuments(
   const laborInputs: PcoLaborLine[] = data.labor.map(l => ({ qty_reg: l.qty_reg, rate_reg: l.rate_reg, qty_ot: l.qty_ot, rate_ot: l.rate_ot, qty_dt: l.qty_dt, rate_dt: l.rate_dt }))
   const materialInputs: PcoMaterialLine[] = data.materials.map(m => ({ qty: m.qty, unit_price: m.unit_price }))
   const subInputs: PcoSubLine[] = data.subs.map(s => ({ amount: s.amount }))
-  const totals = computePcoTotals(laborInputs, materialInputs, subInputs, data.ohpPercent, data.feePercent)
+  const totals = computePcoTotals(laborInputs, materialInputs, subInputs, data.ohpPercent, data.feePercent, data.texturaFee)
 
   const dateLong = fmtDateLong(data.dateISO)
   const ohpPct = +(Number(data.ohpPercent ?? 0) * 100).toFixed(4)
@@ -350,17 +351,20 @@ export async function buildPcoDocuments(
 
   // Pricing summary — TOTAL == pricing_sum (both from computePcoTotals)
   cover.sectionHeading("Pricing Summary")
+  const pricingRows: string[][] = [
+    ["Labor", usd(totals.laborSubtotal)],
+    ["Material & Equipment", usd(totals.materialsSubtotal)],
+    [`OH&P (${ohpPct}%)`, usd(totals.ohpAmount)],
+    ["Subcontractor", usd(totals.subSubtotal)],
+    [`Fee (${feePct}%)`, usd(totals.feeAmount)],
+  ]
+  // Textura Fee line only when non-zero (most PCOs carry none).
+  if (totals.texturaFee !== 0) pricingRows.push(["Textura Fee", usd(totals.texturaFee)])
+  pricingRows.push(["Total", usd(totals.grandTotal)])
   cover.table(
     [{ header: "", w: CW - 150, align: "left" }, { header: "", w: 150, align: "right" }],
-    [
-      ["Labor", usd(totals.laborSubtotal)],
-      ["Material & Equipment", usd(totals.materialsSubtotal)],
-      [`OH&P (${ohpPct}%)`, usd(totals.ohpAmount)],
-      ["Subcontractor", usd(totals.subSubtotal)],
-      [`Fee (${feePct}%)`, usd(totals.feeAmount)],
-      ["Total", usd(totals.grandTotal)],
-    ],
-    { showHeader: false, totalFromIndex: 5 },
+    pricingRows,
+    { showHeader: false, totalFromIndex: pricingRows.length - 1 },
   )
 
   // Schedule sentence

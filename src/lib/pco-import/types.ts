@@ -6,7 +6,8 @@
 // artifacts (e.g. 2704.6099999999997).
 
 export type PcoFlagCode =
-  | "pco_number_mismatch"   // Cover Sheet PCO # ≠ Backup Template PCO #
+  | "pco_number_mismatch"   // Cover # ≠ Backup # — NON-BLOCKING notice (cover is authoritative; stale backup copy is normal)
+  | "pco_number_unverified" // Cover # missing entirely; fell back to backup # — BLOCKING (no trustworthy number)
   | "math_mismatch"         // recomputed subtotal/total ≠ stated value (> tolerance)
   | "collision"             // PCO # already exists in this project's log
   | "missing_fields"        // a required field could not be located
@@ -47,6 +48,7 @@ export interface StatedPricing {
   coverMaterials: number | null
   coverSubcontractor: number | null
   coverFee: number | null
+  coverTextura: number | null   // flat THP "Textura" processing fee on the cover
   coverBond: number | null
   coverTotal: number | null
   // Backup Template subtotals
@@ -62,8 +64,9 @@ export interface ComputedPricing {
   materialsSubtotal: number
   ohpPercent: number | null   // FRACTION, derived from backup OH&P amount
   feePercent: number | null   // FRACTION, derived from cover Fee amount
+  texturaFee: number          // flat Textura fee carried from the cover (0 when absent)
   subcontractor: number
-  total: number               // == computePcoTotals(...).grandTotal
+  total: number               // == computePcoTotals(...).grandTotal (incl. Textura)
 }
 
 export interface ParsedPco {

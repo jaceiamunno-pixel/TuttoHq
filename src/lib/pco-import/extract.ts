@@ -269,7 +269,7 @@ export interface CoverFields {
   scheduleImpactDays: number | null
   signerName: string | null
   signerTitle: string | null
-  cover: Pick<StatedPricing, "coverLabor" | "coverMaterials" | "coverSubcontractor" | "coverFee" | "coverBond" | "coverTotal">
+  cover: Pick<StatedPricing, "coverLabor" | "coverMaterials" | "coverSubcontractor" | "coverFee" | "coverTextura" | "coverBond" | "coverTotal">
 }
 
 export function extractCover(grid: Grid): CoverFields {
@@ -288,7 +288,9 @@ export function extractCover(grid: Grid): CoverFields {
     coverLabor: numberByLabel(grid, n => n.includes("labor") && !n.includes("subtotal") && !n.includes("total hours")),
     coverMaterials: numberByLabel(grid, n => n.includes("material")),
     coverSubcontractor: numberByLabel(grid, n => n.includes("subcontractor") || n === "sub"),
-    coverFee: numberByLabel(grid, n => n === "fee" || (n.includes("fee") && !n.includes("%"))),
+    // Fee must NOT swallow the "Textura Fee" line (it also contains "fee").
+    coverFee: numberByLabel(grid, n => (n === "fee" || (n.includes("fee") && !n.includes("%"))) && !n.includes("textura")),
+    coverTextura: numberByLabel(grid, n => n.includes("textura")),
     coverBond: numberByLabel(grid, isLabel("bond")),
     coverTotal: numberByLabel(grid, isExact("total", "grand total", "total amount", "pco total")),
   }
@@ -381,9 +383,14 @@ export function reconcile(
   const feeAmount = stated.coverFee ?? 0
   const feePercent = preFee > 0 && feeAmount ? round4(feeAmount / preFee) : (feeAmount ? null : 0)
 
-  const totals = computePcoTotals(laborInputs, materialInputs, subcontractor ? [{ amount: subcontractor }] : [], ohpPercent, feePercent)
+  // Textura is a flat cover-summary fee (not derived from lines). Folding it into
+  // the computed grand total closes the small near-constant gap that THP cover
+  // totals carry over the line-derived subtotals.
+  const texturaFee = round2(stated.coverTextura ?? 0)
+
+  const totals = computePcoTotals(laborInputs, materialInputs, subcontractor ? [{ amount: subcontractor }] : [], ohpPercent, feePercent, texturaFee)
   const computed: ComputedPricing = {
-    laborSubtotal, materialsSubtotal, ohpPercent, feePercent, subcontractor, total: totals.grandTotal,
+    laborSubtotal, materialsSubtotal, ohpPercent, feePercent, texturaFee, subcontractor, total: totals.grandTotal,
   }
 
   // Integrity: recomputed vs stated (±$0.05).

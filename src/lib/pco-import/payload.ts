@@ -35,6 +35,11 @@ export interface ImportPcoPayload extends PcoSaveBody {
   materials?: ImportMaterialInput[]
   subs?: ImportSubInput[]
   confirmed_total?: number | null
+  // How the reviewer resolved a totals mismatch (logged, server-validated):
+  //   "stated"   → cover is the document of record; pricing_sum = confirmed_total
+  //                (the cover total), line detail imported as-is.
+  //   "computed" → pricing_sum = server recompute from the lines (the default).
+  resolution?: "stated" | "computed" | null
   // Optional review status to apply AFTER commit via the normal status-update
   // path (import_pco itself always inserts 'Not submitted'). Log-workflow state,
   // not document content.
@@ -68,6 +73,7 @@ export function payloadToDocData(p: ImportPcoPayload, project: ImportProjectCont
     subs: (p.subs ?? []).map(s => ({ description: s.description ?? null, amount: s.amount ?? null })),
     ohpPercent: p.oh_p_percent ?? null,
     feePercent: p.fee_percent ?? null,
+    texturaFee: p.textura_fee ?? null,
     scheduleImpactDays: parseSchedDays(p.schedule_impact_days),
     signerName: p.signer_name ?? null,
     signerTitle: p.signer_title ?? null,

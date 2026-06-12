@@ -75,15 +75,28 @@ export async function POST(req: NextRequest) {
         throw new Error(`PCO #${pcoNumber} already exists in this project`)
       }
 
-      // Recompute pricing_sum server-side; verify against the review-confirmed total.
-      const pricing_sum = computePcoPricingSum(p)
-      if (p.confirmed_total != null && Math.abs(pricing_sum - Number(p.confirmed_total)) > TOL) {
-        throw new Error(`Total changed since review (server ${pricing_sum.toFixed(2)} ≠ confirmed ${Number(p.confirmed_total).toFixed(2)})`)
+      // pricing_sum resolution (server-authoritative). The line-derived recompute
+      // (incl. Textura) is the default. When the reviewer chose "use stated"
+      // (cover is the document of record, lines don't reconcile), pricing_sum is
+      // the reviewer-confirmed cover total — validated against the RESOLVED value,
+      // never silently recomputed away.
+      const computedSum = computePcoPricingSum(p)
+      let pricing_sum: number
+      if (p.resolution === "stated") {
+        const stated = Number(p.confirmed_total)
+        if (!Number.isFinite(stated)) throw new Error("Resolution is 'use stated' but no stated total was provided")
+        pricing_sum = Math.round(stated * 100) / 100
+      } else {
+        pricing_sum = computedSum
+        if (p.confirmed_total != null && Math.abs(computedSum - Number(p.confirmed_total)) > TOL) {
+          throw new Error(`Total changed since review (server ${computedSum.toFixed(2)} ≠ confirmed ${Number(p.confirmed_total).toFixed(2)})`)
+        }
       }
       const lineItems = buildLineItemRows(p)
       if (lineItems.length === 0) throw new Error("No line items")
 
-      const { data: rpcData, error: rpcErr } = await supabase.rpc("import_pco", {
+      const texturaFee = Number(p.textura_fee) || 0
+      const importArgs = {
         p_project_id:            projectId,
         p_co_number:             pcoNumber,
         p_date:                  p.date || null,
@@ -97,7 +110,16 @@ export async function POST(req: NextRequest) {
         p_signer_title:          typeof p.signer_title === "string" ? p.signer_title.trim() || null : null,
         p_signer_signature_path: null,
         p_line_items:            lineItems,
-      })
+      }
+      // Persist textura_fee only when non-zero. If migration 0007 hasn't been
+      // applied yet, import_pco lacks p_textura_fee → PostgREST returns PGRST202;
+      // retry without it so the import still commits (pricing_sum already includes
+      // textura; only the separate column goes unset until 0007 lands).
+      let { data: rpcData, error: rpcErr } = await supabase.rpc("import_pco",
+        texturaFee !== 0 ? { ...importArgs, p_textura_fee: texturaFee } : importArgs)
+      if (rpcErr?.code === "PGRST202" && texturaFee !== 0) {
+        ({ data: rpcData, error: rpcErr } = await supabase.rpc("import_pco", importArgs))
+      }
       if (rpcErr) {
         // 23505 = unique_violation on the partial-unique builder-PCO index.
         if (rpcErr.code === "23505") throw new Error(`PCO #${pcoNumber} already exists in this project`)

@@ -20,6 +20,31 @@ const numericKey = (co: string | null | undefined): string => (co ?? "").replace
 let seq = 0
 const cid = () => `card-${seq++}`
 
+// Residual diagnostic (report-only). For each parsed PCO that still doesn't
+// reconcile AFTER Textura extraction, log (stated − computed) and a cluster
+// histogram. A cluster on a common value/pattern implies ANOTHER unparsed cover
+// line — surface it before assuming the remainder is stale-backup noise. Runs in
+// the browser console over whatever batch the reviewer drops (e.g. THP's 49).
+function logResidualDiagnostics(pcos: ParsedPco[]) {
+  const rows = pcos.flatMap(p => {
+    const stated = p.stated.coverTotal
+    if (stated == null) return []
+    const residual = Math.round((stated - p.computed.total) * 100) / 100
+    return Math.abs(residual) > 0.05
+      ? [{ pco: p.pcoNumber ?? "?", file: p.sourceFileName, stated, computed: p.computed.total, textura: p.computed.texturaFee, residual }]
+      : []
+  })
+  if (rows.length === 0) return
+  console.info(`[pco-import] residual diagnostic — ${rows.length} card(s) still mismatch after Textura:`)
+  for (const r of rows) {
+    console.info(`  PCO ${r.pco} (${r.file}): stated ${r.stated.toFixed(2)} − computed ${r.computed.toFixed(2)} = ${r.residual.toFixed(2)}  [textura ${r.textura.toFixed(2)}]`)
+  }
+  const clusters = new Map<string, number>()
+  for (const r of rows) { const k = r.residual.toFixed(2); clusters.set(k, (clusters.get(k) ?? 0) + 1) }
+  const sorted = [...clusters.entries()].sort((a, b) => b[1] - a[1])
+  console.info("[pco-import] residual clusters (value ×count):", sorted.map(([v, c]) => `${v}×${c}`).join("   "))
+}
+
 // A real THP workbook is a *.xlsx that is NOT an Office lock file. Office writes
 // a hidden "~$name.xlsx" companion while a workbook is open; it has the .xlsx
 // extension but is not a workbook, so it must be skipped along with non-xlsx files.
@@ -56,12 +81,13 @@ async function walkEntry(entry: FileSystemEntry, acc: File[]): Promise<void> {
 interface Card {
   id: string
   pco: ParsedPco          // editable copy
-  staticFlags: PcoFlag[]  // cover/backup PCO# mismatch — resolved only by excluding
+  staticFlags: PcoFlag[]  // file-level number flags (cover≠backup notice; cover-missing block)
   excluded: boolean
   committed: boolean
   committing: boolean
   error: string | null
   status: string          // review status, applied AFTER commit (default 'Not submitted')
+  resolution: "stated" | "computed" | null  // how a totals mismatch was resolved (null = unresolved)
 }
 
 // CHECK-valid change_orders statuses (see migration 0005 / status CHECK).
@@ -70,7 +96,12 @@ const STATUS_OPTIONS = ["Not submitted", "Pending", "Approved"]
 interface CommitResult { imported: number; total: number; failures: { pco_number: string; reason: string }[] }
 
 // Flags that block commit and can ONLY be cleared by excluding the file.
-const EXCLUDE_ONLY: PcoFlag["code"][] = ["pco_number_mismatch", "collision", "unsupported_value"]
+const EXCLUDE_ONLY: PcoFlag["code"][] = ["pco_number_unverified", "collision", "unsupported_value"]
+
+// Informational-only flags: shown to the reviewer but they do NOT block commit.
+// The cover≠backup number notice is here — the cover # is authoritative, so a
+// stale backup number is expected and a card carrying only this notice is clean.
+const NON_BLOCKING: PcoFlag["code"][] = ["pco_number_mismatch"]
 
 export default function PcoImportModal({ project, onClose, onImported }: {
   project: Project
@@ -100,7 +131,12 @@ export default function PcoImportModal({ project, onClose, onImported }: {
     return f
   }
 
-  const committable = (card: Card) => !card.excluded && !card.committed && liveFlags(card).length === 0
+  // A card is committable when it has no BLOCKING flags. Non-blocking notices
+  // (the cover≠backup number notice) never count; math_mismatch stops counting
+  // once the reviewer has explicitly resolved it (use stated / use computed).
+  const blockingFlags = (card: Card) => liveFlags(card).filter(f =>
+    !NON_BLOCKING.includes(f.code) && !(f.code === "math_mismatch" && card.resolution !== null))
+  const committable = (card: Card) => !card.excluded && !card.committed && blockingFlags(card).length === 0
 
   // Live computed totals (mirrors the server + the generated PDF).
   function totalsOf(p: ParsedPco) {
@@ -109,7 +145,7 @@ export default function PcoImportModal({ project, onClose, onImported }: {
       p.labor.map(l => ({ qty_reg: l.qty_reg, rate_reg: l.rate_reg, qty_ot: l.qty_ot, rate_ot: l.rate_ot, qty_dt: l.qty_dt, rate_dt: l.rate_dt })),
       p.materials.map(m => ({ qty: m.qty, unit_price: m.unit_price })),
       computed.subcontractor ? [{ amount: computed.subcontractor }] : [],
-      computed.ohpPercent, computed.feePercent,
+      computed.ohpPercent, computed.feePercent, computed.texturaFee,
     )
     return { computed, t }
   }
@@ -170,16 +206,20 @@ export default function PcoImportModal({ project, onClose, onImported }: {
             pcoNumber: null, pcoNumberRaw: null, project: null, dateISO: null, dateSuggestion: null, title: r.fileName,
             descriptionOfWork: null, scheduleImpactDays: null, signerName: null, signerTitle: null,
             jobNumber: null, labor: [], materials: [],
-            stated: { coverLabor: null, coverMaterials: null, coverSubcontractor: null, coverFee: null, coverBond: null, coverTotal: null, backupLaborSubtotal: null, backupMaterialsSubtotal: null, backupOhpAmount: null, backupGrandTotal: null },
-            computed: { laborSubtotal: 0, materialsSubtotal: 0, ohpPercent: null, feePercent: null, subcontractor: 0, total: 0 },
+            stated: { coverLabor: null, coverMaterials: null, coverSubcontractor: null, coverFee: null, coverTextura: null, coverBond: null, coverTotal: null, backupLaborSubtotal: null, backupMaterialsSubtotal: null, backupOhpAmount: null, backupGrandTotal: null },
+            computed: { laborSubtotal: 0, materialsSubtotal: 0, ohpPercent: null, feePercent: null, texturaFee: 0, subcontractor: 0, total: 0 },
             flags: r.fileFlags, notes: r.notes,
           }
-          return { id: cid(), pco: stub, staticFlags: r.fileFlags, excluded: true, committed: false, committing: false, error: null, status: "Not submitted" }
+          return { id: cid(), pco: stub, staticFlags: r.fileFlags, excluded: true, committed: false, committing: false, error: null, status: "Not submitted", resolution: null }
         }
-        const staticFlags = r.pco.flags.filter(f => f.code === "pco_number_mismatch")
-        return { id: cid(), pco: r.pco, staticFlags, excluded: false, committed: false, committing: false, error: null, status: "Not submitted" }
+        // Cover/backup number flags are file-level (not recomputable from edits),
+        // so they ride along as static: the non-blocking cover≠backup notice and
+        // the blocking cover-missing fallback.
+        const staticFlags = r.pco.flags.filter(f => f.code === "pco_number_mismatch" || f.code === "pco_number_unverified")
+        return { id: cid(), pco: r.pco, staticFlags, excluded: false, committed: false, committing: false, error: null, status: "Not submitted", resolution: null }
       })
       setCards(prev => [...prev, ...newCards])
+      logResidualDiagnostics(newCards.map(c => c.pco))
       setParseMsg(`${fileWord(found)} found, ${xlsx.length} parsed${skipped > 0 ? `, ${skipped} skipped (non-xlsx)` : ""}`)
     } catch (e) {
       setParseMsg(`Could not parse: ${(e as Error)?.message ?? "unknown error"}`)
@@ -195,11 +235,24 @@ export default function PcoImportModal({ project, onClose, onImported }: {
   function toggleExclude(cardId: string) {
     setCards(prev => prev.map(c => (c.id === cardId ? { ...c, excluded: !c.excluded } : c)))
   }
+  function setResolution(cardId: string, resolution: "stated" | "computed") {
+    setCards(prev => prev.map(c => (c.id === cardId ? { ...c, resolution, error: null } : c)))
+  }
+
+  // The reviewer-resolved total: "use stated" → the cover document total; else
+  // the line-derived computed total (incl. Textura). Falls back to computed when
+  // "stated" was chosen but the cover carried no total.
+  function resolvedTotal(card: Card): { total: number; resolution: "stated" | "computed" } {
+    const computedTotal = totalsOf(card.pco).t.grandTotal
+    const stated = card.pco.stated.coverTotal
+    if (card.resolution === "stated" && stated != null) return { total: stated, resolution: "stated" }
+    return { total: computedTotal, resolution: "computed" }
+  }
 
   function payloadFor(card: Card) {
     const p = card.pco
     const { computed } = reconcile(p.labor, p.materials, p.stated)
-    const total = totalsOf(p).t.grandTotal
+    const { total, resolution } = resolvedTotal(card)
     return {
       project_id: project.id,
       pco_number: p.pcoNumber ?? "",
@@ -209,12 +262,14 @@ export default function PcoImportModal({ project, onClose, onImported }: {
       schedule_impact_days: p.scheduleImpactDays ?? 0,
       oh_p_percent: computed.ohpPercent,
       fee_percent: computed.feePercent,
+      textura_fee: computed.texturaFee,
       signer_name: p.signerName,
       signer_title: p.signerTitle,
       labor: p.labor.map(l => ({ description: l.role, qty_reg: l.qty_reg, rate_reg: l.rate_reg, qty_ot: l.qty_ot, rate_ot: l.rate_ot, qty_dt: l.qty_dt, rate_dt: l.rate_dt })),
       materials: p.materials.map(m => ({ description: m.item, qty: m.qty, unit: m.unit, unit_price: m.unit_price, note: m.note })),
       subs: computed.subcontractor ? [{ description: "Subcontractor", amount: computed.subcontractor }] : [],
       confirmed_total: total,
+      resolution,
       status: card.status,
     }
   }
@@ -305,11 +360,12 @@ export default function PcoImportModal({ project, onClose, onImported }: {
 
           {cards.map(card => {
             const flags = liveFlags(card)
+            const blocking = flags.filter(f => !NON_BLOCKING.includes(f.code))
             const { t, computed } = totalsOf(card.pco)
             const p = card.pco
             const ok = committable(card)
             return (
-              <div key={card.id} className={`bg-white rounded-xl border p-4 ${card.excluded ? "border-[#E2E8F0] opacity-60" : flags.length ? "border-amber-300" : "border-green-300"}`}>
+              <div key={card.id} className={`bg-white rounded-xl border p-4 ${card.excluded ? "border-[#E2E8F0] opacity-60" : blocking.length ? "border-amber-300" : "border-green-300"}`}>
                 {/* Card header */}
                 <div className="flex items-start justify-between gap-3 mb-3">
                   <div className="min-w-0">
@@ -334,15 +390,17 @@ export default function PcoImportModal({ project, onClose, onImported }: {
                   </div>
                 </div>
 
-                {/* Flags — volatile_date is a neutral CONFIRM prompt (nothing is
-                    wrong); everything else is an amber error. */}
+                {/* Flags — volatile_date and the cover≠backup number notice are
+                    neutral blue informational prompts (nothing is wrong); real
+                    errors are amber. */}
                 {flags.length > 0 && !card.excluded && (
                   <div className="mb-3 space-y-1">
                     {flags.map((f, i) => {
-                      const confirm = f.code === "volatile_date"
+                      const info = f.code === "volatile_date" || f.code === "pco_number_mismatch"
+                      const label = f.code === "volatile_date" ? "Confirm date" : f.code === "pco_number_mismatch" ? "Note" : f.code.replace(/_/g, " ")
                       return (
-                        <div key={i} className={`flex items-start gap-2 text-[11px] rounded-md px-2 py-1 border ${confirm ? "text-blue-800 bg-blue-50 border-blue-200" : "text-amber-800 bg-amber-50 border-amber-200"}`}>
-                          <span className="font-semibold uppercase tracking-wide shrink-0">{confirm ? "Confirm date" : f.code.replace(/_/g, " ")}</span>
+                        <div key={i} className={`flex items-start gap-2 text-[11px] rounded-md px-2 py-1 border ${info ? "text-blue-800 bg-blue-50 border-blue-200" : "text-amber-800 bg-amber-50 border-amber-200"}`}>
+                          <span className="font-semibold uppercase tracking-wide shrink-0">{label}</span>
                           <span>{f.message}</span>
                           {EXCLUDE_ONLY.includes(f.code) && <span className="text-amber-600 italic ml-auto shrink-0">exclude to proceed</span>}
                         </div>
@@ -418,6 +476,7 @@ export default function PcoImportModal({ project, onClose, onImported }: {
                         {computed.subcontractor !== 0 && <Row label="Subcontractor" computed={computed.subcontractor} stated={p.stated.coverSubcontractor} />}
                         <Row label="OH&P" computed={t.ohpAmount} stated={p.stated.backupOhpAmount} />
                         <Row label="Fee" computed={t.feeAmount} stated={p.stated.coverFee} />
+                        {t.texturaFee !== 0 && <Row label="Textura Fee" computed={t.texturaFee} stated={p.stated.coverTextura} />}
                         <div className="flex items-center justify-between pt-1 border-t border-[#E2E8F0] font-bold text-[13px]">
                           <span>TOTAL</span><span className="tabular-nums">{usd(t.grandTotal)}</span>
                         </div>
@@ -436,6 +495,34 @@ export default function PcoImportModal({ project, onClose, onImported }: {
                         </button>
                       </div>
                     </div>
+
+                    {/* Math-mismatch resolution — a mismatched card is blocked until
+                        the reviewer explicitly picks how to commit. No silent default. */}
+                    {flags.some(f => f.code === "math_mismatch") && (
+                      <div className="mt-3 rounded-md border border-amber-200 bg-amber-50/70 px-3 py-2">
+                        <p className="text-[11px] font-semibold text-amber-800 mb-1.5">
+                          Totals don&apos;t reconcile against the file. Choose how to commit — the pick is recorded on this PCO.
+                        </p>
+                        <div className="flex flex-wrap items-center gap-2">
+                          {p.stated.coverTotal != null && (
+                            <button onClick={() => setResolution(card.id, "stated")}
+                              className={`h-7 px-2.5 rounded border text-[11px] font-medium transition-colors ${card.resolution === "stated" ? "border-[#7B9BB5] bg-[#7B9BB5] text-white" : "border-[#E2E8F0] bg-white text-[#0F172A] hover:bg-[#F4F5F7]"}`}>
+                              Use file&apos;s stated total ({usd(p.stated.coverTotal)})
+                            </button>
+                          )}
+                          <button onClick={() => setResolution(card.id, "computed")}
+                            className={`h-7 px-2.5 rounded border text-[11px] font-medium transition-colors ${card.resolution === "computed" ? "border-[#7B9BB5] bg-[#7B9BB5] text-white" : "border-[#E2E8F0] bg-white text-[#0F172A] hover:bg-[#F4F5F7]"}`}>
+                            Use computed from lines ({usd(t.grandTotal)})
+                          </button>
+                          <span className="text-[10px] text-[#64748B]">…or edit the lines above until they reconcile.</span>
+                        </div>
+                        {card.resolution && (
+                          <p className="text-[10px] text-[#0F172A] mt-1.5">
+                            Will commit using <span className="font-semibold">{card.resolution === "stated" ? "the cover's stated total" : "the computed total"}</span> — pricing_sum {usd(card.resolution === "stated" ? (p.stated.coverTotal ?? t.grandTotal) : t.grandTotal)} (line detail imports as-is).
+                          </p>
+                        )}
+                      </div>
+                    )}
 
                     {card.error && <p className="text-[11px] text-red-600 mt-2">{card.error}</p>}
                     {p.notes.length > 0 && (
