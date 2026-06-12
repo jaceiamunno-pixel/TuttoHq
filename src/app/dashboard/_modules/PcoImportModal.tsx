@@ -3,7 +3,7 @@
 import { useMemo, useRef, useState } from "react"
 import type { Project } from "../_shared/types"
 import { computePcoTotals } from "../_shared/pco-math"
-import { parseWorkbookFiles } from "@/lib/pco-import/parse"
+import { parseWorkbookFilesAsync } from "@/lib/pco-import/parse-client"
 import { reconcile } from "@/lib/pco-import/extract"
 import type { ParsedPco, PcoFlag } from "@/lib/pco-import/types"
 
@@ -197,7 +197,11 @@ export default function PcoImportModal({ project, onClose, onImported }: {
         .catch(() => new Set<string>())
       setCollisionKeys(existing)
 
-      const results = await parseWorkbookFiles(xlsx)
+      // Parsed off the main thread in a Web Worker — the UI stays responsive
+      // through a 49-file folder and the batch keeps running if the desktop
+      // tab is backgrounded. Live per-file progress drives the count below.
+      const results = await parseWorkbookFilesAsync(xlsx, ({ done, total }) =>
+        setParseMsg(`Parsing ${done} of ${total}…`))
       const newCards: Card[] = results.map(r => {
         if (!r.pco) {
           // Hard parse failure → an excluded error card carrying the file flags.

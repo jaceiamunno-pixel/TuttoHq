@@ -20,7 +20,7 @@ import {
   removePendingDailyReport,
   tagDraftWithSavedReport,
 } from "@/lib/idb-photos"
-import { compressFileToUploadablePhoto } from "@/lib/photo-compression"
+import { createPhotoCompressor } from "@/lib/photo-compression-client"
 import { DraftPhotoThumb } from "@/components/photos/DraftPhotoThumb"
 import {
   derivePhotoStatus,
@@ -356,9 +356,12 @@ export default function DailyModule({ globalProjectId, appProjects, teamMembers 
   async function uploadDailyPhoto(file: File) {
     if (!viewDaily) return
     setDailyPhotoUploading(true)
+    // Compress off the main thread (decode/downscale/HEIC-transcode in a
+    // worker); falls back to the main-thread pipeline where unsupported.
+    const compressor = createPhotoCompressor()
     try {
       const reportId = viewDaily.id
-      const photo = await compressFileToUploadablePhoto(file)
+      const photo = await compressor.compress(file)
       const existing = await listPhotosForSavedReport(reportId)
       await addDailyDraftPhoto(reportId, photo, existing.length, reportId)
       setViewDailyIdbPhotos(await listPhotosForSavedReport(reportId))
@@ -367,6 +370,7 @@ export default function DailyModule({ globalProjectId, appProjects, teamMembers 
     } catch (err) {
       console.error("[daily view-modal capture] failed", err)
     } finally {
+      compressor.dispose()
       setDailyPhotoUploading(false)
     }
   }
@@ -388,12 +392,17 @@ export default function DailyModule({ globalProjectId, appProjects, teamMembers 
     }
     setDailyPhotoUploadError("")
     setPhotoCompressProgress({ done: 0, total: files.length })
+    // One reusable worker drives the whole batch off the main thread, so the
+    // capture UI stays responsive and the run completes in a backgrounded
+    // desktop tab. Per-file failures stay isolated (logged + flagged, batch
+    // continues), exactly as before.
+    const compressor = createPhotoCompressor()
     try {
       let nextOrder = draftPhotos.length
       for (let i = 0; i < files.length; i++) {
         const file = files[i]
         try {
-          const photo = await compressFileToUploadablePhoto(file)
+          const photo = await compressor.compress(file)
           await addDailyDraftPhoto(draftId, photo, nextOrder++)
         } catch (err) {
           console.error("[daily draft] photo compression failed", err)
@@ -405,6 +414,7 @@ export default function DailyModule({ globalProjectId, appProjects, teamMembers 
       const refreshed = await listDailyDraftPhotos(draftId)
       setDraftPhotos(refreshed)
     } finally {
+      compressor.dispose()
       setPhotoCompressProgress(null)
     }
   }
