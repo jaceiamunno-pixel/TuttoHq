@@ -338,7 +338,7 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
                 ) : (
                   <>
                   {/* Desktop table */}
-                  <div className="hidden sm:block mx-4 my-4 rounded-xl border border-[#E2E8F0] overflow-clip bg-white">
+                  <div className="hidden sm:block mx-4 my-4 rounded-xl border border-[#E2E8F0] overflow-x-auto bg-white">
             <table className="w-full text-[13px] border-collapse">
                     <thead className="sticky top-0 bg-[#F8F9FA] z-10">
                       <tr className="border-b border-[#E2E8F0]">
@@ -386,26 +386,26 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
                               <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold ${badgeCls}`}>{c.status}</span>
                             </td>
                             <td className="px-4 py-2.5">
-                              <div className="flex items-center gap-1">
+                              <div className="flex items-center gap-0.5 whitespace-nowrap">
                                 {c.has_pco_detail && c.origin !== "imported" && (
                                   <button onClick={() => setEditPcoId(c.id)}
-                                    className="text-[11px] text-[#7B9BB5] hover:text-[#5A7A94] px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors">Edit</button>
+                                    className="text-[11px] text-[#7B9BB5] hover:text-[#5A7A94] px-1.5 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors">Edit</button>
                                 )}
                                 <button onClick={() => { setViewCo(c); setCoResponseStatus(c.status); setCoAssignedTo(c.assigned_to ?? ""); setCoAssignedCoNumber(c.assigned_co_number ?? ""); setCoRespAmount(c.pricing_sum != null ? String(c.pricing_sum) : ""); setCoRespRealized(c.realized_amount != null ? String(c.realized_amount) : "") }}
-                                  className="text-[11px] text-[#64748B] hover:text-[#0F172A] px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors">View</button>
+                                  className="text-[11px] text-[#64748B] hover:text-[#0F172A] px-1.5 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors">View</button>
                                 {c.has_pco_detail ? (
                                   <>
                                     <button onClick={() => openPcoPdf(c.id, "cover")} disabled={pcoPdfBusyId === c.id}
-                                      className="text-[11px] text-[#7B9BB5] px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors disabled:opacity-50">Cover</button>
+                                      className="text-[11px] text-[#7B9BB5] px-1.5 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors disabled:opacity-50">Cover</button>
                                     <button onClick={() => openPcoPdf(c.id, "backup")} disabled={pcoPdfBusyId === c.id}
-                                      className="text-[11px] text-[#7B9BB5] px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors disabled:opacity-50">Backup</button>
+                                      className="text-[11px] text-[#7B9BB5] px-1.5 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors disabled:opacity-50">Backup</button>
                                   </>
                                 ) : (
                                   <button onClick={() => generateCoPdf(c.id)} disabled={coGeneratingPdf}
-                                    className="text-[11px] text-[#7B9BB5] hover:text-[#7B9BB5] px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors disabled:opacity-50">PDF</button>
+                                    className="text-[11px] text-[#7B9BB5] hover:text-[#7B9BB5] px-1.5 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors disabled:opacity-50">PDF</button>
                                 )}
                                 <button onClick={() => deleteCo(c.id)}
-                                  className="text-[11px] text-red-400/60 hover:text-red-400 px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors">Del</button>
+                                  className="text-[11px] text-red-400/60 hover:text-red-400 px-1.5 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors">Del</button>
                               </div>
                             </td>
                           </tr>
