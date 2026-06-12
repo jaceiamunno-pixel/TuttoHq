@@ -259,6 +259,13 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
   const [coverProjectCms, setCoverProjectCms]             = useState<CoverContact[]>([])
   const [coverSelectedId, setCoverSelectedId]             = useState<string>("")
   const [showCoverPreview, setShowCoverPreview]           = useState(false)
+  // Reviewer-stamp name. The generated coversheet stamps the user's
+  // user_profiles.full_name as "Reviewed By". If it's not set yet, the cover
+  // modal captures it inline (one-time) and saves via PATCH /api/profile before
+  // generating. `myFullName === undefined` = still loading.
+  const [myFullName, setMyFullName] = useState<string | null | undefined>(undefined)
+  const [stampNameInput, setStampNameInput] = useState("")
+  const [savingStampName, setSavingStampName] = useState(false)
   // Sync submittal project filter with global project selection
   useEffect(() => { setActiveProjectId(globalProjectId || null) }, [globalProjectId])
 
@@ -287,6 +294,15 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
   }
 
   useEffect(() => { loadTree() }, [])
+
+  // Load the user's saved review-stamp name once, to decide whether the cover
+  // modal must capture it inline.
+  useEffect(() => {
+    fetch("/api/profile")
+      .then(r => r.json())
+      .then((d: { full_name?: string | null }) => setMyFullName(d.full_name ?? null))
+      .catch(() => setMyFullName(null))
+  }, [])
 
   // Debounced Library search → /api/library-search (plain ilike, no AI).
   useEffect(() => {
@@ -480,6 +496,24 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
   async function handleGenerateCover(e: React.FormEvent) {
     e.preventDefault()
     if (!coverForm || !openFileCtx) return
+
+    // One-time review-stamp name capture. If the user has no saved full_name,
+    // persist the inline-entered name via PATCH /api/profile before generating —
+    // the coversheet resolves "Reviewed By" server-side from user_profiles.
+    if (!myFullName) {
+      const name = stampNameInput.trim()
+      if (!name) { alert("Please enter your name for the review stamp."); return }
+      setSavingStampName(true)
+      try {
+        const pRes = await fetch("/api/profile", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ full_name: name }) })
+        const pJson = await pRes.json().catch(() => ({}))
+        if (!pRes.ok) { alert(pJson.error ?? "Could not save your name."); return }
+        setMyFullName(pJson.full_name ?? name)
+      } finally {
+        setSavingStampName(false)
+      }
+    }
+
     setGeneratingCover(true)
     try {
       const res = await fetch("/api/generate-cover", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ submittalId: openFileCtx.file.id, projectId: modalProjectId || null, existingId: coverEditId || null, ...coverForm }) })
@@ -2714,6 +2748,23 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                 )}
               </div>
 
+              {/* One-time review-stamp name capture (only when no saved full_name) */}
+              {myFullName === null && (
+                <div className="px-6 py-3 border-t border-[#E2E8F0] bg-[#F8F9FA]">
+                  <label className={labelCls}>Your name (appears on the review stamp)</label>
+                  <input
+                    type="text"
+                    value={stampNameInput}
+                    onChange={e => setStampNameInput(e.target.value)}
+                    required
+                    maxLength={120}
+                    placeholder="e.g. Jane Smith"
+                    className={inputCls}
+                  />
+                  <p className="text-[11px] text-[#64748B] mt-1">Saved to your profile — you&apos;ll only be asked once.</p>
+                </div>
+              )}
+
               <div className="flex justify-end gap-2 px-6 py-4 border-t border-[#E2E8F0]">
                 <button
                   type="button"
@@ -2724,11 +2775,11 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                 </button>
                 <button
                   type="submit"
-                  disabled={generatingCover}
+                  disabled={generatingCover || savingStampName}
                   className="h-8 px-4 rounded-md bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors disabled:opacity-50 flex items-center gap-2"
                 >
-                  {generatingCover && <SpinnerIcon className="h-3 w-3" />}
-                  {generatingCover ? "Generating…" : "Generate & Download"}
+                  {(generatingCover || savingStampName) && <SpinnerIcon className="h-3 w-3" />}
+                  {savingStampName ? "Saving…" : generatingCover ? "Generating…" : "Generate & Download"}
                 </button>
               </div>
             </form>

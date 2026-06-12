@@ -111,6 +111,23 @@ export interface PDFStamp {
   content?: string | null
 }
 
+/** OUR review stamp, rendered into the top-left box of PDFStampGrid. All fields
+ *  are pre-resolved server-side; empty strings render as a graceful "—" (or are
+ *  omitted, for `submittalNo`). */
+export interface PDFReviewerStamp {
+  /** Company name shown right-aligned in the red header bar. */
+  company: string
+  projectName: string
+  projectNumber: string
+  /** Pre-formatted "{section}-{num}.{rev}"; pass "" to omit the row entirely. */
+  submittalNo: string
+  reviewedBy: string
+  /** Generation date, pre-formatted M/D/YYYY. */
+  date: string
+  /** Review-language boilerplate paragraph (small print). */
+  reviewText: string
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 /** Truncate `text` with an ellipsis so it fits within `maxPx` at `size`. */
 function clip(font: PDFFont, text: string, maxPx: number, size: number): string {
@@ -771,8 +788,10 @@ export class PDFBuilder {
 
   // ── PDFStampGrid ─────────────────────────────────────────────────────────────
   /** Draw a 2×2 grid of review-stamp boxes filling the space down to the footer.
-   *  Each box shows its stamp content, or a "<role> Stamp" placeholder. */
-  stampGrid(stamps?: PDFStamp[]) {
+   *  Each box shows its stamp content, or a "<role> Stamp" placeholder. When a
+   *  `reviewer` is supplied, OUR review stamp is rendered into the top-left box
+   *  (index 0) — the box GCs reserve for their own stamp. */
+  stampGrid(stamps?: PDFStamp[], reviewer?: PDFReviewerStamp | null) {
     const resolved: PDFStamp[] = (stamps ?? [
       { role: "GC" }, { role: "Architect" }, { role: "Engineer" }, { role: "Subcontractor" },
     ]).slice(0, 4)
@@ -788,7 +807,9 @@ export class PDFBuilder {
         x: sx, y: sy, width: cellW, height: cellH,
         color: PDF.color.white, borderColor: PDF.color.ruleStrong, borderWidth: 0.75,
       })
-      if (stamp.content && stamp.content.trim()) {
+      if (i === 0 && reviewer) {
+        this.drawReviewerStamp(sx, sy, cellW, cellH, reviewer)
+      } else if (stamp.content && stamp.content.trim()) {
         this.page.drawText(clip(this.reg, stamp.content, cellW - 16, 8.5), {
           x: sx + 8, y: sy + cellH - 20, size: 8.5, font: this.reg, color: PDF.color.ink,
         })
@@ -801,6 +822,91 @@ export class PDFBuilder {
       }
     })
     this.y = top - 2 * cellH - gap
+  }
+
+  /** Render OUR review stamp inside a stamp-grid box at (x,y,w,h). A red header
+   *  bar (title + company), label rows, a full-width "REVIEWED" divider, then
+   *  the small-print review language. Everything is sized against the box height
+   *  so it scales down rather than spilling past the border. */
+  private drawReviewerStamp(x: number, y: number, w: number, h: number, s: PDFReviewerStamp) {
+    const red = rgb(0.70, 0.12, 0.12)
+    const pad = 7
+    const innerX = x + pad
+    const innerW = w - pad * 2
+
+    // Design targets ~190pt of box height; shrink uniformly when the box is
+    // shorter so the header/rows/divider never overrun the cell.
+    const scale = Math.min(1, h / 190)
+    const headerH   = 17 * scale
+    const rowH      = 13.5 * scale
+    const dividerH  = 12 * scale
+    const headerSz  = 8.5 * scale
+    const labelSz   = 7 * scale
+    const valueSz   = 8 * scale
+
+    let cy = y + h // top edge — draw downward
+
+    // ── Header bar: "Submittal Stamp" left, company right ──────────────────────
+    cy -= headerH
+    this.page.drawRectangle({ x, y: cy, width: w, height: headerH, color: red })
+    this.page.drawText("Submittal Stamp", {
+      x: innerX, y: cy + (headerH - headerSz) / 2 + 0.5, size: headerSz, font: this.bold, color: PDF.color.white,
+    })
+    if (s.company) {
+      const co = clip(this.bold, s.company.toUpperCase(), innerW * 0.55, labelSz)
+      const cow = this.bold.widthOfTextAtSize(co, labelSz)
+      this.page.drawText(co, {
+        x: x + w - pad - cow, y: cy + (headerH - labelSz) / 2 + 0.5, size: labelSz, font: this.bold, color: PDF.color.white,
+      })
+    }
+
+    // ── Label rows ─────────────────────────────────────────────────────────────
+    const row = (label: string, value: string) => {
+      cy -= rowH
+      this.page.drawText(label, {
+        x: innerX, y: cy + (rowH - labelSz) / 2 + 0.5, size: labelSz, font: this.bold, color: PDF.color.label,
+      })
+      const lw = this.bold.widthOfTextAtSize(label, labelSz)
+      this.page.drawText(clip(this.reg, value && value.trim() ? value : "—", innerW - lw - 5, valueSz), {
+        x: innerX + lw + 5, y: cy + (rowH - valueSz) / 2 + 0.5, size: valueSz, font: this.reg, color: PDF.color.ink,
+      })
+    }
+
+    row("Project: ", s.projectName)
+    row("Project #: ", s.projectNumber)
+
+    // ── Full-width "REVIEWED" divider ──────────────────────────────────────────
+    cy -= dividerH
+    this.page.drawRectangle({ x, y: cy, width: w, height: dividerH, color: red })
+    const dt = "REVIEWED"
+    const dtw = this.bold.widthOfTextAtSize(dt, labelSz)
+    this.page.drawText(dt, {
+      x: x + (w - dtw) / 2, y: cy + (dividerH - labelSz) / 2 + 0.5, size: labelSz, font: this.bold, color: PDF.color.white,
+    })
+
+    if (s.submittalNo && s.submittalNo.trim()) row("Submittal No: ", s.submittalNo)
+    row("Reviewed By: ", s.reviewedBy)
+    row("Date: ", s.date)
+
+    // ── Review-language small print — fills the remaining height, shrinking the
+    //    font (then dropping trailing lines) before it can overflow the box. ─────
+    const availH = cy - y - pad
+    if (availH > 7 && s.reviewText.trim()) {
+      let pSz = 6 * scale
+      let lines = this.wrapTextWith(this.reg, s.reviewText, pSz, innerW)
+      let pLineH = pSz + 1.5
+      while (pSz > 4.5 && lines.length * pLineH > availH) {
+        pSz -= 0.25
+        lines = this.wrapTextWith(this.reg, s.reviewText, pSz, innerW)
+        pLineH = pSz + 1.5
+      }
+      const maxLines = Math.max(0, Math.floor(availH / pLineH))
+      let py = cy - 3 * scale
+      for (const line of lines.slice(0, maxLines)) {
+        py -= pLineH
+        this.page.drawText(line, { x: innerX, y: py, size: pSz, font: this.reg, color: PDF.color.muted })
+      }
+    }
   }
 
   // ── Save ────────────────────────────────────────────────────────────────────
