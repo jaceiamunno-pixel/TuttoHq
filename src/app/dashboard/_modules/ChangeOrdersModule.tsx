@@ -681,16 +681,16 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
                 </div>
               )}
 
-              {/* Status update — frozen for imported PCOs */}
-              {viewCo?.origin === "imported" ? (
-                <div className="border-t border-[#E2E8F0] pt-4">
-                  <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2.5 text-[12px] text-amber-800">
-                    <span className="font-semibold">Imported historical PCO — frozen.</span> All values are preserved exactly as imported and can&apos;t be edited. Use the Cover / Backup buttons in the log row to view its documents.
-                  </div>
-                </div>
-              ) : (
+              {/* Status update — log-workflow fields stay editable on imported
+                  PCOs (status / CO # / realized / reviewer); pricing + document
+                  fields are frozen by the PATCH guard + DB trigger. */}
               <div className="border-t border-[#E2E8F0] pt-4 space-y-3">
                 <p className="text-[11px] font-bold text-[#64748B] uppercase tracking-widest">Update</p>
+                {viewCo?.origin === "imported" && (
+                  <div className="rounded-md bg-amber-50 border border-amber-200 px-3 py-1.5 text-[11px] text-amber-800">
+                    Imported PCO — pricing &amp; document fields are frozen. Status, CO #, realized amount &amp; reviewer remain editable.
+                  </div>
+                )}
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="block text-[11px] font-semibold text-[#64748B] uppercase tracking-widest mb-1">Status</label>
@@ -728,7 +728,6 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
                   </div>
                 </div>
               </div>
-              )}
             </div>
 
             <div className="flex justify-between px-6 py-4 border-t border-[#E2E8F0] flex-shrink-0">
@@ -745,13 +744,11 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
               <div className="flex gap-2">
                 <button onClick={() => setViewCo(null)}
                   className="h-8 px-4 rounded-md border border-[#E2E8F0] text-[13px] text-[#64748B] hover:bg-[#0F172A]/[0.04] transition-colors">Close</button>
-                {viewCo?.origin !== "imported" && (
-                  <button onClick={saveCoStatus} disabled={coRespondSaving}
-                    className="h-8 px-4 rounded-md bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors disabled:opacity-50 flex items-center gap-2">
-                    {coRespondSaving && <SpinnerIcon className="h-3 w-3" />}
-                    {coRespondSaving ? "Saving…" : "Save Changes"}
-                  </button>
-                )}
+                <button onClick={saveCoStatus} disabled={coRespondSaving}
+                  className="h-8 px-4 rounded-md bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors disabled:opacity-50 flex items-center gap-2">
+                  {coRespondSaving && <SpinnerIcon className="h-3 w-3" />}
+                  {coRespondSaving ? "Saving…" : "Save Changes"}
+                </button>
               </div>
             </div>
           </div>

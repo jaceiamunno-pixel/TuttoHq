@@ -28,7 +28,11 @@ interface Card {
   committed: boolean
   committing: boolean
   error: string | null
+  status: string          // review status, applied AFTER commit (default 'Not submitted')
 }
+
+// CHECK-valid change_orders statuses (see migration 0005 / status CHECK).
+const STATUS_OPTIONS = ["Not submitted", "Pending", "Approved"]
 
 interface CommitResult { imported: number; total: number; failures: { pco_number: string; reason: string }[] }
 
@@ -99,10 +103,10 @@ export default function PcoImportModal({ project, onClose, onImported }: {
             computed: { laborSubtotal: 0, materialsSubtotal: 0, ohpPercent: null, feePercent: null, subcontractor: 0, total: 0 },
             flags: r.fileFlags, notes: r.notes,
           }
-          return { id: cid(), pco: stub, staticFlags: r.fileFlags, excluded: true, committed: false, committing: false, error: null }
+          return { id: cid(), pco: stub, staticFlags: r.fileFlags, excluded: true, committed: false, committing: false, error: null, status: "Not submitted" }
         }
         const staticFlags = r.pco.flags.filter(f => f.code === "pco_number_mismatch")
-        return { id: cid(), pco: r.pco, staticFlags, excluded: false, committed: false, committing: false, error: null }
+        return { id: cid(), pco: r.pco, staticFlags, excluded: false, committed: false, committing: false, error: null, status: "Not submitted" }
       })
       setCards(prev => [...prev, ...newCards])
       setParseMsg(null)
@@ -140,6 +144,7 @@ export default function PcoImportModal({ project, onClose, onImported }: {
       materials: p.materials.map(m => ({ description: m.item, qty: m.qty, unit: m.unit, unit_price: m.unit_price, note: m.note })),
       subs: computed.subcontractor ? [{ description: "Subcontractor", amount: computed.subcontractor }] : [],
       confirmed_total: total,
+      status: card.status,
     }
   }
 
@@ -244,9 +249,18 @@ export default function PcoImportModal({ project, onClose, onImported }: {
                     </div>
                     <div className="text-[12px] text-[#64748B] mt-0.5 truncate">{p.title ?? "Untitled"} · {p.dateISO ?? "no date"} · {p.project ?? project.name}</div>
                   </div>
-                  <label className="flex items-center gap-1.5 text-[11px] text-[#64748B] shrink-0 cursor-pointer">
-                    <input type="checkbox" checked={card.excluded} onChange={() => toggleExclude(card.id)} /> Exclude
-                  </label>
+                  <div className="flex items-center gap-3 shrink-0">
+                    <label className="flex items-center gap-1.5 text-[11px] text-[#64748B]">
+                      Status
+                      <select value={card.status} onChange={e => setCards(prev => prev.map(c => (c.id === card.id ? { ...c, status: e.target.value } : c)))}
+                        className="h-7 px-1.5 rounded border border-[#E2E8F0] text-[11px] text-[#0F172A] focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]">
+                        {STATUS_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
+                      </select>
+                    </label>
+                    <label className="flex items-center gap-1.5 text-[11px] text-[#64748B] cursor-pointer">
+                      <input type="checkbox" checked={card.excluded} onChange={() => toggleExclude(card.id)} /> Exclude
+                    </label>
+                  </div>
                 </div>
 
                 {/* Flags */}

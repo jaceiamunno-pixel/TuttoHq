@@ -35,6 +35,10 @@ export interface ImportPcoPayload extends PcoSaveBody {
   materials?: ImportMaterialInput[]
   subs?: ImportSubInput[]
   confirmed_total?: number | null
+  // Optional review status to apply AFTER commit via the normal status-update
+  // path (import_pco itself always inserts 'Not submitted'). Log-workflow state,
+  // not document content.
+  status?: string | null
 }
 
 export interface ImportProjectContext {

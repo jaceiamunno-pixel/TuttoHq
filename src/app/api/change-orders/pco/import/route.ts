@@ -109,6 +109,21 @@ export async function POST(req: NextRequest) {
       importedIds.push(newId)
       ctx.existing.add(numericKey(pcoNumber))   // prevent intra-batch dup
 
+      // Apply the optional review status AFTER commit via a normal status UPDATE
+      // (the freeze allow-lists workflow columns). import_pco itself inserted
+      // 'Not submitted'. Non-fatal: a failure leaves the row at 'Not submitted'.
+      const reqStatus = typeof p.status === "string" ? p.status.trim() : ""
+      if (reqStatus && reqStatus !== "Not submitted") {
+        try {
+          await supabase.from("change_orders").update({
+            status: reqStatus,
+            ...(reqStatus === "Approved" ? { approved_at: new Date().toISOString() } : {}),
+          }).eq("id", newId)
+        } catch (statusErr) {
+          console.error(`Imported PCO ${pcoNumber}: status set to '${reqStatus}' failed:`, statusErr)
+        }
+      }
+
       // Generate + store the Tutto cover/backup PDFs. Non-fatal: the row is
       // already committed (frozen); a PDF hiccup must not drop the import — the
       // user can regenerate from the log. Writes only the allow-listed PDF-path
