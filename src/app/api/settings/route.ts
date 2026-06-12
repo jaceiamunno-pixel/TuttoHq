@@ -4,9 +4,12 @@ import { createClient } from "@/lib/supabase/server"
 export async function GET() {
   const supabase = await createClient()
 
+  // select("*") (not an explicit column list) so this stays resilient if the
+  // display_name column has not been migrated yet (0006) — a missing column is
+  // simply absent rather than erroring the whole read and breaking the logo.
   const { data: settings } = await supabase
     .from("company_settings")
-    .select("logo_path, cover_page_path, address_line1, address_line2, phone, default_oh_p_percent")
+    .select("*")
     .maybeSingle()
 
   let logo_url: string | null = null
@@ -20,6 +23,7 @@ export async function GET() {
   return NextResponse.json({
     logo_url,
     has_cover_page: !!settings?.cover_page_path,
+    display_name: settings?.display_name ?? null,
     address_line1: settings?.address_line1 ?? null,
     address_line2: settings?.address_line2 ?? null,
     phone: settings?.phone ?? null,
@@ -44,7 +48,7 @@ export async function PATCH(req: NextRequest) {
 
   const updates: Record<string, string | number | null> = {}
 
-  for (const key of ["address_line1", "address_line2", "phone"] as const) {
+  for (const key of ["display_name", "address_line1", "address_line2", "phone"] as const) {
     if (body[key] === undefined) continue
     updates[key] = typeof body[key] === "string" && body[key].trim() ? body[key].trim() : null
   }

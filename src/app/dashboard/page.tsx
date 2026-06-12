@@ -2,7 +2,16 @@
 
 import { useState, useEffect, useRef } from "react"
 import Link from "next/link"
+import localFont from "next/font/local"
 import { createClient } from "@/lib/supabase/client"
+
+// Source Serif 4 (OFL) — the same family embedded in the generated PDFs, reused
+// here as the nav wordmark when a company display name is set. Loaded locally
+// (no network at build) from the bytes already committed for the PDF builder.
+const serifWordmark = localFont({
+  src: "../../lib/fonts/SourceSerif4-SemiBold.ttf",
+  display: "swap",
+})
 import type { Project, TeamMember } from "./_shared/types"
 import { SelectProjectEmptyState } from "./_shared/ui"
 import DrawingsModule from "./_modules/DrawingsModule"
@@ -150,6 +159,7 @@ export default function Home() {
   // Auth + company settings
   const [userEmail, setUserEmail] = useState<string | null>(null)
   const [logoUrl, setLogoUrl]     = useState<string | null>(null)
+  const [displayName, setDisplayName] = useState<string | null>(null)
 
   // Projects + team
   const [appProjects, setAppProjects] = useState<Project[]>([])
@@ -230,7 +240,7 @@ export default function Home() {
     })
     fetch("/api/settings")
       .then(r => r.json())
-      .then(d => { if (d.logo_url) setLogoUrl(d.logo_url) })
+      .then(d => { if (d.logo_url) setLogoUrl(d.logo_url); if (d.display_name) setDisplayName(d.display_name) })
       .catch(() => {})
     fetch("/api/projects").then(r => r.json()).then(d => setAppProjects(d.projects ?? [])).catch(() => {})
     fetch("/api/team").then(r => r.json()).then(d => setTeamMembers(d.members ?? [])).catch(() => {})
@@ -246,7 +256,11 @@ export default function Home() {
   const needsProject  = activeModule !== "library"
   const showEmptyState = needsProject && !globalProjectId
 
-  const logo = logoUrl ? (
+  // Chrome branding fallback chain: company display name (serif wordmark) →
+  // logo image → app default mark.
+  const logo = displayName ? (
+    <span className={`${serifWordmark.className} text-[17px] leading-none text-white tracking-tight truncate max-w-[200px]`} title={displayName}>{displayName}</span>
+  ) : logoUrl ? (
     <img src={logoUrl} alt="Logo" className="h-7 max-w-[130px] object-contain" />
   ) : (
     <>

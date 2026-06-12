@@ -20,6 +20,39 @@ const numericKey = (co: string | null | undefined): string => (co ?? "").replace
 let seq = 0
 const cid = () => `card-${seq++}`
 
+// A real THP workbook is a *.xlsx that is NOT an Office lock file. Office writes
+// a hidden "~$name.xlsx" companion while a workbook is open; it has the .xlsx
+// extension but is not a workbook, so it must be skipped along with non-xlsx files.
+const isImportableXlsx = (name: string) => {
+  const base = name.split(/[\\/]/).pop() ?? name
+  return base.toLowerCase().endsWith(".xlsx") && !base.startsWith("~$")
+}
+
+// Drain a directory reader fully — readEntries() returns results in batches and
+// must be called repeatedly until it yields an empty batch.
+function readAllEntries(reader: FileSystemDirectoryReader): Promise<FileSystemEntry[]> {
+  return new Promise<FileSystemEntry[]>((resolve, reject) => {
+    const out: FileSystemEntry[] = []
+    const pump = () => reader.readEntries(batch => {
+      if (batch.length === 0) { resolve(out); return }
+      out.push(...batch)
+      pump()
+    }, reject)
+    pump()
+  })
+}
+
+// Recursively collect every leaf File under a dropped entry (file or directory).
+async function walkEntry(entry: FileSystemEntry, acc: File[]): Promise<void> {
+  if (entry.isFile) {
+    const file = await new Promise<File>((res, rej) => (entry as FileSystemFileEntry).file(res, rej))
+    acc.push(file)
+  } else if (entry.isDirectory) {
+    const entries = await readAllEntries((entry as FileSystemDirectoryEntry).createReader())
+    for (const e of entries) await walkEntry(e, acc)
+  }
+}
+
 interface Card {
   id: string
   pco: ParsedPco          // editable copy
@@ -81,9 +114,45 @@ export default function PcoImportModal({ project, onClose, onImported }: {
     return { computed, t }
   }
 
-  async function onFiles(files: FileList | null) {
-    if (!files || files.length === 0) return
-    setParsing(true); setParseMsg(`Parsing ${files.length} file${files.length === 1 ? "" : "s"}…`)
+  // Entry point for a flat selection (file input). Folders dropped onto the zone
+  // go through onDrop → walkEntry first, then land here as a flat File[].
+  function ingestFromList(files: File[]) {
+    const found = files.length
+    const xlsx = files.filter(f => isImportableXlsx(f.name))
+    ingest(xlsx, found, found - xlsx.length)
+  }
+
+  // Recursively collect dropped files/folders, then ingest the *.xlsx among them.
+  async function onDrop(e: React.DragEvent) {
+    e.preventDefault()
+    const dt = e.dataTransfer
+    // webkitGetAsEntry must be read synchronously before the handler yields — the
+    // DataTransferItemList is cleared once we await. Capture entries up front.
+    const entries = dt.items
+      ? Array.from(dt.items).map(it => it.webkitGetAsEntry?.() ?? null).filter((x): x is FileSystemEntry => x !== null)
+      : []
+    const flatFallback = Array.from(dt.files)
+    if (entries.length === 0) { ingestFromList(flatFallback); return }
+    setParsing(true); setParseMsg("Reading dropped items…")
+    const collected: File[] = []
+    try {
+      for (const en of entries) await walkEntry(en, collected)
+    } catch {
+      setParsing(false); setParseMsg("Could not read the dropped folder."); return
+    }
+    setParsing(false)
+    ingestFromList(collected)
+  }
+
+  // Parse the importable .xlsx files into cards. `found`/`skipped` drive the
+  // "N files found, M parsed, K skipped (non-xlsx)" summary.
+  async function ingest(xlsx: File[], found: number, skipped: number) {
+    const fileWord = (n: number) => `${n} file${n === 1 ? "" : "s"}`
+    if (xlsx.length === 0) {
+      setParseMsg(found > 0 ? `${fileWord(found)} found, 0 parsed, ${skipped} skipped (non-xlsx)` : null)
+      return
+    }
+    setParsing(true); setParseMsg(`Parsing ${fileWord(xlsx.length)}…`)
     try {
       // Collision pre-flight: existing CO numbers in this project (covers manual
       // + builder rows; the server re-checks authoritatively on commit).
@@ -92,7 +161,7 @@ export default function PcoImportModal({ project, onClose, onImported }: {
         .catch(() => new Set<string>())
       setCollisionKeys(existing)
 
-      const results = await parseWorkbookFiles(Array.from(files))
+      const results = await parseWorkbookFiles(xlsx)
       const newCards: Card[] = results.map(r => {
         if (!r.pco) {
           // Hard parse failure → an excluded error card carrying the file flags.
@@ -111,7 +180,7 @@ export default function PcoImportModal({ project, onClose, onImported }: {
         return { id: cid(), pco: r.pco, staticFlags, excluded: false, committed: false, committing: false, error: null, status: "Not submitted" }
       })
       setCards(prev => [...prev, ...newCards])
-      setParseMsg(null)
+      setParseMsg(`${fileWord(found)} found, ${xlsx.length} parsed${skipped > 0 ? `, ${skipped} skipped (non-xlsx)` : ""}`)
     } catch (e) {
       setParseMsg(`Could not parse: ${(e as Error)?.message ?? "unknown error"}`)
     } finally {
@@ -224,9 +293,9 @@ export default function PcoImportModal({ project, onClose, onImported }: {
           {/* Upload zone */}
           <div className="bg-white rounded-xl border border-dashed border-[#CBD5E1] p-5 text-center"
             onDragOver={e => e.preventDefault()}
-            onDrop={e => { e.preventDefault(); onFiles(e.dataTransfer.files) }}>
-            <input ref={fileRef} type="file" accept=".xlsx" multiple className="hidden" onChange={e => onFiles(e.target.files)} />
-            <p className="text-[13px] text-[#475569]">Drop THP-format <span className="font-mono">.xlsx</span> workbooks here, or</p>
+            onDrop={onDrop}>
+            <input ref={fileRef} type="file" accept=".xlsx" multiple className="hidden" onChange={e => ingestFromList(Array.from(e.target.files ?? []))} />
+            <p className="text-[13px] text-[#475569]">Drop THP-format <span className="font-mono">.xlsx</span> workbooks — or a whole folder — here, or</p>
             <button onClick={() => fileRef.current?.click()} disabled={parsing}
               className="mt-2 h-9 px-4 rounded-md bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] disabled:opacity-50">
               {parsing ? "Parsing…" : "Choose files"}

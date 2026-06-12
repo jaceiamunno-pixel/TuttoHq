@@ -15,6 +15,46 @@ import PcoImportModal from "./PcoImportModal"
 // effect keys on globalProjectId (the module mounts only when Change Orders is
 // active, so the activeModule guard is no longer needed).
 
+// Compact icon paths for the CO-log row actions. Icon buttons (with title
+// tooltips) replace the old text buttons so the log fits without a horizontal
+// scrollbar at 1280/1440px.
+const ICON = {
+  edit:   "M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z",
+  view:   "M15 12a3 3 0 11-6 0 3 3 0 016 0z M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z",
+  cover:  "M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z M9 13h6 M9 17h6",
+  backup: "M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2 M10 8h8a2 2 0 012 2v8a2 2 0 01-2 2h-8a2 2 0 01-2-2v-8a2 2 0 012-2z",
+  trash:  "M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16",
+} as const
+
+// Numeric collation for the CO log. Pulls the digits out of co_number and
+// compares them as integers ("042" → 42), so the log reads 9, 10, 042 in true
+// numeric order. Number-less rows sort after numbered ones; numeric ties and
+// number-less pairs break by date (oldest-first, empty dates last).
+function coNumKey(co: string | null | undefined): number | null {
+  const digits = (co ?? "").replace(/[^0-9]/g, "")
+  return digits === "" ? null : parseInt(digits, 10)
+}
+function coLogCompare(a: ChangeOrder, b: ChangeOrder): number {
+  const na = coNumKey(a.co_number), nb = coNumKey(b.co_number)
+  if (na !== null && nb !== null) { if (na !== nb) return na - nb }
+  else if (na !== null) return -1
+  else if (nb !== null) return 1
+  return (a.date ?? "9999").localeCompare(b.date ?? "9999")
+}
+
+function CoActionBtn({ label, onClick, icon, className = "", disabled = false }: {
+  label: string; onClick: () => void; icon: string; className?: string; disabled?: boolean
+}) {
+  return (
+    <button onClick={onClick} disabled={disabled} title={label} aria-label={label}
+      className={`h-7 w-7 inline-flex items-center justify-center rounded hover:bg-[#0F172A]/[0.05] transition-colors disabled:opacity-40 ${className}`}>
+      <svg className="h-[15px] w-[15px]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        {icon.split(" M").map((seg, i) => <path key={i} strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.7} d={(i === 0 ? seg : "M" + seg)} />)}
+      </svg>
+    </button>
+  )
+}
+
 export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
   globalProjectId: string
   appProjects: Project[]
@@ -42,6 +82,8 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
   const [coGeneratingPdf, setCoGeneratingPdf]         = useState(false)
   const [coBaseValue, setCoBaseValue]                 = useState("")
   const [coBaseSaving, setCoBaseSaving]               = useState(false)
+  const [showBaseEdit, setShowBaseEdit]               = useState(false)
+  const [baseEditValue, setBaseEditValue]             = useState("")
   const [coRespAmount, setCoRespAmount]               = useState("")
   const [coRealized, setCoRealized]                   = useState("")
   const [coRespRealized, setCoRespRealized]           = useState("")
@@ -57,11 +99,12 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
     const qs = pid ? `?project_id=${encodeURIComponent(pid)}` : ""
     fetch(`/api/change-orders${qs}`)
       .then(r => r.json())
-      // Sort ascending by PCO # (zero-padded co_number; lexical order = numeric,
-      // 001→028) so the log reads oldest-first like a real PCO log; new COs append
-      // at the bottom. created_at can diverge from the PCO sequence if back-dated.
-      .then(d => setChangeOrders([...(d.changeOrders ?? [])].sort(
-        (a: ChangeOrder, b: ChangeOrder) => (a.co_number ?? "").localeCompare(b.co_number ?? ""))))
+      // Sort ascending by PCO # NUMERICALLY (leading-zero agnostic): the embedded
+      // digits are compared as integers, so "9" < "10" < "042" regardless of
+      // zero-padding or insertion/import order, and imported + manual rows
+      // interleave in one sequence. Rows whose number has no digits sort last;
+      // numeric ties and number-less rows fall back to date (oldest-first).
+      .then(d => setChangeOrders([...(d.changeOrders ?? [])].sort(coLogCompare)))
       .catch(() => setChangeOrders([]))
       .finally(() => setCoLoading(false))
   }
@@ -166,16 +209,20 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
   }
 
   // Persist the project's Base Contract value via the existing company-scoped
-  // projects PATCH (RLS gates it to the caller's tenant).
-  async function saveBaseContract() {
+  // projects PATCH (RLS gates it to the caller's tenant). Editing is now gated
+  // behind a confirm modal (no longer a live inline input) so the figure that
+  // Revised Contract Value / Open Changes derive from can't be nudged by accident.
+  async function saveBaseContract(raw: string) {
     if (!globalProjectId) return
+    const v = raw.trim()
     setCoBaseSaving(true)
     try {
-      const raw = coBaseValue.trim()
       await fetch(`/api/projects/${globalProjectId}`, {
         method: "PATCH", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ base_contract_value: raw === "" ? null : raw }),
+        body: JSON.stringify({ base_contract_value: v === "" ? null : v }),
       })
+      setCoBaseValue(v)        // reflect locally so the totals recompute
+      setShowBaseEdit(false)
     } finally { setCoBaseSaving(false) }
   }
 
@@ -280,13 +327,14 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
         <div className="flex-shrink-0 border-b border-[#E2E8F0] bg-white px-4 py-3 flex flex-wrap items-end gap-4">
           <div>
             <label className="block text-[10px] font-bold text-[#64748B] uppercase tracking-widest mb-1">Base Contract Value</label>
-            <div className="flex items-center gap-2">
-              <input type="number" step="0.01" value={coBaseValue}
-                onChange={e => setCoBaseValue(e.target.value)} placeholder="0.00"
-                className="h-9 w-44 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40 tabular-nums placeholder:text-[#64748B]" />
-              <button onClick={saveBaseContract} disabled={coBaseSaving}
-                className="h-9 px-3 rounded-md bg-[#7B9BB5] text-white text-[12px] font-semibold hover:bg-[#6A8AA4] transition-colors disabled:opacity-50 flex items-center gap-1.5">
-                {coBaseSaving && <SpinnerIcon className="h-3 w-3" />}{coBaseSaving ? "Saving…" : "Save"}
+            <div className="flex items-center gap-1.5 h-9">
+              <span className="text-[18px] font-bold tabular-nums text-[#0F172A]">
+                {baseForTotals != null ? fmtUsd2(baseForTotals) : <span className="text-[15px] font-normal text-[#94A3B8]">Not set</span>}
+              </span>
+              <button onClick={() => { setBaseEditValue(""); setShowBaseEdit(true) }}
+                title="Edit base contract value"
+                className="h-7 w-7 inline-flex items-center justify-center rounded-md text-[#64748B] hover:text-[#0F172A] hover:bg-[#0F172A]/[0.05] transition-colors">
+                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
               </button>
             </div>
           </div>
@@ -344,19 +392,17 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
                       <tr className="border-b border-[#E2E8F0]">
                         <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-20">PCO #</th>
                         <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-24">CO #</th>
-                        <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-32">Project</th>
                         <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest">Proposal</th>
-                        <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-28">Proposed</th>
-                        <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-28">Realized</th>
+                        <th className="text-right px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-28">Proposed</th>
+                        <th className="text-right px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-28">Realized</th>
                         <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-20">Sched.</th>
                         <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-24">Date</th>
                         <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-28">Status</th>
-                        <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-28">Actions</th>
+                        <th className="text-right px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-36">Actions</th>
                       </tr>
                     </thead>
                     <tbody>
                       {changeOrders.map(c => {
-                        const proj = appProjects.find(p => p.id === c.project_id)
                         const statusColor: Record<string, string> = {
                           "Not submitted": "bg-gray-100 text-gray-500",
                           Pending:         "bg-amber-100 text-amber-700",
@@ -364,18 +410,19 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
                           Rejected:        "bg-red-100 text-red-700",
                         }
                         const badgeCls = statusColor[c.status] ?? "bg-gray-100 text-gray-500"
+                        const imported = c.origin === "imported"
+                        const pdfBusy  = pcoPdfBusyId === c.id
                         return (
                           <tr key={c.id} className="border-b border-[#E2E8F0]/60 hover:bg-[#F8F9FA] transition-colors">
-                            <td className="px-4 py-2.5 text-[12px] font-mono text-[#7B9BB5] whitespace-nowrap">{pcoLabel(c.co_number)}{c.has_pco_detail && <span className="ml-1.5 px-1 py-0.5 rounded bg-[#7B9BB5]/10 text-[#5A7A94] text-[9px] font-sans font-semibold align-middle">PCO</span>}{c.origin === "imported" && <span className="ml-1 px-1 py-0.5 rounded bg-amber-100 text-amber-700 text-[9px] font-sans font-semibold align-middle" title="Imported historical PCO — frozen, cannot be edited">Imported</span>}</td>
+                            <td className="px-4 py-2.5 text-[12px] font-mono text-[#7B9BB5] whitespace-nowrap">{pcoLabel(c.co_number)}{c.has_pco_detail && <span className="ml-1.5 px-1 py-0.5 rounded bg-[#7B9BB5]/10 text-[#5A7A94] text-[9px] font-sans font-semibold align-middle">PCO</span>}{imported && <span className="ml-1 px-1 py-0.5 rounded bg-amber-100 text-amber-700 text-[9px] font-sans font-semibold align-middle" title="Imported historical PCO — frozen, cannot be edited">Imported</span>}</td>
                             <td className="px-4 py-2.5 text-[12px] text-[#0F172A]">{c.assigned_co_number || "—"}</td>
-                            <td className="px-4 py-2.5 text-[#64748B] text-[12px] truncate">{proj?.name ?? "—"}</td>
-                            <td className="px-4 py-2.5 align-top min-w-[220px]">
-                              <p className="text-[13px] text-[#0F172A] leading-relaxed whitespace-pre-wrap break-words">{c.proposal ?? "—"}</p>
+                            <td className="px-4 py-2.5 align-top">
+                              <p className="text-[13px] text-[#0F172A] leading-relaxed line-clamp-2 break-words" title={c.proposal ?? undefined}>{c.proposal ?? "—"}</p>
                             </td>
-                            <td className="px-4 py-2.5 text-[12px] tabular-nums font-medium">
+                            <td className="px-4 py-2.5 text-[12px] text-right tabular-nums font-medium">
                               {c.pricing_sum != null ? <span className={c.pricing_sum < 0 ? "text-red-600" : "text-[#0F172A]"}>{fmtUsd2(c.pricing_sum)}</span> : <span className="text-[#0F172A]">—</span>}
                             </td>
-                            <td className="px-4 py-2.5 text-[12px] tabular-nums font-medium">
+                            <td className="px-4 py-2.5 text-[12px] text-right tabular-nums font-medium">
                               {c.realized_amount != null ? <span className={c.realized_amount < 0 ? "text-red-600" : "text-[#0F172A]"}>{fmtUsd2(c.realized_amount)}</span> : <span className="text-[#94A3B8]">—</span>}
                             </td>
                             <td className="px-4 py-2.5 text-[12px]">
@@ -386,26 +433,22 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
                               <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold ${badgeCls}`}>{c.status}</span>
                             </td>
                             <td className="px-4 py-2.5">
-                              <div className="flex items-center gap-0.5 whitespace-nowrap">
-                                {c.has_pco_detail && c.origin !== "imported" && (
-                                  <button onClick={() => setEditPcoId(c.id)}
-                                    className="text-[11px] text-[#7B9BB5] hover:text-[#5A7A94] px-1.5 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors">Edit</button>
+                              <div className="flex items-center justify-end gap-0.5 whitespace-nowrap">
+                                {c.has_pco_detail && !imported && (
+                                  <CoActionBtn label="Edit" onClick={() => setEditPcoId(c.id)} className="text-[#7B9BB5] hover:text-[#5A7A94]" icon={ICON.edit} />
                                 )}
-                                <button onClick={() => { setViewCo(c); setCoResponseStatus(c.status); setCoAssignedTo(c.assigned_to ?? ""); setCoAssignedCoNumber(c.assigned_co_number ?? ""); setCoRespAmount(c.pricing_sum != null ? String(c.pricing_sum) : ""); setCoRespRealized(c.realized_amount != null ? String(c.realized_amount) : "") }}
-                                  className="text-[11px] text-[#64748B] hover:text-[#0F172A] px-1.5 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors">View</button>
+                                <CoActionBtn label="View" onClick={() => { setViewCo(c); setCoResponseStatus(c.status); setCoAssignedTo(c.assigned_to ?? ""); setCoAssignedCoNumber(c.assigned_co_number ?? ""); setCoRespAmount(c.pricing_sum != null ? String(c.pricing_sum) : ""); setCoRespRealized(c.realized_amount != null ? String(c.realized_amount) : "") }} className="text-[#64748B] hover:text-[#0F172A]" icon={ICON.view} />
                                 {c.has_pco_detail ? (
                                   <>
-                                    <button onClick={() => openPcoPdf(c.id, "cover")} disabled={pcoPdfBusyId === c.id}
-                                      className="text-[11px] text-[#7B9BB5] px-1.5 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors disabled:opacity-50">Cover</button>
-                                    <button onClick={() => openPcoPdf(c.id, "backup")} disabled={pcoPdfBusyId === c.id}
-                                      className="text-[11px] text-[#7B9BB5] px-1.5 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors disabled:opacity-50">Backup</button>
+                                    <CoActionBtn label="Cover sheet" onClick={() => openPcoPdf(c.id, "cover")} disabled={pdfBusy} className="text-[#7B9BB5]" icon={ICON.cover} />
+                                    <CoActionBtn label="Pricing backup" onClick={() => openPcoPdf(c.id, "backup")} disabled={pdfBusy} className="text-[#7B9BB5]" icon={ICON.backup} />
                                   </>
                                 ) : (
-                                  <button onClick={() => generateCoPdf(c.id)} disabled={coGeneratingPdf}
-                                    className="text-[11px] text-[#7B9BB5] hover:text-[#7B9BB5] px-1.5 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors disabled:opacity-50">PDF</button>
+                                  <CoActionBtn label="Generate PDF" onClick={() => generateCoPdf(c.id)} disabled={coGeneratingPdf} className="text-[#7B9BB5]" icon={ICON.cover} />
                                 )}
-                                <button onClick={() => deleteCo(c.id)}
-                                  className="text-[11px] text-red-400/60 hover:text-red-400 px-1.5 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors">Del</button>
+                                {!imported && (
+                                  <CoActionBtn label="Delete" onClick={() => deleteCo(c.id)} className="text-red-400/70 hover:text-red-500" icon={ICON.trash} />
+                                )}
                               </div>
                             </td>
                           </tr>
@@ -754,6 +797,50 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
           </div>
         </div>
       )}
+
+      {/* ── Edit Base Contract Value confirm modal ────────────────────────── */}
+      {showBaseEdit && (() => {
+        const parsed = parseFloat(baseEditValue)
+        const canConfirm = baseEditValue.trim() !== "" && Number.isFinite(parsed) && !coBaseSaving
+        return (
+          <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4"
+            onClick={e => { if (e.target === e.currentTarget) setShowBaseEdit(false) }}>
+            <div className="bg-white border border-[#E2E8F0] rounded-xl w-full max-w-md mx-4 sm:mx-0 flex flex-col">
+              <div className="flex items-center justify-between px-6 py-4 border-b border-[#E2E8F0]">
+                <h2 className="text-[16px] font-bold text-[#0F172A]">Edit Base Contract Value</h2>
+                <button onClick={() => setShowBaseEdit(false)} className="text-[#64748B] hover:text-[#0F172A] transition-colors">
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                </button>
+              </div>
+              <div className="px-6 py-5 space-y-4">
+                <div className="flex items-baseline justify-between rounded-lg bg-[#F4F5F7] border border-[#E2E8F0] px-4 py-3">
+                  <span className="text-[11px] font-bold text-[#64748B] uppercase tracking-widest">Current value</span>
+                  <span className="text-[16px] font-bold tabular-nums text-[#0F172A]">{baseForTotals != null ? fmtUsd2(baseForTotals) : "Not set"}</span>
+                </div>
+                <div>
+                  <label className="block text-[11px] font-semibold text-[#64748B] uppercase tracking-widest mb-1">New value ($)</label>
+                  <input type="number" step="0.01" value={baseEditValue} autoFocus
+                    onChange={e => setBaseEditValue(e.target.value)}
+                    onKeyDown={e => { if (e.key === "Enter" && canConfirm) saveBaseContract(baseEditValue) }}
+                    placeholder="0.00"
+                    className="w-full h-10 px-3 rounded-md border border-[#E2E8F0] text-[14px] text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40 tabular-nums placeholder:text-[#94A3B8]" />
+                </div>
+                <p className="text-[12px] text-[#64748B] leading-relaxed">
+                  <span className="font-semibold text-[#0F172A]">Revised Contract Value</span> and <span className="font-semibold text-[#0F172A]">Open Changes</span> recalculate from this.
+                </p>
+              </div>
+              <div className="flex justify-end gap-2 px-6 py-4 border-t border-[#E2E8F0]">
+                <button type="button" onClick={() => setShowBaseEdit(false)}
+                  className="h-9 px-4 rounded-md border border-[#E2E8F0] text-[13px] text-[#64748B] hover:bg-[#0F172A]/[0.04] transition-colors">Cancel</button>
+                <button onClick={() => saveBaseContract(baseEditValue)} disabled={!canConfirm}
+                  className="h-9 px-4 rounded-md bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2">
+                  {coBaseSaving && <SpinnerIcon className="h-3 w-3" />}{coBaseSaving ? "Saving…" : "Confirm"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )
+      })()}
     </>
   )
 }

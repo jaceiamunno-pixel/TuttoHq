@@ -151,6 +151,9 @@ export default function SettingsPage() {
 
   const [logoUrl, setLogoUrl]           = useState<string | null>(null)
   const [hasCoverPage, setHasCoverPage] = useState(false)
+  const [displayName, setDisplayName]       = useState("")
+  const [savedDisplayName, setSavedDisplayName] = useState("")
+  const [savingDisplayName, setSavingDisplayName] = useState(false)
   const [loadingCompany, setLoadingCompany] = useState(true)
   const [uploadingLogo, setUploadingLogo]   = useState(false)
   const [uploadingCover, setUploadingCover] = useState(false)
@@ -290,7 +293,7 @@ export default function SettingsPage() {
   useEffect(() => {
     fetch("/api/settings")
       .then(r => r.json())
-      .then(d => { setLogoUrl(d.logo_url); setHasCoverPage(d.has_cover_page) })
+      .then(d => { setLogoUrl(d.logo_url); setHasCoverPage(d.has_cover_page); setDisplayName(d.display_name ?? ""); setSavedDisplayName(d.display_name ?? "") })
       .finally(() => setLoadingCompany(false))
 
     fetch("/api/settings/reminders")
@@ -481,6 +484,19 @@ export default function SettingsPage() {
   function flashCompany(text: string, ok = true) {
     setCompanyMessage({ text, ok })
     setTimeout(() => setCompanyMessage(null), 3000)
+  }
+
+  async function saveDisplayName() {
+    setSavingDisplayName(true)
+    try {
+      const res = await fetch("/api/settings", {
+        method: "PATCH", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ display_name: displayName }),
+      })
+      if (res.ok) { setSavedDisplayName(displayName.trim()); flashCompany("Display name saved") }
+      else flashCompany("Could not save display name", false)
+    } catch { flashCompany("Could not save display name", false) }
+    finally { setSavingDisplayName(false) }
   }
 
   function flashTeam(text: string, ok = true) {
@@ -1343,6 +1359,30 @@ export default function SettingsPage() {
                     </div>
                   </div>
                   <input ref={logoInputRef} type="file" accept="image/*" onChange={handleLogoChange} className="hidden" />
+
+                  <div className="mt-5 pt-5 border-t border-[#E2E8F0]">
+                    <h3 className="text-[13px] font-semibold text-[#0F172A] mb-0.5">Company display name</h3>
+                    <p className="text-[12px] text-[#64748B] mb-3">
+                      Shown as a text wordmark in the app header. When set, it replaces the logo image in the nav (the logo image is still used on generated PDFs). Leave blank to show the logo image.
+                    </p>
+                    <div className="flex items-center gap-2 max-w-[460px]">
+                      <input
+                        type="text"
+                        value={displayName}
+                        onChange={e => setDisplayName(e.target.value)}
+                        placeholder="e.g. Tomlinson Hawley Patterson"
+                        maxLength={60}
+                        className="flex-1 h-9 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40 placeholder:text-[#94A3B8]"
+                      />
+                      <button
+                        onClick={saveDisplayName}
+                        disabled={savingDisplayName || displayName.trim() === savedDisplayName.trim()}
+                        className="h-9 px-4 rounded-md bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors disabled:opacity-50 flex-shrink-0"
+                      >
+                        {savingDisplayName ? "Saving…" : "Save"}
+                      </button>
+                    </div>
+                  </div>
                 </div>
 
                 <div className="bg-white rounded-xl border border-[#E2E8F0] p-5">
