@@ -38,19 +38,22 @@ export interface PcoTotals {
   ohpAmount: number
   preFeeTotal: number  // labor + materials + OH&P + subcontractor — the BACKUP grand total (no fee)
   feeAmount: number    // fee% of preFeeTotal — shown on backup, ADDED only on the cover
-  grandTotal: number   // preFeeTotal + fee — the COVER total, == stored pricing_sum
+  texturaFee: number   // flat Textura processing fee from the cover summary — ADDED only on the cover
+  grandTotal: number   // preFeeTotal + fee + Textura — the COVER total, == stored pricing_sum
 }
 
 // ohpPercent / feePercent are FRACTIONS (0.15 == 15%). Fee is a percent of the
-// full pre-fee total (labor + materials + OH&P + subcontractor). IMPORTANT: fee
-// is NOT part of preFeeTotal (the backup grand total) — it is only added into
-// grandTotal (the cover total / pricing_sum).
+// full pre-fee total (labor + materials + OH&P + subcontractor). texturaFee is a
+// flat dollar amount (THP cover Textura processing line). IMPORTANT: neither fee
+// nor Textura is part of preFeeTotal (the backup grand total) — they are only
+// added into grandTotal (the cover total / pricing_sum).
 export function computePcoTotals(
   labor: PcoLaborLine[],
   materials: PcoMaterialLine[],
   subs: PcoSubLine[],
   ohpPercent: number | null,
   feePercent: number | null = null,
+  texturaFee: number | null = null,
 ): PcoTotals {
   const laborSubtotal     = round2(labor.reduce((s, l) => s + laborLineTotal(l), 0))
   const hoursReg          = round2(labor.reduce((s, l) => s + n0(l.qty_reg), 0))
@@ -62,6 +65,7 @@ export function computePcoTotals(
   const ohpAmount         = round2(n0(ohpPercent) * ohpBase)
   const preFeeTotal       = round2(laborSubtotal + materialsSubtotal + ohpAmount + subSubtotal)
   const feeAmount         = round2(n0(feePercent) * preFeeTotal)
-  const grandTotal        = round2(preFeeTotal + feeAmount)
-  return { laborSubtotal, hoursReg, hoursOt, hoursDt, materialsSubtotal, subSubtotal, ohpBase, ohpAmount, preFeeTotal, feeAmount, grandTotal }
+  const texturaFeeAmt     = round2(n0(texturaFee))
+  const grandTotal        = round2(preFeeTotal + feeAmount + texturaFeeAmt)
+  return { laborSubtotal, hoursReg, hoursOt, hoursDt, materialsSubtotal, subSubtotal, ohpBase, ohpAmount, preFeeTotal, feeAmount, texturaFee: texturaFeeAmt, grandTotal }
 }

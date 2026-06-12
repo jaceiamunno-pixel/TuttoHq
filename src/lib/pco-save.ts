@@ -26,6 +26,7 @@ export interface PcoSaveBody {
   subs?: PcoSubInput[]
   oh_p_percent?: number | null // FRACTION (0.15 == 15%)
   fee_percent?: number | null  // FRACTION; % of the full pre-fee total
+  textura_fee?: number | null  // flat cover Textura fee (THP import); 0 for builder PCOs
 }
 
 const arr = <T>(v: T[] | undefined): T[] => (Array.isArray(v) ? v : [])
@@ -49,6 +50,7 @@ export function computePcoPricingSum(body: PcoSaveBody): number {
     arr(body.subs).map(s => ({ amount: numOrNull(s.amount) })),
     numOrNull(body.oh_p_percent),
     numOrNull(body.fee_percent),
+    numOrNull(body.textura_fee),
   ).grandTotal
 }
 

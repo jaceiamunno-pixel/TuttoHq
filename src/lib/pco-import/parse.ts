@@ -140,6 +140,7 @@ export async function parseWorkbookFile(file: File): Promise<ParsedFileResult> {
     coverMaterials: cover.cover.coverMaterials,
     coverSubcontractor: cover.cover.coverSubcontractor,
     coverFee: cover.cover.coverFee,
+    coverTextura: cover.cover.coverTextura,
     coverBond: cover.cover.coverBond,
     coverTotal: cover.cover.coverTotal,
     backupLaborSubtotal: backup.backup.backupLaborSubtotal,

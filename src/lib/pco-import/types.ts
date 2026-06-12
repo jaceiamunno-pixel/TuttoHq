@@ -48,6 +48,7 @@ export interface StatedPricing {
   coverMaterials: number | null
   coverSubcontractor: number | null
   coverFee: number | null
+  coverTextura: number | null   // flat THP "Textura" processing fee on the cover
   coverBond: number | null
   coverTotal: number | null
   // Backup Template subtotals
@@ -63,8 +64,9 @@ export interface ComputedPricing {
   materialsSubtotal: number
   ohpPercent: number | null   // FRACTION, derived from backup OH&P amount
   feePercent: number | null   // FRACTION, derived from cover Fee amount
+  texturaFee: number          // flat Textura fee carried from the cover (0 when absent)
   subcontractor: number
-  total: number               // == computePcoTotals(...).grandTotal
+  total: number               // == computePcoTotals(...).grandTotal (incl. Textura)
 }
 
 export interface ParsedPco {

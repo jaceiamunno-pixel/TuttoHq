@@ -32,8 +32,10 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
 
   const { id } = await params
 
+  // select("*") (not an explicit list) so this stays resilient if textura_fee
+  // (migration 0007) has not been applied yet — a missing column is simply absent.
   const { data: co } = await supabase.from("change_orders")
-    .select("id, co_number, project_id, date, proposal, description_of_work, schedule_impact_days, oh_p_percent, fee_percent, submitted_by, signer_title, signer_signature_path, has_pco_detail")
+    .select("*")
     .eq("id", id).maybeSingle()
   if (!co) return NextResponse.json({ error: "Change order not found" }, { status: 404 })
   if (!co.has_pco_detail) return NextResponse.json({ error: "Not a builder PCO" }, { status: 409 })
@@ -85,6 +87,7 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
     subs:      items.filter(i => i.category === "subcontractor"),
     ohpPercent: co.oh_p_percent ?? null,
     feePercent: co.fee_percent ?? null,
+    texturaFee: co.textura_fee ?? null,
     scheduleImpactDays: co.schedule_impact_days ?? null,
     signerName: co.submitted_by ?? null,
     signerTitle: co.signer_title ?? null,
