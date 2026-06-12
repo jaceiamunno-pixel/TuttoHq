@@ -5,8 +5,10 @@ import { PDFDocument } from "pdf-lib"
 import { getDocumentProxy } from "unpdf"
 import {
   detectSheetNumber, detectRevision, titleblockPayload, deriveDiscipline,
+  prefixOf, normalizeSheetNumber, looksLikeIndexPage,
   DISCIPLINE_MAP, type PositionedItem, type PageGeom,
 } from "@/lib/drawing-detect"
+import { renderStripCrops, renderFullPageImage, mapPool } from "@/lib/drawing-ocr"
 import { presignAndUpload } from "@/lib/storage-upload"
 import { bufferToHex } from "@/lib/file-hash"
 import { SpinnerIcon, XIcon } from "../../app/dashboard/_shared/icons"
@@ -22,6 +24,16 @@ import { SpinnerIcon, XIcon } from "../../app/dashboard/_shared/icons"
 // component state for the editable review table. Nothing becomes canonical
 // until the user hits Commit (→ /api/drawings/commit, which re-verifies
 // SHA-256 server-side). Cancel purges the staged files.
+//
+// TIERED DETECTION (a text-free vector CAD set yields ZERO text → Tier 1 finds
+// nothing). Tier 1 = text layer (above). Tier 2 = OCR fallback: for any page
+// Tier 1 couldn't number, render the right + bottom titleblock strip crops in
+// the browser and read them via Claude Haiku vision (/api/drawings/ocr-
+// titleblock). Tier 3 = index enrichment: detect an "INDEX OF DRAWINGS" page,
+// read its number→title table (/api/drawings/ocr-index), and fill blank titles
+// by EXACT number match. Every OCR call is failure-isolated — any error leaves
+// the row exactly as Tier 1 did (blank, included, Rev 0); OCR never blocks the
+// import. Caps: ≤250 OCR pages per import, 4 calls in flight.
 
 const DISCIPLINE_OPTIONS = Array.from(new Set(Object.values(DISCIPLINE_MAP)))
 
@@ -38,6 +50,33 @@ interface ProposedRow {
   sha256: string
   size: number
   flags: string[]
+  /** Secondary "SHEET NO." sub-identifier read by OCR (e.g. "06.07.A3").
+   *  Display-only — disambiguates pages that share one DRAWING NO.; never
+   *  sent to commit (no schema change). */
+  subId: string
+  /** "text" (Tier 1) or "ocr" (Tier 2) — how the sheet number was found. */
+  source: "text" | "ocr" | null
+}
+
+// Bound OCR cost/time on monster sets: hard cap on pages sent to OCR, and the
+// number of per-page vision requests in flight.
+const MAX_OCR_PAGES = 250
+const OCR_CONCURRENCY = 4
+// Only the first few pages are ever index candidates (an index lives up front).
+const INDEX_SCAN_PAGES = 3
+
+interface DetectStats {
+  pages: number
+  tier1Hits: number
+  tier2Attempts: number
+  tier2Hits: number
+  tier2Failures: number
+  indexFound: boolean
+  indexRows: number
+  titlesEnriched: number
+  ocrCalls: number
+  ocrBytes: number
+  ocrSkippedCap: number
 }
 
 /** Apply a pdf.js 6-matrix to a point (item origin → device space). */
@@ -56,6 +95,7 @@ export default function DrawingImportModal({ projectId, onClose }: {
   const [batchId, setBatchId] = useState<string>("")
   const [committedCount, setCommittedCount] = useState(0)
   const [failedRows, setFailedRows] = useState<{ row: ProposedRow; error: string }[]>([])
+  const [stats, setStats] = useState<DetectStats | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
 
   const updateRow = useCallback((id: string, patch: Partial<ProposedRow>) => {
@@ -66,6 +106,7 @@ export default function DrawingImportModal({ projectId, onClose }: {
     const file = fileRef.current?.files?.[0]
     if (!file) { setError("Choose a drawing-set PDF first."); return }
     setError(null)
+    setStats(null)
     setPhase("processing")
     const bid = crypto.randomUUID()
     setBatchId(bid)
@@ -91,6 +132,12 @@ export default function DrawingImportModal({ projectId, onClose }: {
 
       const staged: ProposedRow[] = []
       const titleReq: { client_row_id: string; titleblock_text: string }[] = []
+      // Per-page Tier-1 text, kept for Tier-3 index-page vocabulary detection.
+      const fullTextByPage = new Map<number, string>()
+      const counters: DetectStats = {
+        pages: pageCount, tier1Hits: 0, tier2Attempts: 0, tier2Hits: 0, tier2Failures: 0,
+        indexFound: false, indexRows: 0, titlesEnriched: 0, ocrCalls: 0, ocrBytes: 0, ocrSkippedCap: 0,
+      }
 
       for (let p = 1; p <= pageCount; p++) {
         setProgress(`Detecting & staging sheet ${p} of ${pageCount}…`)
@@ -131,10 +178,11 @@ export default function DrawingImportModal({ projectId, onClose }: {
         const { path } = await presignAndUpload("submittals", `drawing-staging/${bid}`, pageFile)
 
         const flags: string[] = []
-        if (!sn.sheetNumber) flags.push("no sheet #")
         if (sn.prefix && !sn.discipline) flags.push(`prefix '${sn.prefix}' unmapped`)
         if (items.length < 5) flags.push("low text (image?)")
+        if (sn.sheetNumber) counters.tier1Hits++
 
+        fullTextByPage.set(p, fullText)
         const id = `${bid}-${p}`
         staged.push({
           id, page: p,
@@ -148,11 +196,16 @@ export default function DrawingImportModal({ projectId, onClose }: {
           sha256: sha,
           size: ab.byteLength,
           flags,
+          subId: "",
+          source: sn.sheetNumber ? "text" : null,
         })
         titleReq.push({ client_row_id: id, titleblock_text: tbText })
       }
 
-      // --- title-only AI assist (small text payloads) ---
+      // --- TIER 1 title assist (small text payloads; titleblock-cell text) ---
+      // Only meaningful for pages WITH a text layer; text-free pages send empty
+      // payloads and come back null (filled later by OCR / index). "no title"
+      // flagging is deferred until after every tier has run.
       setProgress("Reading sheet titles…")
       try {
         const res = await fetch("/api/drawings/detect-titles", {
@@ -166,10 +219,137 @@ export default function DrawingImportModal({ projectId, onClose }: {
           for (const r of staged) {
             const t = byId.get(r.id)
             if (t) r.title = t
-            else r.flags = [...r.flags, "no title"]
           }
         }
-      } catch { /* titles are nice-to-have; leave blank + flagged */ }
+      } catch { /* titles are nice-to-have; leave blank, handled below */ }
+
+      // --- TIER 2: OCR fallback for pages Tier 1 couldn't number ----------
+      // Render the right + bottom titleblock strips client-side and read them
+      // via Haiku vision. Failure-isolated per page; capped + concurrency-
+      // bounded. A page that fails OCR stays exactly as Tier 1 left it.
+      const ocrTargets = staged.filter(r => !r.sheetNumber)
+      const ocrRows = ocrTargets.slice(0, MAX_OCR_PAGES)
+      counters.ocrSkippedCap = ocrTargets.length - ocrRows.length
+      for (const r of ocrTargets.slice(MAX_OCR_PAGES)) r.flags = [...r.flags, "ocr skipped (cap)"]
+
+      if (ocrRows.length > 0) {
+        let done = 0
+        await mapPool(ocrRows, OCR_CONCURRENCY, async (r) => {
+          counters.tier2Attempts++
+          setProgress(`Reading titleblocks (OCR) ${++done} of ${ocrRows.length}…`)
+          let crops
+          try {
+            crops = await renderStripCrops(pdf, r.page)
+          } catch {
+            counters.tier2Failures++
+            r.flags = [...r.flags, "ocr render failed"]
+            return
+          }
+          counters.ocrBytes += crops.bytes
+          if (!crops.right && !crops.bottom) { counters.tier2Failures++; return }
+          try {
+            counters.ocrCalls++
+            const res = await fetch("/api/drawings/ocr-titleblock", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ client_row_id: r.id, right: crops.right, bottom: crops.bottom }),
+            })
+            if (!res.ok) { counters.tier2Failures++; r.flags = [...r.flags, "ocr failed"]; return }
+            const d = await res.json() as {
+              sheet_number: string | null; sub_id: string | null
+              sheet_title: string | null; revision: string | null; flags?: string[]
+            }
+            if (Array.isArray(d.flags)) r.flags = [...r.flags, ...d.flags]
+            if (d.sheet_number) {
+              const prefix = prefixOf(d.sheet_number)
+              r.sheetNumber = d.sheet_number
+              r.prefix = prefix
+              if (!r.discipline) r.discipline = deriveDiscipline(prefix) ?? ""
+              if (prefix && !deriveDiscipline(prefix)) r.flags = [...r.flags, `prefix '${prefix}' unmapped`]
+              r.source = "ocr"
+              counters.tier2Hits++
+            }
+            if (d.sub_id) r.subId = d.sub_id
+            if (d.sheet_title && !r.title) r.title = d.sheet_title
+            if (d.revision) r.revisionLabel = d.revision
+          } catch {
+            counters.tier2Failures++
+            r.flags = [...r.flags, "ocr failed"]
+          }
+        })
+      }
+
+      // --- TIER 3: index-page enrichment ---------------------------------
+      // Detect an index page by VOCABULARY (Tier-1 text, or — on a text-free
+      // set — by probing the first pages' rendered images), read its
+      // number→title table, and fill BLANK titles by EXACT number match. The
+      // per-page detected number always wins; never invent rows, never zip
+      // index row N to page N.
+      try {
+        const scan = Math.min(INDEX_SCAN_PAGES, pageCount)
+        let candidatePages = staged
+          .filter(r => r.page <= scan && looksLikeIndexPage(fullTextByPage.get(r.page) ?? ""))
+          .map(r => r.page)
+        // Text-free set: no vocabulary in the (empty) text layer → probe the
+        // first pages' renders; the route returns [] for non-index pages.
+        if (candidatePages.length === 0 && counters.tier2Attempts > 0) {
+          candidatePages = Array.from({ length: scan }, (_, i) => i + 1)
+        }
+
+        let bestRows: { sheet_number: string; title: string }[] = []
+        let bestPage = 0
+        for (const p of candidatePages) {
+          setProgress("Reading drawing index…")
+          let img
+          try { img = await renderFullPageImage(pdf, p) } catch { img = null }
+          if (!img) continue
+          counters.ocrCalls++
+          counters.ocrBytes += img.bytes
+          const res = await fetch("/api/drawings/ocr-index", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ image: img.image }),
+          })
+          if (!res.ok) continue
+          const d = await res.json() as { rows?: { sheet_number: string; title: string }[] }
+          const rows = Array.isArray(d.rows) ? d.rows : []
+          if (rows.length > bestRows.length) { bestRows = rows; bestPage = p }
+          // A page yielding many rows is unambiguously the index — stop probing.
+          if (rows.length >= 10) break
+        }
+
+        if (bestRows.length > 0) {
+          counters.indexFound = true
+          counters.indexRows = bestRows.length
+          const titleByNumber = new Map(bestRows.map(r => [r.sheet_number, r.title]))
+          for (const r of staged) {
+            if (!r.sheetNumber || r.title) continue
+            const t = titleByNumber.get(normalizeSheetNumber(r.sheetNumber))
+            if (t) { r.title = t; counters.titlesEnriched++ }
+          }
+          const idxRow = staged.find(r => r.page === bestPage)
+          if (idxRow) idxRow.flags = [...idxRow.flags, "index"]
+        }
+      } catch { /* index enrichment is best-effort; never blocks the import */ }
+
+      // --- finalize flags: blank-number, missing-title, duplicate runs ----
+      const numberCounts = new Map<string, number>()
+      for (const r of staged) {
+        if (r.sheetNumber) numberCounts.set(r.sheetNumber, (numberCounts.get(r.sheetNumber) ?? 0) + 1)
+      }
+      for (const r of staged) {
+        if (!r.sheetNumber) r.flags = [...r.flags, "no sheet #"]
+        if (!r.title) r.flags = [...r.flags, "no title"]
+        const dupes = r.sheetNumber ? numberCounts.get(r.sheetNumber) ?? 0 : 0
+        if (dupes > 1) r.flags = [...r.flags, `${r.sheetNumber} (${dupes} pages)`]
+      }
+
+      // --- observability: one structured line per import (sizes the next OCR
+      //     phases; mirrors the bulk-import detector's counters) -------------
+      console.info("[drawings-import] detection", {
+        ...counters, ocrKB: Math.round(counters.ocrBytes / 1024),
+      })
+      setStats(counters)
 
       setRows(staged)
       setPhase("review")
@@ -292,6 +472,15 @@ export default function DrawingImportModal({ projectId, onClose }: {
           {/* REVIEW — editable table */}
           {phase === "review" && (
             <div>
+              {stats && (stats.tier2Attempts > 0 || stats.indexFound) && (
+                <p className="mb-2 text-[10px] text-[#94A3B8]">
+                  Detection: {stats.pages} pages · {stats.tier1Hits} from text
+                  {stats.tier2Attempts > 0 && <> · {stats.tier2Hits}/{stats.tier2Attempts} via OCR</>}
+                  {stats.tier2Failures > 0 && <> · {stats.tier2Failures} OCR failed</>}
+                  {stats.ocrSkippedCap > 0 && <> · {stats.ocrSkippedCap} over cap</>}
+                  {stats.indexFound && <> · index: {stats.indexRows} titles, {stats.titlesEnriched} filled</>}
+                </p>
+              )}
               <div className="flex items-center gap-3 mb-2">
                 <p className="text-[12px] text-[#475569]"><span className="font-semibold">{rows.length}</span> sheets detected · <span className="font-semibold">{includedCount}</span> to import</p>
                 <label className="text-[11px] text-[#64748B] ml-auto flex items-center gap-1.5">
@@ -320,11 +509,17 @@ export default function DrawingImportModal({ projectId, onClose }: {
                     return (
                       <tr key={r.id} className={`border-b border-[#F1F5F9] ${r.include ? "" : "opacity-40"}`}>
                         <td className="py-1 pr-2 text-[#94A3B8]">{r.page}</td>
-                        <td className="py-1 pr-2">
+                        <td className="py-1 pr-2 align-top">
                           <input value={r.sheetNumber}
                             onChange={e => { const v = e.target.value; updateRow(r.id, { sheetNumber: v, prefix: (v.match(/^([A-Za-z]+)/)?.[1] ?? null), discipline: r.discipline || (deriveDiscipline(v.match(/^([A-Za-z]+)/)?.[1]?.toUpperCase() ?? null) ?? "") }) }}
                             placeholder="—"
                             className={`w-full h-7 px-2 rounded border text-[12px] font-mono ${!r.sheetNumber ? "border-amber-400 bg-amber-50" : "border-[#E2E8F0]"}`} />
+                          {(r.subId || r.source === "ocr") && (
+                            <div className="mt-0.5 flex items-center gap-1 text-[9px] text-[#94A3B8] leading-tight">
+                              {r.source === "ocr" && <span className="px-1 rounded bg-[#EEF2F6] text-[#5A7A94] font-semibold">OCR</span>}
+                              {r.subId && <span className="font-mono">Sheet {r.subId}</span>}
+                            </div>
+                          )}
                         </td>
                         <td className="py-1 pr-2">
                           <input value={r.title} onChange={e => updateRow(r.id, { title: e.target.value })}
