@@ -6,9 +6,10 @@ import { PlusIcon, SpinnerIcon, XIcon } from "../_shared/icons"
 import { inputCls, labelCls } from "../_shared/ui"
 import { VendorPicker } from "../_shared/vendor-picker"
 
-// Purchase Orders module — replaces the old Commitments nav entry. POs are
-// company-wide (cross-project, like Library); the form picks a project. A PO is
-// a commitments row with type='purchase_order' plus po_line_items.
+// Purchase Orders module — replaces the old Commitments nav entry. The list is
+// scoped to the ACTIVE project (the project in the route); the form still lets
+// you pick which project a new PO belongs to. A PO is a commitments row with
+// type='purchase_order' plus po_line_items.
 
 const usd = (n: number) => new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n)
 const usd0 = (n: number) => new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(n)
@@ -81,15 +82,20 @@ export default function PurchaseOrdersModule({ appProjects, globalProjectId }: {
     return p ? `${p.name}${p.number ? ` — ${p.number}` : ""}` : "—"
   }, [appProjects])
 
-  function loadPOs() {
+  // Scope the list to the ACTIVE project (the project in the route). The PO route
+  // filters server-side by project_id on top of RLS; without the param it returns
+  // the whole company, which is why every project page used to show the same POs.
+  function loadPOs(pid = globalProjectId) {
+    if (!pid) { setPos([]); return }
     setLoading(true)
-    fetch("/api/purchase-orders")
+    fetch(`/api/purchase-orders?project_id=${encodeURIComponent(pid)}`)
       .then(r => r.json())
       .then(d => setPos(d.purchase_orders ?? []))
       .catch(() => setPos([]))
       .finally(() => setLoading(false))
   }
-  useEffect(() => { loadPOs() }, [])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { loadPOs() }, [globalProjectId])
 
   // Eligible release-against contracts = supplier contracts on the SAME project +
   // SAME vendor, RLS-visible (the API filters by both). Refetched whenever the
