@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect, useCallback } from "react"
-import type { Project, PurchaseOrder, PoLineItem, Vendor, CommitmentInvoice, PoBalance } from "../_shared/types"
+import type { Project, PurchaseOrder, PoLineItem, Vendor, CommitmentInvoice, PoBalance, SupplierContract } from "../_shared/types"
 import { PlusIcon, SpinnerIcon, XIcon } from "../_shared/icons"
 import { inputCls, labelCls } from "../_shared/ui"
 import { VendorPicker } from "../_shared/vendor-picker"
@@ -54,6 +54,12 @@ export default function PurchaseOrdersModule({ appProjects, globalProjectId }: {
   const [lines, setLines]         = useState<EditLine[]>([emptyLine()])
   const [status, setStatus]       = useState<PurchaseOrder["status"]>("draft")
   const [acceptedDate, setAcceptedDate] = useState<string | null>(null)  // executed_at when accepted
+  // Release-order link (optional). parentContractId = the supplier_contract this
+  // PO is released against; null = standalone (the default). releaseContracts =
+  // the eligible parents for the current project + vendor (from the view, so the
+  // remaining drawdown is live). The server re-validates the link on every save.
+  const [parentContractId, setParentContractId] = useState<string | null>(null)
+  const [releaseContracts, setReleaseContracts] = useState<SupplierContract[]>([])
   const [saving, setSaving]       = useState(false)
   const [pdfBusy, setPdfBusy]     = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
@@ -85,6 +91,27 @@ export default function PurchaseOrdersModule({ appProjects, globalProjectId }: {
   }
   useEffect(() => { loadPOs() }, [])
 
+  // Eligible release-against contracts = supplier contracts on the SAME project +
+  // SAME vendor, RLS-visible (the API filters by both). Refetched whenever the
+  // project or vendor changes; a now-invalid selection is cleared so the picker
+  // can never hold a cross-project/cross-vendor link. The server still
+  // re-validates on save — this is UX, not the security boundary.
+  useEffect(() => {
+    if (!showForm || !projectId || !vendor) { setReleaseContracts([]); return }
+    let cancelled = false
+    const params = new URLSearchParams({ project_id: projectId, vendor_id: vendor.id })
+    fetch(`/api/supplier-contracts?${params.toString()}`)
+      .then(r => r.json())
+      .then(d => {
+        if (cancelled) return
+        const list: SupplierContract[] = d.supplier_contracts ?? []
+        setReleaseContracts(list)
+        setParentContractId(prev => (prev && !list.some(c => c.id === prev) ? null : prev))
+      })
+      .catch(() => { if (!cancelled) setReleaseContracts([]) })
+    return () => { cancelled = true }
+  }, [showForm, projectId, vendor])
+
   const linesTotal = lines.reduce((s, l) => s + (numOrNull(l.quantity) ?? 0) * (numOrNull(l.unit_price) ?? 0), 0)
 
   function resetInvForm() {
@@ -98,6 +125,7 @@ export default function PurchaseOrdersModule({ appProjects, globalProjectId }: {
     setProjectId(""); setVendor(null); setDateRequired(""); setTerms("")
     setCostCode(""); setCtTax(""); setNotes(""); setLines([emptyLine()])
     setStatus("draft"); setAcceptedDate(null)
+    setParentContractId(null); setReleaseContracts([])
     setSaving(false); setPdfBusy(false); setFormError(null)
     setBalance(null); setInvoices([]); resetInvForm()
   }
@@ -121,6 +149,7 @@ export default function PurchaseOrdersModule({ appProjects, globalProjectId }: {
     setNotes(po.notes ?? "")
     setStatus(po.status)
     setAcceptedDate(po.status === "accepted" ? (po.executed_at ?? null) : null)
+    setParentContractId(po.parent_commitment_id ?? null)
     // Load line items + the linked vendor in parallel.
     try {
       const [poRes, vRes] = await Promise.all([
@@ -168,6 +197,7 @@ export default function PurchaseOrdersModule({ appProjects, globalProjectId }: {
       cost_code: costCode,
       ct_tax_treatment: ctTax || null,
       notes,
+      parent_commitment_id: parentContractId,
       line_items: lines
         .map(l => ({ quantity: numOrNull(l.quantity), description: l.description.trim(), unit_price: numOrNull(l.unit_price) }))
         .filter(l => l.description || l.quantity != null || l.unit_price != null),
@@ -462,6 +492,42 @@ export default function PurchaseOrdersModule({ appProjects, globalProjectId }: {
                 <p className="-mt-2 text-[11px] text-[#64748B]">
                   {[vendor.street_address, [vendor.city, vendor.state].filter(Boolean).join(", "), vendor.zip_code].filter(Boolean).join(" · ")}
                 </p>
+              )}
+
+              {/* Release against a supplier contract (optional) — same project +
+                  same vendor only. Standalone (no contract) is the default. */}
+              {projectId && vendor && (
+                <div>
+                  <label className={labelCls}>
+                    Release Against Contract <span className="text-[#94A3B8] font-normal normal-case tracking-normal">(optional)</span>
+                  </label>
+                  {releaseContracts.length === 0 ? (
+                    <p className="text-[12px] text-[#94A3B8]">No supplier contracts for this vendor on this project — this PO will be standalone.</p>
+                  ) : (
+                    <>
+                      <select value={parentContractId ?? ""} onChange={e => setParentContractId(e.target.value || null)} className={inputCls}>
+                        <option value="">Standalone — no contract</option>
+                        {releaseContracts.map(c => {
+                          const rem = c.contract_remaining ?? c.contract_value ?? 0
+                          const label = [c.cost_code, c.contract_value != null ? usd0(c.contract_value) : null].filter(Boolean).join(" · ")
+                          return <option key={c.id} value={c.id}>{label ? `${label} — ` : ""}{usd0(rem)} remaining</option>
+                        })}
+                      </select>
+                      {(() => {
+                        const sel = releaseContracts.find(c => c.id === parentContractId)
+                        if (!sel) return null
+                        const rem = sel.contract_remaining ?? sel.contract_value ?? 0
+                        const over = linesTotal > rem
+                        return (
+                          <div className={`mt-1.5 rounded-md border px-3 py-2 text-[12px] ${over ? "bg-amber-50 border-amber-200 text-amber-800" : "bg-[#F4F5F7] border-[#E2E8F0] text-[#64748B]"}`}>
+                            Contract remaining <span className="font-semibold tabular-nums">{usd0(rem)}</span>
+                            {over && <span> · This PO ({usd0(linesTotal)}) exceeds the remaining balance. Over-release is allowed — just confirming you can see it.</span>}
+                          </div>
+                        )
+                      })()}
+                    </>
+                  )}
+                </div>
               )}
 
               {/* Date required + terms + cost code */}

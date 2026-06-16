@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
-import { normalizeLines, lineTotal } from "@/lib/po-helpers"
+import { normalizeLines, lineTotal, releaseParentError } from "@/lib/po-helpers"
 
 // Purchase Orders = commitments rows with type = 'purchase_order'. POs are
 // company-wide (RLS scopes to the tenant); subcontract-type commitments are not
@@ -53,6 +53,21 @@ export async function POST(req: NextRequest) {
   const { data: vendor } = await supabase.from("vendors").select("company_name").eq("id", vendor_id).maybeSingle()
   if (!vendor) return NextResponse.json({ error: "Vendor not found" }, { status: 400 })
 
+  // Optional release-order link. parent_commitment_id is OPTIONAL — a standalone
+  // PO (null) is the default. When present we re-fetch the parent through RLS
+  // (null = not visible → reject) and verify it is a supplier_contract on the
+  // same project + same vendor. The client value is never trusted.
+  let parent_commitment_id: string | null = null
+  const rawParent = typeof body.parent_commitment_id === "string" ? body.parent_commitment_id.trim() : ""
+  if (rawParent) {
+    const { data: parent } = await supabase
+      .from("commitments").select("id, type, project_id, vendor_id").eq("id", rawParent).maybeSingle()
+    if (!parent) return NextResponse.json({ error: "Release-against contract not found or not accessible" }, { status: 400 })
+    const reason = releaseParentError(parent, project_id, vendor_id)
+    if (reason) return NextResponse.json({ error: reason }, { status: 400 })
+    parent_commitment_id = parent.id
+  }
+
   const lines = normalizeLines(body.line_items)
 
   // Issue the PO number SERVER-SIDE — this is the single authoritative source of
@@ -82,6 +97,7 @@ export async function POST(req: NextRequest) {
       ct_tax_treatment: body.ct_tax_treatment === "included" || body.ct_tax_treatment === "exempt" ? body.ct_tax_treatment : null,
       notes: typeof body.notes === "string" ? body.notes.trim() || null : null,
       contract_value: lineTotal(lines),
+      parent_commitment_id,
       uploaded_by: user.id,
     })
     .select()

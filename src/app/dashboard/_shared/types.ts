@@ -179,6 +179,11 @@ export interface PurchaseOrder {
   status: "draft" | "out_for_signature" | "executed" | "accepted"
   contract_value: number | null
   notes: string | null
+  // Release-order link: when set, this PO is released against a supplier_contract
+  // (its parent). Null = standalone PO (the default). The contract's drawdown
+  // (released_to_children) is Σ of its child POs' contract_value — owned by the
+  // commitment_balances view, never summed client-side.
+  parent_commitment_id: string | null
   // executed_at is reused to hold the accepted date for POs (set when a PO is
   // marked accepted); no dedicated accepted_at column exists.
   executed_at: string | null
