@@ -75,27 +75,24 @@ export async function POST(req: NextRequest) {
         throw new Error(`PCO #${pcoNumber} already exists in this project`)
       }
 
-      // pricing_sum resolution (server-authoritative). The line-derived recompute
-      // (incl. Textura) is the default. When the reviewer chose "use stated"
-      // (cover is the document of record, lines don't reconcile), pricing_sum is
-      // the reviewer-confirmed cover total — validated against the RESOLVED value,
-      // never silently recomputed away.
+      // STATED TOTALS ARE AUTHORITATIVE — the import is a direct copy of the
+      // document, so pricing_sum = the cover TOTAL (stated_total, falling back to
+      // confirmed_total). The line-derived recompute is logged for diagnostics
+      // only; it never overrides or blocks. (A foreign/absent backup means the
+      // lines can't reproduce the cover total — that's expected.)
+      const statedTotal = p.stated_total != null ? Number(p.stated_total)
+        : (p.confirmed_total != null ? Number(p.confirmed_total) : NaN)
+      if (!Number.isFinite(statedTotal)) throw new Error("Cover TOTAL is missing")
+      const pricing_sum = Math.round(statedTotal * 100) / 100
       const computedSum = computePcoPricingSum(p)
-      let pricing_sum: number
-      if (p.resolution === "stated") {
-        const stated = Number(p.confirmed_total)
-        if (!Number.isFinite(stated)) throw new Error("Resolution is 'use stated' but no stated total was provided")
-        pricing_sum = Math.round(stated * 100) / 100
-      } else {
-        pricing_sum = computedSum
-        if (p.confirmed_total != null && Math.abs(computedSum - Number(p.confirmed_total)) > TOL) {
-          throw new Error(`Total changed since review (server ${computedSum.toFixed(2)} ≠ confirmed ${Number(p.confirmed_total).toFixed(2)})`)
-        }
+      if (Math.abs(computedSum - pricing_sum) > TOL) {
+        console.info(`[pco-import] PCO ${pcoNumber}: line recompute ${computedSum.toFixed(2)} ≠ stated cover total ${pricing_sum.toFixed(2)} (using stated).`)
       }
+      // Line items may legitimately be empty (cover-summary-only / foreign backup).
       const lineItems = buildLineItemRows(p)
-      if (lineItems.length === 0) throw new Error("No line items")
 
       const texturaFee = Number(p.textura_fee) || 0
+      const num = (v: unknown) => (v == null || v === "" || !Number.isFinite(Number(v)) ? null : Number(v))
       const importArgs = {
         p_project_id:            projectId,
         p_co_number:             pcoNumber,
@@ -111,14 +108,25 @@ export async function POST(req: NextRequest) {
         p_signer_signature_path: null,
         p_line_items:            lineItems,
       }
-      // Persist textura_fee only when non-zero. If migration 0007 hasn't been
-      // applied yet, import_pco lacks p_textura_fee → PostgREST returns PGRST202;
-      // retry without it so the import still commits (pricing_sum already includes
-      // textura; only the separate column goes unset until 0007 lands).
-      let { data: rpcData, error: rpcErr } = await supabase.rpc("import_pco",
-        texturaFee !== 0 ? { ...importArgs, p_textura_fee: texturaFee } : importArgs)
-      if (rpcErr?.code === "PGRST202" && texturaFee !== 0) {
-        ({ data: rpcData, error: rpcErr } = await supabase.rpc("import_pco", importArgs))
+      // Full args incl. textura (0007, live) + stated summary (0008). If 0008 is
+      // not applied yet, import_pco lacks the p_stated_* params → PGRST202; retry
+      // with the 0007 signature (textura only) so the import still commits (the
+      // stated summary just isn't persisted; pricing_sum already = cover TOTAL).
+      const fullArgs = {
+        ...importArgs,
+        p_textura_fee:     texturaFee,
+        p_stated_labor:    num(p.stated_labor),
+        p_stated_materials: num(p.stated_materials),
+        p_stated_sub:      num(p.stated_subcontractor),
+        p_stated_ohp:      num(p.stated_ohp_amount),
+        p_stated_fee:      num(p.stated_fee_amount),
+      }
+      let { data: rpcData, error: rpcErr } = await supabase.rpc("import_pco", fullArgs)
+      if (rpcErr?.code === "PGRST202") {
+        ({ data: rpcData, error: rpcErr } = await supabase.rpc("import_pco", { ...importArgs, p_textura_fee: texturaFee }))
+        if (rpcErr?.code === "PGRST202" && texturaFee === 0) {
+          ({ data: rpcData, error: rpcErr } = await supabase.rpc("import_pco", importArgs))
+        }
       }
       if (rpcErr) {
         // 23505 = unique_violation on the partial-unique builder-PCO index.
@@ -154,11 +162,16 @@ export async function POST(req: NextRequest) {
         const docData = payloadToDocData(p, { name: ctx.name, number: ctx.number, location: ctx.location })
         const companyName = companyRow?.name ?? ctx.gc_name ?? null
         const { cover, backup } = await buildPcoDocuments(docData, { logoBytes, sigBytes: null, companyName, phone: settings?.phone ?? null })
-        const backupPath = `${companyId}/change-orders/${newId}/backup.pdf`
         const coverPath  = `${companyId}/change-orders/${newId}/cover.pdf`
-        await supabase.storage.from("submittals").upload(backupPath, Buffer.from(backup), { contentType: "application/pdf", upsert: true })
         await supabase.storage.from("submittals").upload(coverPath, Buffer.from(cover), { contentType: "application/pdf", upsert: true })
-        await supabase.from("change_orders").update({ pco_backup_pdf_path: backupPath, pco_cover_pdf_path: coverPath }).eq("id", newId)
+        // No backup PDF when there's no line detail (cover-summary-only / foreign backup).
+        const pdfPaths: Record<string, string> = { pco_cover_pdf_path: coverPath }
+        if (lineItems.length > 0) {
+          const backupPath = `${companyId}/change-orders/${newId}/backup.pdf`
+          await supabase.storage.from("submittals").upload(backupPath, Buffer.from(backup), { contentType: "application/pdf", upsert: true })
+          pdfPaths.pco_backup_pdf_path = backupPath
+        }
+        await supabase.from("change_orders").update(pdfPaths).eq("id", newId)
       } catch (pdfErr) {
         console.error(`Imported PCO ${pcoNumber} stored, but PDF generation failed:`, pdfErr)
       }

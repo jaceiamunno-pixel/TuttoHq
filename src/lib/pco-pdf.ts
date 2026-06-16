@@ -52,6 +52,16 @@ export interface PcoDocData {
   signerTitle: string | null
   projectName: string | null
   projectLocation: string | null
+  // STATED cover summary (imports only). When present, the cover Pricing Summary
+  // renders these document values verbatim instead of recomputing from line
+  // items — the import is a direct copy, and a foreign/absent backup means the
+  // line detail can't reproduce the cover totals. Null for builder PCOs.
+  stated?: PcoStatedSummary | null
+}
+
+export interface PcoStatedSummary {
+  labor: number; materials: number; subcontractor: number
+  ohpAmount: number; feeAmount: number; texturaFee: number; total: number
 }
 
 export interface PcoDocAssets {
@@ -349,18 +359,22 @@ export async function buildPcoDocuments(
     cover.paragraph(data.descriptionOfWork.trim(), cover.sans, 10, INK, 10)
   }
 
-  // Pricing summary — TOTAL == pricing_sum (both from computePcoTotals)
+  // Pricing summary. For imports the STATED cover summary is authoritative (a
+  // direct copy of the document); builder PCOs recompute from their line items.
   cover.sectionHeading("Pricing Summary")
+  const sum = data.stated
+    ? { labor: data.stated.labor, materials: data.stated.materials, ohp: data.stated.ohpAmount, sub: data.stated.subcontractor, fee: data.stated.feeAmount, textura: data.stated.texturaFee, total: data.stated.total }
+    : { labor: totals.laborSubtotal, materials: totals.materialsSubtotal, ohp: totals.ohpAmount, sub: totals.subSubtotal, fee: totals.feeAmount, textura: totals.texturaFee, total: totals.grandTotal }
   const pricingRows: string[][] = [
-    ["Labor", usd(totals.laborSubtotal)],
-    ["Material & Equipment", usd(totals.materialsSubtotal)],
-    [`OH&P (${ohpPct}%)`, usd(totals.ohpAmount)],
-    ["Subcontractor", usd(totals.subSubtotal)],
-    [`Fee (${feePct}%)`, usd(totals.feeAmount)],
+    ["Labor", usd(sum.labor)],
+    ["Material & Equipment", usd(sum.materials)],
+    [`OH&P (${ohpPct}%)`, usd(sum.ohp)],
+    ["Subcontractor", usd(sum.sub)],
+    [`Fee (${feePct}%)`, usd(sum.fee)],
   ]
   // Textura Fee line only when non-zero (most PCOs carry none).
-  if (totals.texturaFee !== 0) pricingRows.push(["Textura Fee", usd(totals.texturaFee)])
-  pricingRows.push(["Total", usd(totals.grandTotal)])
+  if (sum.textura !== 0) pricingRows.push(["Textura Fee", usd(sum.textura)])
+  pricingRows.push(["Total", usd(sum.total)])
   cover.table(
     [{ header: "", w: CW - 150, align: "left" }, { header: "", w: 150, align: "right" }],
     pricingRows,

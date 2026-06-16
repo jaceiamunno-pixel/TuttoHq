@@ -93,6 +93,17 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
     signerTitle: co.signer_title ?? null,
     projectName: project.name ?? null,
     projectLocation: project.location ?? null,
+    // Imports persist the authoritative cover summary (migration 0008) so the
+    // regenerated cover reproduces the document even with no line detail.
+    stated: co.stated_labor_subtotal != null || co.stated_materials_subtotal != null ? {
+      labor: co.stated_labor_subtotal ?? 0,
+      materials: co.stated_materials_subtotal ?? 0,
+      subcontractor: co.stated_subcontractor ?? 0,
+      ohpAmount: co.stated_ohp_amount ?? 0,
+      feeAmount: co.stated_fee_amount ?? 0,
+      texturaFee: co.textura_fee ?? 0,
+      total: co.pricing_sum ?? 0,
+    } : null,
   }
 
   const { backup: backupBytes, cover: coverBytes } = await buildPcoDocuments(docData, {
@@ -103,17 +114,22 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
   })
 
   // ── Store at fixed paths + return fresh signed URLs ──────────────────────────
+  // No backup PDF when there's no line detail (cover-summary-only / foreign backup).
+  const hasLines = items.length > 0
   const backupPath = `${companyId}/change-orders/${id}/backup.pdf`
   const coverPath  = `${companyId}/change-orders/${id}/cover.pdf`
-  const up1 = await supabase.storage.from("submittals").upload(backupPath, Buffer.from(backupBytes), { contentType: "application/pdf", upsert: true })
   const up2 = await supabase.storage.from("submittals").upload(coverPath, Buffer.from(coverBytes), { contentType: "application/pdf", upsert: true })
-  if (up1.error || up2.error) {
-    console.error("PCO PDF upload failed:", up1.error ?? up2.error)
+  const up1 = hasLines ? await supabase.storage.from("submittals").upload(backupPath, Buffer.from(backupBytes), { contentType: "application/pdf", upsert: true }) : null
+  if (up2.error || up1?.error) {
+    console.error("PCO PDF upload failed:", up2.error ?? up1?.error)
     return NextResponse.json({ error: "Could not store PDFs" }, { status: 500 })
   }
-  await supabase.from("change_orders").update({ pco_backup_pdf_path: backupPath, pco_cover_pdf_path: coverPath }).eq("id", id)
+  await supabase.from("change_orders").update({
+    pco_cover_pdf_path: coverPath,
+    ...(hasLines ? { pco_backup_pdf_path: backupPath } : {}),
+  }).eq("id", id)
 
-  const { data: bSigned } = await supabase.storage.from("submittals").createSignedUrl(backupPath, 604800)
+  const { data: bSigned } = hasLines ? await supabase.storage.from("submittals").createSignedUrl(backupPath, 604800) : { data: null }
   const { data: cSigned } = await supabase.storage.from("submittals").createSignedUrl(coverPath, 604800)
   return NextResponse.json({ ok: true, backup_url: bSigned?.signedUrl ?? null, cover_url: cSigned?.signedUrl ?? null })
 }

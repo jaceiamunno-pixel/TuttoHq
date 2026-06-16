@@ -35,11 +35,14 @@ export interface ImportPcoPayload extends PcoSaveBody {
   materials?: ImportMaterialInput[]
   subs?: ImportSubInput[]
   confirmed_total?: number | null
-  // How the reviewer resolved a totals mismatch (logged, server-validated):
-  //   "stated"   → cover is the document of record; pricing_sum = confirmed_total
-  //                (the cover total), line detail imported as-is.
-  //   "computed" → pricing_sum = server recompute from the lines (the default).
-  resolution?: "stated" | "computed" | null
+  // STATED cover summary — authoritative. pricing_sum = stated_total (cover
+  // TOTAL); the rest render verbatim on the cover PDF + persist (migration 0008).
+  stated_labor?: number | null
+  stated_materials?: number | null
+  stated_subcontractor?: number | null
+  stated_ohp_amount?: number | null
+  stated_fee_amount?: number | null
+  stated_total?: number | null
   // Optional review status to apply AFTER commit via the normal status-update
   // path (import_pco itself always inserts 'Not submitted'). Log-workflow state,
   // not document content.
@@ -79,6 +82,22 @@ export function payloadToDocData(p: ImportPcoPayload, project: ImportProjectCont
     signerTitle: p.signer_title ?? null,
     projectName: project.name,
     projectLocation: project.location,
+    stated: statedSummaryFrom(p),
+  }
+}
+
+// Build the authoritative stated cover summary for the PDF from the payload.
+// Present for imports (which carry stated_total = cover TOTAL); null otherwise.
+export function statedSummaryFrom(p: ImportPcoPayload) {
+  if (p.stated_total == null) return null
+  return {
+    labor: p.stated_labor ?? 0,
+    materials: p.stated_materials ?? 0,
+    subcontractor: p.stated_subcontractor ?? 0,
+    ohpAmount: p.stated_ohp_amount ?? 0,
+    feeAmount: p.stated_fee_amount ?? 0,
+    texturaFee: p.textura_fee ?? 0,
+    total: p.stated_total,
   }
 }
 

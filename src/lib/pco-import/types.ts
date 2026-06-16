@@ -8,7 +8,9 @@
 export type PcoFlagCode =
   | "pco_number_mismatch"   // Cover # ≠ Backup # — NON-BLOCKING notice (cover is authoritative; stale backup copy is normal)
   | "pco_number_unverified" // Cover # missing entirely; fell back to backup # — BLOCKING (no trustworthy number)
-  | "math_mismatch"         // recomputed subtotal/total ≠ stated value (> tolerance)
+  | "pco_number_conflict"   // two DIFFERENT cover cell values for the PCO # — BLOCKING (can't tell which)
+  | "foreign_backup"        // backup belonged to another PCO and its lines don't reconcile — lines OMITTED, NON-BLOCKING notice
+  | "math_mismatch"         // recomputed subtotal/total ≠ stated value — NON-BLOCKING (stated cover is authoritative); shown as a notice
   | "collision"             // PCO # already exists in this project's log
   | "missing_fields"        // a required field could not be located
   | "volatile_date"         // the only date is a TODAY()/NOW() formula — must confirm
@@ -47,6 +49,7 @@ export interface StatedPricing {
   coverLabor: number | null
   coverMaterials: number | null
   coverSubcontractor: number | null
+  coverOhp: number | null       // OH&P amount stated on the cover pricing summary
   coverFee: number | null
   coverTextura: number | null   // flat THP "Textura" processing fee on the cover
   coverBond: number | null

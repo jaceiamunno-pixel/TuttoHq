@@ -7,7 +7,7 @@
 import type { Grid, GridCell } from "./grid"
 import { norm, findLabelCell, findRows } from "./grid"
 import type { ParsedFileResult, ParsedPco, PcoFlag, StatedPricing } from "./types"
-import { extractCover, extractBackup, reconcile, normalizePcoNumber } from "./extract"
+import { extractCover, extractBackup, reconcile, normalizePcoNumber, extractPcoCandidates } from "./extract"
 
 const MAX_ROWS = 500
 const MAX_COLS = 60
@@ -62,14 +62,19 @@ function gridFromWorksheet(ws: { rowCount: number; columnCount: number; getRow: 
 
 // ── sheet classification ────────────────────────────────────────────────────
 function looksLikeCover(grid: Grid): boolean {
-  const hasPco = !!findLabelCell(grid, n => n.includes("pco"))
-  const hasCoverField = !!findLabelCell(grid, n => n.includes("project") || n === "title" || n.includes("description"))
+  // PCO marker: "PCO" / "THP PCO #" (new) or "Proposed Change Order" (old title cell).
+  const hasPco = !!findLabelCell(grid, n => n.includes("pco") || n.includes("proposed change order"))
+  // Cover field vocabulary spans both formats: PROJECT / RE: / TITLE / Scope of Work / Description.
+  const hasCoverField = !!findLabelCell(grid, n =>
+    n.includes("project") || n === "re" || n.startsWith("re ") ||
+    n === "title" || n.startsWith("title") || n.includes("subject") ||
+    n.includes("description") || n.includes("scope"))
   return hasPco && hasCoverField
 }
 function looksLikeBackup(grid: Grid): boolean {
   const hasLabor = !!findLabelCell(grid, n => n === "labor" || n.startsWith("labor"))
-  const hasMarker = findRows(grid, n => n.includes("total hours")).length > 0
-    || findRows(grid, n => n.includes("materials subtotal")).length > 0
+  const hasMarker = findRows(grid, n => n.includes("total hours") || n.includes("total hrs")).length > 0
+    || findRows(grid, n => n.includes("materials subtotal") || n.includes("material subtotal")).length > 0
     || findRows(grid, n => n.includes("grand total")).length > 0
   return hasLabor && hasMarker
 }
@@ -120,25 +125,13 @@ export async function parseWorkbookFile(file: File): Promise<ParsedFileResult> {
   }
 
   const flags: PcoFlag[] = []
-
-  // PCO #: the COVER SHEET is authoritative everywhere (row number, collision
-  // key, prem-time matching). THP workbooks are copied from prior PCOs, so the
-  // Backup Template's number is often stale — cover# ≠ backup# is a NORMAL
-  // condition, surfaced as a non-blocking notice. Only when the cover carries no
-  // number at all do we fall back to the backup#, and then it can't be trusted →
-  // a hard block.
-  if (cover.pcoNumber) {
-    if (backup.pcoNumber && backup.pcoNumber !== cover.pcoNumber) {
-      flags.push({ code: "pco_number_mismatch", message: `Backup sheet shows PCO ${backup.pcoNumber} — using cover PCO ${cover.pcoNumber}.` })
-    }
-  } else if (backup.pcoNumber) {
-    flags.push({ code: "pco_number_unverified", message: `Cover Sheet PCO # is missing; falling back to the Backup PCO # (${backup.pcoNumber}), which can't be verified. Exclude unless the number is confirmed.` })
-  }
+  const TOL = 0.05
 
   const stated: StatedPricing = {
     coverLabor: cover.cover.coverLabor,
     coverMaterials: cover.cover.coverMaterials,
     coverSubcontractor: cover.cover.coverSubcontractor,
+    coverOhp: cover.cover.coverOhp,
     coverFee: cover.cover.coverFee,
     coverTextura: cover.cover.coverTextura,
     coverBond: cover.cover.coverBond,
@@ -149,19 +142,62 @@ export async function parseWorkbookFile(file: File): Promise<ParsedFileResult> {
     backupGrandTotal: backup.backup.backupGrandTotal,
   }
 
-  const { computed, flags: integrityFlags } = reconcile(backup.labor, backup.materials, stated)
-  flags.push(...integrityFlags)
+  // PCO #: the COVER SHEET is authoritative everywhere (row number, collision
+  // key, prem-time matching). Two DIFFERENT strong cover values (cell values) →
+  // we can't tell which, so block.
+  const coverStrong = extractPcoCandidates(coverSheet.grid).strong
+  if (coverStrong.length > 1) {
+    flags.push({ code: "pco_number_conflict", message: `Cover Sheet shows conflicting PCO #s (${coverStrong.join(", ")}). Resolve before committing.` })
+  }
 
-  if (backup.dropped > 0) notes.push(`Dropped ${backup.dropped} zero-quantity row${backup.dropped === 1 ? "" : "s"}.`)
+  // Line detail comes from the BACKUP. THP workbooks are copied from prior PCOs,
+  // so the backup number is often stale (cover# ≠ backup#) — that alone is a
+  // benign notice IF the backup's line detail still reconciles to the cover
+  // summary. When it does NOT reconcile, the backup belonged to another PCO: omit
+  // its line items entirely (never write another PCO's lines) and keep only the
+  // cover summary.
+  const recon0 = reconcile(backup.labor, backup.materials, stated)
+  let laborLines = backup.labor
+  let materialLines = backup.materials
+  let foreignBackup = false
+  if (cover.pcoNumber) {
+    if (backup.pcoNumber && backup.pcoNumber !== cover.pcoNumber) {
+      const labOk = stated.coverLabor == null || Math.abs(recon0.computed.laborSubtotal - stated.coverLabor) <= TOL
+      const matOk = stated.coverMaterials == null || Math.abs(recon0.computed.materialsSubtotal - stated.coverMaterials) <= TOL
+      if (labOk && matOk) {
+        flags.push({ code: "pco_number_mismatch", message: `Backup sheet shows PCO ${backup.pcoNumber} — using cover PCO ${cover.pcoNumber}.` })
+      } else {
+        foreignBackup = true
+        laborLines = []
+        materialLines = []
+        flags.push({ code: "foreign_backup", message: `Backup sheet belonged to PCO ${backup.pcoNumber} — line detail omitted; cover summary preserved.` })
+      }
+    }
+  } else if (backup.pcoNumber) {
+    flags.push({ code: "pco_number_unverified", message: `Cover Sheet PCO # is missing; falling back to the Backup PCO # (${backup.pcoNumber}), which can't be verified. Exclude unless the number is confirmed.` })
+  }
 
-  // Date: a static (non-volatile) date is used as-is. If the only date is a
-  // volatile TODAY()/NOW() formula (the real THP files use =TODAY() on BOTH
-  // sheets), it is NEVER trusted — the card is flagged and the cached value is
-  // surfaced as a confirm-able suggestion.
+  // Recompute against the kept (possibly omitted) lines. In the foreign-backup
+  // case the omitted lines won't reconcile to the cover stated subtotals — that's
+  // expected, the foreign_backup notice explains it — so drop the now-redundant
+  // math_mismatch noise. (math_mismatch is itself non-blocking; the stated cover
+  // is authoritative.)
+  const { computed, flags: integrityFlags } = foreignBackup ? reconcile([], [], stated) : recon0
+  flags.push(...(foreignBackup ? integrityFlags.filter(f => f.code !== "math_mismatch") : integrityFlags))
+
+  if (backup.dropped > 0 && !foreignBackup) notes.push(`Dropped ${backup.dropped} zero-quantity row${backup.dropped === 1 ? "" : "s"}.`)
+  if (laborLines.length === 0 && materialLines.length === 0) {
+    notes.push(foreignBackup ? "No line detail imported (foreign backup) — cover summary only." : "No line detail in this PCO — committing on the cover summary only.")
+  }
+
+  // Date: a static (non-volatile) date is used as-is. A volatile TODAY()/NOW()
+  // (real THP files use =TODAY()/=NOW() on both sheets) is NEVER trusted — the
+  // card is flagged and the cached value surfaced as a date-only suggestion.
   const staticDate = cover.dateISO ?? backup.dateISO
   const dateSuggestion = cover.dateVolatileCached ?? backup.dateVolatileCached ?? null
 
-  // Required fields for a committable PCO.
+  // Required fields. NB: line items are NOT required — a cover-summary-only PCO is
+  // valid (stated totals are authoritative).
   const pcoNumber = cover.pcoNumber ?? backup.pcoNumber
   if (!pcoNumber) flags.push({ code: "missing_fields", field: "PCO #", message: "PCO # could not be read." })
   if (!cover.title) flags.push({ code: "missing_fields", field: "Title", message: "Title could not be read." })
@@ -170,7 +206,6 @@ export async function parseWorkbookFile(file: File): Promise<ParsedFileResult> {
       ? { code: "volatile_date", field: "Date", message: `This file's date is auto-generated by Excel (last showed ${dateSuggestion}). Confirm or enter the PCO date.` }
       : { code: "missing_fields", field: "Date", message: "Date could not be read." })
   }
-  if (backup.labor.length === 0 && backup.materials.length === 0) flags.push({ code: "missing_fields", field: "Line items", message: "No labor or material lines were found." })
 
   const pco: ParsedPco = {
     sourceFileName: file.name,
@@ -187,8 +222,8 @@ export async function parseWorkbookFile(file: File): Promise<ParsedFileResult> {
     signerName: cover.signerName,
     signerTitle: cover.signerTitle,
     jobNumber: backup.jobNumber,
-    labor: backup.labor,
-    materials: backup.materials,
+    labor: laborLines,
+    materials: materialLines,
     stated,
     computed,
     flags,
