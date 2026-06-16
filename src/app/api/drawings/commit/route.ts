@@ -31,7 +31,12 @@ import { hashBufferInNode } from "@/lib/file-hash-node"
 // re-asserted explicitly. company_id + uploaded_by are set server-side and
 // never trusted from the request body.
 
-export const maxDuration = 60
+// A full set commits in one request; each row re-downloads its file for the
+// SHA-256 integrity gate. Sequentially that exceeded 60s on large sets (60+
+// sheets) → HTTP 504. Rows now commit with bounded concurrency (below) AND the
+// ceiling is raised to Vercel's current 300s max for safety margin on the
+// largest sets (route caps at 300 rows).
+export const maxDuration = 300
 
 interface RowIn {
   client_row_id: string
@@ -120,20 +125,24 @@ export async function POST(req: NextRequest) {
     return { error: last }
   }
 
-  for (const r of rows) {
+  // Commit one row end-to-end. FULLY INDEPENDENT (its own sheet + revision +
+  // file copy + integrity gate), so rows can run concurrently without any
+  // cross-row state — one bad row still errors only itself. Returns its result
+  // instead of pushing, so the pool below can collect them.
+  const commitRow = async (r: RowIn): Promise<CommitResult> => {
     const cid = typeof r.client_row_id === "string" ? r.client_row_id : ""
     // Every failure is logged server-side (row id + sheet number + reason) —
     // the error must never live only in the HTTP response (S-303's actual
     // cause was lost that way and is now unrecoverable).
-    const fail = (error: string) => {
+    const fail = (error: string): CommitResult => {
       console.error(`[drawings-commit] row FAILED — client_row_id=${cid} sheet_number=${JSON.stringify(r?.sheet_number ?? null)}: ${error}`)
-      results.push({ client_row_id: cid, status: "error", error })
+      return { client_row_id: cid, status: "error", error }
     }
 
-    if (!cid) { results.push({ client_row_id: "", status: "error", error: "client_row_id missing" }); continue }
-    if (!r.staging_path || typeof r.staging_path !== "string") { fail("staging_path missing"); continue }
-    if (!r.staging_path.startsWith(stagingPrefix)) { fail("staging_path is outside this company's drawing-staging directory"); continue }
-    if (r.staging_path.slice(stagingPrefix.length).includes("..")) { fail("invalid staging_path"); continue }
+    if (!cid) return { client_row_id: "", status: "error", error: "client_row_id missing" }
+    if (!r.staging_path || typeof r.staging_path !== "string") return fail("staging_path missing")
+    if (!r.staging_path.startsWith(stagingPrefix)) return fail("staging_path is outside this company's drawing-staging directory")
+    if (r.staging_path.slice(stagingPrefix.length).includes("..")) return fail("invalid staging_path")
     // Commit-with-blanks: a missing sheet_number no longer blocks the row — it
     // commits as NULL and surfaces in the log's "Needs info" bucket for inline
     // fill. NO placeholder is invented (null means null). This is SAFE here
@@ -141,7 +150,7 @@ export async function POST(req: NextRequest) {
     // see header) — a blank can't collide with or silently merge into another
     // sheet. The integrity gate (file_sha256) is unchanged and still mandatory.
     const sheetNumber = (r.sheet_number ?? "").toString().trim() || null
-    if (!isValidSha256(r.file_sha256)) { fail("file_sha256 missing or malformed — cannot verify integrity"); continue }
+    if (!isValidSha256(r.file_sha256)) return fail("file_sha256 missing or malformed — cannot verify integrity")
 
     // 1) Insert the sheet. company_id := get_my_company_id() DEFAULT (server),
     //    uploaded_by := authed user (server). search_vector is generated.
@@ -157,7 +166,7 @@ export async function POST(req: NextRequest) {
       })
       .select("id")
       .single()
-    if (sErr || !sheet) { fail(`sheet insert failed: ${sErr?.message ?? "no row"}`); continue }
+    if (sErr || !sheet) return fail(`sheet insert failed: ${sErr?.message ?? "no row"}`)
     const sheetId = sheet.id as string
 
     // 2) Copy staged → final tenant-isolated path.
@@ -166,8 +175,7 @@ export async function POST(req: NextRequest) {
     const copyErr = await copyWithRetry(r.staging_path, finalPath)
     if (copyErr) {
       await supabase.from("drawing_sheets").delete().eq("id", sheetId)
-      fail(`storage copy failed after retries: ${copyErr}`)
-      continue
+      return fail(`storage copy failed after retries: ${copyErr}`)
     }
 
     // 3) FILE-INTEGRITY GATE — recompute SHA-256 on the bytes that actually
@@ -177,8 +185,7 @@ export async function POST(req: NextRequest) {
     if (dl.error || !dl.buf || !dl.hash) {
       await supabase.storage.from("submittals").remove([finalPath]).catch(() => {})
       await supabase.from("drawing_sheets").delete().eq("id", sheetId)
-      fail(`integrity check failed after retries: ${dl.error ?? "no bytes"}`)
-      continue
+      return fail(`integrity check failed after retries: ${dl.error ?? "no bytes"}`)
     }
     const finalBuf = dl.buf
     const serverHash = dl.hash
@@ -202,8 +209,7 @@ export async function POST(req: NextRequest) {
     if (rErr || !revision) {
       await supabase.storage.from("submittals").remove([finalPath]).catch(() => {})
       await supabase.from("drawing_sheets").delete().eq("id", sheetId)
-      fail(`revision insert failed: ${rErr?.message ?? "no row"}`)
-      continue
+      return fail(`revision insert failed: ${rErr?.message ?? "no row"}`)
     }
 
     // 5) Point the sheet at its current revision.
@@ -221,8 +227,26 @@ export async function POST(req: NextRequest) {
     //    now live under drawings/ and are integrity-verified).
     await supabase.storage.from("submittals").remove([r.staging_path]).catch(() => {})
 
-    results.push({ client_row_id: cid, status: "ok", sheet_id: sheetId, revision_id: revisionId, storage_path: finalPath })
+    return { client_row_id: cid, status: "ok", sheet_id: sheetId, revision_id: revisionId, storage_path: finalPath }
   }
+
+  // Bounded-concurrency pool. Sequential commits did one storage round-trip per
+  // row (each re-downloads its file for the SHA-256 gate); a 60+ sheet set blew
+  // past the function timeout → HTTP 504. Running a few rows at a time keeps the
+  // per-row integrity contract identical while cutting wall-clock time ~6×.
+  // Results are collected per-index (order is irrelevant — the client matches
+  // by client_row_id).
+  const COMMIT_CONCURRENCY = 6
+  const ordered: CommitResult[] = new Array(rows.length)
+  let cursor = 0
+  const worker = async () => {
+    while (cursor < rows.length) {
+      const i = cursor++
+      ordered[i] = await commitRow(rows[i])
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(COMMIT_CONCURRENCY, rows.length) }, worker))
+  results.push(...ordered)
 
   return NextResponse.json({ project_id: projectId, results })
 }
