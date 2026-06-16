@@ -71,6 +71,14 @@ const MODULE_SLUG: Record<string, string> = {
   closeout:        "closeout",
 }
 
+// Company-scoped destinations, pinned to the bottom of the rail (tertiary).
+// "All projects" is reached via the brand link / the switcher's own item.
+const BOTTOM_LINKS = [
+  { href: "/library",     label: "Library" },
+  { href: "/directories", label: "Directories" },
+  { href: "/settings",    label: "Settings" },
+]
+
 function ProjectSwitcher({ projects, currentId, onPick }: {
   projects: Project[]
   currentId: string
@@ -99,7 +107,7 @@ function ProjectSwitcher({ projects, currentId, onPick }: {
         onClick={() => { setOpen(o => !o); setSearch("") }}
         className="w-full h-9 px-2.5 rounded-lg bg-white/[0.06] border border-white/10 text-[12px] text-white flex items-center justify-between gap-1 hover:bg-white/[0.10] transition-colors"
       >
-        <span className="truncate">{label}</span>
+        <span className="truncate font-medium">{label}</span>
         <svg className={`w-3.5 h-3.5 flex-shrink-0 text-[#64748B] transition-transform ${open ? "rotate-180" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
         </svg>
@@ -141,15 +149,6 @@ function ProjectSwitcher({ projects, currentId, onPick }: {
     </div>
   )
 }
-
-// Top-level (company-scoped) destinations, persistently reachable from inside a
-// project. These live at root, NOT inside the project.
-const TOP_LEVEL = [
-  { href: "/dashboard",   label: "All Projects" },
-  { href: "/library",     label: "Library" },
-  { href: "/directories", label: "Directories" },
-  { href: "/settings",    label: "Settings" },
-]
 
 export default function ProjectChrome({ project, children }: { project: ShellProject; children: React.ReactNode }) {
   const router  = useRouter()
@@ -203,7 +202,7 @@ export default function ProjectChrome({ project, children }: { project: ShellPro
   }
 
   const brand = displayName
-    ? <span className="text-[15px] font-bold text-white tracking-tight truncate max-w-[180px]" title={displayName}>{displayName}</span>
+    ? <span className="text-[15px] font-bold text-white tracking-tight truncate max-w-[170px]" title={displayName}>{displayName}</span>
     : logoUrl
       ? <img src={logoUrl} alt="Logo" className="h-7 max-w-[130px] object-contain" />
       : <span className="text-[15px] font-bold text-white tracking-tight">TuttoHQ</span>
@@ -211,7 +210,7 @@ export default function ProjectChrome({ project, children }: { project: ShellPro
   function closeoutBadge(slug: string) {
     if (slug !== "closeout" || closeoutPct === null) return null
     return (
-      <span className={`ml-0.5 text-[10px] font-bold px-1.5 py-0.5 rounded-full flex-shrink-0 ${closeoutPct === 100 ? "bg-emerald-500/20 text-emerald-400" : closeoutPct >= 50 ? "bg-amber-500/20 text-amber-400" : "bg-red-500/20 text-red-400"}`}>{closeoutPct}%</span>
+      <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full flex-shrink-0 ${closeoutPct === 100 ? "bg-emerald-500/20 text-emerald-400" : closeoutPct >= 50 ? "bg-amber-500/20 text-amber-400" : "bg-red-500/20 text-red-400"}`}>{closeoutPct}%</span>
     )
   }
 
@@ -219,31 +218,7 @@ export default function ProjectChrome({ project, children }: { project: ShellPro
     <ProjectShellContext.Provider value={value}>
       <div className="flex flex-col bg-[#F4F5F7] w-full overflow-hidden" style={{ height: "100dvh" }}>
 
-        {/* ── Top nav — desktop ─────────────────────────────────────────── */}
-        <header className="hidden sm:flex flex-shrink-0 items-center h-14 bg-[#0A1628] border-b border-white/10 px-3">
-          <Link href="/dashboard" className="flex items-center gap-2.5 pr-3 mr-1 border-r border-white/10 h-8" title="All projects">
-            {brand}
-          </Link>
-          <div className="flex items-center gap-2 pr-3 mr-1 border-r border-white/10">
-            <span className="text-[12px] text-[#64748B] uppercase tracking-wider">Project</span>
-            <span className="text-[13px] font-semibold text-white truncate max-w-[180px]" title={project.name}>{project.name}{project.number ? ` · ${project.number}` : ""}</span>
-          </div>
-          <nav className="flex items-center gap-0.5 overflow-x-auto">
-            {PROJECT_NAV.map(m => (
-              <Link
-                key={m.slug}
-                href={`/projects/${project.id}/${m.slug}`}
-                className={`flex items-center gap-2 h-9 px-3 rounded-lg text-[13px] font-medium whitespace-nowrap flex-shrink-0 transition-colors ${segment === m.slug ? "bg-white/[0.12] text-white" : "text-[#94A3B8] hover:text-white hover:bg-white/[0.06]"}`}
-              >
-                {m.icon}
-                {m.label}
-                {closeoutBadge(m.slug)}
-              </Link>
-            ))}
-          </nav>
-        </header>
-
-        {/* ── Top bar — mobile ──────────────────────────────────────────── */}
+        {/* ── Mobile top bar (sidebar collapses to a hamburger drawer) ─────── */}
         <header className="flex sm:hidden flex-shrink-0 items-center gap-2 h-14 bg-[#0A1628] border-b border-white/10 px-3 relative">
           <Link href="/dashboard" className="flex items-center gap-2 flex-shrink-0">{brand}</Link>
           <div className="flex-1 min-w-0">
@@ -269,17 +244,18 @@ export default function ProjectChrome({ project, children }: { project: ShellPro
                   className={`w-full text-left px-4 py-3 text-[13px] font-medium border-l-2 transition-colors flex items-center gap-2.5 ${segment === m.slug ? "border-white text-white bg-white/[0.06]" : "border-transparent text-[#94A3B8] hover:text-white hover:bg-white/[0.04]"}`}
                 >
                   {m.icon}
-                  {m.label}
+                  <span className="flex-1">{m.label}</span>
                   {closeoutBadge(m.slug)}
                 </Link>
               ))}
               <div className="border-t border-white/10">
-                {TOP_LEVEL.map(t => (
+                <Link href="/dashboard" onClick={() => setMobileNavOpen(false)} className="w-full text-left px-4 py-3 text-[13px] font-medium text-[#94A3B8] hover:text-white hover:bg-white/[0.04] transition-colors flex items-center gap-2.5">All projects</Link>
+                {BOTTOM_LINKS.map(t => (
                   <Link
                     key={t.href}
                     href={t.href}
                     onClick={() => setMobileNavOpen(false)}
-                    className="w-full text-left px-4 py-3 text-[13px] font-medium border-l-2 border-transparent text-[#94A3B8] hover:text-white hover:bg-white/[0.04] transition-colors flex items-center gap-2.5"
+                    className="w-full text-left px-4 py-3 text-[13px] font-medium text-[#94A3B8] hover:text-white hover:bg-white/[0.04] transition-colors flex items-center gap-2.5"
                   >
                     {t.label}
                   </Link>
@@ -293,27 +269,42 @@ export default function ProjectChrome({ project, children }: { project: ShellPro
           )}
         </header>
 
-        {/* ── Sidebar + content ─────────────────────────────────────────── */}
+        {/* ── Single left rail (desktop) + content ────────────────────────── */}
         <div className="flex flex-1 min-h-0">
-          <aside className="hidden sm:flex flex-col flex-shrink-0 w-52 bg-[#0A1628] border-r border-white/10">
-            <div className="flex-shrink-0 px-3 pt-4 pb-3">
-              <p className="text-[10px] font-bold text-[#64748B] uppercase tracking-widest px-0.5 mb-1.5">Project</p>
-              <ProjectSwitcher projects={appProjects} currentId={project.id} onPick={switchProject} />
+          <aside className="hidden sm:flex flex-col flex-shrink-0 w-60 bg-[#0A1628] border-r border-white/10">
+            <div className="flex-shrink-0 px-3 pt-4 pb-3 border-b border-white/10 space-y-3">
+              <Link href="/dashboard" className="flex items-center gap-2 h-7" title="All projects">{brand}</Link>
+              <div>
+                <p className="text-[10px] font-bold text-[#64748B] uppercase tracking-widest px-0.5 mb-1.5">Project</p>
+                <ProjectSwitcher projects={appProjects} currentId={project.id} onPick={switchProject} />
+              </div>
             </div>
 
-            <div className="flex-1" />
+            <nav className="flex-1 overflow-y-auto px-2 py-3 space-y-0.5">
+              {PROJECT_NAV.map(m => (
+                <Link
+                  key={m.slug}
+                  href={`/projects/${project.id}/${m.slug}`}
+                  className={`flex items-center gap-3 px-3 py-2 rounded-lg text-[13px] font-medium transition-colors ${segment === m.slug ? "bg-white/[0.12] text-white" : "text-[#94A3B8] hover:text-white hover:bg-white/[0.06]"}`}
+                >
+                  {m.icon}
+                  <span className="flex-1 truncate">{m.label}</span>
+                  {closeoutBadge(m.slug)}
+                </Link>
+              ))}
+            </nav>
 
             <div className="flex-shrink-0 border-t border-white/10 px-2 py-2 space-y-0.5">
-              {TOP_LEVEL.map(t => (
+              {BOTTOM_LINKS.map(t => (
                 <Link
                   key={t.href}
                   href={t.href}
-                  className="flex items-center gap-3 px-3 py-2 rounded-lg text-[13px] text-[#94A3B8] hover:text-white hover:bg-white/[0.06] transition-colors"
+                  className="flex items-center px-3 py-1.5 rounded-lg text-[12px] text-[#64748B] hover:text-white hover:bg-white/[0.06] transition-colors"
                 >
                   {t.label}
                 </Link>
               ))}
-              <div className="flex items-center justify-between px-3 py-1.5">
+              <div className="flex items-center justify-between px-3 pt-1.5">
                 <span className="text-[11px] text-[#64748B] truncate min-w-0">{userEmail}</span>
                 <button onClick={signOut} className="text-[11px] text-[#94A3B8] hover:text-white transition-colors flex-shrink-0 ml-2">Sign out</button>
               </div>

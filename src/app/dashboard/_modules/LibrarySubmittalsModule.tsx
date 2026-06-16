@@ -20,6 +20,7 @@ import { hashFileInBrowser } from "@/lib/file-hash"
 import { exportSubmittalLogToExcel } from "../_shared/excel-export"
 import PackageCreateModal, { type VendorPreset } from "@/components/packages/PackageCreateModal"
 import PackagesView from "@/components/packages/PackagesView"
+import OverflowMenu, { type OverflowEntry } from "@/components/overflow-menu"
 import BulkImportModal from "@/components/bulk-import/BulkImportModal"
 
 // Status options for the inline Status dropdown in the submittal log.
@@ -211,7 +212,9 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
   // Monotonic id so an out-of-order Submittal Log response can't clobber a newer one.
   const logReqSeq      = useRef(0)
   // Reset Submittal Log
-  const [resetMenuOpen, setResetMenuOpen]       = useState(false)
+  // Reset options now live in the toolbar's More (⋯) menu; the setter is kept so
+  // openResetConfirm() stays byte-for-byte unchanged.
+  const [, setResetMenuOpen]                    = useState(false)
   const [resetScope, setResetScope]             = useState<"all" | "spec_ingestion" | null>(null)
   const [resetCount, setResetCount]             = useState<number | null>(null)
   const [resetting, setResetting]               = useState(false)
@@ -1465,26 +1468,6 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
               </p>
             </div>
             <div className="flex items-center gap-2 ml-auto flex-wrap justify-end">
-              {submittalsView === "log" && !isSearchMode && (
-                <label className="flex items-center gap-1.5 text-[12px] text-[#64748B] cursor-pointer select-none whitespace-nowrap">
-                  <input type="checkbox" checked={groupBySection}
-                    onChange={e => setGroupBySection(e.target.checked)}
-                    className="accent-[#7B9BB5]" />
-                  <span className="hidden sm:inline">Group by section</span>
-                </label>
-              )}
-              {submittalsView === "log" && !isSearchMode && activeProjectId && (
-                <button
-                  onClick={() => { if (selectMode) exitSelectMode(); else setSelectMode(true) }}
-                  className={`h-8 px-3 rounded-md border text-[12px] font-semibold transition-colors flex items-center gap-1.5 whitespace-nowrap ${
-                    selectMode
-                      ? "border-[#7B9BB5] bg-[#7B9BB5]/10 text-[#0F172A]"
-                      : "border-[#E2E8F0] text-[#64748B] hover:bg-[#0F172A]/[0.04]"
-                  }`}
-                >
-                  <CheckIcon /> {selectMode ? "Done" : "Select"}
-                </button>
-              )}
               {submittalsView === "log" && activeProjectId && displaySubmittals.length > 0 && (
                 <button
                   onClick={handleExportLog}
@@ -1500,52 +1483,27 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                   <span className="hidden sm:inline">{exporting ? "Exporting…" : "Export"}</span>
                 </button>
               )}
-              {submittalsView === "log" && activeProjectId && (
-                <div className="relative">
-                  <button
-                    onClick={() => setResetMenuOpen(o => !o)}
-                    className="h-8 px-3 rounded-md border border-[#E2E8F0] text-[12px] text-[#64748B] hover:bg-[#0F172A]/[0.04] transition-colors flex items-center gap-1.5 whitespace-nowrap"
-                  >
-                    Reset
-                    <svg className={`w-3 h-3 transition-transform ${resetMenuOpen ? "rotate-180" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                    </svg>
-                  </button>
-                  {resetMenuOpen && (
-                    <>
-                      <div className="fixed inset-0 z-40" onClick={() => setResetMenuOpen(false)} />
-                      <div className="absolute right-0 top-full mt-1 z-50 w-64 bg-white border border-[#E2E8F0] rounded-lg shadow-xl overflow-hidden">
-                        <button onClick={() => openResetConfirm("spec_ingestion")}
-                          className="w-full text-left px-3 py-2.5 hover:bg-[#F8F9FA] transition-colors">
-                          <span className="block text-[12px] font-semibold text-[#0F172A]">Reset spec-ingested only</span>
-                          <span className="block text-[11px] text-[#64748B]">Removes AI-extracted rows; keeps manual &amp; email entries.</span>
-                        </button>
-                        <button onClick={() => openResetConfirm("all")}
-                          className="w-full text-left px-3 py-2.5 hover:bg-red-50 transition-colors border-t border-[#E2E8F0]">
-                          <span className="block text-[12px] font-semibold text-red-600">Reset all submittals</span>
-                          <span className="block text-[11px] text-red-400">Deletes every submittal in this project.</span>
-                        </button>
-                      </div>
-                    </>
-                  )}
-                </div>
-              )}
-              {submittalsView === "log" && activeProjectId && (
-                <button
-                  onClick={() => setShowBulkImport(true)}
-                  title="Bulk-import previously approved submittals (Stage 1 — review only)"
-                  className="h-8 px-3 rounded-md border border-[#E2E8F0] text-[12px] text-[#64748B] hover:bg-[#0F172A]/[0.04] transition-colors flex items-center gap-1.5 whitespace-nowrap"
-                >
-                  <LayersIcon />
-                  <span className="hidden sm:inline">Bulk Import</span>
-                </button>
-              )}
-              <button
-                onClick={() => onNavigate("library")}
-                className="h-8 px-3 rounded-md border border-[#E2E8F0] text-[12px] text-[#7B9BB5] hover:bg-[#0F172A]/[0.04] transition-colors flex items-center gap-1.5 whitespace-nowrap"
-              >
-                <PlusIcon /> <span className="hidden sm:inline">Upload to Library</span>
-              </button>
+              {/* Secondary actions collapsed into a reusable More (⋯) menu —
+                  declutter only; every item keeps its exact existing handler. */}
+              {(() => {
+                const moreItems: OverflowEntry[] = []
+                if (submittalsView === "log" && !isSearchMode) {
+                  moreItems.push({ key: "group", label: "Group by section", checked: groupBySection, keepOpen: true, onClick: () => setGroupBySection(!groupBySection) })
+                }
+                if (submittalsView === "log" && !isSearchMode && activeProjectId) {
+                  moreItems.push({ key: "select", label: selectMode ? "Done selecting" : "Select", icon: <CheckIcon />, onClick: () => { if (selectMode) exitSelectMode(); else setSelectMode(true) } })
+                }
+                if (submittalsView === "log" && activeProjectId) {
+                  moreItems.push({ key: "bulk", label: "Bulk import", description: "Import previously approved submittals (review only).", icon: <LayersIcon />, onClick: () => setShowBulkImport(true) })
+                }
+                moreItems.push({ key: "upload", label: "Upload to Library", icon: <PlusIcon />, onClick: () => onNavigate("library") })
+                if (submittalsView === "log" && activeProjectId) {
+                  moreItems.push("separator")
+                  moreItems.push({ key: "reset-spec", label: "Reset spec-ingested only", description: "Removes AI-extracted rows; keeps manual & email entries.", onClick: () => openResetConfirm("spec_ingestion") })
+                  moreItems.push({ key: "reset-all", label: "Reset all submittals", description: "Deletes every submittal in this project.", danger: true, onClick: () => openResetConfirm("all") })
+                }
+                return <OverflowMenu items={moreItems} />
+              })()}
             </div>
           </div>
           {submittalsView === "log" && (<>
