@@ -650,10 +650,16 @@ function extractFooterTitle(fullText: string): string | null {
 
 // ─── SUBMITTALS article extraction ───────────────────────────────────────────
 
-// An article heading: a numbered sub-clause like "1.4 SUBMITTALS" whose title
-// is upper-case. Used both to locate SUBMITTALS articles and to know where the
-// next (non-submittal) article begins.
-const ARTICLE_HEADING = /(?:^|\n)[ \t]*(\d{1,2}\.\d{1,2})[ \t]+([A-Z][A-Z0-9 ,/&'’.\-]{2,60})/g
+// An article heading: a numbered sub-clause like "1.4 SUBMITTALS" or
+// "1.3 Action Submittals". Used both to locate SUBMITTALS articles and to know
+// where the next (non-submittal) article begins. The title may be ALL-CAPS
+// (engineering/structural sections) OR Title-Case (the KPMB architectural
+// template uses "Action Submittals", "Informational Submittals", "Closeout
+// Submittals", "Summary", …) — so the title is mixed-case, but its FIRST
+// character must still be a capital letter. That capital-first requirement is
+// what keeps line-leading measurements ("0.5 inches") from registering as
+// article headings.
+const ARTICLE_HEADING = /(?:^|\n)[ \t]*(\d{1,2}\.\d{1,2})[ \t]+([A-Z][A-Za-z0-9 ,/&'’.\-]{2,60})/g
 
 // Hard boundaries that end a SUBMITTALS article even when no numbered article
 // heading follows it (e.g. SUBMITTALS is the last article in PART 1): the next
