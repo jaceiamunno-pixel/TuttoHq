@@ -181,6 +181,9 @@ export interface PurchaseOrder {
   notes: string | null
   created_at: string
   updated_at: string
+  // Attached by the list endpoint from commitment_balances (drawdown display).
+  billed_to_date?: number
+  remaining_balance?: number
 }
 export interface PoLineItem {
   id?: string
@@ -188,6 +191,25 @@ export interface PoLineItem {
   quantity: number | null
   description: string | null
   unit_price: number | null
+}
+// An invoice drawn against a PO (commitment_invoices). retainage_amount is 0 for
+// POs and not surfaced in the PO invoice UI.
+export interface CommitmentInvoice {
+  id: string
+  invoice_no: string | null
+  invoice_date: string | null
+  amount: number
+  retainage_amount: number
+  status: "draft" | "submitted" | "paid"
+  created_at: string
+}
+// Live balance from the commitment_balances view (source of truth — never
+// recomputed client-side). For POs, approved_changes/retainage_held are 0.
+export interface PoBalance {
+  contract_value: number | null
+  billed_to_date: number
+  remaining_balance: number
+  net_paid: number
 }
 
 export interface SpecBookDoc {

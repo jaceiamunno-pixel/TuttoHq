@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect, useRef, useCallback } from "react"
-import type { Project, PurchaseOrder, PoLineItem, Vendor } from "../_shared/types"
+import type { Project, PurchaseOrder, PoLineItem, Vendor, CommitmentInvoice, PoBalance } from "../_shared/types"
 import { PlusIcon, SpinnerIcon, XIcon } from "../_shared/icons"
 import { inputCls, labelCls } from "../_shared/ui"
 
@@ -46,6 +46,18 @@ export default function PurchaseOrdersModule({ appProjects, globalProjectId }: {
   const [pdfBusy, setPdfBusy]     = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
 
+  // Invoice drawdown (Phase 2) — only meaningful once a PO is saved.
+  const [balance, setBalance]   = useState<PoBalance | null>(null)
+  const [invoices, setInvoices] = useState<CommitmentInvoice[]>([])
+  const [showInvForm, setShowInvForm] = useState(false)
+  const [invEditingId, setInvEditingId] = useState<string | null>(null)
+  const [invNo, setInvNo]       = useState("")
+  const [invDate, setInvDate]   = useState("")
+  const [invAmount, setInvAmount] = useState("")
+  const [invStatus, setInvStatus] = useState<"draft" | "submitted" | "paid">("draft")
+  const [invSaving, setInvSaving] = useState(false)
+  const [invError, setInvError]   = useState<string | null>(null)
+
   const projectName = useCallback((id: string) => {
     const p = appProjects.find(p => p.id === id)
     return p ? `${p.name}${p.number ? ` — ${p.number}` : ""}` : "—"
@@ -63,11 +75,18 @@ export default function PurchaseOrdersModule({ appProjects, globalProjectId }: {
 
   const linesTotal = lines.reduce((s, l) => s + (numOrNull(l.quantity) ?? 0) * (numOrNull(l.unit_price) ?? 0), 0)
 
+  function resetInvForm() {
+    setShowInvForm(false); setInvEditingId(null)
+    setInvNo(""); setInvDate(""); setInvAmount(""); setInvStatus("draft")
+    setInvSaving(false); setInvError(null)
+  }
+
   function resetForm() {
     setEditingId(null); setPoNumber("")
     setProjectId(""); setVendor(null); setDateRequired(""); setTerms("")
     setCostCode(""); setCtTax(""); setNotes(""); setLines([emptyLine()])
     setSaving(false); setPdfBusy(false); setFormError(null)
+    setBalance(null); setInvoices([]); resetInvForm()
   }
 
   function openNew() {
@@ -97,12 +116,26 @@ export default function PurchaseOrdersModule({ appProjects, globalProjectId }: {
       setLines(li.length
         ? li.map(l => ({ quantity: l.quantity != null ? String(l.quantity) : "", description: l.description ?? "", unit_price: l.unit_price != null ? String(l.unit_price) : "" }))
         : [emptyLine()])
+      setBalance(poRes.balance ?? null)
+      setInvoices(poRes.invoices ?? [])
       // Best-effort vendor hydrate (so the address preview shows on edit).
       if (po.vendor_id) {
         const match = (vRes.vendors as Vendor[] | undefined)?.find(v => v.id === po.vendor_id)
         setVendor(match ?? { id: po.vendor_id, vendor_no: null, company_name: po.to_company_name, street_address: null, city: null, state: null, zip_code: null, phone: null })
       }
     } catch { /* leave defaults */ }
+  }
+
+  // Re-read the balance + invoices from the server (commitment_balances is the
+  // source of truth) after any invoice change. Deliberately does NOT touch the
+  // form fields or line items so unsaved edits aren't clobbered.
+  async function refreshDetail(id: string) {
+    try {
+      const d = await fetch(`/api/purchase-orders/${id}`).then(r => r.json())
+      setBalance(d.balance ?? null)
+      setInvoices(d.invoices ?? [])
+    } catch { /* keep current */ }
+    loadPOs()  // keep list drawdown columns in sync
   }
 
   function closeForm() {
@@ -179,6 +212,54 @@ export default function PurchaseOrdersModule({ appProjects, globalProjectId }: {
     }
   }
 
+  // ── Invoices ──────────────────────────────────────────────────────────────
+  function openAddInvoice() {
+    resetInvForm()
+    setInvDate(new Date().toISOString().slice(0, 10))
+    setShowInvForm(true)
+  }
+  function openEditInvoice(inv: CommitmentInvoice) {
+    setInvEditingId(inv.id)
+    setInvNo(inv.invoice_no ?? "")
+    setInvDate(inv.invoice_date ?? "")
+    setInvAmount(inv.amount != null ? String(inv.amount) : "")
+    setInvStatus(inv.status)
+    setInvError(null)
+    setShowInvForm(true)
+  }
+  async function saveInvoice() {
+    if (!editingId) return
+    setInvError(null)
+    if (numOrNull(invAmount) == null || (numOrNull(invAmount) ?? 0) < 0) { setInvError("Enter a non-negative amount."); return }
+    setInvSaving(true)
+    try {
+      const payload = { invoice_no: invNo, invoice_date: invDate, amount: invAmount, status: invStatus }
+      const url = invEditingId
+        ? `/api/purchase-orders/${editingId}/invoices/${invEditingId}`
+        : `/api/purchase-orders/${editingId}/invoices`
+      const res = await fetch(url, { method: invEditingId ? "PATCH" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) })
+      const d = await res.json()
+      if (!res.ok) { setInvError(d.error ?? "Could not save the invoice."); return }
+      resetInvForm()
+      await refreshDetail(editingId)
+    } finally { setInvSaving(false) }
+  }
+  async function deleteInvoice(invId: string) {
+    if (!editingId) return
+    if (!confirm("Delete this invoice?")) return
+    const res = await fetch(`/api/purchase-orders/${editingId}/invoices/${invId}`, { method: "DELETE" })
+    if (res.ok) await refreshDetail(editingId)
+  }
+
+  const invStatusBadge = (s: CommitmentInvoice["status"]) => {
+    const map: Record<string, string> = {
+      draft: "bg-slate-100 text-slate-600",
+      submitted: "bg-amber-100 text-amber-700",
+      paid: "bg-green-100 text-green-700",
+    }
+    return <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold capitalize ${map[s] ?? map.draft}`}>{s}</span>
+  }
+
   const statusBadge = (s: PurchaseOrder["status"]) => {
     const map: Record<string, string> = {
       draft: "bg-slate-100 text-slate-600",
@@ -228,7 +309,9 @@ export default function PurchaseOrdersModule({ appProjects, globalProjectId }: {
                     <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-32">PO #</th>
                     <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest">Vendor</th>
                     <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest">Project</th>
-                    <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-32">Total</th>
+                    <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-28">PO Total</th>
+                    <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-28">Billed</th>
+                    <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-28">Remaining</th>
                     <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-24">Status</th>
                     <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-40">Actions</th>
                   </tr>
@@ -240,6 +323,8 @@ export default function PurchaseOrdersModule({ appProjects, globalProjectId }: {
                       <td className="px-4 py-2.5 max-w-0"><p className="text-[#0F172A] font-medium truncate" title={po.to_company_name}>{po.to_company_name}</p></td>
                       <td className="px-4 py-2.5 text-[#64748B] text-[12px] truncate max-w-[200px]" title={projectName(po.project_id)}>{projectName(po.project_id)}</td>
                       <td className="px-4 py-2.5 text-[#0F172A] text-[12px] tabular-nums font-medium">{po.contract_value != null ? usd0(po.contract_value) : "—"}</td>
+                      <td className="px-4 py-2.5 text-[#64748B] text-[12px] tabular-nums">{usd0(po.billed_to_date ?? 0)}</td>
+                      <td className={`px-4 py-2.5 text-[12px] tabular-nums font-medium ${(po.remaining_balance ?? 0) < 0 ? "text-amber-700" : "text-[#0F172A]"}`}>{usd0(po.remaining_balance ?? po.contract_value ?? 0)}</td>
                       <td className="px-4 py-2.5">{statusBadge(po.status)}</td>
                       <td className="px-4 py-2.5">
                         <div className="flex items-center gap-1">
@@ -263,8 +348,12 @@ export default function PurchaseOrdersModule({ appProjects, globalProjectId }: {
                   </div>
                   <p className="text-[13px] font-medium text-[#0F172A]">{po.to_company_name}</p>
                   <p className="text-[11px] text-[#64748B] mb-1.5 truncate">{projectName(po.project_id)}</p>
-                  <div className="flex items-center justify-between">
-                    <span className="text-[12px] font-semibold text-[#0F172A] tabular-nums">{po.contract_value != null ? usd0(po.contract_value) : "—"}</span>
+                  <div className="flex items-center gap-3 mb-2 text-[11px]">
+                    <span className="text-[#64748B]">Total <span className="font-semibold text-[#0F172A] tabular-nums">{po.contract_value != null ? usd0(po.contract_value) : "—"}</span></span>
+                    <span className="text-[#64748B]">Billed <span className="font-semibold text-[#0F172A] tabular-nums">{usd0(po.billed_to_date ?? 0)}</span></span>
+                    <span className="text-[#64748B]">Rem. <span className={`font-semibold tabular-nums ${(po.remaining_balance ?? 0) < 0 ? "text-amber-700" : "text-[#0F172A]"}`}>{usd0(po.remaining_balance ?? po.contract_value ?? 0)}</span></span>
+                  </div>
+                  <div className="flex items-center justify-end">
                     <div className="flex items-center gap-1">
                       <button onClick={() => openEdit(po)} className="text-[11px] text-[#64748B] px-2 py-1 rounded border border-[#E2E8F0] bg-[#F8F9FA]">Edit</button>
                       <button onClick={() => generatePdf(po.id)} className="text-[11px] text-[#7B9BB5] px-2 py-1 rounded border border-[#E2E8F0] bg-[#F8F9FA]">PDF</button>
@@ -374,6 +463,83 @@ export default function PurchaseOrdersModule({ appProjects, globalProjectId }: {
                 <label className={labelCls}>Notes</label>
                 <textarea value={notes} onChange={e => setNotes(e.target.value)} rows={2} placeholder="Optional" className="w-full px-3 py-2 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40 resize-none placeholder:text-[#64748B]" />
               </div>
+
+              {/* ── Billed & Invoices (saved POs only) ───────────────────────── */}
+              {editingId && (
+                <div className="pt-2 border-t border-[#E2E8F0]">
+                  {/* Balance band — straight from commitment_balances (source of truth) */}
+                  {(() => {
+                    const total = balance?.contract_value ?? 0
+                    const billed = balance?.billed_to_date ?? 0
+                    const remaining = balance?.remaining_balance ?? total
+                    const over = remaining < 0
+                    return (
+                      <div className="flex items-stretch gap-3 mb-4">
+                        {[
+                          { label: "PO Total", value: usd(total), cls: "text-[#0F172A]" },
+                          { label: "Billed to Date", value: usd(billed), cls: "text-[#0F172A]" },
+                          { label: over ? "Remaining (over-billed)" : "Remaining", value: usd(remaining), cls: over ? "text-amber-700" : "text-[#0F172A]" },
+                        ].map(({ label, value, cls }, i) => (
+                          <div key={label} className={`flex-1 rounded-lg border px-3 py-2 ${i === 2 && over ? "bg-amber-50 border-amber-200" : "bg-[#F4F5F7] border-[#E2E8F0]"}`}>
+                            <p className="text-[10px] font-bold text-[#64748B] uppercase tracking-widest mb-1">{label}</p>
+                            <p className={`text-[15px] font-bold tabular-nums ${cls}`}>{value}</p>
+                          </div>
+                        ))}
+                      </div>
+                    )
+                  })()}
+
+                  {/* Invoice list */}
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className={labelCls + " !mb-0"}>Invoices <span className="text-[#94A3B8] font-normal normal-case tracking-normal">({invoices.length})</span></label>
+                    {!showInvForm && (
+                      <button type="button" onClick={openAddInvoice} className="text-[12px] text-[#7B9BB5] font-semibold hover:text-[#5A7A94]">+ Add invoice</button>
+                    )}
+                  </div>
+                  <div className="rounded-lg border border-[#E2E8F0] overflow-hidden">
+                    <div className="grid grid-cols-[1fr_110px_110px_90px_56px] gap-2 px-3 py-2 bg-[#F8F9FA] border-b border-[#E2E8F0] text-[10px] font-bold text-[#64748B] uppercase tracking-wide">
+                      <span>Invoice #</span><span>Date</span><span className="text-right">Amount</span><span>Status</span><span />
+                    </div>
+                    {invoices.length === 0 && !showInvForm && (
+                      <p className="px-3 py-3 text-[12px] text-[#94A3B8]">No invoices yet.</p>
+                    )}
+                    {invoices.map(inv => (
+                      <div key={inv.id} className="grid grid-cols-[1fr_110px_110px_90px_56px] gap-2 px-3 py-2 items-center border-b border-[#E2E8F0]/60 text-[13px]">
+                        <span className="text-[#0F172A] truncate" title={inv.invoice_no ?? ""}>{inv.invoice_no || "—"}</span>
+                        <span className="text-[#64748B] text-[12px]">{inv.invoice_date ?? "—"}</span>
+                        <span className="text-right tabular-nums text-[#0F172A]">{usd(inv.amount)}</span>
+                        <span>{invStatusBadge(inv.status)}</span>
+                        <span className="flex items-center gap-1 justify-end">
+                          <button type="button" onClick={() => openEditInvoice(inv)} className="text-[11px] text-[#64748B] hover:text-[#0F172A]">Edit</button>
+                          <button type="button" onClick={() => deleteInvoice(inv.id)} className="text-[11px] text-red-400/70 hover:text-red-400">Del</button>
+                        </span>
+                      </div>
+                    ))}
+                    {/* Add / edit invoice form row */}
+                    {showInvForm && (
+                      <div className="px-3 py-2.5 bg-[#F8F9FA] space-y-2">
+                        <div className="grid grid-cols-[1fr_110px_110px_90px] gap-2">
+                          <input value={invNo} onChange={e => setInvNo(e.target.value)} placeholder="Invoice #" className="h-8 px-2 rounded border border-[#E2E8F0] text-[13px] focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40" />
+                          <input type="date" value={invDate} onChange={e => setInvDate(e.target.value)} className="h-8 px-2 rounded border border-[#E2E8F0] text-[13px] focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40" />
+                          <input value={invAmount} onChange={e => setInvAmount(e.target.value)} inputMode="decimal" placeholder="0.00" className="h-8 px-2 rounded border border-[#E2E8F0] text-[13px] text-right focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40" />
+                          <select value={invStatus} onChange={e => setInvStatus(e.target.value as typeof invStatus)} className="h-8 px-1.5 rounded border border-[#E2E8F0] text-[13px] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40">
+                            <option value="draft">Draft</option>
+                            <option value="submitted">Submitted</option>
+                            <option value="paid">Paid</option>
+                          </select>
+                        </div>
+                        {invError && <p className="text-[11px] text-red-600">{invError}</p>}
+                        <div className="flex justify-end gap-2">
+                          <button type="button" onClick={resetInvForm} className="h-7 px-3 rounded border border-[#E2E8F0] text-[12px] text-[#64748B] hover:bg-[#0F172A]/[0.04]">Cancel</button>
+                          <button type="button" onClick={saveInvoice} disabled={invSaving} className="h-7 px-3 rounded bg-[#7B9BB5] text-white text-[12px] font-semibold hover:bg-[#6A8AA4] disabled:opacity-50 flex items-center gap-1.5">
+                            {invSaving && <SpinnerIcon className="h-3 w-3" />} {invEditingId ? "Save invoice" : "Add invoice"}
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
 
               {formError && <div className="rounded-md bg-red-50 border border-red-200 px-3 py-2 text-[12px] text-red-600">{formError}</div>}
             </div>
