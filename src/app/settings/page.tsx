@@ -20,9 +20,68 @@ import {
   MAX_REMINDER_COUNT,
 } from "@/lib/reminder-settings"
 
-// "team" = the multi-user accounts tab (Phase 3).
-// "contacts" = the legacy team_members directory (renamed from "team").
-type Tab = "company" | "labor" | "profile" | "team" | "contacts" | "projects" | "subcontractors" | "suppliers" | "cms" | "gmail"
+// Settings is organized into 5 left-rail sections (ADR-006: 11 flat tabs → 5
+// grouped sections). Each "View" is a leaf page under a section; single-page
+// sections (Account, Integrations) have one leaf. The Directories section's
+// three former entity tabs (subs/suppliers/cms) collapse into ONE panel
+// switched by `DirEntity`.
+// "people-team" = the multi-user accounts surface; "people-contacts" = the
+// legacy team_members directory (cover-sheet reviewers).
+type SectionId = "account" | "company" | "people" | "directories" | "integrations"
+type View =
+  | "account"
+  | "company-identity" | "company-labor" | "company-reminders" | "company-cover"
+  | "people-team" | "people-contacts"
+  | "dir-companies" | "dir-projects"
+  | "gmail"
+type DirEntity = "subcontractors" | "suppliers" | "cms"
+
+function sectionOfView(v: View): SectionId {
+  if (v.startsWith("company-")) return "company"
+  if (v.startsWith("people-")) return "people"
+  if (v.startsWith("dir-")) return "directories"
+  if (v === "gmail") return "integrations"
+  return "account"
+}
+
+// Left-rail structure. A section header navigates to its `defaultView`; sub
+// links (when present) render beneath the active section.
+const SETTINGS_NAV: { id: SectionId; label: string; defaultView: View; subs: { view: View; label: string }[] }[] = [
+  { id: "account", label: "Account", defaultView: "account", subs: [] },
+  { id: "company", label: "Company", defaultView: "company-identity", subs: [
+    { view: "company-identity",  label: "Identity" },
+    { view: "company-labor",     label: "Labor Rates" },
+    { view: "company-reminders", label: "Reminders" },
+    { view: "company-cover",     label: "Cover Page" },
+  ] },
+  { id: "people", label: "People & Access", defaultView: "people-team", subs: [
+    { view: "people-team",     label: "Team" },
+    { view: "people-contacts", label: "Contacts" },
+  ] },
+  { id: "directories", label: "Directories", defaultView: "dir-companies", subs: [
+    { view: "dir-companies", label: "Companies" },
+    { view: "dir-projects",  label: "Projects" },
+  ] },
+  { id: "integrations", label: "Integrations", defaultView: "gmail", subs: [] },
+]
+
+// Old ?tab= deep-link keys → new view (+ directory entity) so existing links
+// from the dashboard and the OAuth redirect keep resolving.
+const TAB_TO_VIEW: Record<string, { view: View; entity?: DirEntity }> = {
+  company:        { view: "company-identity" },
+  labor:          { view: "company-labor" },
+  profile:        { view: "account" },
+  team:           { view: "people-team" },
+  contacts:       { view: "people-contacts" },
+  projects:       { view: "dir-projects" },
+  subcontractors: { view: "dir-companies", entity: "subcontractors" },
+  suppliers:      { view: "dir-companies", entity: "suppliers" },
+  cms:            { view: "dir-companies", entity: "cms" },
+  gmail:          { view: "gmail" },
+}
+
+const inputCls = "w-full h-9 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40 focus:border-[#7B9BB5]/50 placeholder:text-[#64748B] transition-all"
+const labelCls = "block text-[12px] font-medium text-[#64748B] mb-1"
 
 interface AccountMember {
   user_id:   string
@@ -147,8 +206,129 @@ function PlusIcon() {
   )
 }
 
+interface DirField {
+  label: string
+  value: string
+  onChange: (v: string) => void
+  placeholder?: string
+  required?: boolean
+  autoFocus?: boolean
+  fullWidth?: boolean
+}
+
+/**
+ * Generic directory CRUD panel (ADR-006 "Directories dedup"). One component for
+ * the three flat global directories — subcontractors, suppliers, construction
+ * managers — that used to be three near-identical CRUD tabs. Each entity
+ * supplies its own fields, columns, and the page's EXISTING handlers/state; this
+ * component only unifies the header + add/edit form + list rendering. It owns no
+ * data layer — every fetch/mutation still runs through the same handlers and API
+ * routes as before.
+ */
+function DirectoryPanel<T extends { id: string }>({
+  title, subtitle, addLabel, formTitle, emptyText,
+  rows, loading, showForm, editing, saving, canSubmit,
+  fields, columns, message, switcher,
+  onAdd, onCancel, onSubmit, onEdit, onDelete,
+}: {
+  title: string
+  subtitle: string
+  addLabel: string
+  formTitle: string
+  emptyText: string
+  rows: T[]
+  loading: boolean
+  showForm: boolean
+  editing: boolean
+  saving: boolean
+  canSubmit: boolean
+  fields: DirField[]
+  columns: { header: string; render: (row: T) => React.ReactNode }[]
+  message: { text: string; ok: boolean } | null
+  switcher: React.ReactNode
+  onAdd: () => void
+  onCancel: () => void
+  onSubmit: (e: React.FormEvent) => void
+  onEdit: (row: T) => void
+  onDelete: (row: T) => void
+}) {
+  return (
+    <div className="space-y-4">
+      {switcher}
+      {message && <div className={`px-4 py-2.5 rounded-lg text-[13px] ${message.ok ? "bg-green-50 text-green-700 border border-green-200" : "bg-red-50 text-red-700 border border-red-200"}`}>{message.text}</div>}
+      <div className="bg-white rounded-xl border border-[#E2E8F0] overflow-hidden">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-[#E2E8F0]">
+          <div>
+            <h2 className="text-[14px] font-semibold text-[#0F172A]">{title}</h2>
+            <p className="text-[12px] text-[#64748B] mt-0.5">{subtitle}</p>
+          </div>
+          {!showForm && <button onClick={onAdd} className="h-8 px-3 rounded-md bg-[#7B9BB5] text-white text-[13px] font-medium hover:bg-[#6A8AA4] transition-colors flex items-center gap-1.5"><PlusIcon /> {addLabel}</button>}
+        </div>
+
+        {showForm && (
+          <div className="px-5 py-4 border-b border-[#E2E8F0] bg-[#F4F5F7]/50">
+            <p className="text-[13px] font-semibold text-[#0F172A] mb-3">{formTitle}</p>
+            <form onSubmit={onSubmit} className="space-y-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {fields.map((f, i) => (
+                  <div key={i} className={f.fullWidth ? "sm:col-span-2" : ""}>
+                    <label className={labelCls}>{f.label}{f.required && <span className="text-red-400"> *</span>}</label>
+                    <input
+                      value={f.value}
+                      onChange={e => f.onChange(e.target.value)}
+                      required={f.required}
+                      autoFocus={f.autoFocus}
+                      placeholder={f.placeholder}
+                      className={inputCls}
+                    />
+                  </div>
+                ))}
+              </div>
+              <div className="flex justify-end gap-2 pt-1">
+                <button type="button" onClick={onCancel} className="h-8 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#64748B] hover:text-[#0F172A] transition-colors">Cancel</button>
+                <button type="submit" disabled={saving || !canSubmit} className="h-8 px-4 rounded-md bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors disabled:opacity-50">{saving ? "Saving…" : editing ? "Save changes" : addLabel}</button>
+              </div>
+            </form>
+          </div>
+        )}
+
+        {loading && <div className="px-5 py-4 text-[13px] text-[#64748B]">Loading…</div>}
+        {!loading && rows.length === 0 && !showForm && (
+          <div className="px-5 py-8 text-center"><p className="text-[13px] text-[#64748B]">{emptyText}</p></div>
+        )}
+        {!loading && rows.length > 0 && (
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead className="sticky top-0 bg-[#F8F9FA]">
+                <tr className="border-b border-[#E2E8F0]">
+                  {columns.map(c => <th key={c.header} className="text-left px-4 py-2.5 text-[11px] font-semibold text-[#64748B] uppercase tracking-wider whitespace-nowrap">{c.header}</th>)}
+                  <th className="px-4 py-2.5" />
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((row, i) => (
+                  <tr key={row.id} className={`${i < rows.length - 1 ? "border-b border-[#E2E8F0]" : ""} hover:bg-[#F8F9FA] transition-colors group`}>
+                    {columns.map((c, ci) => (
+                      <td key={c.header} className={ci === 0 ? "px-4 py-2.5 text-[13px] font-medium text-[#0F172A]" : "px-4 py-2.5 text-[12px] text-[#64748B]"}>{c.render(row)}</td>
+                    ))}
+                    <td className="px-4 py-2.5 text-right whitespace-nowrap">
+                      <button onClick={() => onEdit(row)} className="p-1 rounded text-[#64748B] hover:text-[#0F172A] transition-colors mr-1"><PencilIcon /></button>
+                      <button onClick={() => onDelete(row)} className="p-1 rounded text-[#64748B] hover:text-red-400 transition-colors"><XIcon /></button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 export default function SettingsPage() {
-  const [activeTab, setActiveTab] = useState<Tab>("company")
+  const [activeView, setActiveView] = useState<View>("account")
+  const [dirEntity, setDirEntity]   = useState<DirEntity>("subcontractors")
 
   const [logoUrl, setLogoUrl]           = useState<string | null>(null)
   const [hasCoverPage, setHasCoverPage] = useState(false)
@@ -316,7 +496,7 @@ export default function SettingsPage() {
     const params = new URLSearchParams(window.location.search)
     const tabParam = params.get("tab")
     if (tabParam === "gmail") {
-      setActiveTab("gmail")
+      setActiveView("gmail")
       const connected = params.get("connected")
       const err = params.get("error")
       if (connected === "1") {
@@ -327,8 +507,11 @@ export default function SettingsPage() {
         setTimeout(() => setGmailMessage(null), 8000)
       }
       window.history.replaceState({}, "", "/settings?tab=gmail")
-    } else if (tabParam && ["company", "labor", "profile", "team", "contacts", "projects", "subcontractors", "suppliers", "cms"].includes(tabParam)) {
-      setActiveTab(tabParam as Tab)
+    } else if (tabParam && TAB_TO_VIEW[tabParam]) {
+      // Map an old flat-tab key to the new section/sub-page (and entity).
+      const dest = TAB_TO_VIEW[tabParam]
+      setActiveView(dest.view)
+      if (dest.entity) setDirEntity(dest.entity)
     }
   }, [])
 
@@ -344,15 +527,19 @@ export default function SettingsPage() {
     })()
   }, [])
 
+  // Lazy-load each surface's data when first shown. Same load functions and
+  // fetch call paths as before — only the trigger key changed (tab → view).
   useEffect(() => {
-    if (activeTab === "team" && !accountsLoaded) loadAccounts()
-    if (activeTab === "contacts" && !teamLoaded) loadTeam()
-    if (activeTab === "projects" && !projectsLoaded) loadProjects()
-    if (activeTab === "subcontractors" && !subsLoaded) loadSubs()
-    if (activeTab === "suppliers" && !supplLoaded) loadSuppliers()
-    if (activeTab === "cms" && !cmsLoaded) loadCms()
-    if (activeTab === "gmail" && !gmailLoaded) loadGmailConnection()
-  }, [activeTab])
+    if (activeView === "people-team" && !accountsLoaded) loadAccounts()
+    if (activeView === "people-contacts" && !teamLoaded) loadTeam()
+    if (activeView === "dir-projects" && !projectsLoaded) loadProjects()
+    if (activeView === "dir-companies") {
+      if (dirEntity === "subcontractors" && !subsLoaded) loadSubs()
+      if (dirEntity === "suppliers" && !supplLoaded) loadSuppliers()
+      if (dirEntity === "cms" && !cmsLoaded) loadCms()
+    }
+    if (activeView === "gmail" && !gmailLoaded) loadGmailConnection()
+  }, [activeView, dirEntity])
 
   async function loadAccounts() {
     setAccountsLoading(true)
@@ -1371,25 +1558,11 @@ export default function SettingsPage() {
     setQuickAddSupplOpen(false); setQuickAddName(""); setQuickAddField("")
   }
 
-  const inputCls = "w-full h-9 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40 focus:border-[#7B9BB5]/50 placeholder:text-[#64748B] transition-all"
-  const labelCls = "block text-[12px] font-medium text-[#64748B] mb-1"
-
-  const tabs: { key: Tab; label: string }[] = [
-    { key: "company",        label: "Company" },
-    { key: "labor",          label: "Labor Rates" },
-    { key: "profile",        label: "Profile" },
-    { key: "team",           label: "Team" },
-    { key: "contacts",       label: "Contacts" },
-    { key: "projects",       label: "Projects" },
-    { key: "subcontractors", label: "Subcontractors" },
-    { key: "suppliers",      label: "Suppliers" },
-    { key: "cms",            label: "CMs" },
-    { key: "gmail",          label: "Gmail" },
-  ]
+  const activeSection = sectionOfView(activeView)
 
   return (
     <div className="min-h-screen bg-[#F4F5F7]">
-      <div className="max-w-[1040px] mx-auto py-8 sm:py-12 px-4 sm:px-6">
+      <div className="max-w-[1120px] mx-auto py-8 sm:py-12 px-4 sm:px-6">
 
         <div className="flex items-center justify-between mb-6 sm:mb-8">
           <div>
@@ -1401,23 +1574,82 @@ export default function SettingsPage() {
           </Link>
         </div>
 
-        <div className="flex gap-1 mb-6 border-b border-[#E2E8F0] overflow-x-auto scrollbar-none -mx-4 px-4 sm:mx-0 sm:px-0">
-          {tabs.map(t => (
-            <button
-              key={t.key}
-              onClick={() => setActiveTab(t.key)}
-              className={`px-3 sm:px-4 py-2.5 text-[13px] font-medium transition-colors border-b-2 -mb-px whitespace-nowrap ${
-                activeTab === t.key
-                  ? "border-[#7B9BB5] text-[#0F172A]"
-                  : "border-transparent text-[#64748B] hover:text-[#0F172A]"
-              }`}
-            >
-              {t.label}
-            </button>
-          ))}
-        </div>
+        <div className="flex flex-col md:flex-row gap-6 md:gap-8">
+          {/* Left rail — 5 grouped sections (ADR-006). On desktop the active
+              section's sub-pages render beneath it (accordion); on mobile the
+              sections become a horizontal strip with sub-pages as pills below. */}
+          <nav className="md:w-52 md:flex-shrink-0">
+            <div className="flex md:flex-col gap-1 overflow-x-auto scrollbar-none -mx-4 px-4 md:mx-0 md:px-0 md:overflow-visible">
+              {SETTINGS_NAV.map(section => {
+                const isActiveSection = activeSection === section.id
+                return (
+                  <div key={section.id} className="md:contents">
+                    <button
+                      onClick={() => setActiveView(section.defaultView)}
+                      className={`text-left px-3 py-2 rounded-lg text-[13px] font-medium whitespace-nowrap transition-colors ${
+                        isActiveSection
+                          ? "bg-[#7B9BB5]/[0.12] text-[#0F172A]"
+                          : "text-[#64748B] hover:text-[#0F172A] hover:bg-[#0F172A]/[0.03]"
+                      }`}
+                    >
+                      {section.label}
+                    </button>
+                    {isActiveSection && section.subs.length > 0 && (
+                      <div className="hidden md:flex md:flex-col gap-0.5 mt-0.5 mb-1.5 ml-2 pl-2 border-l border-[#E2E8F0]">
+                        {section.subs.map(sub => (
+                          <button
+                            key={sub.view}
+                            onClick={() => setActiveView(sub.view)}
+                            className={`text-left px-3 py-1.5 rounded-md text-[13px] transition-colors ${
+                              activeView === sub.view
+                                ? "text-[#0F172A] font-semibold bg-[#7B9BB5]/10"
+                                : "text-[#64748B] hover:text-[#0F172A] hover:bg-[#0F172A]/[0.03]"
+                            }`}
+                          >
+                            {sub.label}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+            {(() => {
+              const section = SETTINGS_NAV.find(s => s.id === activeSection)
+              if (!section || section.subs.length === 0) return null
+              return (
+                <div className="flex md:hidden gap-1 mt-3 overflow-x-auto scrollbar-none -mx-4 px-4">
+                  {section.subs.map(sub => (
+                    <button
+                      key={sub.view}
+                      onClick={() => setActiveView(sub.view)}
+                      className={`px-3 py-1.5 rounded-full text-[12px] font-medium whitespace-nowrap transition-colors ${
+                        activeView === sub.view
+                          ? "bg-[#7B9BB5] text-white"
+                          : "bg-white border border-[#E2E8F0] text-[#64748B] hover:text-[#0F172A]"
+                      }`}
+                    >
+                      {sub.label}
+                    </button>
+                  ))}
+                </div>
+              )
+            })()}
+          </nav>
 
-        {activeTab === "company" && (
+          {/* Active view */}
+          <div className="flex-1 min-w-0">
+
+        {activeView === "account" && (
+          <ProfileSignature />
+        )}
+
+        {activeView === "company-labor" && (
+          <LaborRatesTab canEdit={currentRole === "admin"} />
+        )}
+
+        {activeView === "company-identity" && (
           <div className="space-y-4">
             {loadingCompany ? (
               <div className="text-[13px] text-[#64748B]">Loading…</div>
@@ -1476,36 +1708,61 @@ export default function SettingsPage() {
                   </div>
                 </div>
 
-                <div className="bg-white rounded-xl border border-[#E2E8F0] p-5">
-                  <h2 className="text-[14px] font-semibold text-[#0F172A] mb-0.5">Cover Page Template</h2>
-                  <p className="text-[12px] text-[#64748B] mb-4">
-                    This PDF will be prepended to every submittal when a user opens or downloads it. Must be a PDF file.
-                  </p>
-                  <div className="flex items-center gap-3">
-                    <div className={`flex-1 h-9 px-3 rounded-md border flex items-center text-[13px] ${
-                      hasCoverPage
-                        ? "border-[#E2E8F0] bg-white text-[#0F172A]"
-                        : "border-dashed border-[#E2E8F0] text-[#64748B]"
-                    }`}>
-                      {hasCoverPage ? "📄 cover.pdf — active" : "No cover page uploaded"}
-                    </div>
-                    <button
-                      onClick={() => coverInputRef.current?.click()}
-                      disabled={uploadingCover}
-                      className="h-9 px-4 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] hover:bg-[#F4F5F7]/[0.05] transition-colors disabled:opacity-50 flex-shrink-0"
-                    >
-                      {uploadingCover ? "Uploading…" : hasCoverPage ? "Replace" : "Upload PDF"}
-                    </button>
-                  </div>
-                  <input ref={coverInputRef} type="file" accept=".pdf,application/pdf" onChange={handleCoverChange} className="hidden" />
-                </div>
+                <CompanyDetailsCard canEdit={currentRole === "admin"} />
+              </>
+            )}
 
-                {/* ── Reminder defaults (Session K2) ──────────────────────
-                    Sits below the file-upload cards. Inline (not an
-                    extracted component) to match the rest of the company
-                    tab's pattern. */}
-                <div className="bg-white rounded-xl border border-[#E2E8F0] p-5">
-                  <h2 className="text-[14px] font-semibold text-[#0F172A] mb-0.5">Reminder Defaults</h2>
+            {companyMessage && (
+              <div className={`text-center text-[13px] ${companyMessage.ok ? "text-[#7B9BB5]" : "text-red-400"}`}>
+                {companyMessage.text}
+              </div>
+            )}
+          </div>
+        )}
+
+        {activeView === "company-cover" && (
+          <div className="space-y-4">
+            {loadingCompany ? (
+              <div className="text-[13px] text-[#64748B]">Loading…</div>
+            ) : (
+              <div className="bg-white rounded-xl border border-[#E2E8F0] p-5">
+                <h2 className="text-[14px] font-semibold text-[#0F172A] mb-0.5">Cover Page Template</h2>
+                <p className="text-[12px] text-[#64748B] mb-4">
+                  This PDF will be prepended to every submittal when a user opens or downloads it. Must be a PDF file.
+                </p>
+                <div className="flex items-center gap-3">
+                  <div className={`flex-1 h-9 px-3 rounded-md border flex items-center text-[13px] ${
+                    hasCoverPage
+                      ? "border-[#E2E8F0] bg-white text-[#0F172A]"
+                      : "border-dashed border-[#E2E8F0] text-[#64748B]"
+                  }`}>
+                    {hasCoverPage ? "📄 cover.pdf — active" : "No cover page uploaded"}
+                  </div>
+                  <button
+                    onClick={() => coverInputRef.current?.click()}
+                    disabled={uploadingCover}
+                    className="h-9 px-4 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] hover:bg-[#F4F5F7]/[0.05] transition-colors disabled:opacity-50 flex-shrink-0"
+                  >
+                    {uploadingCover ? "Uploading…" : hasCoverPage ? "Replace" : "Upload PDF"}
+                  </button>
+                </div>
+                <input ref={coverInputRef} type="file" accept=".pdf,application/pdf" onChange={handleCoverChange} className="hidden" />
+              </div>
+            )}
+            {companyMessage && (
+              <div className={`text-center text-[13px] ${companyMessage.ok ? "text-[#7B9BB5]" : "text-red-400"}`}>
+                {companyMessage.text}
+              </div>
+            )}
+          </div>
+        )}
+
+        {activeView === "company-reminders" && (
+          <div className="space-y-4">
+            {/* Company-wide reminder cadence (submittal + closeout). Per-package
+                overrides live on each package's detail view. */}
+            <div className="bg-white rounded-xl border border-[#E2E8F0] p-5">
+              <h2 className="text-[14px] font-semibold text-[#0F172A] mb-0.5">Reminder Defaults</h2>
                   <p className="text-[12px] text-[#64748B] mb-4">
                     Sets the company-wide cadence for outbound package reminders (submittal + closeout).
                     Per-package overrides are configured on each package&apos;s detail view.
@@ -1612,28 +1869,10 @@ export default function SettingsPage() {
                     )
                   })()}
                 </div>
-
-                <CompanyDetailsCard canEdit={currentRole === "admin"} />
-              </>
-            )}
-
-            {companyMessage && (
-              <div className={`text-center text-[13px] ${companyMessage.ok ? "text-[#7B9BB5]" : "text-red-400"}`}>
-                {companyMessage.text}
-              </div>
-            )}
           </div>
         )}
 
-        {activeTab === "labor" && (
-          <LaborRatesTab canEdit={currentRole === "admin"} />
-        )}
-
-        {activeTab === "profile" && (
-          <ProfileSignature />
-        )}
-
-        {activeTab === "team" && (
+        {activeView === "people-team" && (
           <div className="space-y-4">
             <div className="bg-white rounded-xl border border-[#E2E8F0] overflow-hidden">
               <div className="flex items-center justify-between px-5 py-4 border-b border-[#E2E8F0]">
@@ -1827,7 +2066,7 @@ export default function SettingsPage() {
           </div>
         )}
 
-        {activeTab === "contacts" && (
+        {activeView === "people-contacts" && (
           <div className="space-y-4">
             <div className="bg-white rounded-xl border border-[#E2E8F0] overflow-hidden">
               <div className="flex items-center justify-between px-5 py-4 border-b border-[#E2E8F0]">
@@ -2056,7 +2295,7 @@ export default function SettingsPage() {
           </div>
         )}
 
-        {activeTab === "projects" && (
+        {activeView === "dir-projects" && (
           <div className="space-y-4">
             <div className="bg-white rounded-xl border border-[#E2E8F0] overflow-hidden">
               <div className="flex items-center justify-between px-5 py-4 border-b border-[#E2E8F0]">
@@ -2618,220 +2857,144 @@ export default function SettingsPage() {
           </div>
         )}
 
-        {activeTab === "subcontractors" && (
-          <div className="space-y-4">
-            {subMessage && <div className={`px-4 py-2.5 rounded-lg text-[13px] ${subMessage.ok ? "bg-green-50 text-green-700 border border-green-200" : "bg-red-50 text-red-700 border border-red-200"}`}>{subMessage.text}</div>}
-            <div className="bg-white rounded-xl border border-[#E2E8F0] overflow-hidden">
-              <div className="flex items-center justify-between px-5 py-4 border-b border-[#E2E8F0]">
-                <div>
-                  <h2 className="text-[14px] font-semibold text-[#0F172A]">Subcontractors</h2>
-                  <p className="text-[12px] text-[#64748B] mt-0.5">Global list of subcontractors reusable across all projects.</p>
-                </div>
-                {!showSubForm && <button onClick={openAddSub} className="h-8 px-3 rounded-md bg-[#7B9BB5] text-white text-[13px] font-medium hover:bg-[#6A8AA4] transition-colors flex items-center gap-1.5"><PlusIcon /> Add subcontractor</button>}
-              </div>
-
-              {showSubForm && (
-                <div className="px-5 py-4 border-b border-[#E2E8F0] bg-[#F4F5F7]/50">
-                  <p className="text-[13px] font-semibold text-[#0F172A] mb-3">{editingSub ? "Edit subcontractor" : "New subcontractor"}</p>
-                  <form onSubmit={saveSub} className="space-y-3">
-                    <div className="grid grid-cols-2 gap-3">
-                      <div><label className={labelCls}>Company Name <span className="text-red-400">*</span></label><input value={subForm.company_name} onChange={e => setSubForm(p => ({ ...p, company_name: e.target.value }))} required autoFocus placeholder="e.g. ABC Electrical" className={inputCls} /></div>
-                      <div><label className={labelCls}>Trade / Specialty</label><input value={subForm.trade} onChange={e => setSubForm(p => ({ ...p, trade: e.target.value }))} placeholder="e.g. Electrical" className={inputCls} /></div>
-                    </div>
-                    <div className="grid grid-cols-3 gap-3">
-                      <div><label className={labelCls}>Contact Name</label><input value={subForm.contact_name} onChange={e => setSubForm(p => ({ ...p, contact_name: e.target.value }))} placeholder="John Smith" className={inputCls} /></div>
-                      <div><label className={labelCls}>Phone</label><input value={subForm.phone} onChange={e => setSubForm(p => ({ ...p, phone: e.target.value }))} placeholder="555-000-1234" className={inputCls} /></div>
-                      <div><label className={labelCls}>Email</label><input value={subForm.email} onChange={e => setSubForm(p => ({ ...p, email: e.target.value }))} placeholder="contact@company.com" className={inputCls} /></div>
-                    </div>
-                    <div className="grid grid-cols-2 gap-3">
-                      <div><label className={labelCls}>License Number</label><input value={subForm.license_number} onChange={e => setSubForm(p => ({ ...p, license_number: e.target.value }))} placeholder="LIC-123456" className={inputCls} /></div>
-                      <div><label className={labelCls}>Notes</label><input value={subForm.notes} onChange={e => setSubForm(p => ({ ...p, notes: e.target.value }))} placeholder="Any notes…" className={inputCls} /></div>
-                    </div>
-                    <div className="flex justify-end gap-2 pt-1">
-                      <button type="button" onClick={cancelSubForm} className="h-8 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#64748B] hover:text-[#0F172A] transition-colors">Cancel</button>
-                      <button type="submit" disabled={savingSub || !subForm.company_name.trim()} className="h-8 px-4 rounded-md bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors disabled:opacity-50">{savingSub ? "Saving…" : editingSub ? "Save changes" : "Add subcontractor"}</button>
-                    </div>
-                  </form>
-                </div>
-              )}
-
-              {subsLoading && <div className="px-5 py-4 text-[13px] text-[#64748B]">Loading…</div>}
-              {!subsLoading && subcontractors.length === 0 && !showSubForm && (
-                <div className="px-5 py-8 text-center"><p className="text-[13px] text-[#64748B]">No subcontractors yet.</p></div>
-              )}
-              {!subsLoading && subcontractors.length > 0 && (
-                <div>
-                  <table className="w-full">
-                    <thead className="sticky top-0 bg-[#F8F9FA]">
-                      <tr className="border-b border-[#E2E8F0]">
-                        {["Company Name","Trade","Contact","Phone","Email","License",""].map(h => <th key={h} className="text-left px-4 py-2.5 text-[11px] font-semibold text-[#64748B] uppercase tracking-wider">{h}</th>)}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {subcontractors.map((s, i) => (
-                        <tr key={s.id} className={`${i < subcontractors.length - 1 ? "border-b border-[#E2E8F0]" : ""} hover:bg-[#F8F9FA] transition-colors group`}>
-                          <td className="px-4 py-2.5 text-[13px] font-medium text-[#0F172A]">{s.company_name}</td>
-                          <td className="px-4 py-2.5 text-[12px] text-[#64748B]">{s.trade ?? "—"}</td>
-                          <td className="px-4 py-2.5 text-[12px] text-[#64748B]">{s.contact_name ?? "—"}</td>
-                          <td className="px-4 py-2.5 text-[12px] text-[#64748B]">{s.phone ?? "—"}</td>
-                          <td className="px-4 py-2.5 text-[12px] text-[#64748B]">{s.email ?? "—"}</td>
-                          <td className="px-4 py-2.5 text-[12px] text-[#64748B]">{s.license_number ?? "—"}</td>
-                          <td className="px-4 py-2.5 text-right">
-                            <button onClick={() => openEditSub(s)} className="p-1 rounded text-[#64748B] hover:text-[#0F172A] transition-colors mr-1"><PencilIcon /></button>
-                            <button onClick={() => deleteSub(s)} className="p-1 rounded text-[#64748B] hover:text-red-400 transition-colors"><XIcon /></button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
+        {activeView === "dir-companies" && (() => {
+          // One generic panel, switched by entity type (subs/suppliers/cms).
+          // Each branch wires the entity's EXISTING handlers/state/fields — no
+          // data-layer change, just unified form + list rendering.
+          const switcher = (
+            <div className="inline-flex rounded-lg border border-[#E2E8F0] bg-white p-0.5">
+              {([["subcontractors", "Subcontractors"], ["suppliers", "Suppliers"], ["cms", "CMs"]] as [DirEntity, string][]).map(([k, label]) => (
+                <button
+                  key={k}
+                  onClick={() => setDirEntity(k)}
+                  className={`px-3 py-1.5 rounded-md text-[12px] font-medium transition-colors ${
+                    dirEntity === k ? "bg-[#7B9BB5] text-white" : "text-[#64748B] hover:text-[#0F172A]"
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
             </div>
-          </div>
-        )}
+          )
+          if (dirEntity === "subcontractors") return (
+            <DirectoryPanel<Subcontractor>
+              switcher={switcher}
+              title="Subcontractors"
+              subtitle="Global list of subcontractors reusable across all projects."
+              addLabel="Add subcontractor"
+              formTitle={editingSub ? "Edit subcontractor" : "New subcontractor"}
+              emptyText="No subcontractors yet."
+              rows={subcontractors}
+              loading={subsLoading}
+              showForm={showSubForm}
+              editing={!!editingSub}
+              saving={savingSub}
+              canSubmit={!!subForm.company_name.trim()}
+              message={subMessage}
+              onAdd={openAddSub}
+              onCancel={cancelSubForm}
+              onSubmit={saveSub}
+              onEdit={openEditSub}
+              onDelete={deleteSub}
+              fields={[
+                { label: "Company Name", required: true, autoFocus: true, value: subForm.company_name, onChange: v => setSubForm(p => ({ ...p, company_name: v })), placeholder: "e.g. ABC Electrical" },
+                { label: "Trade / Specialty", value: subForm.trade, onChange: v => setSubForm(p => ({ ...p, trade: v })), placeholder: "e.g. Electrical" },
+                { label: "Contact Name", value: subForm.contact_name, onChange: v => setSubForm(p => ({ ...p, contact_name: v })), placeholder: "John Smith" },
+                { label: "Phone", value: subForm.phone, onChange: v => setSubForm(p => ({ ...p, phone: v })), placeholder: "555-000-1234" },
+                { label: "Email", value: subForm.email, onChange: v => setSubForm(p => ({ ...p, email: v })), placeholder: "contact@company.com" },
+                { label: "License Number", value: subForm.license_number, onChange: v => setSubForm(p => ({ ...p, license_number: v })), placeholder: "LIC-123456" },
+                { label: "Notes", fullWidth: true, value: subForm.notes, onChange: v => setSubForm(p => ({ ...p, notes: v })), placeholder: "Any notes…" },
+              ]}
+              columns={[
+                { header: "Company Name", render: s => s.company_name },
+                { header: "Trade", render: s => s.trade ?? "—" },
+                { header: "Contact", render: s => s.contact_name ?? "—" },
+                { header: "Phone", render: s => s.phone ?? "—" },
+                { header: "Email", render: s => s.email ?? "—" },
+                { header: "License", render: s => s.license_number ?? "—" },
+              ]}
+            />
+          )
+          if (dirEntity === "suppliers") return (
+            <DirectoryPanel<Supplier>
+              switcher={switcher}
+              title="Suppliers"
+              subtitle="Global list of material suppliers reusable across all projects."
+              addLabel="Add supplier"
+              formTitle={editingSuppl ? "Edit supplier" : "New supplier"}
+              emptyText="No suppliers yet."
+              rows={suppliers}
+              loading={supplLoading}
+              showForm={showSupplForm}
+              editing={!!editingSuppl}
+              saving={savingSuppl}
+              canSubmit={!!supplForm.company_name.trim()}
+              message={supplMessage}
+              onAdd={openAddSuppl}
+              onCancel={cancelSupplForm}
+              onSubmit={saveSuppl}
+              onEdit={openEditSuppl}
+              onDelete={deleteSuppl}
+              fields={[
+                { label: "Company Name", required: true, autoFocus: true, value: supplForm.company_name, onChange: v => setSupplForm(p => ({ ...p, company_name: v })), placeholder: "e.g. XYZ Lumber Supply" },
+                { label: "Material / Specialty", value: supplForm.specialty, onChange: v => setSupplForm(p => ({ ...p, specialty: v })), placeholder: "e.g. Structural Steel" },
+                { label: "Contact Name", value: supplForm.contact_name, onChange: v => setSupplForm(p => ({ ...p, contact_name: v })), placeholder: "Jane Doe" },
+                { label: "Phone", value: supplForm.phone, onChange: v => setSupplForm(p => ({ ...p, phone: v })), placeholder: "555-000-1234" },
+                { label: "Email", value: supplForm.email, onChange: v => setSupplForm(p => ({ ...p, email: v })), placeholder: "contact@supplier.com" },
+                { label: "Website", value: supplForm.website, onChange: v => setSupplForm(p => ({ ...p, website: v })), placeholder: "https://supplier.com" },
+                { label: "Notes", fullWidth: true, value: supplForm.notes, onChange: v => setSupplForm(p => ({ ...p, notes: v })), placeholder: "Any notes…" },
+              ]}
+              columns={[
+                { header: "Company Name", render: s => s.company_name },
+                { header: "Material/Specialty", render: s => s.specialty ?? "—" },
+                { header: "Contact", render: s => s.contact_name ?? "—" },
+                { header: "Phone", render: s => s.phone ?? "—" },
+                { header: "Email", render: s => s.email ?? "—" },
+                { header: "Website", render: s => s.website ? <a href={s.website} target="_blank" rel="noopener noreferrer" className="text-[#7B9BB5] hover:underline">{s.website.replace(/^https?:\/\//, "")}</a> : "—" },
+              ]}
+            />
+          )
+          return (
+            <DirectoryPanel<ConstructionManager>
+              switcher={switcher}
+              title="Construction Managers"
+              subtitle="Global list of CMs reusable across all projects."
+              addLabel="Add CM"
+              formTitle={editingCm ? "Edit CM" : "New CM"}
+              emptyText="No construction managers yet."
+              rows={cms}
+              loading={cmsLoading}
+              showForm={showCmForm}
+              editing={!!editingCm}
+              saving={savingCm}
+              canSubmit={!!cmForm.company_name.trim()}
+              message={cmMessage}
+              onAdd={openAddCm}
+              onCancel={cancelCmForm}
+              onSubmit={saveCm}
+              onEdit={openEditCm}
+              onDelete={deleteCm}
+              fields={[
+                { label: "Company Name", required: true, autoFocus: true, value: cmForm.company_name, onChange: v => setCmForm(p => ({ ...p, company_name: v })), placeholder: "e.g. Turner Construction" },
+                { label: "Contact Name", value: cmForm.contact_name, onChange: v => setCmForm(p => ({ ...p, contact_name: v })), placeholder: "Jane Smith" },
+                { label: "Phone", value: cmForm.phone, onChange: v => setCmForm(p => ({ ...p, phone: v })), placeholder: "555-000-1234" },
+                { label: "Email", value: cmForm.email, onChange: v => setCmForm(p => ({ ...p, email: v })), placeholder: "contact@cm.com" },
+                { label: "Notes", value: cmForm.notes, onChange: v => setCmForm(p => ({ ...p, notes: v })), placeholder: "Any notes…" },
+                { label: "Address", fullWidth: true, value: cmForm.address, onChange: v => setCmForm(p => ({ ...p, address: v })), placeholder: "123 Main St, City, State 00000" },
+              ]}
+              columns={[
+                { header: "Company Name", render: c => c.company_name },
+                { header: "Contact", render: c => c.contact_name ?? "—" },
+                { header: "Phone", render: c => c.phone ?? "—" },
+                { header: "Email", render: c => c.email ?? "—" },
+                { header: "Address", render: c => <span className="block max-w-[160px] truncate">{c.address ?? "—"}</span> },
+                { header: "Notes", render: c => c.notes ?? "—" },
+              ]}
+            />
+          )
+        })()}
 
-        {activeTab === "suppliers" && (
-          <div className="space-y-4">
-            {supplMessage && <div className={`px-4 py-2.5 rounded-lg text-[13px] ${supplMessage.ok ? "bg-green-50 text-green-700 border border-green-200" : "bg-red-50 text-red-700 border border-red-200"}`}>{supplMessage.text}</div>}
-            <div className="bg-white rounded-xl border border-[#E2E8F0] overflow-hidden">
-              <div className="flex items-center justify-between px-5 py-4 border-b border-[#E2E8F0]">
-                <div>
-                  <h2 className="text-[14px] font-semibold text-[#0F172A]">Suppliers</h2>
-                  <p className="text-[12px] text-[#64748B] mt-0.5">Global list of material suppliers reusable across all projects.</p>
-                </div>
-                {!showSupplForm && <button onClick={openAddSuppl} className="h-8 px-3 rounded-md bg-[#7B9BB5] text-white text-[13px] font-medium hover:bg-[#6A8AA4] transition-colors flex items-center gap-1.5"><PlusIcon /> Add supplier</button>}
-              </div>
-
-              {showSupplForm && (
-                <div className="px-5 py-4 border-b border-[#E2E8F0] bg-[#F4F5F7]/50">
-                  <p className="text-[13px] font-semibold text-[#0F172A] mb-3">{editingSuppl ? "Edit supplier" : "New supplier"}</p>
-                  <form onSubmit={saveSuppl} className="space-y-3">
-                    <div className="grid grid-cols-2 gap-3">
-                      <div><label className={labelCls}>Company Name <span className="text-red-400">*</span></label><input value={supplForm.company_name} onChange={e => setSupplForm(p => ({ ...p, company_name: e.target.value }))} required autoFocus placeholder="e.g. XYZ Lumber Supply" className={inputCls} /></div>
-                      <div><label className={labelCls}>Material / Specialty</label><input value={supplForm.specialty} onChange={e => setSupplForm(p => ({ ...p, specialty: e.target.value }))} placeholder="e.g. Structural Steel" className={inputCls} /></div>
-                    </div>
-                    <div className="grid grid-cols-3 gap-3">
-                      <div><label className={labelCls}>Contact Name</label><input value={supplForm.contact_name} onChange={e => setSupplForm(p => ({ ...p, contact_name: e.target.value }))} placeholder="Jane Doe" className={inputCls} /></div>
-                      <div><label className={labelCls}>Phone</label><input value={supplForm.phone} onChange={e => setSupplForm(p => ({ ...p, phone: e.target.value }))} placeholder="555-000-1234" className={inputCls} /></div>
-                      <div><label className={labelCls}>Email</label><input value={supplForm.email} onChange={e => setSupplForm(p => ({ ...p, email: e.target.value }))} placeholder="contact@supplier.com" className={inputCls} /></div>
-                    </div>
-                    <div className="grid grid-cols-2 gap-3">
-                      <div><label className={labelCls}>Website</label><input value={supplForm.website} onChange={e => setSupplForm(p => ({ ...p, website: e.target.value }))} placeholder="https://supplier.com" className={inputCls} /></div>
-                      <div><label className={labelCls}>Notes</label><input value={supplForm.notes} onChange={e => setSupplForm(p => ({ ...p, notes: e.target.value }))} placeholder="Any notes…" className={inputCls} /></div>
-                    </div>
-                    <div className="flex justify-end gap-2 pt-1">
-                      <button type="button" onClick={cancelSupplForm} className="h-8 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#64748B] hover:text-[#0F172A] transition-colors">Cancel</button>
-                      <button type="submit" disabled={savingSuppl || !supplForm.company_name.trim()} className="h-8 px-4 rounded-md bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors disabled:opacity-50">{savingSuppl ? "Saving…" : editingSuppl ? "Save changes" : "Add supplier"}</button>
-                    </div>
-                  </form>
-                </div>
-              )}
-
-              {supplLoading && <div className="px-5 py-4 text-[13px] text-[#64748B]">Loading…</div>}
-              {!supplLoading && suppliers.length === 0 && !showSupplForm && (
-                <div className="px-5 py-8 text-center"><p className="text-[13px] text-[#64748B]">No suppliers yet.</p></div>
-              )}
-              {!supplLoading && suppliers.length > 0 && (
-                <div>
-                  <table className="w-full">
-                    <thead className="sticky top-0 bg-[#F8F9FA]">
-                      <tr className="border-b border-[#E2E8F0]">
-                        {["Company Name","Material/Specialty","Contact","Phone","Email","Website",""].map(h => <th key={h} className="text-left px-4 py-2.5 text-[11px] font-semibold text-[#64748B] uppercase tracking-wider">{h}</th>)}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {suppliers.map((s, i) => (
-                        <tr key={s.id} className={`${i < suppliers.length - 1 ? "border-b border-[#E2E8F0]" : ""} hover:bg-[#F8F9FA] transition-colors group`}>
-                          <td className="px-4 py-2.5 text-[13px] font-medium text-[#0F172A]">{s.company_name}</td>
-                          <td className="px-4 py-2.5 text-[12px] text-[#64748B]">{s.specialty ?? "—"}</td>
-                          <td className="px-4 py-2.5 text-[12px] text-[#64748B]">{s.contact_name ?? "—"}</td>
-                          <td className="px-4 py-2.5 text-[12px] text-[#64748B]">{s.phone ?? "—"}</td>
-                          <td className="px-4 py-2.5 text-[12px] text-[#64748B]">{s.email ?? "—"}</td>
-                          <td className="px-4 py-2.5 text-[12px] text-[#64748B]">{s.website ? <a href={s.website} target="_blank" rel="noopener noreferrer" className="text-[#7B9BB5] hover:underline">{s.website.replace(/^https?:\/\//, "")}</a> : "—"}</td>
-                          <td className="px-4 py-2.5 text-right">
-                            <button onClick={() => openEditSuppl(s)} className="p-1 rounded text-[#64748B] hover:text-[#0F172A] transition-colors mr-1"><PencilIcon /></button>
-                            <button onClick={() => deleteSuppl(s)} className="p-1 rounded text-[#64748B] hover:text-red-400 transition-colors"><XIcon /></button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
-        {activeTab === "cms" && (
-          <div className="space-y-4">
-            {cmMessage && <div className={`px-4 py-2.5 rounded-lg text-[13px] ${cmMessage.ok ? "bg-green-50 text-green-700 border border-green-200" : "bg-red-50 text-red-700 border border-red-200"}`}>{cmMessage.text}</div>}
-            <div className="bg-white rounded-xl border border-[#E2E8F0] overflow-hidden">
-              <div className="flex items-center justify-between px-5 py-4 border-b border-[#E2E8F0]">
-                <div>
-                  <h2 className="text-[14px] font-semibold text-[#0F172A]">Construction Managers</h2>
-                  <p className="text-[12px] text-[#64748B] mt-0.5">Global list of CMs reusable across all projects.</p>
-                </div>
-                {!showCmForm && <button onClick={openAddCm} className="h-8 px-3 rounded-md bg-[#7B9BB5] text-white text-[13px] font-medium hover:bg-[#6A8AA4] transition-colors flex items-center gap-1.5"><PlusIcon /> Add CM</button>}
-              </div>
-
-              {showCmForm && (
-                <div className="px-5 py-4 border-b border-[#E2E8F0] bg-[#F4F5F7]/50">
-                  <p className="text-[13px] font-semibold text-[#0F172A] mb-3">{editingCm ? "Edit CM" : "New CM"}</p>
-                  <form onSubmit={saveCm} className="space-y-3">
-                    <div className="grid grid-cols-2 gap-3">
-                      <div><label className={labelCls}>Company Name <span className="text-red-400">*</span></label><input value={cmForm.company_name} onChange={e => setCmForm(p => ({ ...p, company_name: e.target.value }))} required autoFocus placeholder="e.g. Turner Construction" className={inputCls} /></div>
-                      <div><label className={labelCls}>Contact Name</label><input value={cmForm.contact_name} onChange={e => setCmForm(p => ({ ...p, contact_name: e.target.value }))} placeholder="Jane Smith" className={inputCls} /></div>
-                    </div>
-                    <div className="grid grid-cols-3 gap-3">
-                      <div><label className={labelCls}>Phone</label><input value={cmForm.phone} onChange={e => setCmForm(p => ({ ...p, phone: e.target.value }))} placeholder="555-000-1234" className={inputCls} /></div>
-                      <div><label className={labelCls}>Email</label><input value={cmForm.email} onChange={e => setCmForm(p => ({ ...p, email: e.target.value }))} placeholder="contact@cm.com" className={inputCls} /></div>
-                      <div><label className={labelCls}>Notes</label><input value={cmForm.notes} onChange={e => setCmForm(p => ({ ...p, notes: e.target.value }))} placeholder="Any notes…" className={inputCls} /></div>
-                    </div>
-                    <div><label className={labelCls}>Address</label><input value={cmForm.address} onChange={e => setCmForm(p => ({ ...p, address: e.target.value }))} placeholder="123 Main St, City, State 00000" className={inputCls} /></div>
-                    <div className="flex justify-end gap-2 pt-1">
-                      <button type="button" onClick={cancelCmForm} className="h-8 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#64748B] hover:text-[#0F172A] transition-colors">Cancel</button>
-                      <button type="submit" disabled={savingCm || !cmForm.company_name.trim()} className="h-8 px-4 rounded-md bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors disabled:opacity-50">{savingCm ? "Saving…" : editingCm ? "Save changes" : "Add CM"}</button>
-                    </div>
-                  </form>
-                </div>
-              )}
-
-              {cmsLoading && <div className="px-5 py-4 text-[13px] text-[#64748B]">Loading…</div>}
-              {!cmsLoading && cms.length === 0 && !showCmForm && (
-                <div className="px-5 py-8 text-center"><p className="text-[13px] text-[#64748B]">No construction managers yet.</p></div>
-              )}
-              {!cmsLoading && cms.length > 0 && (
-                <div>
-                  <table className="w-full">
-                    <thead className="sticky top-0 bg-[#F8F9FA]">
-                      <tr className="border-b border-[#E2E8F0]">
-                        {["Company Name","Contact","Phone","Email","Address","Notes",""].map(h => <th key={h} className="text-left px-4 py-2.5 text-[11px] font-semibold text-[#64748B] uppercase tracking-wider">{h}</th>)}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {cms.map((c, i) => (
-                        <tr key={c.id} className={`${i < cms.length - 1 ? "border-b border-[#E2E8F0]" : ""} hover:bg-[#F8F9FA] transition-colors group`}>
-                          <td className="px-4 py-2.5 text-[13px] font-medium text-[#0F172A]">{c.company_name}</td>
-                          <td className="px-4 py-2.5 text-[12px] text-[#64748B]">{c.contact_name ?? "—"}</td>
-                          <td className="px-4 py-2.5 text-[12px] text-[#64748B]">{c.phone ?? "—"}</td>
-                          <td className="px-4 py-2.5 text-[12px] text-[#64748B]">{c.email ?? "—"}</td>
-                          <td className="px-4 py-2.5 text-[12px] text-[#64748B] max-w-[160px] truncate">{c.address ?? "—"}</td>
-                          <td className="px-4 py-2.5 text-[12px] text-[#64748B]">{c.notes ?? "—"}</td>
-                          <td className="px-4 py-2.5 text-right">
-                            <button onClick={() => openEditCm(c)} className="p-1 rounded text-[#64748B] hover:text-[#0F172A] transition-colors mr-1"><PencilIcon /></button>
-                            <button onClick={() => deleteCm(c)} className="p-1 rounded text-[#64748B] hover:text-red-400 transition-colors"><XIcon /></button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
-        {activeTab === "gmail" && (
+        {activeView === "gmail" && (
           <div className="space-y-4">
             {gmailLoading ? (
               <div className="text-[13px] text-[#64748B]">Loading…</div>
@@ -2964,6 +3127,8 @@ export default function SettingsPage() {
           </div>
         )}
 
+          </div>
+        </div>
       </div>
     </div>
   )
