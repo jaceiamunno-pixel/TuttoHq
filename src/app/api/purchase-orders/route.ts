@@ -1,30 +1,38 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
-import { normalizeLines, lineTotal } from "@/lib/po-helpers"
+import { normalizeLines, lineTotal, releaseParentError } from "@/lib/po-helpers"
 
 // Purchase Orders = commitments rows with type = 'purchase_order'. POs are
 // company-wide (RLS scopes to the tenant); subcontract-type commitments are not
 // surfaced here yet.
 
-// GET /api/purchase-orders — newest first, company-wide.
-export async function GET() {
+// GET /api/purchase-orders?project_id=… — newest first. Company-wide by default
+// (RLS-scoped); the optional project_id narrows to one project (used by the
+// Commitments drawdown tree). Existing callers pass no param → unchanged.
+export async function GET(req: NextRequest) {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
-  const { data, error } = await supabase
+  const projectId = req.nextUrl.searchParams.get("project_id")?.trim() ?? ""
+
+  let q = supabase
     .from("commitments")
     .select("*")
     .eq("type", "purchase_order")
     .order("created_at", { ascending: false })
+  if (projectId) q = q.eq("project_id", projectId)
+  const { data, error } = await q
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
   // Attach billed/remaining from the balances view so the list can show drawdown
   // without the client recomputing anything. View math is the source of truth.
-  const { data: balances } = await supabase
+  let balQ = supabase
     .from("commitment_balances")
     .select("commitment_id, billed_to_date, remaining_balance")
     .eq("type", "purchase_order")
+  if (projectId) balQ = balQ.eq("project_id", projectId)
+  const { data: balances } = await balQ
   const byId = new Map((balances ?? []).map(b => [b.commitment_id, b]))
   const rows = (data ?? []).map(po => ({
     ...po,
@@ -52,6 +60,21 @@ export async function POST(req: NextRequest) {
   // record carries its own copy even if the vendor master later changes.
   const { data: vendor } = await supabase.from("vendors").select("company_name").eq("id", vendor_id).maybeSingle()
   if (!vendor) return NextResponse.json({ error: "Vendor not found" }, { status: 400 })
+
+  // Optional release-order link. parent_commitment_id is OPTIONAL — a standalone
+  // PO (null) is the default. When present we re-fetch the parent through RLS
+  // (null = not visible → reject) and verify it is a supplier_contract on the
+  // same project + same vendor. The client value is never trusted.
+  let parent_commitment_id: string | null = null
+  const rawParent = typeof body.parent_commitment_id === "string" ? body.parent_commitment_id.trim() : ""
+  if (rawParent) {
+    const { data: parent } = await supabase
+      .from("commitments").select("id, type, project_id, vendor_id").eq("id", rawParent).maybeSingle()
+    if (!parent) return NextResponse.json({ error: "Release-against contract not found or not accessible" }, { status: 400 })
+    const reason = releaseParentError(parent, project_id, vendor_id)
+    if (reason) return NextResponse.json({ error: reason }, { status: 400 })
+    parent_commitment_id = parent.id
+  }
 
   const lines = normalizeLines(body.line_items)
 
@@ -82,6 +105,7 @@ export async function POST(req: NextRequest) {
       ct_tax_treatment: body.ct_tax_treatment === "included" || body.ct_tax_treatment === "exempt" ? body.ct_tax_treatment : null,
       notes: typeof body.notes === "string" ? body.notes.trim() || null : null,
       contract_value: lineTotal(lines),
+      parent_commitment_id,
       uploaded_by: user.id,
     })
     .select()

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
-import { normalizeLines, lineTotal } from "@/lib/po-helpers"
+import { normalizeLines, lineTotal, releaseParentError } from "@/lib/po-helpers"
 
 // GET /api/purchase-orders/[id] — one PO with its line items, invoices, and the
 // live balance row. The balance comes straight from the commitment_balances view
@@ -51,7 +51,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
   const { data: existing } = await supabase
     .from("commitments")
-    .select("id, vendor_id, po_number, status")
+    .select("id, project_id, vendor_id, po_number, status, parent_commitment_id")
     .eq("id", id).eq("type", "purchase_order").maybeSingle()
   if (!existing) return NextResponse.json({ error: "Purchase order not found" }, { status: 404 })
 
@@ -90,6 +90,38 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     if (!vendor) return NextResponse.json({ error: "Vendor not found" }, { status: 400 })
     update.vendor_id = body.vendor_id
     update.to_company_name = vendor.company_name
+  }
+
+  // ── Release-order link (parent supplier_contract) ──────────────────────────
+  // Validate against the EFFECTIVE project + vendor for this PO (after any change
+  // above), so a link can never end up pointing at a different project/vendor.
+  const effProject = (update.project_id as string | undefined) ?? existing.project_id
+  const effVendor  = (update.vendor_id as string | undefined) ?? existing.vendor_id
+  const projectOrVendorChanged = "project_id" in update || "vendor_id" in update
+
+  // What this write intends the link to be:
+  //  • body sends the key → use it (empty/null clears it → standalone)
+  //  • body omits it but project/vendor changed and a link exists → re-validate
+  //    the existing link so the change can't silently break the invariant
+  //  • otherwise → leave the column untouched
+  let intendedParent: string | null | undefined
+  if ("parent_commitment_id" in body) {
+    const raw = typeof body.parent_commitment_id === "string" ? body.parent_commitment_id.trim() : ""
+    intendedParent = raw || null
+  } else if (existing.parent_commitment_id && projectOrVendorChanged) {
+    intendedParent = existing.parent_commitment_id
+  }
+
+  if (intendedParent === null) {
+    update.parent_commitment_id = null
+  } else if (intendedParent) {
+    if (!effVendor) return NextResponse.json({ error: "Select a vendor before releasing this PO against a contract." }, { status: 400 })
+    const { data: parent } = await supabase
+      .from("commitments").select("id, type, project_id, vendor_id").eq("id", intendedParent).maybeSingle()
+    if (!parent) return NextResponse.json({ error: "Release-against contract not found or not accessible" }, { status: 400 })
+    const reason = releaseParentError(parent, effProject, effVendor)
+    if (reason) return NextResponse.json({ error: reason }, { status: 400 })
+    update.parent_commitment_id = parent.id
   }
 
   // Line items: only touch them when the client sends an array.

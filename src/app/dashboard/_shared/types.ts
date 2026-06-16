@@ -179,6 +179,11 @@ export interface PurchaseOrder {
   status: "draft" | "out_for_signature" | "executed" | "accepted"
   contract_value: number | null
   notes: string | null
+  // Release-order link: when set, this PO is released against a supplier_contract
+  // (its parent). Null = standalone PO (the default). The contract's drawdown
+  // (released_to_children) is Σ of its child POs' contract_value — owned by the
+  // commitment_balances view, never summed client-side.
+  parent_commitment_id: string | null
   // executed_at is reused to hold the accepted date for POs (set when a PO is
   // marked accepted); no dedicated accepted_at column exists.
   executed_at: string | null
@@ -213,6 +218,37 @@ export interface PoBalance {
   billed_to_date: number
   remaining_balance: number
   net_paid: number
+}
+
+// A Supplier Contract is a commitments row with type = 'supplier_contract'. It
+// is the PARENT a purchase_order can be released against (PO.parent_commitment_id
+// → this id). The contract's consumption is driven by its child POs, never by
+// invoices: released_to_children = Σ(child PO contract_value) and
+// contract_remaining = contract_value − released_to_children, both read straight
+// from the commitment_balances view (source of truth — never recomputed client-side).
+export interface SupplierContract {
+  id: string
+  project_id: string
+  vendor_id: string | null
+  to_company_name: string
+  contract_value: number | null
+  cost_code: string | null
+  terms: string | null
+  notes: string | null
+  status: "draft" | "out_for_signature" | "executed" | "accepted"
+  created_at: string
+  updated_at: string
+  // Attached by the list/detail endpoints from commitment_balances (drawdown).
+  released_to_children?: number
+  contract_remaining?: number
+}
+// Live contract-level balance from commitment_balances. For a supplier_contract,
+// billed/remaining are not used (the contract does not look at invoices); the
+// meaningful numbers are released_to_children + contract_remaining.
+export interface SupplierContractBalance {
+  contract_value: number | null
+  released_to_children: number
+  contract_remaining: number
 }
 
 export interface SpecBookDoc {

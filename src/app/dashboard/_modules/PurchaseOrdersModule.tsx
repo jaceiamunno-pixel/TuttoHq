@@ -1,9 +1,10 @@
 "use client"
 
-import { useState, useEffect, useRef, useCallback } from "react"
-import type { Project, PurchaseOrder, PoLineItem, Vendor, CommitmentInvoice, PoBalance } from "../_shared/types"
+import { useState, useEffect, useCallback } from "react"
+import type { Project, PurchaseOrder, PoLineItem, Vendor, CommitmentInvoice, PoBalance, SupplierContract } from "../_shared/types"
 import { PlusIcon, SpinnerIcon, XIcon } from "../_shared/icons"
 import { inputCls, labelCls } from "../_shared/ui"
+import { VendorPicker } from "../_shared/vendor-picker"
 
 // Purchase Orders module — replaces the old Commitments nav entry. POs are
 // company-wide (cross-project, like Library); the form picks a project. A PO is
@@ -53,6 +54,12 @@ export default function PurchaseOrdersModule({ appProjects, globalProjectId }: {
   const [lines, setLines]         = useState<EditLine[]>([emptyLine()])
   const [status, setStatus]       = useState<PurchaseOrder["status"]>("draft")
   const [acceptedDate, setAcceptedDate] = useState<string | null>(null)  // executed_at when accepted
+  // Release-order link (optional). parentContractId = the supplier_contract this
+  // PO is released against; null = standalone (the default). releaseContracts =
+  // the eligible parents for the current project + vendor (from the view, so the
+  // remaining drawdown is live). The server re-validates the link on every save.
+  const [parentContractId, setParentContractId] = useState<string | null>(null)
+  const [releaseContracts, setReleaseContracts] = useState<SupplierContract[]>([])
   const [saving, setSaving]       = useState(false)
   const [pdfBusy, setPdfBusy]     = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
@@ -84,6 +91,27 @@ export default function PurchaseOrdersModule({ appProjects, globalProjectId }: {
   }
   useEffect(() => { loadPOs() }, [])
 
+  // Eligible release-against contracts = supplier contracts on the SAME project +
+  // SAME vendor, RLS-visible (the API filters by both). Refetched whenever the
+  // project or vendor changes; a now-invalid selection is cleared so the picker
+  // can never hold a cross-project/cross-vendor link. The server still
+  // re-validates on save — this is UX, not the security boundary.
+  useEffect(() => {
+    if (!showForm || !projectId || !vendor) { setReleaseContracts([]); return }
+    let cancelled = false
+    const params = new URLSearchParams({ project_id: projectId, vendor_id: vendor.id })
+    fetch(`/api/supplier-contracts?${params.toString()}`)
+      .then(r => r.json())
+      .then(d => {
+        if (cancelled) return
+        const list: SupplierContract[] = d.supplier_contracts ?? []
+        setReleaseContracts(list)
+        setParentContractId(prev => (prev && !list.some(c => c.id === prev) ? null : prev))
+      })
+      .catch(() => { if (!cancelled) setReleaseContracts([]) })
+    return () => { cancelled = true }
+  }, [showForm, projectId, vendor])
+
   const linesTotal = lines.reduce((s, l) => s + (numOrNull(l.quantity) ?? 0) * (numOrNull(l.unit_price) ?? 0), 0)
 
   function resetInvForm() {
@@ -97,6 +125,7 @@ export default function PurchaseOrdersModule({ appProjects, globalProjectId }: {
     setProjectId(""); setVendor(null); setDateRequired(""); setTerms("")
     setCostCode(""); setCtTax(""); setNotes(""); setLines([emptyLine()])
     setStatus("draft"); setAcceptedDate(null)
+    setParentContractId(null); setReleaseContracts([])
     setSaving(false); setPdfBusy(false); setFormError(null)
     setBalance(null); setInvoices([]); resetInvForm()
   }
@@ -120,6 +149,7 @@ export default function PurchaseOrdersModule({ appProjects, globalProjectId }: {
     setNotes(po.notes ?? "")
     setStatus(po.status)
     setAcceptedDate(po.status === "accepted" ? (po.executed_at ?? null) : null)
+    setParentContractId(po.parent_commitment_id ?? null)
     // Load line items + the linked vendor in parallel.
     try {
       const [poRes, vRes] = await Promise.all([
@@ -167,6 +197,7 @@ export default function PurchaseOrdersModule({ appProjects, globalProjectId }: {
       cost_code: costCode,
       ct_tax_treatment: ctTax || null,
       notes,
+      parent_commitment_id: parentContractId,
       line_items: lines
         .map(l => ({ quantity: numOrNull(l.quantity), description: l.description.trim(), unit_price: numOrNull(l.unit_price) }))
         .filter(l => l.description || l.quantity != null || l.unit_price != null),
@@ -463,6 +494,42 @@ export default function PurchaseOrdersModule({ appProjects, globalProjectId }: {
                 </p>
               )}
 
+              {/* Release against a supplier contract (optional) — same project +
+                  same vendor only. Standalone (no contract) is the default. */}
+              {projectId && vendor && (
+                <div>
+                  <label className={labelCls}>
+                    Release Against Contract <span className="text-[#94A3B8] font-normal normal-case tracking-normal">(optional)</span>
+                  </label>
+                  {releaseContracts.length === 0 ? (
+                    <p className="text-[12px] text-[#94A3B8]">No supplier contracts for this vendor on this project — this PO will be standalone.</p>
+                  ) : (
+                    <>
+                      <select value={parentContractId ?? ""} onChange={e => setParentContractId(e.target.value || null)} className={inputCls}>
+                        <option value="">Standalone — no contract</option>
+                        {releaseContracts.map(c => {
+                          const rem = c.contract_remaining ?? c.contract_value ?? 0
+                          const label = [c.cost_code, c.contract_value != null ? usd0(c.contract_value) : null].filter(Boolean).join(" · ")
+                          return <option key={c.id} value={c.id}>{label ? `${label} — ` : ""}{usd0(rem)} remaining</option>
+                        })}
+                      </select>
+                      {(() => {
+                        const sel = releaseContracts.find(c => c.id === parentContractId)
+                        if (!sel) return null
+                        const rem = sel.contract_remaining ?? sel.contract_value ?? 0
+                        const over = linesTotal > rem
+                        return (
+                          <div className={`mt-1.5 rounded-md border px-3 py-2 text-[12px] ${over ? "bg-amber-50 border-amber-200 text-amber-800" : "bg-[#F4F5F7] border-[#E2E8F0] text-[#64748B]"}`}>
+                            Contract remaining <span className="font-semibold tabular-nums">{usd0(rem)}</span>
+                            {over && <span> · This PO ({usd0(linesTotal)}) exceeds the remaining balance. Over-release is allowed — just confirming you can see it.</span>}
+                          </div>
+                        )
+                      })()}
+                    </>
+                  )}
+                </div>
+              )}
+
               {/* Date required + terms + cost code */}
               <div className="flex flex-col sm:flex-row gap-3">
                 <div className="flex-1">
@@ -626,79 +693,5 @@ export default function PurchaseOrdersModule({ appProjects, globalProjectId }: {
         </div>
       )}
     </>
-  )
-}
-
-// Searchable single-step vendor picker — mirrors the submittals VendorCell
-// interaction (anchored fixed-position dropdown, typeahead search), pointed at
-// the unified vendors master. Vendors are flat (no person dimension), so this is
-// one step. Results are server-filtered (the master is 1,400+ rows).
-function VendorPicker({ vendor, onChange }: { vendor: Vendor | null; onChange: (v: Vendor) => void }) {
-  const [open, setOpen]   = useState(false)
-  const [q, setQ]         = useState("")
-  const [rows, setRows]   = useState<Vendor[]>([])
-  const [loading, setLoading] = useState(false)
-  const [pos, setPos]     = useState<{ top: number; left: number; width: number } | null>(null)
-  const ref    = useRef<HTMLDivElement>(null)
-  const btnRef = useRef<HTMLButtonElement>(null)
-
-  useEffect(() => {
-    if (!open) return
-    function onDown(e: MouseEvent) { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false) }
-    document.addEventListener("mousedown", onDown)
-    return () => document.removeEventListener("mousedown", onDown)
-  }, [open])
-
-  // Debounced server search whenever the dropdown is open and the query changes.
-  useEffect(() => {
-    if (!open) return
-    setLoading(true)
-    const t = setTimeout(() => {
-      fetch(`/api/vendors?q=${encodeURIComponent(q.trim())}`)
-        .then(r => r.json())
-        .then(d => setRows(d.vendors ?? []))
-        .catch(() => setRows([]))
-        .finally(() => setLoading(false))
-    }, 200)
-    return () => clearTimeout(t)
-  }, [q, open])
-
-  function toggle() {
-    if (open) { setOpen(false); return }
-    const r = btnRef.current?.getBoundingClientRect()
-    if (r) setPos({ top: r.bottom + 4, left: r.left, width: r.width })
-    setQ("")
-    setOpen(true)
-  }
-
-  return (
-    <div ref={ref}>
-      <button ref={btnRef} type="button" onClick={toggle}
-        className={`w-full h-9 px-3 rounded-md border text-[14px] text-left truncate bg-white transition-colors hover:border-[#7B9BB5]/60 ${open ? "border-[#7B9BB5]" : "border-[#E2E8F0]"} ${vendor ? "text-[#0F172A]" : "text-[#64748B]"}`}>
-        {vendor?.company_name ?? "Select a vendor…"}
-      </button>
-      {open && pos && (
-        <div style={{ position: "fixed", top: pos.top, left: pos.left, width: Math.max(pos.width, 280) }}
-          className="z-50 bg-white border border-[#E2E8F0] rounded-lg shadow-xl">
-          <div className="p-1.5 border-b border-[#E2E8F0]">
-            <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder="Search vendors…"
-              className="w-full h-8 px-2 rounded border border-[#E2E8F0] text-[13px] focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40" />
-          </div>
-          <div className="max-h-72 overflow-y-auto py-1">
-            {loading ? (
-              <p className="px-3 py-2 text-[12px] text-[#94A3B8] flex items-center gap-2"><SpinnerIcon className="h-3 w-3" /> Searching…</p>
-            ) : rows.length === 0 ? (
-              <p className="px-3 py-2 text-[12px] text-[#94A3B8]">No vendors match.</p>
-            ) : rows.map(v => (
-              <button key={v.id} type="button" onClick={() => { onChange(v); setOpen(false) }}
-                className={`w-full text-left px-3 py-1.5 hover:bg-[#F8F9FA] ${v.id === vendor?.id ? "bg-[#7B9BB5]/5" : ""}`}>
-                <p className={`text-[13px] truncate ${v.id === vendor?.id ? "text-[#7B9BB5] font-semibold" : "text-[#0F172A]"}`}>{v.company_name}</p>
-                <p className="text-[11px] text-[#94A3B8] truncate">{[v.vendor_no, [v.city, v.state].filter(Boolean).join(", ")].filter(Boolean).join(" · ") || " "}</p>
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-    </div>
   )
 }
