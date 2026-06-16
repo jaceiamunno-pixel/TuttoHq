@@ -117,13 +117,21 @@ export class PdfDoc {
     this.page.drawLine({ start: { x: x0, y }, end: { x: x1, y }, thickness, color })
   }
 
-  // Wrap text to width; honors explicit newlines.
+  // Wrap text to width; honors explicit newlines. Tokens longer than the column
+  // (e.g. long unspaced names) are hard-broken by character so nothing overflows.
   wrap(font: PDFFont, text: string, size: number, maxW: number): string[] {
     const out: string[] = []
     for (const para of text.split(/\r?\n/)) {
       const words = para.split(/\s+/).filter(Boolean)
       let cur = ""
-      for (const w of words) {
+      for (let w of words) {
+        while (font.widthOfTextAtSize(w, size) > maxW) {
+          let fit = 1
+          while (fit < w.length && font.widthOfTextAtSize(w.slice(0, fit + 1), size) <= maxW) fit++
+          if (cur) { out.push(cur); cur = "" }
+          out.push(w.slice(0, fit))
+          w = w.slice(fit)
+        }
         const next = cur ? `${cur} ${w}` : w
         if (font.widthOfTextAtSize(next, size) <= maxW) cur = next
         else { if (cur) out.push(cur); cur = w }
@@ -153,11 +161,19 @@ export class PdfDoc {
     this.y -= 9
   }
 
-  // A slate uppercase micro-label with a near-black value beneath it.
-  metaCell(x: number, w: number, label: string, value: string) {
+  // A slate uppercase micro-label with a near-black value beneath it. The value
+  // wraps across lines within `w` (long project / vendor names are never
+  // clipped). Returns the height consumed so the caller can advance past the
+  // tallest cell in the row (one line ⇒ 30, matching the prior fixed layout).
+  metaCell(x: number, w: number, label: string, value: string): number {
     this.text(label.toUpperCase(), x, this.y - 8, this.sansBold, 7, SLATE)
-    const v = this.clip(this.serif, value || "—", w, 12)
-    this.text(v, x, this.y - 23, this.serif, 12, INK)
+    const lineH = 15
+    let ly = this.y - 23
+    for (const line of this.wrap(this.serif, value || "—", 12, w)) {
+      this.text(line, x, ly, this.serif, 12, INK)
+      ly -= lineH
+    }
+    return (this.y - 23) - ly + 15  // 23 (label+first line) + extra lines + 7 pad
   }
 
   // Hairline table: slate column-header rule, plain body rows, a single slate
@@ -194,23 +210,39 @@ export class PdfDoc {
       this.y -= 4
     }
     drawHeader()
+    const lineH = 13
     rows.forEach((r, i) => {
       const isTotal = opts.totalFromIndex != null && i >= opts.totalFromIndex
-      this.ensure(rowH + (i === opts.totalFromIndex ? 6 : 0))
+      const font = isTotal ? this.sansBold : this.sans
+      // Left-aligned cells (Description / Name) wrap; right-aligned numerics
+      // stay one line (they're short — clip is a safety net only).
+      const cellLines = cols.map((c, ci) => {
+        const raw = r[ci] ?? ""
+        if (c.align === "right") return [this.clip(font, raw, c.w - PAD, 9)]
+        const lg = ci === 0 ? 0 : PAD
+        return this.wrap(font, raw, 9, c.w - lg)
+      })
+      const nLines = Math.max(1, ...cellLines.map(l => l.length))
+      const h = rowH + (nLines - 1) * lineH
+      this.ensure(h + (i === opts.totalFromIndex ? 6 : 0))
       if (i === opts.totalFromIndex) {
         this.down(4)
         this.rule(this.y + 2, SLATE, 0.8)
         this.down(2)
       }
-      const font = isTotal ? this.sansBold : this.sans
       let cx = M
       cols.forEach((c, ci) => {
-        const { t, x, right } = cellX(cx, c, ci, font, 9, r[ci] ?? "")
-        if (right) this.rtext(t, x, this.y - 12, font, 9, INK)
-        else this.text(t, x, this.y - 12, font, 9, INK)
+        const lines = cellLines[ci]
+        if (c.align === "right") {
+          this.rtext(lines[0] ?? "", cx + c.w - PAD, this.y - 12, font, 9, INK)
+        } else {
+          const lg = ci === 0 ? 0 : PAD
+          let ly = this.y - 12
+          for (const line of lines) { this.text(line, cx + lg, ly, font, 9, INK); ly -= lineH }
+        }
         cx += c.w
       })
-      this.y -= rowH
+      this.y -= h
     })
   }
 
