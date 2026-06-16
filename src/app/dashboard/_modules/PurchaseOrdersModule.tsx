@@ -31,9 +31,8 @@ export default function PurchaseOrdersModule({ appProjects, globalProjectId }: {
   // Form state (shared by new + edit)
   const [showForm, setShowForm]   = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
-  // For a brand-new draft, the number is reserved via the RPC the moment the
-  // form opens; if the user cancels without saving we release it so it recycles.
-  const [reservedNumber, setReservedNumber] = useState<string | null>(null)
+  // The PO number is issued server-side at create (the create route calls
+  // issue_po_number); it's unknown until the first save, then displayed.
   const [poNumber, setPoNumber]   = useState("")
   const [projectId, setProjectId] = useState("")
   const [vendor, setVendor]       = useState<Vendor | null>(null)
@@ -65,23 +64,16 @@ export default function PurchaseOrdersModule({ appProjects, globalProjectId }: {
   const linesTotal = lines.reduce((s, l) => s + (numOrNull(l.quantity) ?? 0) * (numOrNull(l.unit_price) ?? 0), 0)
 
   function resetForm() {
-    setEditingId(null); setReservedNumber(null); setPoNumber("")
+    setEditingId(null); setPoNumber("")
     setProjectId(""); setVendor(null); setDateRequired(""); setTerms("")
     setCostCode(""); setCtTax(""); setNotes(""); setLines([emptyLine()])
     setSaving(false); setPdfBusy(false); setFormError(null)
   }
 
-  async function openNew() {
+  function openNew() {
     resetForm()
     setProjectId(globalProjectId || "")
     setShowForm(true)
-    // Reserve a PO number to display immediately (draft-create timing).
-    try {
-      const res = await fetch("/api/purchase-orders/number", { method: "POST" })
-      const d = await res.json()
-      if (res.ok && d.po_number) { setPoNumber(d.po_number); setReservedNumber(d.po_number) }
-      else setFormError(d.error ?? "Could not reserve a PO number.")
-    } catch { setFormError("Could not reserve a PO number.") }
   }
 
   async function openEdit(po: PurchaseOrder) {
@@ -113,19 +105,14 @@ export default function PurchaseOrdersModule({ appProjects, globalProjectId }: {
     } catch { /* leave defaults */ }
   }
 
-  async function closeForm() {
-    // Release the reserved number only when a brand-new draft is abandoned
-    // before it was ever saved (no editingId yet).
-    if (reservedNumber && !editingId) {
-      fetch(`/api/purchase-orders/number?n=${encodeURIComponent(reservedNumber)}`, { method: "DELETE" }).catch(() => {})
-    }
+  function closeForm() {
+    // Nothing to release: no number is issued until the first save (server-side).
     setShowForm(false)
     resetForm()
   }
 
   function buildPayload() {
     return {
-      po_number: poNumber,
       project_id: projectId,
       vendor_id: vendor?.id ?? "",
       date_required: dateRequired,
@@ -151,9 +138,9 @@ export default function PurchaseOrdersModule({ appProjects, globalProjectId }: {
       const d = await res.json()
       if (!res.ok) { setFormError(d.error ?? "Save failed."); return null }
       const row: PurchaseOrder = d.purchase_order
-      // On first save the draft is now persisted — adopt its id so a later close
-      // doesn't release the (now in-use) number, and edits PATCH it.
-      if (!editingId) { setEditingId(row.id); setReservedNumber(null) }
+      // On first save the server issued the number and persisted the draft —
+      // adopt its id (so edits PATCH it) and display the issued number.
+      if (!editingId) { setEditingId(row.id); setPoNumber(row.po_number ?? "") }
       loadPOs()
       return row
     } finally {
@@ -299,7 +286,7 @@ export default function PurchaseOrdersModule({ appProjects, globalProjectId }: {
             <div className="flex items-center justify-between px-6 pt-5 pb-4 border-b border-[#E2E8F0] flex-shrink-0">
               <div className="flex items-center gap-3 min-w-0">
                 <h2 className="text-[15px] font-bold text-[#0F172A]">{editingId ? "Edit Purchase Order" : "New Purchase Order"}</h2>
-                <span className="text-[13px] font-semibold text-[#7B9BB5] tabular-nums">{poNumber || (reservedNumber === null && !editingId ? "…" : "")}</span>
+                <span className="text-[13px] font-semibold text-[#7B9BB5] tabular-nums">{poNumber || (editingId ? "" : "PO # assigned on save")}</span>
               </div>
               <button onClick={closeForm} className="text-[#64748B] hover:text-[#0F172A] transition-colors"><XIcon className="h-4 w-4" /></button>
             </div>

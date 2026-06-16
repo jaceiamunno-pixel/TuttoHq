@@ -21,19 +21,17 @@ export async function GET() {
   return NextResponse.json({ purchase_orders: data ?? [] })
 }
 
-// POST /api/purchase-orders — create a draft PO. The PO number was already
-// reserved via /api/purchase-orders/number, so it arrives in the body.
+// POST /api/purchase-orders — create a draft PO. The PO number is issued here,
+// server-side, via issue_po_number() — never supplied or trusted from the client.
 export async function POST(req: NextRequest) {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
   const body = await req.json().catch(() => ({}))
-  const po_number = typeof body.po_number === "string" ? body.po_number.trim() : ""
   const project_id = typeof body.project_id === "string" ? body.project_id : ""
   const vendor_id = typeof body.vendor_id === "string" ? body.vendor_id : ""
 
-  if (!po_number) return NextResponse.json({ error: "po_number is required" }, { status: 400 })
   if (!project_id) return NextResponse.json({ error: "project_id is required" }, { status: 400 })
   if (!vendor_id) return NextResponse.json({ error: "vendor_id is required" }, { status: 400 })
 
@@ -43,6 +41,18 @@ export async function POST(req: NextRequest) {
   if (!vendor) return NextResponse.json({ error: "Vendor not found" }, { status: 400 })
 
   const lines = normalizeLines(body.line_items)
+
+  // Issue the PO number SERVER-SIDE — this is the single authoritative source of
+  // the number. issue_po_number() reads the caller's po_prefix/po_next_seq from
+  // user_profiles and increments it atomically; we never trust a client value.
+  const { data: issued, error: numErr } = await supabase.rpc("issue_po_number")
+  if (numErr || !issued) {
+    // Surface the RPC's own message (e.g. "PO numbering not configured for this
+    // user") so the cause is actionable rather than a generic field error.
+    const msg = numErr?.message ?? "Could not issue a PO number"
+    return NextResponse.json({ error: msg }, { status: /not configured/i.test(msg) ? 400 : 500 })
+  }
+  const po_number = issued as string
 
   const { data: row, error: insertError } = await supabase
     .from("commitments")
@@ -65,6 +75,9 @@ export async function POST(req: NextRequest) {
     .single()
 
   if (insertError || !row) {
+    // The number was already consumed by the RPC; recycle it if it was the last
+    // issued so the sequence doesn't skip on a failed insert.
+    await supabase.rpc("release_po_number", { p_number: po_number })
     return NextResponse.json({ error: insertError?.message ?? "Insert failed" }, { status: 500 })
   }
 
