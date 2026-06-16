@@ -51,7 +51,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
   const { data: existing } = await supabase
     .from("commitments")
-    .select("id, vendor_id")
+    .select("id, vendor_id, po_number, status")
     .eq("id", id).eq("type", "purchase_order").maybeSingle()
   if (!existing) return NextResponse.json({ error: "Purchase order not found" }, { status: 404 })
 
@@ -64,7 +64,25 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   if (body.ct_tax_treatment === "included" || body.ct_tax_treatment === "exempt") update.ct_tax_treatment = body.ct_tax_treatment
   else if (body.ct_tax_treatment === null || body.ct_tax_treatment === "") update.ct_tax_treatment = null
   if (typeof body.notes === "string") update.notes = body.notes.trim() || null
-  if (body.status === "draft" || body.status === "issued") update.status = body.status
+
+  // Lifecycle status — forward progression draft → executed → accepted only.
+  // 'accepted' is guarded: a PO that was never issued (no number, still draft)
+  // can't be accepted. The accepted date is stored in executed_at (reused; POs
+  // have no dedicated accepted_at column and the PDF's order date uses created_at).
+  if (typeof body.status === "string") {
+    const next = body.status
+    if (!["draft", "executed", "accepted"].includes(next)) {
+      return NextResponse.json({ error: "Unsupported status" }, { status: 400 })
+    }
+    if (next === "accepted") {
+      if (!existing.po_number) return NextResponse.json({ error: "Issue the PO (it needs a number) before it can be accepted." }, { status: 400 })
+      if (existing.status === "draft") return NextResponse.json({ error: "Mark the PO as Issued before accepting it." }, { status: 400 })
+      update.status = "accepted"
+      update.executed_at = new Date().toISOString().slice(0, 10)  // accepted date
+    } else {
+      update.status = next
+    }
+  }
 
   // Vendor change → re-snapshot the company name into to_company_name.
   if (typeof body.vendor_id === "string" && body.vendor_id && body.vendor_id !== existing.vendor_id) {
