@@ -55,22 +55,29 @@ function parseSourceUrl(url) {
   // pg connection password can be URL-encoded; we keep it as-is
   const password = decodeURIComponent(u.password)
   const directRefMatch = u.hostname.match(/^db\.([a-z0-9]+)\.supabase\.co$/i)
-  const poolerUserMatch = u.username.match(/^postgres\.([a-z0-9]+)$/i)
-  const ref = directRefMatch ? directRefMatch[1] : (poolerUserMatch ? poolerUserMatch[1] : null)
+  const poolerUserMatch = u.username.match(/^([a-z0-9_]+)\.([a-z0-9]+)$/i)
+  const ref = directRefMatch ? directRefMatch[1] : (poolerUserMatch ? poolerUserMatch[2] : null)
   if (!ref) throw new Error(`Cannot extract project ref from ${u.hostname}`)
+  // Preserve the actual pooler db user (`<dbuser>.<ref>`, e.g. postgres.<ref>
+  // or antigravity_migrator.<ref>) so non-postgres roles survive the region
+  // probe instead of being silently rewritten to `postgres`.
+  const dbUser = poolerUserMatch ? poolerUserMatch[1] : (u.username || "postgres")
   const isPooler = u.hostname.endsWith(".pooler.supabase.com")
-  const knownGoodRegion = isPooler ? u.hostname.match(/^aws-0-([a-z0-9-]+)\.pooler\.supabase\.com$/)?.[1] ?? null : null
-  return { ref, password, isPooler, knownGoodRegion }
+  // Accept any aws-N prefix (aws-0, aws-1, …), not just aws-0.
+  const poolerHostMatch = isPooler ? u.hostname.match(/^(aws-\d+)-([a-z0-9-]+)\.pooler\.supabase\.com$/i) : null
+  const knownGoodPrefix = poolerHostMatch?.[1] ?? null
+  const knownGoodRegion = poolerHostMatch?.[2] ?? null
+  return { ref, password, dbUser, isPooler, knownGoodPrefix, knownGoodRegion }
 }
 
-const { ref, password, isPooler, knownGoodRegion } = parseSourceUrl(sourceUrl)
+const { ref, password, dbUser, isPooler, knownGoodPrefix, knownGoodRegion } = parseSourceUrl(sourceUrl)
 
 // Session-pooler URL builder. Port 5432 (NOT 6543 — that's transaction
 // pooler, which can't run DDL with prepared statements). Username is
-// `postgres.<ref>` for the pooler, not bare `postgres`.
+// `<dbuser>.<ref>` for the pooler, not bare `<dbuser>`.
 function buildPoolerUrl(region) {
   // pg client accepts a plain URL; we URL-encode the password defensively
-  return `postgresql://postgres.${ref}:${encodeURIComponent(password)}@aws-0-${region}.pooler.supabase.com:5432/postgres`
+  return `postgresql://${dbUser}.${ref}:${encodeURIComponent(password)}@aws-0-${region}.pooler.supabase.com:5432/postgres`
 }
 
 // If the URL is already a working pooler, try it first. Otherwise probe
@@ -84,12 +91,12 @@ const REGION_PROBE = [
 const POOLER_PREFIXES = ["aws-0", "aws-1"]
 function buildAllCandidates() {
   const out = []
-  if (isPooler && knownGoodRegion) out.push({ region: `${knownGoodRegion} (current)`, url: sourceUrl })
+  if (isPooler && knownGoodRegion) out.push({ region: `${knownGoodPrefix}/${knownGoodRegion} (current)`, url: sourceUrl })
   for (const prefix of POOLER_PREFIXES) {
     for (const region of REGION_PROBE) {
       out.push({
         region: `${prefix}/${region}`,
-        url: `postgresql://postgres.${ref}:${encodeURIComponent(password)}@${prefix}-${region}.pooler.supabase.com:5432/postgres`,
+        url: `postgresql://${dbUser}.${ref}:${encodeURIComponent(password)}@${prefix}-${region}.pooler.supabase.com:5432/postgres`,
       })
     }
   }
