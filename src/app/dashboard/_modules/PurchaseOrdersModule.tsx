@@ -21,6 +21,15 @@ const numOrNull = (v: string): number | null => {
 interface EditLine { quantity: string; description: string; unit_price: string }
 const emptyLine = (): EditLine => ({ quantity: "", description: "", unit_price: "" })
 
+// PO lifecycle display: draft (neutral) → executed/"Issued" (blue) → accepted
+// (green). out_for_signature is a deferred signature-flow state, shown if present.
+const STATUS_META: Record<string, { label: string; cls: string }> = {
+  draft:             { label: "Draft",             cls: "bg-slate-100 text-slate-600" },
+  out_for_signature: { label: "Out for Signature", cls: "bg-amber-100 text-amber-700" },
+  executed:          { label: "Issued",            cls: "bg-blue-100 text-blue-700" },
+  accepted:          { label: "Accepted",          cls: "bg-green-100 text-green-700" },
+}
+
 export default function PurchaseOrdersModule({ appProjects, globalProjectId }: {
   appProjects: Project[]
   globalProjectId: string
@@ -42,6 +51,8 @@ export default function PurchaseOrdersModule({ appProjects, globalProjectId }: {
   const [ctTax, setCtTax]         = useState<"" | "included" | "exempt">("")
   const [notes, setNotes]         = useState("")
   const [lines, setLines]         = useState<EditLine[]>([emptyLine()])
+  const [status, setStatus]       = useState<PurchaseOrder["status"]>("draft")
+  const [acceptedDate, setAcceptedDate] = useState<string | null>(null)  // executed_at when accepted
   const [saving, setSaving]       = useState(false)
   const [pdfBusy, setPdfBusy]     = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
@@ -85,6 +96,7 @@ export default function PurchaseOrdersModule({ appProjects, globalProjectId }: {
     setEditingId(null); setPoNumber("")
     setProjectId(""); setVendor(null); setDateRequired(""); setTerms("")
     setCostCode(""); setCtTax(""); setNotes(""); setLines([emptyLine()])
+    setStatus("draft"); setAcceptedDate(null)
     setSaving(false); setPdfBusy(false); setFormError(null)
     setBalance(null); setInvoices([]); resetInvForm()
   }
@@ -106,6 +118,8 @@ export default function PurchaseOrdersModule({ appProjects, globalProjectId }: {
     setCostCode(po.cost_code ?? "")
     setCtTax(po.ct_tax_treatment ?? "")
     setNotes(po.notes ?? "")
+    setStatus(po.status)
+    setAcceptedDate(po.status === "accepted" ? (po.executed_at ?? null) : null)
     // Load line items + the linked vendor in parallel.
     try {
       const [poRes, vRes] = await Promise.all([
@@ -173,7 +187,7 @@ export default function PurchaseOrdersModule({ appProjects, globalProjectId }: {
       const row: PurchaseOrder = d.purchase_order
       // On first save the server issued the number and persisted the draft —
       // adopt its id (so edits PATCH it) and display the issued number.
-      if (!editingId) { setEditingId(row.id); setPoNumber(row.po_number ?? "") }
+      if (!editingId) { setEditingId(row.id); setPoNumber(row.po_number ?? ""); setStatus(row.status) }
       loadPOs()
       return row
     } finally {
@@ -210,6 +224,31 @@ export default function PurchaseOrdersModule({ appProjects, globalProjectId }: {
       if (editingId === id) { setShowForm(false); resetForm() }
       loadPOs()
     }
+  }
+
+  // ── Lifecycle status ────────────────────────────────────────────────────────
+  // Forward-only progression: draft → executed ("Issued") → accepted. The server
+  // enforces the same rules + the accepted guardrail; we also block early here so
+  // the message is immediate.
+  async function advanceStatus(next: "executed" | "accepted") {
+    if (!editingId) return
+    if (next === "accepted" && (!poNumber || status === "draft")) {
+      setFormError("Mark the PO as Issued (it needs a number) before accepting it.")
+      return
+    }
+    setSaving(true)
+    setFormError(null)
+    try {
+      const res = await fetch(`/api/purchase-orders/${editingId}`, {
+        method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: next }),
+      })
+      const d = await res.json()
+      if (!res.ok) { setFormError(d.error ?? "Could not update the status."); return }
+      const row: PurchaseOrder = d.purchase_order
+      setStatus(row.status)
+      setAcceptedDate(row.status === "accepted" ? (row.executed_at ?? null) : null)
+      loadPOs()
+    } finally { setSaving(false) }
   }
 
   // ── Invoices ──────────────────────────────────────────────────────────────
@@ -261,12 +300,8 @@ export default function PurchaseOrdersModule({ appProjects, globalProjectId }: {
   }
 
   const statusBadge = (s: PurchaseOrder["status"]) => {
-    const map: Record<string, string> = {
-      draft: "bg-slate-100 text-slate-600",
-      issued: "bg-amber-100 text-amber-700",
-      executed: "bg-green-100 text-green-700",
-    }
-    return <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold capitalize ${map[s] ?? map.draft}`}>{s}</span>
+    const m = STATUS_META[s] ?? STATUS_META.draft
+    return <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold ${m.cls}`}>{m.label}</span>
   }
 
   return (
@@ -381,6 +416,31 @@ export default function PurchaseOrdersModule({ appProjects, globalProjectId }: {
             </div>
 
             <div className="px-6 py-4 space-y-4 overflow-y-auto">
+              {/* Lifecycle status + forward action (saved POs only) */}
+              {editingId && (
+                <div className="flex items-center justify-between rounded-lg border border-[#E2E8F0] bg-[#F8F9FA] px-3 py-2.5">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="text-[10px] font-bold uppercase tracking-widest text-[#64748B]">Status</span>
+                    {statusBadge(status)}
+                    {status === "accepted" && acceptedDate && (
+                      <span className="text-[11px] text-[#64748B]">Accepted {acceptedDate}</span>
+                    )}
+                  </div>
+                  {status === "draft" && (
+                    <button type="button" onClick={() => advanceStatus("executed")} disabled={saving}
+                      className="h-8 px-3 rounded-md bg-[#7B9BB5] text-white text-[12px] font-semibold hover:bg-[#6A8AA4] transition-colors disabled:opacity-50">
+                      Mark as Issued
+                    </button>
+                  )}
+                  {status === "executed" && (
+                    <button type="button" onClick={() => advanceStatus("accepted")} disabled={saving}
+                      className="h-8 px-3 rounded-md bg-green-600 text-white text-[12px] font-semibold hover:bg-green-700 transition-colors disabled:opacity-50">
+                      Mark as Accepted
+                    </button>
+                  )}
+                </div>
+              )}
+
               {/* Project + Vendor */}
               <div className="flex flex-col sm:flex-row gap-3">
                 <div className="flex-1">

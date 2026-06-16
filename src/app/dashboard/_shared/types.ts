@@ -176,9 +176,12 @@ export interface PurchaseOrder {
   date_required: string | null
   terms: string | null
   ct_tax_treatment: "included" | "exempt" | null
-  status: "draft" | "issued" | "executed"
+  status: "draft" | "out_for_signature" | "executed" | "accepted"
   contract_value: number | null
   notes: string | null
+  // executed_at is reused to hold the accepted date for POs (set when a PO is
+  // marked accepted); no dedicated accepted_at column exists.
+  executed_at: string | null
   created_at: string
   updated_at: string
   // Attached by the list endpoint from commitment_balances (drawdown display).
