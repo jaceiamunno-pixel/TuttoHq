@@ -15,7 +15,7 @@ const serifWordmark = localFont({
 import type { Project, TeamMember } from "./_shared/types"
 import { SelectProjectEmptyState } from "./_shared/ui"
 import DrawingsModule from "./_modules/DrawingsModule"
-import CommitmentsModule from "./_modules/CommitmentsModule"
+import PurchaseOrdersModule from "./_modules/PurchaseOrdersModule"
 import PunchModule from "./_modules/PunchModule"
 import DailyModule from "./_modules/DailyModule"
 import RfisModule from "./_modules/RfisModule"
@@ -23,7 +23,7 @@ import ChangeOrdersModule from "./_modules/ChangeOrdersModule"
 import CloseoutModule from "./_modules/CloseoutModule"
 import LibrarySubmittalsModule from "./_modules/LibrarySubmittalsModule"
 
-type ModuleId = "library" | "submittals" | "rfis" | "changeorders" | "punch" | "daily" | "drawings" | "commitments" | "closeout"
+type ModuleId = "library" | "submittals" | "rfis" | "changeorders" | "punch" | "daily" | "drawings" | "purchaseorders" | "closeout"
 
 // Module nav — rendered horizontally in the top nav (desktop) and as a
 // hamburger dropdown (mobile). Spec Books is intentionally absent: it is
@@ -36,19 +36,19 @@ const MODULES: { id: ModuleId; label: string; icon: React.ReactNode }[] = [
   { id: "punch",        label: "Punch List",    icon: <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" /></svg> },
   { id: "daily",        label: "Daily Reports", icon: <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg> },
   { id: "drawings",     label: "Drawing Log",   icon: <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7" /></svg> },
-  { id: "commitments",  label: "Commitments",   icon: <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg> },
+  { id: "purchaseorders", label: "Purchase Orders", icon: <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg> },
   { id: "closeout",     label: "Closeout",      icon: <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z" /></svg> },
 ]
 
 // Empty-state phrasing for project-scoped modules opened with no project set.
-const MODULE_EMPTY_LABEL: Record<Exclude<ModuleId, "library">, string> = {
+// Library and Purchase Orders are cross-project, so they're excluded.
+const MODULE_EMPTY_LABEL: Record<Exclude<ModuleId, "library" | "purchaseorders">, string> = {
   submittals:   "the submittal log",
   rfis:         "RFIs",
   changeorders: "change orders",
   punch:        "the punch list",
   daily:        "daily reports",
   drawings:     "the drawing log",
-  commitments:  "commitments",
   closeout:     "closeout",
 }
 
@@ -251,9 +251,9 @@ export default function Home() {
     window.location.href = "/login"
   }
 
-  // Library is the only cross-project module; everything else requires a
+  // Library and Purchase Orders are cross-project; every other module requires a
   // project to be selected before it shows content.
-  const needsProject  = activeModule !== "library"
+  const needsProject  = activeModule !== "library" && activeModule !== "purchaseorders"
   const showEmptyState = needsProject && !globalProjectId
 
   // Chrome branding fallback chain: company display name (serif wordmark) →
@@ -388,7 +388,7 @@ export default function Home() {
         {/* ── Main content area ───────────────────────────────────────────── */}
         <div className="flex-1 flex flex-col min-h-0 min-w-0 bg-[#F4F5F7]">
           {showEmptyState ? (
-            <SelectProjectEmptyState label={MODULE_EMPTY_LABEL[activeModule as Exclude<ModuleId, "library">]} />
+            <SelectProjectEmptyState label={MODULE_EMPTY_LABEL[activeModule as Exclude<ModuleId, "library" | "purchaseorders">]} />
           ) : (
             <>
               {(activeModule === "library" || activeModule === "submittals") && (
@@ -408,8 +408,8 @@ export default function Home() {
                 <DrawingsModule globalProjectId={globalProjectId} appProjects={appProjects} />
               )}
 
-              {activeModule === "commitments" && (
-                <CommitmentsModule globalProjectId={globalProjectId} />
+              {activeModule === "purchaseorders" && (
+                <PurchaseOrdersModule appProjects={appProjects} globalProjectId={globalProjectId} />
               )}
 
               {activeModule === "punch" && (

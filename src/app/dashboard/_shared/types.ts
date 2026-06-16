@@ -153,6 +153,43 @@ export interface Commitment {
   updated_at: string
   uploaded_by: string
 }
+// Unified vendor master (1,400+ rows). Only the fields the PO module reads.
+export interface Vendor {
+  id: string
+  vendor_no: string | null
+  company_name: string
+  street_address: string | null
+  city: string | null
+  state: string | null
+  zip_code: string | null
+  phone: string | null
+}
+
+// A Purchase Order is a commitments row with type = 'purchase_order'.
+export interface PurchaseOrder {
+  id: string
+  project_id: string
+  vendor_id: string | null
+  to_company_name: string
+  po_number: string | null
+  cost_code: string | null
+  date_required: string | null
+  terms: string | null
+  ct_tax_treatment: "included" | "exempt" | null
+  status: "draft" | "issued" | "executed"
+  contract_value: number | null
+  notes: string | null
+  created_at: string
+  updated_at: string
+}
+export interface PoLineItem {
+  id?: string
+  line_no?: number
+  quantity: number | null
+  description: string | null
+  unit_price: number | null
+}
+
 export interface SpecBookDoc {
   id: string
   project_id: string
