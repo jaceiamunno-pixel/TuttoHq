@@ -6,25 +6,33 @@ import { normalizeLines, lineTotal, releaseParentError } from "@/lib/po-helpers"
 // company-wide (RLS scopes to the tenant); subcontract-type commitments are not
 // surfaced here yet.
 
-// GET /api/purchase-orders — newest first, company-wide.
-export async function GET() {
+// GET /api/purchase-orders?project_id=… — newest first. Company-wide by default
+// (RLS-scoped); the optional project_id narrows to one project (used by the
+// Commitments drawdown tree). Existing callers pass no param → unchanged.
+export async function GET(req: NextRequest) {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
-  const { data, error } = await supabase
+  const projectId = req.nextUrl.searchParams.get("project_id")?.trim() ?? ""
+
+  let q = supabase
     .from("commitments")
     .select("*")
     .eq("type", "purchase_order")
     .order("created_at", { ascending: false })
+  if (projectId) q = q.eq("project_id", projectId)
+  const { data, error } = await q
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
   // Attach billed/remaining from the balances view so the list can show drawdown
   // without the client recomputing anything. View math is the source of truth.
-  const { data: balances } = await supabase
+  let balQ = supabase
     .from("commitment_balances")
     .select("commitment_id, billed_to_date, remaining_balance")
     .eq("type", "purchase_order")
+  if (projectId) balQ = balQ.eq("project_id", projectId)
+  const { data: balances } = await balQ
   const byId = new Map((balances ?? []).map(b => [b.commitment_id, b]))
   const rows = (data ?? []).map(po => ({
     ...po,

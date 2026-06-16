@@ -1,16 +1,20 @@
 "use client"
 
-import { useState, useEffect } from "react"
-import type { Project, SupplierContract, Vendor } from "../_shared/types"
+import { useState, useEffect, useMemo } from "react"
+import type { Project, SupplierContract, PurchaseOrder, Vendor } from "../_shared/types"
 import { PlusIcon, SpinnerIcon, XIcon } from "../_shared/icons"
 import { inputCls, labelCls } from "../_shared/ui"
 import { VendorPicker } from "../_shared/vendor-picker"
 
-// Commitments view — supplier contracts and (Part 3) their release-order PO
-// drawdown. A supplier contract is a commitments row with type='supplier_contract'
-// that POs are released against. All drawdown numbers (contract_value,
-// released_to_children, contract_remaining) come straight from the
-// commitment_balances view via /api/supplier-contracts — never summed client-side.
+// Commitments view — the contract→release-order drawdown structure. Supplier
+// contracts are the PARENT rows; the POs released against each (parent_commitment_id
+// = contract id) nest beneath; POs with no parent live in a Standalone section.
+//
+// Every balance number — a contract's contract_value / released_to_children /
+// contract_remaining, and a PO's contract_value / billed_to_date /
+// remaining_balance — comes straight from the commitment_balances view (attached
+// server-side by the list endpoints). This screen NEVER sums or recomputes money;
+// it only groups POs under their parent for display.
 
 const usd0 = (n: number) => new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(n)
 const numOrNull = (v: string): number | null => {
@@ -20,11 +24,76 @@ const numOrNull = (v: string): number | null => {
   return Number.isFinite(n) ? n : null
 }
 
+// PO lifecycle badge — mirrors PurchaseOrdersModule's STATUS_META so the rows
+// here read identically to the flat Purchase Orders screen.
+const PO_STATUS: Record<string, { label: string; cls: string }> = {
+  draft:             { label: "Draft",             cls: "bg-slate-100 text-slate-600" },
+  out_for_signature: { label: "Out for Signature", cls: "bg-amber-100 text-amber-700" },
+  executed:          { label: "Issued",            cls: "bg-blue-100 text-blue-700" },
+  accepted:          { label: "Accepted",          cls: "bg-green-100 text-green-700" },
+}
+function PoStatusBadge({ status }: { status: PurchaseOrder["status"] }) {
+  const m = PO_STATUS[status] ?? PO_STATUS.draft
+  return <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold ${m.cls}`}>{m.label}</span>
+}
+
+// Release-order PO rows — same column set + styling as the flat PO list (PO #,
+// Value, Billed, Remaining, Status). Display only; POs are edited on their own
+// screen. All numbers come pre-attached from commitment_balances.
+function PoRows({ pos }: { pos: PurchaseOrder[] }) {
+  return (
+    <>
+      {/* Desktop table */}
+      <div className="hidden sm:block rounded-lg border border-[#E2E8F0] overflow-clip bg-white">
+        <table className="w-full text-[13px] border-collapse">
+          <thead className="bg-[#F8F9FA]">
+            <tr className="border-b border-[#E2E8F0]">
+              <th className="text-left px-3 py-2 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-32">PO #</th>
+              <th className="text-left px-3 py-2 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-32">Value</th>
+              <th className="text-left px-3 py-2 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-32">Billed</th>
+              <th className="text-left px-3 py-2 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-32">Remaining</th>
+              <th className="text-left px-3 py-2 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-28">Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {pos.map(po => (
+              <tr key={po.id} className="border-b border-[#E2E8F0]/60 last:border-0 hover:bg-[#F8F9FA] transition-colors">
+                <td className="px-3 py-2 font-semibold text-[#0F172A] tabular-nums">{po.po_number ?? "—"}</td>
+                <td className="px-3 py-2 text-[#0F172A] text-[12px] tabular-nums font-medium">{po.contract_value != null ? usd0(po.contract_value) : "—"}</td>
+                <td className="px-3 py-2 text-[#64748B] text-[12px] tabular-nums">{usd0(po.billed_to_date ?? 0)}</td>
+                <td className={`px-3 py-2 text-[12px] tabular-nums font-medium ${(po.remaining_balance ?? 0) < 0 ? "text-amber-700" : "text-[#0F172A]"}`}>{usd0(po.remaining_balance ?? po.contract_value ?? 0)}</td>
+                <td className="px-3 py-2"><PoStatusBadge status={po.status} /></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {/* Mobile cards */}
+      <div className="sm:hidden space-y-2">
+        {pos.map(po => (
+          <div key={po.id} className="bg-white rounded-lg border border-[#E2E8F0] p-2.5">
+            <div className="flex items-center justify-between gap-2 mb-1">
+              <span className="text-[13px] font-bold text-[#0F172A] tabular-nums">{po.po_number ?? "—"}</span>
+              <PoStatusBadge status={po.status} />
+            </div>
+            <div className="flex items-center gap-3 text-[11px]">
+              <span className="text-[#64748B]">Value <span className="font-semibold text-[#0F172A] tabular-nums">{po.contract_value != null ? usd0(po.contract_value) : "—"}</span></span>
+              <span className="text-[#64748B]">Billed <span className="font-semibold text-[#0F172A] tabular-nums">{usd0(po.billed_to_date ?? 0)}</span></span>
+              <span className="text-[#64748B]">Rem. <span className={`font-semibold tabular-nums ${(po.remaining_balance ?? 0) < 0 ? "text-amber-700" : "text-[#0F172A]"}`}>{usd0(po.remaining_balance ?? po.contract_value ?? 0)}</span></span>
+            </div>
+          </div>
+        ))}
+      </div>
+    </>
+  )
+}
+
 export default function CommitmentsView({ globalProjectId }: {
   appProjects: Project[]
   globalProjectId: string
 }) {
   const [contracts, setContracts] = useState<SupplierContract[]>([])
+  const [pos, setPos]             = useState<PurchaseOrder[]>([])
   const [loading, setLoading]     = useState(false)
 
   // Create / edit form (shared)
@@ -38,17 +107,42 @@ export default function CommitmentsView({ globalProjectId }: {
   const [saving, setSaving]       = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
 
-  function loadContracts(pid = globalProjectId) {
-    if (!pid) { setContracts([]); return }
+  // Fetch the project's supplier contracts (with balances) AND its POs (with
+  // balances + parent_commitment_id) in parallel. Both endpoints are RLS-scoped
+  // and project-scoped; the balances are attached server-side from the view.
+  function loadData(pid = globalProjectId) {
+    if (!pid) { setContracts([]); setPos([]); return }
     setLoading(true)
-    fetch(`/api/supplier-contracts?project_id=${encodeURIComponent(pid)}`)
-      .then(r => r.json())
-      .then(d => setContracts(d.supplier_contracts ?? []))
-      .catch(() => setContracts([]))
+    Promise.all([
+      fetch(`/api/supplier-contracts?project_id=${encodeURIComponent(pid)}`).then(r => r.json()).then(d => d.supplier_contracts ?? []).catch(() => []),
+      fetch(`/api/purchase-orders?project_id=${encodeURIComponent(pid)}`).then(r => r.json()).then(d => d.purchase_orders ?? []).catch(() => []),
+    ])
+      .then(([c, p]) => { setContracts(c); setPos(p) })
       .finally(() => setLoading(false))
   }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { loadContracts() }, [globalProjectId])
+  useEffect(() => { loadData() }, [globalProjectId])
+
+  // ── Grouping (display only — no money math) ────────────────────────────────
+  // Attach each PO to its parent contract by parent_commitment_id. A PO whose
+  // parent isn't among this project's contracts (orphan: null parent, or a stale
+  // / cross-project link) falls through to Standalone — defensive, never dropped.
+  const { childrenByParent, standalone } = useMemo(() => {
+    const contractIds = new Set(contracts.map(c => c.id))
+    const childrenByParent = new Map<string, PurchaseOrder[]>()
+    const standalone: PurchaseOrder[] = []
+    for (const po of pos) {
+      const parentId = po.parent_commitment_id
+      if (parentId && contractIds.has(parentId)) {
+        const arr = childrenByParent.get(parentId) ?? []
+        arr.push(po)
+        childrenByParent.set(parentId, arr)
+      } else {
+        standalone.push(po)
+      }
+    }
+    return { childrenByParent, standalone }
+  }, [contracts, pos])
 
   function resetForm() {
     setEditingId(null); setVendor(null)
@@ -87,23 +181,24 @@ export default function CommitmentsView({ globalProjectId }: {
       const d = await res.json()
       if (!res.ok) { setFormError(d.error ?? "Save failed."); return }
       closeForm()
-      loadContracts()
+      loadData()
     } finally { setSaving(false) }
   }
 
   async function deleteContract(id: string) {
     if (!confirm("Delete this supplier contract? Any POs released against it become standalone POs (they are not deleted). This cannot be undone.")) return
     const res = await fetch(`/api/supplier-contracts/${id}`, { method: "DELETE" })
-    if (res.ok) { if (editingId === id) closeForm(); loadContracts() }
+    if (res.ok) { if (editingId === id) closeForm(); loadData() }
   }
 
   const previewValue = numOrNull(contractValue)
+  const isEmpty = contracts.length === 0 && standalone.length === 0
 
   return (
     <>
       {/* Action bar */}
       <div className="flex-shrink-0 border-b border-[#E2E8F0] bg-white flex items-center justify-between px-4 py-2.5 gap-2 min-w-0">
-        <p className="text-[13px] font-semibold text-[#0F172A] truncate min-w-0">Commitments <span className="text-[#64748B] font-normal ml-1">({contracts.length})</span></p>
+        <p className="text-[13px] font-semibold text-[#0F172A] truncate min-w-0">Commitments <span className="text-[#64748B] font-normal ml-1">({contracts.length} contract{contracts.length === 1 ? "" : "s"})</span></p>
         <button
           onClick={openNew}
           disabled={!globalProjectId}
@@ -120,7 +215,7 @@ export default function CommitmentsView({ globalProjectId }: {
           <div className="flex items-center justify-center h-40 gap-2 text-[13px] text-[#64748B]">
             <SpinnerIcon className="h-4 w-4" /> Loading…
           </div>
-        ) : contracts.length === 0 ? (
+        ) : isEmpty ? (
           <div className="flex flex-col items-center justify-center h-full py-24 text-center">
             <div className="w-14 h-14 rounded-2xl bg-[#7B9BB5]/10 border border-[#7B9BB5]/20 flex items-center justify-center mb-4">
               <svg className="w-7 h-7 text-[#7B9BB5]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
@@ -132,64 +227,68 @@ export default function CommitmentsView({ globalProjectId }: {
             </button>
           </div>
         ) : (
-          <>
-            {/* Desktop table */}
-            <div className="hidden sm:block mx-4 my-4 rounded-xl border border-[#E2E8F0] overflow-clip bg-white">
-              <table className="w-full text-[13px] border-collapse">
-                <thead className="sticky top-0 bg-[#F8F9FA] z-10">
-                  <tr className="border-b border-[#E2E8F0]">
-                    <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest">Supplier</th>
-                    <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-32">Cost Code</th>
-                    <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-32">Contract</th>
-                    <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-32">Released</th>
-                    <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-32">Remaining</th>
-                    <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-24">Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {contracts.map(c => {
-                    const remaining = c.contract_remaining ?? c.contract_value ?? 0
-                    return (
-                      <tr key={c.id} className="border-b border-[#E2E8F0]/60 hover:bg-[#F8F9FA] transition-colors">
-                        <td className="px-4 py-2.5 max-w-0"><p className="text-[#0F172A] font-medium truncate" title={c.to_company_name}>{c.to_company_name}</p></td>
-                        <td className="px-4 py-2.5 text-[#64748B] text-[12px]">{c.cost_code || "—"}</td>
-                        <td className="px-4 py-2.5 text-[#0F172A] text-[12px] tabular-nums font-medium">{c.contract_value != null ? usd0(c.contract_value) : "—"}</td>
-                        <td className="px-4 py-2.5 text-[#64748B] text-[12px] tabular-nums">{usd0(c.released_to_children ?? 0)}</td>
-                        <td className={`px-4 py-2.5 text-[12px] tabular-nums font-medium ${remaining < 0 ? "text-amber-700" : "text-[#0F172A]"}`}>{usd0(remaining)}</td>
-                        <td className="px-4 py-2.5">
-                          <div className="flex items-center gap-1">
-                            <button onClick={() => openEdit(c)} className="text-[11px] text-[#64748B] hover:text-[#0F172A] px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors">Edit</button>
-                            <button onClick={() => deleteContract(c.id)} className="text-[11px] text-red-400/60 hover:text-red-400 px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors">Del</button>
-                          </div>
-                        </td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
-            </div>
-            {/* Mobile cards */}
-            <div className="sm:hidden px-3 py-3 space-y-2">
-              {contracts.map(c => {
-                const remaining = c.contract_remaining ?? c.contract_value ?? 0
-                return (
-                  <div key={c.id} className="bg-white rounded-xl border border-[#E2E8F0] p-3 shadow-sm">
-                    <p className="text-[13px] font-medium text-[#0F172A] mb-1">{c.to_company_name}</p>
-                    {c.cost_code && <p className="text-[11px] text-[#64748B] mb-1.5">Cost code {c.cost_code}</p>}
-                    <div className="flex items-center gap-3 mb-2 text-[11px]">
-                      <span className="text-[#64748B]">Contract <span className="font-semibold text-[#0F172A] tabular-nums">{c.contract_value != null ? usd0(c.contract_value) : "—"}</span></span>
-                      <span className="text-[#64748B]">Released <span className="font-semibold text-[#0F172A] tabular-nums">{usd0(c.released_to_children ?? 0)}</span></span>
-                      <span className="text-[#64748B]">Rem. <span className={`font-semibold tabular-nums ${remaining < 0 ? "text-amber-700" : "text-[#0F172A]"}`}>{usd0(remaining)}</span></span>
+          <div className="px-3 sm:px-4 py-4 space-y-4">
+            {/* Parent contract cards with nested release-order POs */}
+            {contracts.map(c => {
+              const released  = c.released_to_children ?? 0
+              const remaining = c.contract_remaining ?? c.contract_value ?? 0
+              const over = remaining < 0
+              const children = childrenByParent.get(c.id) ?? []
+              return (
+                <div key={c.id} className="rounded-xl border border-[#E2E8F0] bg-white overflow-clip">
+                  {/* Header */}
+                  <div className="flex items-start justify-between gap-3 px-4 py-3 border-b border-[#E2E8F0] bg-[#F8F9FA]">
+                    <div className="min-w-0">
+                      <p className="text-[13px] font-bold text-[#0F172A] truncate" title={c.to_company_name}>{c.to_company_name}</p>
+                      {c.cost_code && <p className="text-[11px] text-[#64748B] mt-0.5">Cost code {c.cost_code}</p>}
                     </div>
-                    <div className="flex items-center justify-end gap-1">
-                      <button onClick={() => openEdit(c)} className="text-[11px] text-[#64748B] px-2 py-1 rounded border border-[#E2E8F0] bg-[#F8F9FA]">Edit</button>
-                      <button onClick={() => deleteContract(c.id)} className="text-[11px] text-red-400 px-2 py-1 rounded border border-[#E2E8F0] bg-[#F8F9FA]">Del</button>
+                    <div className="flex items-center gap-1 flex-shrink-0">
+                      <button onClick={() => openEdit(c)} className="text-[11px] text-[#64748B] hover:text-[#0F172A] px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors">Edit</button>
+                      <button onClick={() => deleteContract(c.id)} className="text-[11px] text-red-400/60 hover:text-red-400 px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors">Del</button>
                     </div>
                   </div>
-                )
-              })}
-            </div>
-          </>
+
+                  {/* Drawdown band — all three numbers from commitment_balances */}
+                  <div className="flex items-stretch gap-3 px-4 py-3">
+                    {[
+                      { label: "Contract Value", value: c.contract_value != null ? usd0(c.contract_value) : "—", cls: "text-[#0F172A]", box: "bg-[#F4F5F7] border-[#E2E8F0]" },
+                      { label: "Released", value: usd0(released), cls: "text-[#0F172A]", box: "bg-[#F4F5F7] border-[#E2E8F0]" },
+                      { label: over ? "Remaining (over-released)" : "Remaining", value: usd0(remaining), cls: over ? "text-amber-700" : "text-[#0F172A]", box: over ? "bg-amber-50 border-amber-200" : "bg-[#F4F5F7] border-[#E2E8F0]" },
+                    ].map(({ label, value, cls, box }) => (
+                      <div key={label} className={`flex-1 rounded-lg border px-3 py-2 ${box}`}>
+                        <p className="text-[10px] font-bold text-[#64748B] uppercase tracking-widest mb-1">{label}</p>
+                        <p className={`text-[15px] font-bold tabular-nums ${cls}`}>{value}</p>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Nested release-order POs */}
+                  <div className="px-4 pb-4">
+                    <p className="text-[10px] font-bold text-[#64748B] uppercase tracking-widest mb-1.5">Release Orders <span className="text-[#94A3B8]">({children.length})</span></p>
+                    {children.length === 0 ? (
+                      <p className="text-[12px] text-[#94A3B8] px-1 py-1">No release orders against this contract yet.</p>
+                    ) : (
+                      <PoRows pos={children} />
+                    )}
+                  </div>
+                </div>
+              )
+            })}
+
+            {/* Standalone POs — parent null (or orphaned). The flat Purchase
+                Orders screen remains the place to create/edit these. */}
+            {standalone.length > 0 && (
+              <div className="rounded-xl border border-[#E2E8F0] bg-white overflow-clip">
+                <div className="px-4 py-3 border-b border-[#E2E8F0] bg-[#F8F9FA]">
+                  <p className="text-[13px] font-bold text-[#0F172A]">Standalone POs <span className="text-[#64748B] font-normal ml-1">({standalone.length})</span></p>
+                  <p className="text-[11px] text-[#64748B] mt-0.5">Purchase orders not released against a supplier contract.</p>
+                </div>
+                <div className="px-4 py-3">
+                  <PoRows pos={standalone} />
+                </div>
+              </div>
+            )}
+          </div>
         )}
       </div>
 
