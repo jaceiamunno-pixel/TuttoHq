@@ -21,7 +21,11 @@ export interface ParsedSection {
   needsTitleReview: boolean
   /** Provenance of the title — useful for diagnostics + the dry-run
    *  comparison view. */
-  titleSource: "section-prefix" | "bare-same-line" | "lookahead" | "footer-pattern" | "masterformat-fallback"
+  titleSource: "section-prefix" | "header-block" | "bare-same-line" | "lookahead" | "footer-pattern" | "masterformat-fallback" | "toc-enriched"
+  /** True when this boundary's spec number is NOT present in the book's table
+   *  of contents (Layer 2 validation). Surfaced for review; never blocks a
+   *  commit and never removes the boundary. */
+  notInToc?: boolean
 }
 
 export interface SpecParseResult {
@@ -109,8 +113,10 @@ export async function extractPdfPages(buffer: Buffer): Promise<string[]> {
 
 type TitleTier =
   | "section-prefix"   // line literally contains "SECTION" keyword + clean title (best)
+  | "header-block"     // CSI number in page top block + PART 1 below (structural)
   | "bare-same-line"   // bare number + clean title on same line
   | "lookahead"        // bare number + clean title on the next non-blank line
+  | "running-header"   // number changed in the running header; no body text (scanned)
   | "no-clean-title"   // candidate exists but no clean title — anchor only
 
 interface Candidate {
@@ -271,14 +277,37 @@ function letterCount(s: string): number {
   return s.replace(/[^A-Za-z]/g, "").length
 }
 
+// ─── Title-shape gate (Layer 1d) ─────────────────────────────────────────────
+//
+// A real section title is a noun phrase in Title-Case or ALL-CAPS. An inline
+// cross-reference dropped to column 0 by pdf.js line-wrapping yields a SENTENCE
+// fragment as the "title" — e.g. "to produce weathertight installation",
+// "at the sole cost of the Contractor. Such activities are". These are rejected
+// by shape:
+//   - must not begin with a lowercase letter (prose continuation)
+//   - must not contain a mid-string sentence/abbreviation period ". "
+//     ("Contractor. Such…", "(Project No. …")
+//   - must not end with a dangling comma
+// Minor words after commas ("Testing, Adjusting, and Balancing for HVAC") are
+// deliberately NOT rejected — only the prose signatures above. This gate is
+// about document STRUCTURE, not any one book's house style.
+function passesTitleShape(title: string): boolean {
+  const fa = title.match(/[A-Za-z]/)
+  if (fa && fa[0] === fa[0].toLowerCase() && fa[0] !== fa[0].toUpperCase()) return false
+  if (/\.\s/.test(title)) return false       // mid-title sentence / "No." period
+  if (/,\s*$/.test(title)) return false       // dangling trailing comma
+  return true
+}
+
 /** Validate + normalize a raw title string. Returns the cleaned title
- *  when it passes (≥ 3 letters, not a body fragment), else null. */
+ *  when it passes (≥ 3 letters, not a body fragment, clean shape), else null. */
 function validateTitle(raw: string): string | null {
   if (!raw) return null
   const stripped = stripQuotesAndPunctuation(raw)
   const cleaned = cleanTitle(stripped)
   if (letterCount(cleaned) < 3) return null
   if (isBodyFragment(cleaned)) return null
+  if (!passesTitleShape(cleaned)) return null
   return cleaned
 }
 
@@ -293,28 +322,177 @@ function validateTitle(raw: string): string | null {
 const STRICT_HEADER_LINE =
   /^\s*SECTION\s+(\d{2})\s?(\d{2})\s?(\d{2})(?:\.\d{1,2})?\s*[-–—:]\s*(.+)$/i
 
-// Looser fallback: bare number (with or without SECTION prefix) — used for
-// tiers 1/2 (bare-same-line + lookahead). The separator is optional here so
-// we catch books that don't use a separator after the number.
+// Loose fallback: bare number (with or without SECTION prefix). The trailing
+// `(?!\d)` is the Layer-1a digit-run anchor — it forbids a 6-digit CSI window
+// that is actually part of a longer digit run. Without it the Yale project
+// number `10102202` reads as section `10 10 22`.
 const SAME_LINE_HEADER =
-  /^\s*(?:SECTION\s+)?(\d{2})\s?(\d{2})\s?(\d{2})(?:\.\d{1,2})?\s*(?:[-–—:]\s*)?(.*)$/i
+  /^\s*(?:SECTION\s+)?(\d{2})\s?(\d{2})\s?(\d{2})(?:\.\d{1,2})?(?!\d)\s*(?:[-–—:]\s*)?(.*)$/i
 
+// ─── Structural signals (Layer 1) ────────────────────────────────────────────
+//
+// Digit-anchored CSI number ANYWHERE on a line (not just column 0). Same
+// `(?<!\d) … (?!\d)` guard as above so embedded runs (project / consultant job
+// numbers) are rejected.
+const CSI_NUMBER_ANYWHERE =
+  /(?<!\d)(\d{2})\s?(\d{2})\s?(\d{2})(?:\.\d{1,2})?(?!\d)/g
+
+// The CSI 3-part-format body always opens with PART 1 (GENERAL). Its presence
+// in a page's top block is the generic structural signal that the page is a
+// section START — independent of any one book's header styling. This is what
+// recovers sections whose number appears ONLY in the running header
+// (number-at-end), which the `^`-anchored line matchers never see.
+//
+// The optional leading `P` tolerates a real pdf.js wart: a kerned/drop-cap
+// first glyph is sometimes dropped from the text layer, so "PART 1 - GENERAL"
+// extracts as "ART 1 - GENERAL". The trailing `1\b` keeps this from matching
+// "ARTICLE"/"PARTITION".
+const PART1_MARKER = /^\s*P?ART\s*1\b/i
+
+// Running-header / footer band — never carries the section title.
+const RUNNING_HEADER_LINE = /\bProject\s+No\.?|\bPage\s+\d/i
+
+// Prose-continuation tails (Layer 1c): when the line immediately before a
+// bare-number candidate ends with one of these, the number is an inline
+// cross-reference ("…as defined in Section⏎014000 …"), not a header.
+const CONTINUATION_TAIL =
+  /(?:\b(?:section|sections|division|divisions|no|and|or|in|on|with|per|of|to|for|as|by|the|a|an|at|from|within|under|specified)\b[.,:;]?|[,(])\s*$/i
+
+const HEADER_BLOCK_LINES = 12   // top-of-page window scanned for number + PART 1
+const TOP_BLOCK_LINES    = 8    // a bare-number candidate this high on the page
+                                //  counts as structurally "top of page"
+const PART1_LOOKAHEAD    = 10   // …or PART 1 within this many following lines
+
+function prevNonEmpty(lines: string[], i: number): string | null {
+  for (let j = i - 1; j >= 0; j--) {
+    const t = lines[j].trim()
+    if (t.length > 0) return t
+  }
+  return null
+}
+
+/** Strip a leading "NNNNNN –" / "SECTION NNNNNN -" prefix off a title line. */
+function stripSectionNumberPrefix(line: string): string {
+  const m = line.match(/^\s*(?:SECTION\s+)?\d{2}\s?\d{2}\s?\d{2}(?:\.\d{1,2})?\s*[-–—:]?\s*(.*)$/i)
+  return m ? m[1] : line
+}
+
+/** The section number for a header-block page. Prefers the running-header line
+ *  (it contains the keyword "Section") so consultant job numbers on adjacent
+ *  lines ("Buro Happold Project No. 053902") are not mistaken for sections. */
+function findHeaderBlockNumber(lines: string[], blockEnd: number): string | null {
+  for (const preferSection of [true, false]) {
+    for (let j = 0; j < blockEnd; j++) {
+      const line = lines[j]
+      if (preferSection && !/\bsection\b/i.test(line)) continue
+      if (!preferSection && /\bProject\s+No\.?/i.test(line)) continue
+      CSI_NUMBER_ANYWHERE.lastIndex = 0
+      let mm: RegExpExecArray | null
+      while ((mm = CSI_NUMBER_ANYWHERE.exec(line)) !== null) {
+        if (!VALID_DIVISIONS.has(mm[1])) continue
+        const n = `${mm[1]} ${mm[2]} ${mm[3]}`
+        if (n !== "00 00 00") return n
+      }
+    }
+  }
+  return null
+}
+
+/** The standalone title line in a header block: the first top-block line that
+ *  is not the running header, not "Project No."/"Page N", not a numbered
+ *  article, and that passes the title-shape gate. Stops at PART 1. */
+function findHeaderBlockTitle(lines: string[], blockEnd: number): string {
+  for (let j = 0; j < blockEnd; j++) {
+    const line = lines[j].trim()
+    if (!line) continue
+    if (PART1_MARKER.test(line)) break
+    if (RUNNING_HEADER_LINE.test(line)) continue
+    // A real title line either STARTS with the section number
+    // ("Section 018119 Construction IAQ Requirements", "230000 – General
+    // Provisions") or carries no number at all ("Summary", "Storm Sewer
+    // Systems"). Any line with a CSI number that is NOT at the start is the
+    // page banner ("…Project Section 01 10 00KPMB") or a cross-reference — skip
+    // it. This survives the running-header number being glued to the next token
+    // with no space.
+    const startsWithNum = /^\s*(?:SECTION\s+)?\d{2}\s?\d{2}\s?\d{2}/i.test(line)
+    CSI_NUMBER_ANYWHERE.lastIndex = 0
+    if (!startsWithNum && CSI_NUMBER_ANYWHERE.test(line)) continue
+    if (isBodyFragment(line)) continue
+    const t = validateTitle(stripSectionNumberPrefix(line))
+    if (t) return t
+  }
+  return ""
+}
+
+/** The section number carried in a page's running header (top 3 lines): a
+ *  digit-anchored CSI number on a line that names "Section". Returns null when
+ *  the page has no running-header number (covers, dividers). Used by the
+ *  running-header-delta detector to recover sections with NO body text layer
+ *  (scanned/image pages), whose only on-page signal is the header number. */
+function extractRunningHeaderNumber(pageText: string): string | null {
+  const lines = pageText.split("\n")
+  for (let j = 0; j < Math.min(lines.length, 3); j++) {
+    if (!/\bsection\b/i.test(lines[j])) continue
+    CSI_NUMBER_ANYWHERE.lastIndex = 0
+    let mm: RegExpExecArray | null
+    while ((mm = CSI_NUMBER_ANYWHERE.exec(lines[j])) !== null) {
+      if (!VALID_DIVISIONS.has(mm[1])) continue
+      const n = `${mm[1]} ${mm[2]} ${mm[3]}`
+      if (n !== "00 00 00") return n
+    }
+  }
+  return null
+}
+
+/**
+ * Find section-start candidates on one page.
+ *
+ *  - `gated: false` (TOC mode) — legacy loose behavior: tier-0 strict + any
+ *    bare "NN NN NN Title" line. The TOC lists every section as exactly such a
+ *    line, and detectTocRegion counts these to locate the TOC. Never apply the
+ *    structural body gate here or the TOC vanishes.
+ *  - `gated: true` (body mode) — tier-0 strict (unchanged) + the structural
+ *    header-block detector + the bare-number loose path behind all four Layer-1
+ *    gates. This is the actual fix.
+ */
 function findCandidatesInPage(
   pageText: string,
   page: number,
   pageStartOffset: number,
+  opts: { gated: boolean } = { gated: false },
 ): Candidate[] {
   const out: Candidate[] = []
   const lines = pageText.split("\n")
-  let offsetInPage = 0
 
+  // ── Structural header-block detector (body mode only) ────────────────────
+  // A page is a section START when its top block carries a CSI number AND a
+  // PART 1 marker. Emits at the page top so the running header is included.
+  if (opts.gated) {
+    const blockEnd = Math.min(lines.length, HEADER_BLOCK_LINES)
+    let hasPart1 = false
+    for (let j = 0; j < blockEnd; j++) if (PART1_MARKER.test(lines[j])) { hasPart1 = true; break }
+    if (hasPart1) {
+      const num = findHeaderBlockNumber(lines, blockEnd)
+      if (num) {
+        const title = findHeaderBlockTitle(lines, blockEnd)
+        out.push({
+          specNumber: num,
+          specTitle: title,
+          tier: title ? "header-block" : "no-clean-title",
+          page,
+          globalOffset: pageStartOffset,   // section starts at the top of this page
+        })
+      }
+    }
+  }
+
+  // ── Line-start matching (tier-0 always; loose path gated in body mode) ───
+  let offsetInPage = 0
   for (let i = 0; i < lines.length; i++) {
     const lineOffset = offsetInPage
     offsetInPage += lines[i].length + 1
 
-    // Tier 0 — strict: line starts with SECTION + dash/colon separator
-    // + clean title same-line. If this matches AND the title validates,
-    // emit immediately at the best tier and move on to the next line.
+    // Tier 0 — strict SECTION header. Always trusted, never gated.
     const strict = lines[i].match(STRICT_HEADER_LINE)
     if (strict && VALID_DIVISIONS.has(strict[1])) {
       const specNumber = `${strict[1]} ${strict[2]} ${strict[3]}`
@@ -327,32 +505,36 @@ function findCandidatesInPage(
       }
     }
 
-    // Tier 1+ — loose match (no SECTION-prefix requirement, separator
-    // optional). Used for bare-number headers AND for cross-references
-    // that the strict tier 0 deliberately rejected — those land here at
-    // tier 1 or 2 and lose to any tier-0 candidate for the same section
-    // number elsewhere in the document.
+    // Loose bare-number match. In TOC mode this runs unconditionally (legacy).
+    // In body mode it must clear Layer 1: (a) digit-anchor is baked into the
+    // regex, (b) structural position, (c) preceding-context, (d) title-shape.
     const m = lines[i].match(SAME_LINE_HEADER)
     if (!m) continue
-
     const div = m[1]
     if (!VALID_DIVISIONS.has(div)) continue
     const specNumber = `${m[1]} ${m[2]} ${m[3]}`
     if (specNumber === "00 00 00") continue
 
-    const sameLineValid = validateTitle(m[4] ?? "")
+    if (opts.gated) {
+      const topOfPage = i < TOP_BLOCK_LINES
+      let part1Follows = false
+      for (let j = i + 1; j < Math.min(lines.length, i + 1 + PART1_LOOKAHEAD); j++) {
+        if (PART1_MARKER.test(lines[j])) { part1Follows = true; break }
+      }
+      if (!topOfPage && !part1Follows) continue            // (b) structural signal
+      const prev = prevNonEmpty(lines, i)
+      if (prev && CONTINUATION_TAIL.test(prev)) continue   // (c) preceding-context
+    }
+
+    const sameLineValid = validateTitle(m[4] ?? "")        // (d) title-shape
 
     let title = ""
     let tier: TitleTier
-
     if (sameLineValid !== null) {
       title = sameLineValid
       tier  = "bare-same-line"
     } else {
-      // Lookahead — only inspect the FIRST non-blank following line. If
-      // THAT line is a body fragment, stop; what follows will be body
-      // content too. Prevents skipping past body fragments to grab a
-      // later "real-looking" string.
+      // Lookahead — only inspect the FIRST non-blank following line.
       let lookaheadTitle: string | null = null
       for (let j = i + 1; j < Math.min(lines.length, i + 5); j++) {
         const next = lines[j].trim()
@@ -376,9 +558,11 @@ function findCandidatesInPage(
 
 const TIER_RANK: Record<TitleTier, number> = {
   "section-prefix":   0,
-  "bare-same-line":   1,
-  "lookahead":        2,
-  "no-clean-title":   3,
+  "header-block":     1,
+  "bare-same-line":   2,
+  "lookahead":        3,
+  "running-header":   4,
+  "no-clean-title":   5,
 }
 
 /**
@@ -529,18 +713,42 @@ export async function parseSpecBook(buffer: Buffer): Promise<SpecParseResult> {
     return { pageCount, totalChars, needsOcr: true, sections: [] }
   }
 
-  const perPage = pages.map((p, i) => findCandidatesInPage(p, i + 1, pageStartOffsets[i]))
+  // TOC region is detected from UNGATED candidates: the TOC lists every section
+  // as a bare "NN NN NN Title …" line — exactly what the structural body gate
+  // suppresses — so its density is only visible without the gate. A multi-
+  // volume spec book lists every section in its TOC but carries the bodies for
+  // only some divisions; excluding the region keeps TOC-only sections from
+  // collapsing onto the TOC page as junk "sections".
+  const ungatedPerPage = pages.map((p, i) => findCandidatesInPage(p, i + 1, pageStartOffsets[i], { gated: false }))
+  const tocRegion = detectTocRegion(ungatedPerPage, pageCount)
 
-  // Drop candidates inside the table-of-contents region. A multi-volume spec
-  // book lists every section in its TOC but carries the bodies for only some
-  // divisions; without this, a TOC-only section collapses onto the TOC page and
-  // becomes a junk "section" whose full_text is the TOC and which has no
-  // SUBMITTALS article.
-  const tocRegion = detectTocRegion(perPage, pageCount)
+  // Body detection uses the gated structural detector (tier-0 + header-block +
+  // gated-loose). This is the Layer-1 fix.
+  const gatedPerPage = pages.map((p, i) => findCandidatesInPage(p, i + 1, pageStartOffsets[i], { gated: true }))
+
   const candidates: Candidate[] = []
-  for (let i = 0; i < perPage.length; i++) {
+  for (let i = 0; i < gatedPerPage.length; i++) {
     if (tocRegion && i >= tocRegion.start && i <= tocRegion.end) continue
-    candidates.push(...perPage[i])
+    candidates.push(...gatedPerPage[i])
+  }
+
+  // Running-header-delta — recover sections that have NO body text layer
+  // (scanned/image pages, e.g. a section printed as flat images). Their only
+  // on-page signal is the running-header number changing from the previous
+  // page. Emitted ONLY for numbers no content detector already found, so this
+  // never perturbs existing detection; it only ADDS otherwise-invisible
+  // sections, flagged for review downstream.
+  const detectedNums = new Set(candidates.map(c => c.specNumber))
+  const addedRunning = new Set<string>()
+  let prevNum: string | null = null
+  for (let i = 0; i < pages.length; i++) {
+    if (tocRegion && i >= tocRegion.start && i <= tocRegion.end) { prevNum = null; continue }
+    const num = extractRunningHeaderNumber(pages[i])
+    if (num && num !== prevNum && !detectedNums.has(num) && !addedRunning.has(num)) {
+      candidates.push({ specNumber: num, specTitle: "", tier: "running-header", page: i + 1, globalOffset: pageStartOffsets[i] })
+      addedRunning.add(num)
+    }
+    if (num) prevNum = num
   }
 
   const headers = dedupeByTierThenGap(candidates, totalChars)
@@ -568,12 +776,15 @@ export async function parseSpecBook(buffer: Buffer): Promise<SpecParseResult> {
     let specTitle = h.specTitle
     let titleSource: ParsedSection["titleSource"] =
       h.tier === "section-prefix" ? "section-prefix" :
+      h.tier === "header-block"   ? "header-block" :
       h.tier === "bare-same-line" ? "bare-same-line" :
       h.tier === "lookahead"      ? "lookahead" :
       "masterformat-fallback"  // placeholder — overwritten below if Layer 2 hits
-    let needsTitleReview = false
+    // A running-header-delta boundary has no body text we could read, so it is
+    // always handed to review even after a TOC title is joined on.
+    let needsTitleReview = h.tier === "running-header"
 
-    if (h.tier === "no-clean-title" || specTitle === "") {
+    if (h.tier === "no-clean-title" || h.tier === "running-header" || specTitle === "") {
       const footerTitle = extractFooterTitle(fullText)
       if (footerTitle !== null) {
         specTitle = footerTitle
@@ -607,7 +818,82 @@ export async function parseSpecBook(buffer: Buffer): Promise<SpecParseResult> {
     }
   })
 
+  // ── Layer 2 — TOC validation + title enrichment (ADR-005) ────────────────
+  // Safety-net ONLY. The invariant inside applyTocJoin forbids it from adding,
+  // moving, removing, or re-paging any boundary.
+  applyTocJoin(sections, pages)
+
+  // Flag likely-scanned sections (almost no extractable text per page) for
+  // review even when a clean TOC title was joined on — their body could not be
+  // parsed and submittals cannot be extracted from them.
+  for (const s of sections) {
+    const pp = Math.max(1, s.endPage - s.startPage + 1)
+    if (s.fullText.length / pp < 200) s.needsTitleReview = true
+  }
+
   return { pageCount, totalChars, needsOcr: false, sections }
+}
+
+// Truncated-title signature: a real header title never ends on a dangling
+// conjunction/preposition. Used to decide a body title is worth replacing with
+// the canonical TOC title.
+const DANGLING_TAIL = /\b(?:and|or|the|to|for|of|with|a|an|in|on|at|by|per|as|from)\s*$/i
+
+/**
+ * Layer 2 — join detected boundaries against the book's own table of contents.
+ *
+ *   VALIDATE : a boundary whose spec number is absent from the TOC is flagged
+ *              (notInToc + needsTitleReview). It is NEVER dropped.
+ *   ENRICH   : a boundary whose number IS in the TOC but whose detected title
+ *              is weak/fragment/truncated is relabelled with the canonical TOC
+ *              title.
+ *
+ * HARD INVARIANT (ADR-005), enforced at runtime below, not merely documented:
+ * this function may mutate ONLY specTitle / titleSource / needsTitleReview /
+ * notInToc on existing sections. It must never create, remove, move, or re-page
+ * a boundary. count(TOC) must NOT become count(boundaries).
+ */
+function applyTocJoin(sections: ParsedSection[], pages: string[]): void {
+  const beforeCount = sections.length
+  const beforeShape = sections.map(s => `${s.specNumber}@${s.startPage}-${s.endPage}`).join("|")
+
+  const tocEntries = extractSpecToc(pages)
+  const tocTitle = new Map<string, string>()
+  for (const e of tocEntries) if (e.specTitle) tocTitle.set(e.specNumber, e.specTitle)
+  const tocNumbers = new Set(tocEntries.map(e => e.specNumber))
+
+  for (const s of sections) {
+    if (!tocNumbers.has(s.specNumber)) {
+      // VALIDATE — number not in the TOC: suspect boundary, flag for review.
+      s.notInToc = true
+      s.needsTitleReview = true
+      continue
+    }
+    const canonical = tocTitle.get(s.specNumber)
+    if (!canonical) continue
+    const weak =
+      s.needsTitleReview ||
+      s.titleSource === "masterformat-fallback" ||
+      s.titleSource === "footer-pattern" ||
+      !passesTitleShape(s.specTitle) ||
+      DANGLING_TAIL.test(s.specTitle)
+    if (weak && passesTitleShape(canonical) && letterCount(canonical) >= 3) {
+      // ENRICH — replace the weak title with the canonical TOC title.
+      s.specTitle = smartTitleCase(canonical)
+      s.titleSource = "toc-enriched"
+      s.needsTitleReview = false
+    }
+  }
+
+  // Invariant enforcement (code-level): boundaries are untouched by the join.
+  const afterShape = sections.map(s => `${s.specNumber}@${s.startPage}-${s.endPage}`).join("|")
+  if (sections.length !== beforeCount || afterShape !== beforeShape) {
+    throw new Error(
+      `Layer 2 TOC join violated the no-boundary-change invariant ` +
+      `(${beforeCount} -> ${sections.length} sections). The TOC may enrich ` +
+      `titles only; it must never create or move a boundary.`,
+    )
+  }
 }
 
 // ─── Table-of-contents parsing (project scope) ───────────────────────────────
