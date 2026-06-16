@@ -405,12 +405,13 @@ export default function DrawingImportModal({ projectId, onClose }: {
   }
 
   function commit() {
+    // Commit-with-blanks (app-wide pattern): a missing sheet number no longer
+    // BLOCKS the commit. Blank-number rows commit with NULL sheet_number and
+    // land in the log's "Needs info" bucket for inline fill. The blank is still
+    // FLAGGED ("no sheet #"), never silently invented — we drop blocking, not
+    // the flag. Hard requirements that still gate (project, staged file, ≥1
+    // included row) are enforced elsewhere (the button disables on 0 included).
     const included = rows.filter(r => r.include)
-    const blank = included.filter(r => !r.sheetNumber.trim())
-    if (blank.length > 0) {
-      setError(`${blank.length} included sheet${blank.length === 1 ? "" : "s"} ${blank.length === 1 ? "has" : "have"} no sheet number — fill or drop before committing.`)
-      return
-    }
     setCommittedCount(0)
     void runCommit(included)
   }
@@ -434,6 +435,8 @@ export default function DrawingImportModal({ projectId, onClose }: {
   }
 
   const includedCount = rows.filter(r => r.include).length
+  // Soft signal only — blank-number rows commit anyway (see commit()).
+  const blankIncludedCount = rows.filter(r => r.include && !r.sheetNumber.trim()).length
 
   return (
     <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center"
@@ -480,6 +483,11 @@ export default function DrawingImportModal({ projectId, onClose }: {
                   {stats.ocrSkippedCap > 0 && <> · {stats.ocrSkippedCap} over cap</>}
                   {stats.indexFound && <> · index: {stats.indexRows} titles, {stats.titlesEnriched} filled</>}
                 </p>
+              )}
+              {blankIncludedCount > 0 && (
+                <div className="mb-2 px-3 py-2 rounded-md bg-amber-50 border border-amber-300 text-[12px] text-amber-800">
+                  {blankIncludedCount} sheet{blankIncludedCount === 1 ? "" : "s"} {blankIncludedCount === 1 ? "has" : "have"} no sheet number — {blankIncludedCount === 1 ? "it" : "they"}&apos;ll be committed and marked <span className="font-semibold">Needs info</span>. Fill the number{blankIncludedCount === 1 ? "" : "s"} here or later in the log.
+                </div>
               )}
               <div className="flex items-center gap-3 mb-2">
                 <p className="text-[12px] text-[#475569]"><span className="font-semibold">{rows.length}</span> sheets detected · <span className="font-semibold">{includedCount}</span> to import</p>

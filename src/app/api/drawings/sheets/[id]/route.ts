@@ -34,11 +34,13 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   // Build the sheet-metadata patch from an explicit allow-list only.
   const patch: Record<string, string | null> = {}
   const str = (v: unknown) => (typeof v === "string" ? v.trim() : "")
-  if ("sheet_number" in body) {
-    const v = str(body.sheet_number)
-    if (!v) return NextResponse.json({ error: "sheet_number cannot be blank" }, { status: 400 })
-    patch.sheet_number = v
-  }
+  // sheet_number may be blanked → NULL (commit-with-blanks parity): a "Needs
+  // info" sheet must be partially fillable (e.g. save a title before the number
+  // is known) without forcing a number. Not a matching key in this subsystem,
+  // so a NULL here can't bypass any dedup/FLAG rule. search_vector is a STORED
+  // generated column over (sheet_number, title, discipline) — it recomputes on
+  // this UPDATE automatically; no app code needed to keep search current.
+  if ("sheet_number" in body)      patch.sheet_number = str(body.sheet_number) || null
   if ("title" in body)             patch.title = str(body.title) || null
   if ("discipline" in body)        patch.discipline = str(body.discipline) || null
   if ("discipline_prefix" in body) patch.discipline_prefix = str(body.discipline_prefix) || null

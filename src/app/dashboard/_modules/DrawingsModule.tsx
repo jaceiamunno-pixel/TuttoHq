@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, Fragment } from "react"
 import { hashFileInBrowser } from "@/lib/file-hash"
-import { detectRevision } from "@/lib/drawing-detect"
+import { detectRevision, deriveDiscipline } from "@/lib/drawing-detect"
 import { exportDrawingSheetsToExcel } from "../_shared/excel-export"
 import type { DrawingRecord, Project } from "../_shared/types"
 import { fmtDate, nextRevision } from "../_shared/format"
@@ -19,6 +19,10 @@ const DrawingImportModal = dynamic(() => import("@/components/drawings/DrawingIm
 
 // Discipline options for the sheet metadata edit (mirrors drawing-detect's map).
 const SHEET_DISCIPLINES = ["Architectural", "Structural", "Mechanical", "Electrical", "Plumbing", "Civil", "Fire Protection", "Demolition", "Landscape", "General", "Telecom"]
+
+// Bucket label for committed sheets with no sheet_number (commit-with-blanks).
+// Pinned to the top of the discipline browse so they surface for inline fill.
+const NEEDS_INFO = "Needs info"
 
 // Committed drawing_sheets (ADR-005 Drawing Log v1).
 interface ImportedSheet {
@@ -113,8 +117,22 @@ export default function DrawingsModule({ globalProjectId, appProjects }: {
       revision_label: s.revision_label ?? "",
     })
   }
+  // On sheet_number edit, re-derive discipline_prefix the SAME way the splitter
+  // does (leading alpha run; multi-char prefixes like DM/FP fall out for free)
+  // and back-fill discipline only when it's still empty — a manual discipline
+  // choice is never overwritten. Mirrors DrawingImportModal's row editor.
+  function onSheetNumberDraft(v: string) {
+    const pfx = v.match(/^([A-Za-z]+)/)?.[1] ?? ""
+    setSheetDraft(d => ({
+      ...d,
+      sheet_number: v,
+      discipline_prefix: pfx,
+      discipline: d.discipline || (deriveDiscipline(pfx.toUpperCase() || null) ?? ""),
+    }))
+  }
   async function saveEditSheet(id: string) {
-    if (!sheetDraft.sheet_number.trim()) { alert("Sheet number cannot be blank."); return }
+    // Blank sheet_number is allowed (commit-with-blanks parity) — the sheet
+    // stays in "Needs info" and the row is still editable for partial fill.
     setSavingSheet(true)
     try {
       const res = await fetch(`/api/drawings/sheets/${id}`, {
@@ -275,16 +293,20 @@ export default function DrawingsModule({ globalProjectId, appProjects }: {
   })
   // Group the visible sheets by discipline for sectioned rendering. Encounter
   // order = sheet_number order (the GET returns sorted), so each group stays
-  // sheet_number-sorted. Null discipline → "Unspecified", listed last.
+  // sheet_number-sorted. Sheets committed WITHOUT a sheet number (commit-with-
+  // blanks) collect in a "Needs info" bucket pinned to the TOP — surfaced for
+  // fill, never buried as "—" at the bottom. Null discipline → "Unspecified",
+  // listed last.
   const groupedSheets: [string, ImportedSheet[]][] = (() => {
     const groups = new Map<string, ImportedSheet[]>()
     for (const s of visibleSheets) {
-      const key = s.discipline || "Unspecified"
+      const key = !s.sheet_number ? NEEDS_INFO : (s.discipline || "Unspecified")
       const arr = groups.get(key) ?? []
       arr.push(s)
       groups.set(key, arr)
     }
     return [...groups.entries()].sort(([a], [b]) =>
+      a === NEEDS_INFO ? -1 : b === NEEDS_INFO ? 1 :
       a === "Unspecified" ? 1 : b === "Unspecified" ? -1 : a.localeCompare(b),
     )
   })()
@@ -402,24 +424,26 @@ export default function DrawingsModule({ globalProjectId, appProjects }: {
                       )}
                       {groupedSheets.map(([discipline, sheets]) => (
                         <Fragment key={"grp-" + discipline}>
-                          {/* Discipline section header */}
-                          <tr className="bg-[#EEF2F6] border-t border-[#D9E1EA]">
-                            <td className="pl-3 pr-1 py-1.5 w-8">
+                          {/* Discipline section header — "Needs info" (blank
+                              sheet #) is pinned top and styled amber to prompt fill. */}
+                          <tr className={discipline === NEEDS_INFO ? "bg-amber-50 border-t border-amber-200" : "bg-[#EEF2F6] border-t border-[#D9E1EA]"}>
+                            <td className={`pl-3 pr-1 py-1.5 w-8 ${discipline === NEEDS_INFO ? "border-l-2 border-amber-400" : ""}`}>
                               <input type="checkbox" aria-label={`Select ${discipline}`}
                                 checked={sheets.every(x => selectedSheetIds.has(x.id))}
                                 onChange={e => setGroupSelected(sheets, e.target.checked)}
                                 className="align-middle accent-[#7B9BB5]" />
                             </td>
-                            <td colSpan={4} className="px-3 py-1.5 text-[11px] font-bold text-[#475569] uppercase tracking-[0.05em]">
+                            <td colSpan={4} className={`px-3 py-1.5 text-[11px] font-bold uppercase tracking-[0.05em] ${discipline === NEEDS_INFO ? "text-amber-800" : "text-[#475569]"}`}>
                               {discipline}
-                              <span className="ml-1.5 inline-flex items-center px-1.5 py-0.5 rounded-full bg-white text-[#64748B] text-[10px] font-bold normal-case">{sheets.length}</span>
+                              <span className={`ml-1.5 inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-bold normal-case ${discipline === NEEDS_INFO ? "bg-amber-200 text-amber-900" : "bg-white text-[#64748B]"}`}>{sheets.length}</span>
+                              {discipline === NEEDS_INFO && <span className="ml-2 font-normal normal-case tracking-normal text-amber-700">Add a sheet number to file each under its discipline</span>}
                             </td>
                           </tr>
                           {sheets.map(s => editingSheetId === s.id ? (
                             <tr key={s.id} className="border-t border-[#F1F5F9] bg-amber-50/50">
                               <td colSpan={5} className="px-3 py-2">
                                 <div className="flex flex-wrap items-center gap-2">
-                                  <input value={sheetDraft.sheet_number} onChange={e => setSheetDraft(d => ({ ...d, sheet_number: e.target.value }))}
+                                  <input value={sheetDraft.sheet_number} onChange={e => onSheetNumberDraft(e.target.value)}
                                     className="h-7 px-2 w-24 rounded border border-[#E2E8F0] text-[12px] font-mono" placeholder="Sheet #" />
                                   <select value={sheetDraft.discipline} onChange={e => setSheetDraft(d => ({ ...d, discipline: e.target.value }))}
                                     className="h-7 px-1 rounded border border-[#E2E8F0] text-[12px] bg-white">

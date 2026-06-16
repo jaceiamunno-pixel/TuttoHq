@@ -134,8 +134,13 @@ export async function POST(req: NextRequest) {
     if (!r.staging_path || typeof r.staging_path !== "string") { fail("staging_path missing"); continue }
     if (!r.staging_path.startsWith(stagingPrefix)) { fail("staging_path is outside this company's drawing-staging directory"); continue }
     if (r.staging_path.slice(stagingPrefix.length).includes("..")) { fail("invalid staging_path"); continue }
-    const sheetNumber = (r.sheet_number ?? "").toString().trim()
-    if (!sheetNumber) { fail("sheet_number required (blank rows must be filled before commit)"); continue }
+    // Commit-with-blanks: a missing sheet_number no longer blocks the row — it
+    // commits as NULL and surfaces in the log's "Needs info" bucket for inline
+    // fill. NO placeholder is invented (null means null). This is SAFE here
+    // because commit v1 does NOT match/dedup on sheet_number (NEW sheets only,
+    // see header) — a blank can't collide with or silently merge into another
+    // sheet. The integrity gate (file_sha256) is unchanged and still mandatory.
+    const sheetNumber = (r.sheet_number ?? "").toString().trim() || null
     if (!isValidSha256(r.file_sha256)) { fail("file_sha256 missing or malformed — cannot verify integrity"); continue }
 
     // 1) Insert the sheet. company_id := get_my_company_id() DEFAULT (server),
