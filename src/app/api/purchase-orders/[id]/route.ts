@@ -2,7 +2,9 @@ import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import { normalizeLines, lineTotal } from "@/lib/po-helpers"
 
-// GET /api/purchase-orders/[id] — one PO with its line items (ordered).
+// GET /api/purchase-orders/[id] — one PO with its line items, invoices, and the
+// live balance row. The balance comes straight from the commitment_balances view
+// (the proven source of truth) — never recomputed here.
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
@@ -21,7 +23,19 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
     .eq("commitment_id", id)
     .order("line_no", { ascending: true })
 
-  return NextResponse.json({ purchase_order: po, line_items: lines ?? [] })
+  const { data: balance } = await supabase
+    .from("commitment_balances")
+    .select("contract_value, billed_to_date, remaining_balance, net_paid")
+    .eq("commitment_id", id).maybeSingle()
+
+  const { data: invoices } = await supabase
+    .from("commitment_invoices")
+    .select("id, invoice_no, invoice_date, amount, retainage_amount, status, created_at")
+    .eq("commitment_id", id)
+    .order("invoice_date", { ascending: false, nullsFirst: false })
+    .order("created_at", { ascending: false })
+
+  return NextResponse.json({ purchase_order: po, line_items: lines ?? [], balance: balance ?? null, invoices: invoices ?? [] })
 }
 
 // PATCH /api/purchase-orders/[id] — update fields + replace the line items

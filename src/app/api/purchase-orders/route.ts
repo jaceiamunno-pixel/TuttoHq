@@ -18,7 +18,20 @@ export async function GET() {
     .eq("type", "purchase_order")
     .order("created_at", { ascending: false })
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  return NextResponse.json({ purchase_orders: data ?? [] })
+
+  // Attach billed/remaining from the balances view so the list can show drawdown
+  // without the client recomputing anything. View math is the source of truth.
+  const { data: balances } = await supabase
+    .from("commitment_balances")
+    .select("commitment_id, billed_to_date, remaining_balance")
+    .eq("type", "purchase_order")
+  const byId = new Map((balances ?? []).map(b => [b.commitment_id, b]))
+  const rows = (data ?? []).map(po => ({
+    ...po,
+    billed_to_date: byId.get(po.id)?.billed_to_date ?? 0,
+    remaining_balance: byId.get(po.id)?.remaining_balance ?? po.contract_value ?? 0,
+  }))
+  return NextResponse.json({ purchase_orders: rows })
 }
 
 // POST /api/purchase-orders — create a draft PO. The PO number is issued here,
