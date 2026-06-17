@@ -51,11 +51,38 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
   const { data: existing } = await supabase
     .from("commitments")
-    .select("id, project_id, vendor_id, po_number, status, parent_commitment_id")
+    .select("id, project_id, company_id, vendor_id, po_number, status, parent_commitment_id")
     .eq("id", id).eq("type", "purchase_order").maybeSingle()
   if (!existing) return NextResponse.json({ error: "Purchase order not found" }, { status: 404 })
 
   const update: Record<string, unknown> = { updated_at: new Date().toISOString() }
+
+  // PO number is editable (PO rows only — this route already filters type). There
+  // is NO unique index on po_number, so uniqueness MUST be enforced here or we
+  // silently mint duplicate numbers. The check is scoped to company_id, not
+  // project_id: PO numbers are sequenced per-USER (issue_po_number reads
+  // po_prefix/po_next_seq from user_profiles by auth.uid()), POs are company-wide,
+  // and RLS scopes commitments to the tenant — so the company is the real
+  // namespace for a number. company_id is re-resolved from the row (RLS-scoped),
+  // never trusted from the client. (TOCTOU race is acceptable debt until the
+  // dedicated unique-index migration lands.)
+  if (typeof body.po_number === "string") {
+    const next = body.po_number.trim()
+    if (!next) return NextResponse.json({ error: "PO number cannot be empty" }, { status: 400 })
+    if (next !== existing.po_number) {
+      const { data: clash } = await supabase
+        .from("commitments")
+        .select("id")
+        .eq("type", "purchase_order")
+        .eq("company_id", existing.company_id)
+        .eq("po_number", next)
+        .neq("id", id)
+        .limit(1)
+        .maybeSingle()
+      if (clash) return NextResponse.json({ error: "PO number already in use" }, { status: 409 })
+      update.po_number = next
+    }
+  }
 
   if (typeof body.project_id === "string" && body.project_id) update.project_id = body.project_id
   if (typeof body.cost_code === "string") update.cost_code = body.cost_code.trim() || null
