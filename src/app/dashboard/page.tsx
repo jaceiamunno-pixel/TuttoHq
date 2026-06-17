@@ -3,6 +3,8 @@
 import { useEffect, useMemo, useState } from "react"
 import Link from "next/link"
 import AppChrome from "@/components/app-chrome"
+import { createClient } from "@/lib/supabase/client"
+import { useProjectFavorites, sortByFavorite } from "./_shared/use-project-favorites"
 import type { Project } from "./_shared/types"
 
 // ── Landing dashboard (ADR-006 Phase 2) ─────────────────────────────────────
@@ -13,8 +15,13 @@ export default function DashboardLanding() {
   const [projects, setProjects] = useState<Project[]>([])
   const [loading, setLoading]   = useState(true)
   const [query, setQuery]       = useState("")
+  const [userEmail, setUserEmail] = useState<string | null>(null)
+
+  // Per-user project favorites — keyed by the signed-in user (see hook).
+  const { favorites, toggleFavorite } = useProjectFavorites(userEmail)
 
   useEffect(() => {
+    createClient().auth.getUser().then(({ data }) => setUserEmail(data.user?.email ?? null))
     // RLS-scoped server-side — only this company's projects come back.
     fetch("/api/projects")
       .then(r => r.json())
@@ -25,9 +32,12 @@ export default function DashboardLanding() {
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
-    if (!q) return projects
-    return projects.filter(p => `${p.name} ${p.number ?? ""} ${p.location ?? ""} ${p.gc_name ?? ""}`.toLowerCase().includes(q))
-  }, [projects, query])
+    const matched = q
+      ? projects.filter(p => `${p.name} ${p.number ?? ""} ${p.location ?? ""} ${p.gc_name ?? ""}`.toLowerCase().includes(q))
+      : projects
+    // Favorited projects float to the top of the grid (per-user).
+    return sortByFavorite(matched, favorites)
+  }, [projects, query, favorites])
 
   return (
     <AppChrome>
@@ -62,7 +72,9 @@ export default function DashboardLanding() {
             <p className="text-[13px] text-[#64748B]">No projects match “{query}”.</p>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-              {filtered.map(p => (
+              {filtered.map(p => {
+                const fav = favorites.has(p.id)
+                return (
                 <Link
                   key={p.id}
                   href={`/projects/${p.id}/submittals`}
@@ -70,7 +82,20 @@ export default function DashboardLanding() {
                 >
                   <div className="flex items-start justify-between gap-2">
                     <h2 className="text-[14px] font-semibold text-[#0F172A] leading-snug group-hover:text-[#456A88] transition-colors">{p.name}</h2>
-                    {p.number && <span className="text-[11px] font-medium text-[#64748B] bg-[#F4F5F7] border border-[#E2E8F0] rounded px-1.5 py-0.5 flex-shrink-0 whitespace-nowrap">{p.number}</span>}
+                    <div className="flex items-center gap-1.5 flex-shrink-0">
+                      {p.number && <span className="text-[11px] font-medium text-[#64748B] bg-[#F4F5F7] border border-[#E2E8F0] rounded px-1.5 py-0.5 whitespace-nowrap">{p.number}</span>}
+                      <button
+                        type="button"
+                        onClick={e => { e.preventDefault(); e.stopPropagation(); toggleFavorite(p.id) }}
+                        title={fav ? "Unfavorite" : "Favorite"}
+                        aria-label={fav ? "Unfavorite project" : "Favorite project"}
+                        className={`transition-colors ${fav ? "text-amber-400" : "text-[#CBD5E1] hover:text-[#94A3B8]"}`}
+                      >
+                        <svg className="w-4 h-4" viewBox="0 0 24 24" fill={fav ? "currentColor" : "none"} stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M11.48 3.5l2.3 4.66 5.14.75-3.72 3.62.88 5.12-4.6-2.42-4.6 2.42.88-5.12L4.04 8.9l5.14-.75 2.3-4.65z" />
+                        </svg>
+                      </button>
+                    </div>
                   </div>
                   <div className="mt-2 space-y-1">
                     {p.location && <p className="text-[12px] text-[#64748B] truncate">📍 {p.location}</p>}
@@ -81,7 +106,8 @@ export default function DashboardLanding() {
                     <svg className="w-3.5 h-3.5 transition-transform group-hover:translate-x-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
                   </div>
                 </Link>
-              ))}
+                )
+              })}
             </div>
           )}
         </div>
