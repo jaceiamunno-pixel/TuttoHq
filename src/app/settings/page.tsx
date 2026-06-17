@@ -9,6 +9,7 @@ import { CSI_DIVISIONS } from "@/app/dashboard/_shared/csi"
 import ProjectSpecBooks from "@/components/project-spec-books"
 import LaborRatesTab from "@/components/labor-rates-tab"
 import ProfileSignature from "@/components/profile-signature"
+import ProfilePoNumbering from "@/components/profile-po-numbering"
 import CompanyDetailsCard from "@/components/company-details-card"
 import VendorsDirectory from "@/components/vendors-directory"
 import type { TocEntry, TocDivision } from "@/lib/scope-types"
@@ -1594,7 +1595,10 @@ export default function SettingsPage() {
           <div className="flex-1 min-w-0">
 
         {activeView === "account" && (
-          <ProfileSignature />
+          <div className="space-y-4">
+            <ProfileSignature />
+            <ProfilePoNumbering />
+          </div>
         )}
 
         {activeView === "company-labor" && (
