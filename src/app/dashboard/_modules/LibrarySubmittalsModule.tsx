@@ -816,10 +816,11 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
   // what the user sees on screen. `displaySubmittals` already accounts for the
   // search filter; `groupBySection` flips between section/type/seq vs seq only.
   const [exporting, setExporting] = useState(false)
-  async function handleExportLog() {
-    if (!activeProjectId) return
-    const project = appProjects.find(p => p.id === activeProjectId)
-    if (!project) return
+  const [exportingPdf, setExportingPdf] = useState(false)
+  // The currently-displayed log rows in render order — search filter applied
+  // (displaySubmittals), then the same sort the table uses (grouped vs. seq).
+  // Shared by both the Excel and PDF exports so they stay identical.
+  function orderedExportRows(): SubmittalRecord[] {
     const exportRows = [...displaySubmittals]
     if (groupBySection) {
       exportRows.sort((a, b) =>
@@ -829,10 +830,16 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
     } else {
       exportRows.sort((a, b) => (a.submittal_seq ?? 0) - (b.submittal_seq ?? 0))
     }
+    return exportRows
+  }
+  async function handleExportLog() {
+    if (!activeProjectId) return
+    const project = appProjects.find(p => p.id === activeProjectId)
+    if (!project) return
     setExporting(true)
     try {
       await exportSubmittalLogToExcel({
-        rows: exportRows,
+        rows: orderedExportRows(),
         projectName: project.name,
         gcName: project.gc_name,
         vendorSubs,
@@ -848,6 +855,30 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
       alert(err instanceof Error ? err.message : "Export failed")
     } finally {
       setExporting(false)
+    }
+  }
+  // PDF counterpart — same rows, rendered as a single landscape table. The PDF
+  // engine is dynamic-imported so pdf-lib stays out of the main bundle.
+  async function handleExportLogPdf() {
+    if (!activeProjectId) return
+    const project = appProjects.find(p => p.id === activeProjectId)
+    if (!project) return
+    setExportingPdf(true)
+    try {
+      const { exportSubmittalLogToPdf } = await import("../_shared/pdf-log-export")
+      await exportSubmittalLogToPdf({
+        rows: orderedExportRows(),
+        projectName: project.name,
+        gcName: project.gc_name,
+        vendorSubs,
+        vendorSuppliers,
+        vendorSubPeople: subPeople,
+        vendorSupPeople: supPeople,
+      })
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Export failed")
+    } finally {
+      setExportingPdf(false)
     }
   }
 
@@ -1481,6 +1512,21 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                     </svg>
                   )}
                   <span className="hidden sm:inline">{exporting ? "Exporting…" : "Export"}</span>
+                </button>
+              )}
+              {submittalsView === "log" && activeProjectId && displaySubmittals.length > 0 && (
+                <button
+                  onClick={handleExportLogPdf}
+                  disabled={exportingPdf}
+                  title="Export the current view as a PDF table"
+                  className="h-8 px-3 rounded-md border border-[#E2E8F0] text-[12px] font-semibold text-[#64748B] hover:bg-[#0F172A]/[0.04] transition-colors flex items-center gap-1.5 whitespace-nowrap disabled:opacity-60"
+                >
+                  {exportingPdf ? <SpinnerIcon className="h-3.5 w-3.5" /> : (
+                    <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
+                    </svg>
+                  )}
+                  <span className="hidden sm:inline">{exportingPdf ? "Exporting…" : "Export PDF"}</span>
                 </button>
               )}
               {/* Secondary actions collapsed into a reusable More (⋯) menu —

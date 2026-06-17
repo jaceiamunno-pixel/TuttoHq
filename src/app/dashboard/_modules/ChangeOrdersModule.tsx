@@ -88,6 +88,7 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
   const [coRealized, setCoRealized]                   = useState("")
   const [coRespRealized, setCoRespRealized]           = useState("")
   const [coExporting, setCoExporting]                 = useState(false)
+  const [coExportingPdf, setCoExportingPdf]           = useState(false)
   const [showPco, setShowPco]                         = useState(false)
   const [editPcoId, setEditPcoId]                     = useState<string | null>(null)
   const [pcoPdfBusyId, setPcoPdfBusyId]               = useState<string | null>(null)
@@ -252,6 +253,24 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
     } finally { setCoExporting(false) }
   }
 
+  // Export the current CO log (the `changeOrders` state already mirrors what's
+  // on screen — project-scoped + numerically sorted) as a one-table PDF. The
+  // PDF engine is dynamic-imported so pdf-lib stays out of the main bundle.
+  async function handleExportCoLogPdf() {
+    if (!globalProjectId) return
+    const proj = appProjects.find(p => p.id === globalProjectId)
+    setCoExportingPdf(true)
+    try {
+      const { exportChangeOrderLogToPdf } = await import("../_shared/pdf-log-export")
+      await exportChangeOrderLogToPdf({
+        rows: changeOrders,
+        projectName: proj?.name ?? "Project",
+        projectNumber: proj?.number ?? null,
+        baseContractValue: baseForTotals,
+      })
+    } finally { setCoExportingPdf(false) }
+  }
+
   return (
     <>
       {/* Change Orders action bar */}
@@ -267,6 +286,16 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
               </svg>
             )}
             <span className="hidden sm:inline">{coExporting ? "Exporting…" : "Download log"}</span>
+          </button>
+          <button onClick={handleExportCoLogPdf} disabled={coExportingPdf || changeOrders.length === 0}
+            title="Export the change-order log as a PDF table"
+            className="h-8 px-3 rounded-md border border-[#E2E8F0] text-[12px] font-semibold text-[#64748B] hover:bg-[#0F172A]/[0.04] transition-colors flex items-center gap-1.5 whitespace-nowrap disabled:opacity-60">
+            {coExportingPdf ? <SpinnerIcon className="h-3.5 w-3.5" /> : (
+              <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
+              </svg>
+            )}
+            <span className="hidden sm:inline">{coExportingPdf ? "Exporting…" : "Export PDF"}</span>
           </button>
           <button onClick={() => setShowNewCo(true)} className="h-8 px-3 rounded-md border border-[#E2E8F0] text-[13px] font-semibold text-[#0F172A] hover:bg-[#0F172A]/[0.04] transition-colors flex items-center gap-1.5 whitespace-nowrap">
             <PlusIcon /> New CO

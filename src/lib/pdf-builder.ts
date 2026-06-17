@@ -67,6 +67,9 @@ export interface PDFDocMeta {
   logoBytes?: ArrayBuffer | null
   /** Company name — drawn top-right in place of the logo when no logo is set. */
   brandName?: string | null
+  /** Page orientation. "landscape" swaps width/height — used for wide,
+   *  many-column log tables (Submittal Log, Change-Order log). Default portrait. */
+  orientation?: "portrait" | "landscape"
   /** Skip the standard header entirely (for letter-style docs that draw their
    *  own letterhead, e.g. the PCO cover). */
   noHeader?: boolean
@@ -155,10 +158,12 @@ export class PDFBuilder {
   private page!: PDFPage
   private meta!: Required<Pick<PDFDocMeta, "documentType" | "generationDate">> & PDFDocMeta
 
-  readonly W = PDF.pageW
-  readonly H = PDF.pageH
+  // W / H / CW are set in create() — landscape swaps the page dimensions. The
+  // initializers are the portrait defaults.
+  W: number = PDF.pageW
+  H: number = PDF.pageH
   readonly M = PDF.margin
-  readonly CW = PDF.contentW
+  CW: number = PDF.contentW
   readonly rowH = PDF.rowH
   /** Lowest y a block may occupy before a page break is forced. */
   private readonly bottomLimit = PDF.footerH + 14
@@ -182,6 +187,14 @@ export class PDFBuilder {
       ...meta,
       documentType: meta.documentType,
       generationDate: meta.generationDate ?? new Date(),
+    }
+
+    // Landscape swaps width/height; content width follows. Must run before the
+    // first page is added so every page (and the header/footer math) uses it.
+    if (meta.orientation === "landscape") {
+      builder.W = PDF.pageH
+      builder.H = PDF.pageW
+      builder.CW = builder.W - PDF.margin * 2
     }
 
     builder.page = builder.doc.addPage([builder.W, builder.H])
@@ -714,6 +727,78 @@ export class PDFBuilder {
     this.tableHeader(headers, colWidths)
     for (const row of rows) this.tableRow(row, colWidths, highlightRow?.(row) ?? false)
     this.spacer(4)
+  }
+
+  // ── Log table — wide, spreadsheet-style list (Submittal / Change-Order logs) ──
+  /** Render a column-defined table where every cell WRAPS — long descriptions,
+   *  file names and vendor names never clip (long unspaced tokens hard-break via
+   *  the shared wrap). Rows auto-grow to their tallest cell, the column header
+   *  repeats after every page break, per-column alignment is honored, and full
+   *  cell borders give it a log look. `cols` widths should sum to ~this.CW; pass
+   *  `highlight` to bold + tint summary rows (e.g. totals). */
+  logTable(
+    cols: { header: string; width: number; align?: "left" | "right" }[],
+    rows: string[][],
+    opts: { highlight?: (r: string[]) => boolean } = {},
+  ) {
+    const PADX = 5, PADY = 4
+    const headerSize = 7, bodySize = 7.5, lineH = bodySize + 2.5
+    const totalW = cols.reduce((s, c) => s + c.width, 0)
+
+    const vline = (x: number, fy: number, h: number) =>
+      this.page.drawLine({ start: { x, y: fy }, end: { x, y: fy + h }, thickness: 0.5, color: PDF.color.rule })
+    const box = (fy: number, h: number) => {
+      const edges: [number, number, number, number][] = [
+        [this.M, fy, this.M + totalW, fy], [this.M, fy + h, this.M + totalW, fy + h],
+        [this.M, fy, this.M, fy + h], [this.M + totalW, fy, this.M + totalW, fy + h],
+      ]
+      for (const [x1, y1, x2, y2] of edges) this.page.drawLine({ start: { x: x1, y: y1 }, end: { x: x2, y: y2 }, thickness: 0.5, color: PDF.color.rule })
+    }
+
+    const drawHeaderRow = () => {
+      const h = 18
+      const fy = this.y - h
+      this.page.drawRectangle({ x: this.M, y: fy, width: totalW, height: h, color: PDF.color.fieldFill })
+      let cx = this.M
+      cols.forEach((c, i) => {
+        const t = clip(this.bold, c.header.toUpperCase(), c.width - PADX * 2, headerSize)
+        const tw = this.bold.widthOfTextAtSize(t, headerSize)
+        const tx = c.align === "right" ? cx + c.width - PADX - tw : cx + PADX
+        this.page.drawText(t, { x: tx, y: fy + (h - headerSize) / 2 + 0.5, size: headerSize, font: this.bold, color: PDF.color.ruleStrong })
+        if (i > 0) vline(cx, fy, h)
+        cx += c.width
+      })
+      box(fy, h)
+      this.y -= h
+    }
+
+    this.ensureSpace(18 + 30)   // keep the header off the very bottom of a page
+    drawHeaderRow()
+    for (const r of rows) {
+      const hl = opts.highlight?.(r) ?? false
+      const font = hl ? this.bold : this.reg
+      const wrapped = cols.map((c, i) => this.wrapTextWith(font, r[i] ?? "", bodySize, c.width - PADX * 2))
+      const maxLines = Math.max(1, ...wrapped.map(w => w.length))
+      const h = PADY * 2 + maxLines * lineH
+      if (this.y - h < this.bottomLimit) { this.pageBreak(); drawHeaderRow() }
+      const fy = this.y - h
+      if (hl) this.page.drawRectangle({ x: this.M, y: fy, width: totalW, height: h, color: PDF.color.fieldFill })
+      let cx = this.M
+      cols.forEach((c, i) => {
+        let ly = fy + h - PADY - bodySize
+        for (const line of wrapped[i]) {
+          const lw = font.widthOfTextAtSize(line, bodySize)
+          const tx = c.align === "right" ? cx + c.width - PADX - lw : cx + PADX
+          this.page.drawText(line, { x: tx, y: ly, size: bodySize, font, color: PDF.color.ink })
+          ly -= lineH
+        }
+        if (i > 0) vline(cx, fy, h)
+        cx += c.width
+      })
+      box(fy, h)
+      this.y -= h
+    }
+    this.spacer(6)
   }
 
   // ── Pricing block ───────────────────────────────────────────────────────────
