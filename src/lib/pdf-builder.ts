@@ -67,6 +67,9 @@ export interface PDFDocMeta {
   logoBytes?: ArrayBuffer | null
   /** Company name — drawn top-right in place of the logo when no logo is set. */
   brandName?: string | null
+  /** Page orientation. "landscape" swaps width/height — used for wide,
+   *  many-column log tables (Submittal Log, Change-Order log). Default portrait. */
+  orientation?: "portrait" | "landscape"
   /** Skip the standard header entirely (for letter-style docs that draw their
    *  own letterhead, e.g. the PCO cover). */
   noHeader?: boolean
@@ -155,10 +158,12 @@ export class PDFBuilder {
   private page!: PDFPage
   private meta!: Required<Pick<PDFDocMeta, "documentType" | "generationDate">> & PDFDocMeta
 
-  readonly W = PDF.pageW
-  readonly H = PDF.pageH
+  // W / H / CW are set in create() — landscape swaps the page dimensions. The
+  // initializers are the portrait defaults.
+  W: number = PDF.pageW
+  H: number = PDF.pageH
   readonly M = PDF.margin
-  readonly CW = PDF.contentW
+  CW: number = PDF.contentW
   readonly rowH = PDF.rowH
   /** Lowest y a block may occupy before a page break is forced. */
   private readonly bottomLimit = PDF.footerH + 14
@@ -182,6 +187,14 @@ export class PDFBuilder {
       ...meta,
       documentType: meta.documentType,
       generationDate: meta.generationDate ?? new Date(),
+    }
+
+    // Landscape swaps width/height; content width follows. Must run before the
+    // first page is added so every page (and the header/footer math) uses it.
+    if (meta.orientation === "landscape") {
+      builder.W = PDF.pageH
+      builder.H = PDF.pageW
+      builder.CW = builder.W - PDF.margin * 2
     }
 
     builder.page = builder.doc.addPage([builder.W, builder.H])
@@ -277,24 +290,39 @@ export class PDFBuilder {
   spacer(pt = 10) { this.y -= pt }
 
   // ── Field cell primitive ────────────────────────────────────────────────────
-  /** Draw one label|value (or label|status-badge) form cell. */
+  /** Value-line height inside a form field cell. */
+  private readonly fieldLineH = PDF.size.value + 3
+
+  /** The cell width split — label gutter + value area — for a cell of width `w`. */
+  private fieldCellSplit(w: number): { lw: number; vw: number } {
+    const lw = Math.min(118, Math.floor(w * 0.42))
+    return { lw, vw: w - lw }
+  }
+
+  /** Draw one label|value (or label|status-badge) form cell of height `h`. The
+   *  value wraps across as many lines as `h` allows (the row was sized to fit);
+   *  the label stays single-line (labels are short, fixed strings). */
   private drawFieldCell(
-    x: number, fy: number, w: number, label: string,
+    x: number, fy: number, w: number, h: number, label: string,
     value?: string | null, status?: string | null,
   ) {
-    const lw = Math.min(118, Math.floor(w * 0.42))
-    const vw = w - lw
-    this.page.drawRectangle({ x, y: fy, width: lw, height: this.rowH, color: PDF.color.white })
-    this.page.drawRectangle({ x: x + lw, y: fy, width: vw, height: this.rowH, color: PDF.color.fieldFill })
+    const { lw, vw } = this.fieldCellSplit(w)
+    this.page.drawRectangle({ x, y: fy, width: lw, height: h, color: PDF.color.white })
+    this.page.drawRectangle({ x: x + lw, y: fy, width: vw, height: h, color: PDF.color.fieldFill })
+    // Anchor the label + first value line to the top so single-line rows render
+    // identically to before (h === rowH ⇒ baseline at fy + 7).
+    const topBaseline = fy + h - 15
     this.page.drawText(clip(this.bold, label, lw - 10, PDF.size.label), {
-      x: x + 6, y: fy + 7, size: PDF.size.label, font: this.bold, color: PDF.color.label,
+      x: x + 6, y: topBaseline, size: PDF.size.label, font: this.bold, color: PDF.color.label,
     })
     if (status != null && status !== "") {
-      this.drawBadge(x + lw + 6, fy, String(status))
+      this.drawBadge(x + lw + 6, fy + h - this.rowH, String(status))
     } else {
-      this.page.drawText(clip(this.reg, value && value !== "" ? value : "—", vw - 12, PDF.size.value), {
-        x: x + lw + 6, y: fy + 7, size: PDF.size.value, font: this.reg, color: PDF.color.ink,
-      })
+      let ly = topBaseline
+      for (const line of this.wrapTextWith(this.reg, value && value !== "" ? value : "—", PDF.size.value, vw - 12)) {
+        this.page.drawText(line, { x: x + lw + 6, y: ly, size: PDF.size.value, font: this.reg, color: PDF.color.ink })
+        ly -= this.fieldLineH
+      }
     }
   }
 
@@ -314,28 +342,57 @@ export class PDFBuilder {
     this.page.drawText(txt, { x: x + 7, y: fy + 8, size: 7.5, font: this.bold, color: rgb(tr, tg, tb) })
   }
 
-  /** Draw a row of 1–3 cells with the given flex fractions, plus rules. */
-  private drawCellRow(cells: (FieldCell & { frac: number })[]) {
-    const fy = this.y - this.rowH
+  /** Resolve each cell's pixel width for a row, honoring flex fractions. The
+   *  last cell absorbs rounding so the row always spans the full content width. */
+  private cellRowWidths(cells: (FieldCell & { frac: number })[]): number[] {
     const totalFrac = cells.reduce((s, c) => s + c.frac, 0)
+    const widths: number[] = []
     let cx = this.M
     cells.forEach((c, i) => {
       const last = i === cells.length - 1
       const w = last ? this.M + this.CW - cx : Math.round(this.CW * c.frac / totalFrac)
-      this.drawFieldCell(cx, fy, w, c.label, c.value, c.status)
+      widths.push(w)
+      cx += w
+    })
+    return widths
+  }
+
+  /** Height a cell row needs so its longest value wraps fully. One line ⇒ rowH
+   *  (unchanged); each extra line adds one value-line height. */
+  private cellRowHeight(cells: (FieldCell & { frac: number })[]): number {
+    const widths = this.cellRowWidths(cells)
+    let maxLines = 1
+    cells.forEach((c, i) => {
+      if (c.status != null && c.status !== "") return  // badge — always one line
+      const { vw } = this.fieldCellSplit(widths[i])
+      const lines = this.wrapTextWith(this.reg, c.value && c.value !== "" ? c.value : "—", PDF.size.value, vw - 12)
+      if (lines.length > maxLines) maxLines = lines.length
+    })
+    return this.rowH + (maxLines - 1) * this.fieldLineH
+  }
+
+  /** Draw a row of 1–3 cells with the given flex fractions, plus rules. The row
+   *  grows to fit the tallest wrapped value. */
+  private drawCellRow(cells: (FieldCell & { frac: number })[]) {
+    const widths = this.cellRowWidths(cells)
+    const h = this.cellRowHeight(cells)
+    const fy = this.y - h
+    let cx = this.M
+    cells.forEach((c, i) => {
+      this.drawFieldCell(cx, fy, widths[i], h, c.label, c.value, c.status)
       if (i > 0) {
         this.page.drawLine({
-          start: { x: cx, y: fy }, end: { x: cx, y: fy + this.rowH },
+          start: { x: cx, y: fy }, end: { x: cx, y: fy + h },
           thickness: 0.5, color: PDF.color.rule,
         })
       }
-      cx += w
+      cx += widths[i]
     })
     this.page.drawLine({
       start: { x: this.M, y: fy }, end: { x: this.M + this.CW, y: fy },
       thickness: 0.5, color: PDF.color.rule,
     })
-    this.y -= this.rowH
+    this.y -= h
   }
 
   /** Outer border around a block whose top edge was at `topY`. */
@@ -365,7 +422,7 @@ export class PDFBuilder {
         { label: "Architect", value: project.architect, frac: 1 },
       ])
     }
-    this.ensureSpace(rows.length * this.rowH)
+    this.ensureSpace(rows.reduce((sum, r) => sum + this.cellRowHeight(r), 0))
     const topY = this.y
     for (const row of rows) this.drawCellRow(row)
     this.blockBorder(topY)
@@ -394,7 +451,9 @@ export class PDFBuilder {
    *  key-value cells (columns split the width evenly), or a checkbox row. */
   fieldGrid(rows: PDFGridRow[]) {
     if (rows.length === 0) return
-    this.ensureSpace(rows.length * this.rowH)
+    const totalH = rows.reduce((sum, row) =>
+      sum + (Array.isArray(row) ? this.cellRowHeight(row.map(c => ({ ...c, frac: 1 }))) : this.rowH), 0)
+    this.ensureSpace(totalH)
     const topY = this.y
     for (const row of rows) {
       if (Array.isArray(row)) {
@@ -458,7 +517,16 @@ export class PDFBuilder {
     for (const paragraph of text.split(/\r?\n/)) {
       const words = paragraph.split(/\s+/).filter(Boolean)
       let cur = ""
-      for (const word of words) {
+      for (let word of words) {
+        // Hard-break a single token longer than the column (emails, long file
+        // names with no spaces) so it wraps by character instead of overflowing.
+        while (font.widthOfTextAtSize(word, size) > maxW) {
+          let fit = 1
+          while (fit < word.length && font.widthOfTextAtSize(word.slice(0, fit + 1), size) <= maxW) fit++
+          if (cur) { lines.push(cur); cur = "" }
+          lines.push(word.slice(0, fit))
+          word = word.slice(fit)
+        }
         const next = cur ? `${cur} ${word}` : word
         if (font.widthOfTextAtSize(next, size) <= maxW) {
           cur = next
@@ -621,9 +689,15 @@ export class PDFBuilder {
     this.y -= h
   }
 
-  /** Draw one table data row. Repeats the header automatically on a new page. */
+  /** Draw one table data row. Cell values wrap across lines and the row grows to
+   *  fit its tallest cell (so long descriptions are never clipped). Repeats the
+   *  header automatically on a new page. */
   tableRow(values: string[], colWidths: number[], highlight = false) {
-    const h = 20
+    const font = highlight ? this.bold : this.reg
+    const lineH = 11
+    const wrapped = values.map((v, i) => this.wrapTextWith(font, v && v !== "" ? v : "—", 8, colWidths[i] - 12))
+    const maxLines = Math.max(1, ...wrapped.map(w => w.length))
+    const h = 20 + (maxLines - 1) * lineH
     if (this.y - h < this.bottomLimit) {
       this.pageBreak()
       this.drawTableHeaderRow()
@@ -633,11 +707,12 @@ export class PDFBuilder {
       this.page.drawRectangle({ x: this.M, y: fy, width: this.CW, height: h, color: PDF.color.fieldFill })
     }
     let cx = this.M
-    values.forEach((v, i) => {
-      this.page.drawText(clip(highlight ? this.bold : this.reg, v ?? "—", colWidths[i] - 12, 8), {
-        x: cx + 7, y: fy + 7, size: 8,
-        font: highlight ? this.bold : this.reg, color: PDF.color.ink,
-      })
+    wrapped.forEach((lines, i) => {
+      let ly = fy + h - 13   // first line sits at fy + 7 when h === 20
+      for (const line of lines) {
+        this.page.drawText(line, { x: cx + 7, y: ly, size: 8, font, color: PDF.color.ink })
+        ly -= lineH
+      }
       cx += colWidths[i]
     })
     this.page.drawLine({
@@ -652,6 +727,78 @@ export class PDFBuilder {
     this.tableHeader(headers, colWidths)
     for (const row of rows) this.tableRow(row, colWidths, highlightRow?.(row) ?? false)
     this.spacer(4)
+  }
+
+  // ── Log table — wide, spreadsheet-style list (Submittal / Change-Order logs) ──
+  /** Render a column-defined table where every cell WRAPS — long descriptions,
+   *  file names and vendor names never clip (long unspaced tokens hard-break via
+   *  the shared wrap). Rows auto-grow to their tallest cell, the column header
+   *  repeats after every page break, per-column alignment is honored, and full
+   *  cell borders give it a log look. `cols` widths should sum to ~this.CW; pass
+   *  `highlight` to bold + tint summary rows (e.g. totals). */
+  logTable(
+    cols: { header: string; width: number; align?: "left" | "right" }[],
+    rows: string[][],
+    opts: { highlight?: (r: string[]) => boolean } = {},
+  ) {
+    const PADX = 5, PADY = 4
+    const headerSize = 7, bodySize = 7.5, lineH = bodySize + 2.5
+    const totalW = cols.reduce((s, c) => s + c.width, 0)
+
+    const vline = (x: number, fy: number, h: number) =>
+      this.page.drawLine({ start: { x, y: fy }, end: { x, y: fy + h }, thickness: 0.5, color: PDF.color.rule })
+    const box = (fy: number, h: number) => {
+      const edges: [number, number, number, number][] = [
+        [this.M, fy, this.M + totalW, fy], [this.M, fy + h, this.M + totalW, fy + h],
+        [this.M, fy, this.M, fy + h], [this.M + totalW, fy, this.M + totalW, fy + h],
+      ]
+      for (const [x1, y1, x2, y2] of edges) this.page.drawLine({ start: { x: x1, y: y1 }, end: { x: x2, y: y2 }, thickness: 0.5, color: PDF.color.rule })
+    }
+
+    const drawHeaderRow = () => {
+      const h = 18
+      const fy = this.y - h
+      this.page.drawRectangle({ x: this.M, y: fy, width: totalW, height: h, color: PDF.color.fieldFill })
+      let cx = this.M
+      cols.forEach((c, i) => {
+        const t = clip(this.bold, c.header.toUpperCase(), c.width - PADX * 2, headerSize)
+        const tw = this.bold.widthOfTextAtSize(t, headerSize)
+        const tx = c.align === "right" ? cx + c.width - PADX - tw : cx + PADX
+        this.page.drawText(t, { x: tx, y: fy + (h - headerSize) / 2 + 0.5, size: headerSize, font: this.bold, color: PDF.color.ruleStrong })
+        if (i > 0) vline(cx, fy, h)
+        cx += c.width
+      })
+      box(fy, h)
+      this.y -= h
+    }
+
+    this.ensureSpace(18 + 30)   // keep the header off the very bottom of a page
+    drawHeaderRow()
+    for (const r of rows) {
+      const hl = opts.highlight?.(r) ?? false
+      const font = hl ? this.bold : this.reg
+      const wrapped = cols.map((c, i) => this.wrapTextWith(font, r[i] ?? "", bodySize, c.width - PADX * 2))
+      const maxLines = Math.max(1, ...wrapped.map(w => w.length))
+      const h = PADY * 2 + maxLines * lineH
+      if (this.y - h < this.bottomLimit) { this.pageBreak(); drawHeaderRow() }
+      const fy = this.y - h
+      if (hl) this.page.drawRectangle({ x: this.M, y: fy, width: totalW, height: h, color: PDF.color.fieldFill })
+      let cx = this.M
+      cols.forEach((c, i) => {
+        let ly = fy + h - PADY - bodySize
+        for (const line of wrapped[i]) {
+          const lw = font.widthOfTextAtSize(line, bodySize)
+          const tx = c.align === "right" ? cx + c.width - PADX - lw : cx + PADX
+          this.page.drawText(line, { x: tx, y: ly, size: bodySize, font, color: PDF.color.ink })
+          ly -= lineH
+        }
+        if (i > 0) vline(cx, fy, h)
+        cx += c.width
+      })
+      box(fy, h)
+      this.y -= h
+    }
+    this.spacer(6)
   }
 
   // ── Pricing block ───────────────────────────────────────────────────────────

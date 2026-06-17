@@ -79,13 +79,15 @@ export async function buildPcoDocuments(
   cover.y -= 36
 
   // Meta grid — PCO # · Date · Project (Project gets the remaining width so long
-  // project names don't clip; PCO #/Date are short).
-  cover.ensure(30)
+  // project names wrap rather than clip; PCO #/Date are short).
+  cover.ensure(60)
   const mPco = 80, mDate = 150, mProj = CW - mPco - mDate
-  cover.metaCell(M,                 mPco,  "PCO #",   data.pcoNumber)
-  cover.metaCell(M + mPco,          mDate, "Date",    dateLong)
-  cover.metaCell(M + mPco + mDate,  mProj, "Project", data.projectName ?? "—")
-  cover.y -= 30
+  const metaH = Math.max(
+    cover.metaCell(M,                 mPco,  "PCO #",   data.pcoNumber),
+    cover.metaCell(M + mPco,          mDate, "Date",    dateLong),
+    cover.metaCell(M + mPco + mDate,  mProj, "Project", data.projectName ?? "—"),
+  )
+  cover.y -= metaH
   cover.rule(cover.y + 4, HAIR, 0.6)
   cover.down(6)
 
@@ -154,12 +156,14 @@ export async function buildPcoDocuments(
   backup.text("Pricing Backup", M, backup.y - 22, backup.serifSemi, 23, INK)
   backup.y -= 34
 
-  backup.ensure(30)
+  backup.ensure(60)
   const t3 = CW / 3
-  backup.metaCell(M,          t3, "PCO #", data.pcoNumber)
-  backup.metaCell(M + t3,     t3, "Job #", data.jobNumber ?? "—")
-  backup.metaCell(M + t3 * 2, t3, "Date",  dateLong)
-  backup.y -= 30
+  const backupMetaH = Math.max(
+    backup.metaCell(M,          t3, "PCO #", data.pcoNumber),
+    backup.metaCell(M + t3,     t3, "Job #", data.jobNumber ?? "—"),
+    backup.metaCell(M + t3 * 2, t3, "Date",  dateLong),
+  )
+  backup.y -= backupMetaH
   backup.rule(backup.y + 4, HAIR, 0.6)
   backup.down(2)
 
