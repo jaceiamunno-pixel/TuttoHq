@@ -3839,7 +3839,14 @@ function VendorCell({
               <div className="p-1.5 border-b border-[#E2E8F0] flex items-center gap-1.5">
                 <button onClick={() => { resetTransient(); setStep("firm") }} title="Back to vendors"
                   className="h-7 w-7 flex items-center justify-center rounded border border-[#E2E8F0] text-[#64748B] hover:border-[#7B9BB5] flex-shrink-0">←</button>
-                <span className="text-[12px] font-semibold text-[#0F172A] truncate">{pendFirm?.company_name ?? "Firm"}</span>
+                <span className="min-w-0 flex-1 text-[12px] font-semibold text-[#0F172A] truncate">{pendFirm?.company_name ?? "Firm"}</span>
+                {/* Reachable Clear: opening a set vendor lands here on the person
+                    step, so surface the same unset the firm step offers. */}
+                {hasVendor && (
+                  <button onClick={() => { onChange({ vendorId: null, personId: null }); setOpen(false) }}
+                    title="Remove vendor from this submittal"
+                    className="flex-shrink-0 h-7 px-2 rounded border border-[#E2E8F0] text-[11px] text-[#94A3B8] hover:border-[#EF4444] hover:text-[#EF4444]">Clear</button>
+                )}
               </div>
               <div className="p-1.5 border-b border-[#E2E8F0]">
                 <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder="Search people…" className={fieldCls} />
