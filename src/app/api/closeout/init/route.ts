@@ -42,14 +42,16 @@ export async function POST(req: NextRequest) {
   // Training items are added manually via + Add.
 
   // ── SUBCONTRACTOR FOLDERS — one per project subcontractor ─────────────────
+  // Unified vendors model: project_vendors (role='subcontractor') → vendors firm.
   const { data: projSubs } = await supabase
-    .from("project_subcontractors")
-    .select("subcontractors(id, company_name)")
+    .from("project_vendors")
+    .select("vendors(id, company_name)")
     .eq("project_id", project_id)
+    .eq("role", "subcontractor")
 
   let subIdx = 800
   for (const row of projSubs ?? []) {
-    const sub = (Array.isArray(row.subcontractors) ? row.subcontractors[0] : row.subcontractors) as { id: string; company_name: string } | null
+    const sub = (Array.isArray(row.vendors) ? row.vendors[0] : row.vendors) as { id: string; company_name: string } | null
     if (!sub) continue
     const folder = sub.company_name
     rows.push({ ...base, category: "subcontractors", item_type: "workmanship_warranty",   title: "Workmanship Warranty",       folder_name: folder, sort_order: subIdx++ })
@@ -61,14 +63,16 @@ export async function POST(req: NextRequest) {
   }
 
   // ── SUPPLIER FOLDERS — one per project supplier ───────────────────────────
+  // Unified vendors model: project_vendors (role='supplier') → vendors firm.
   const { data: projSuppliers } = await supabase
-    .from("project_suppliers")
-    .select("suppliers(id, company_name)")
+    .from("project_vendors")
+    .select("vendors(id, company_name)")
     .eq("project_id", project_id)
+    .eq("role", "supplier")
 
   let supplIdx = 900
   for (const row of projSuppliers ?? []) {
-    const suppl = (Array.isArray(row.suppliers) ? row.suppliers[0] : row.suppliers) as { id: string; company_name: string } | null
+    const suppl = (Array.isArray(row.vendors) ? row.vendors[0] : row.vendors) as { id: string; company_name: string } | null
     if (!suppl) continue
     const folder = suppl.company_name
     rows.push({ ...base, category: "suppliers", item_type: "material_warranty",   title: "Material Warranty",       folder_name: folder, sort_order: supplIdx++ })

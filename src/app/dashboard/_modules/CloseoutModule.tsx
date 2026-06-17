@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect, useRef } from "react"
-import type { CloseoutItem, SubmittalRecord, RFI, ChangeOrder, DrawingRecord, PunchItem, TeamMember, SubcontractorRow, SupplierRow, Project } from "../_shared/types"
+import type { CloseoutItem, SubmittalRecord, RFI, ChangeOrder, DrawingRecord, PunchItem, TeamMember, ProjectVendorRow, Project } from "../_shared/types"
 import { PlusIcon, SpinnerIcon, XIcon, CheckIcon } from "../_shared/icons"
 import { inputCls, labelCls } from "../_shared/ui"
 import { presignAndUpload } from "@/lib/storage-upload"
@@ -65,8 +65,8 @@ export default function CloseoutModule({ globalProjectId, appProjects, teamMembe
   const [selectMode, setSelectMode]           = useState(false)
   const [selectedItemIds, setSelectedItemIds] = useState<Set<string>>(new Set())
   const [showPackageModal, setShowPackageModal] = useState(false)
-  const [subs, setSubs]           = useState<SubcontractorRow[]>([])
-  const [suppliers, setSuppliers] = useState<SupplierRow[]>([])
+  const [subs, setSubs]           = useState<ProjectVendorRow[]>([])
+  const [suppliers, setSuppliers] = useState<ProjectVendorRow[]>([])
   const projectName = appProjects.find(p => p.id === globalProjectId)?.name ?? "Project"
 
   function toggleItemSelected(id: string) {

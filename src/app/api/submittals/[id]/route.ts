@@ -14,8 +14,9 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     "project_id", "transmittal_sent_at", "transmittal_recipient",
     // Submittal-log tracker columns
     "received_date", "sent_to_ae_date", "returned_from_ae_date", "returned_to_sub_date",
-    "vendor_subcontractor_id", "vendor_supplier_id",
-    "vendor_subcontractor_person_id", "vendor_supplier_person_id",
+    // Unified vendor link (vendors master + vendor_people). RLS on those tables
+    // governs which ids are valid; the FK + ON DELETE SET NULL handle integrity.
+    "vendor_id", "vendor_person_id",
     // Inline title edit. file_name updates implicitly lock the row so the
     // normalizer / spec-book re-parse never overwrites a human's choice.
     "file_name",

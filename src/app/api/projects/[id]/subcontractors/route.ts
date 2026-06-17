@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 
+// Per-project subcontractor assignment, on the unified vendors model. Storage is
+// the project_vendors join (role='subcontractor'); the firm record is a row in
+// the vendors master. RLS scopes both relations to the caller's company; the
+// client never sends company_id (project_vendors.company_id defaults to
+// get_my_company_id() and is locked by the INSERT WITH CHECK).
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
@@ -8,12 +13,13 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
 
   const { id } = await params
   const { data, error } = await supabase
-    .from("project_subcontractors")
-    .select("subcontractor_id, subcontractors(id, company_name, trade, contact_name, phone, email, license_number)")
+    .from("project_vendors")
+    .select("vendor_id, vendors(id, company_name, trade, contact_name, phone, email, license_number)")
     .eq("project_id", id)
+    .eq("role", "subcontractor")
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  const subs = (data ?? []).map((r: Record<string, unknown>) => r.subcontractors).filter(Boolean)
+  const subs = (data ?? []).map((r: Record<string, unknown>) => r.vendors).filter(Boolean)
   return NextResponse.json(subs)
 }
 
@@ -25,11 +31,13 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
   const { id } = await params
   const { ids } = await req.json() as { ids: string[] }
 
-  await supabase.from("project_subcontractors").delete().eq("project_id", id)
+  // Replace this project's subcontractor assignments only — role-scoped so the
+  // supplier assignments in the same join table are left untouched.
+  await supabase.from("project_vendors").delete().eq("project_id", id).eq("role", "subcontractor")
 
   if (ids?.length) {
-    const rows = ids.map(subcontractor_id => ({ project_id: id, subcontractor_id }))
-    const { error } = await supabase.from("project_subcontractors").insert(rows)
+    const rows = ids.map(vendor_id => ({ project_id: id, vendor_id, role: "subcontractor" }))
+    const { error } = await supabase.from("project_vendors").insert(rows)
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   }
 
