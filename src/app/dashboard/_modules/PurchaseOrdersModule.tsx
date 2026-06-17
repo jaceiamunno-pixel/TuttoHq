@@ -43,8 +43,10 @@ export default function PurchaseOrdersModule({ appProjects, globalProjectId }: {
   const [showForm, setShowForm]   = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
   // The PO number is issued server-side at create (the create route calls
-  // issue_po_number); it's unknown until the first save, then displayed.
+  // issue_po_number); it's unknown until the first save, then displayed and
+  // editable. poNumberError holds the inline 409 ("already in use").
   const [poNumber, setPoNumber]   = useState("")
+  const [poNumberError, setPoNumberError] = useState<string | null>(null)
   const [projectId, setProjectId] = useState("")
   const [vendor, setVendor]       = useState<Vendor | null>(null)
   const [dateRequired, setDateRequired] = useState("")
@@ -127,7 +129,7 @@ export default function PurchaseOrdersModule({ appProjects, globalProjectId }: {
   }
 
   function resetForm() {
-    setEditingId(null); setPoNumber("")
+    setEditingId(null); setPoNumber(""); setPoNumberError(null)
     setProjectId(""); setVendor(null); setDateRequired(""); setTerms("")
     setCostCode(""); setCtTax(""); setNotes(""); setLines([emptyLine()])
     setStatus("draft"); setAcceptedDate(null)
@@ -198,6 +200,10 @@ export default function PurchaseOrdersModule({ appProjects, globalProjectId }: {
     return {
       project_id: projectId,
       vendor_id: vendor?.id ?? "",
+      // Only send po_number when editing an existing PO. On create the number is
+      // issued server-side (the POST route ignores any client value); sending the
+      // empty draft value would otherwise trip the PATCH "cannot be empty" guard.
+      ...(editingId ? { po_number: poNumber.trim() } : {}),
       date_required: dateRequired,
       terms,
       cost_code: costCode,
@@ -211,16 +217,23 @@ export default function PurchaseOrdersModule({ appProjects, globalProjectId }: {
   }
 
   async function save(): Promise<PurchaseOrder | null> {
-    setFormError(null)
+    setFormError(null); setPoNumberError(null)
     if (!projectId) { setFormError("Select a project."); return null }
     if (!vendor)    { setFormError("Select a vendor."); return null }
+    if (editingId && !poNumber.trim()) { setPoNumberError("PO number cannot be empty."); return null }
     setSaving(true)
     try {
       const url = editingId ? `/api/purchase-orders/${editingId}` : "/api/purchase-orders"
       const method = editingId ? "PATCH" : "POST"
       const res = await fetch(url, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(buildPayload()) })
       const d = await res.json()
-      if (!res.ok) { setFormError(d.error ?? "Save failed."); return null }
+      if (!res.ok) {
+        // 409 = duplicate PO number; surface it inline by the field and keep the
+        // form open (the number stays in edit state) so the user can fix it.
+        if (res.status === 409) setPoNumberError(d.error ?? "PO number already in use.")
+        else setFormError(d.error ?? "Save failed.")
+        return null
+      }
       const row: PurchaseOrder = d.purchase_order
       // On first save the server issued the number and persisted the draft —
       // adopt its id (so edits PATCH it) and display the issued number.
@@ -445,9 +458,25 @@ export default function PurchaseOrdersModule({ appProjects, globalProjectId }: {
           onClick={e => { if (e.target === e.currentTarget) closeForm() }}>
           <div className="bg-white rounded-xl border border-[#E2E8F0] shadow-2xl w-full sm:w-[680px] mx-4 sm:mx-0 flex flex-col max-h-[92vh]">
             <div className="flex items-center justify-between px-6 pt-5 pb-4 border-b border-[#E2E8F0] flex-shrink-0">
-              <div className="flex items-center gap-3 min-w-0">
-                <h2 className="text-[15px] font-bold text-[#0F172A]">{editingId ? "Edit Purchase Order" : "New Purchase Order"}</h2>
-                <span className="text-[13px] font-semibold text-[#7B9BB5] tabular-nums">{poNumber || (editingId ? "" : "PO # assigned on save")}</span>
+              <div className="flex flex-col min-w-0 gap-1">
+                <div className="flex items-center gap-3 min-w-0">
+                  <h2 className="text-[15px] font-bold text-[#0F172A]">{editingId ? "Edit Purchase Order" : "New Purchase Order"}</h2>
+                  {editingId ? (
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[11px] font-bold uppercase tracking-widest text-[#64748B]">PO #</span>
+                      <input
+                        value={poNumber}
+                        onChange={e => { setPoNumber(e.target.value); if (poNumberError) setPoNumberError(null) }}
+                        placeholder="PO #"
+                        aria-label="PO number"
+                        className={`w-32 h-7 px-2 rounded border text-[13px] font-semibold text-[#0F172A] tabular-nums focus:outline-none focus:ring-1 ${poNumberError ? "border-red-300 focus:ring-red-300/40" : "border-[#E2E8F0] focus:ring-[#7B9BB5]/40"}`}
+                      />
+                    </div>
+                  ) : (
+                    <span className="text-[13px] font-semibold text-[#7B9BB5] tabular-nums">PO # assigned on save</span>
+                  )}
+                </div>
+                {poNumberError && <p className="text-[11px] text-red-600">{poNumberError}</p>}
               </div>
               <button onClick={closeForm} className="text-[#64748B] hover:text-[#0F172A] transition-colors"><XIcon className="h-4 w-4" /></button>
             </div>
