@@ -57,15 +57,16 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
   const update: Record<string, unknown> = { updated_at: new Date().toISOString() }
 
-  // PO number is editable (PO rows only — this route already filters type). There
-  // is NO unique index on po_number, so uniqueness MUST be enforced here or we
-  // silently mint duplicate numbers. The check is scoped to company_id, not
-  // project_id: PO numbers are sequenced per-USER (issue_po_number reads
+  // PO number is editable (PO rows only — this route already filters type). The
+  // company-wide unique index (commitments_company_po_number_uniq, migration
+  // 0014) is the real backstop; this app-level check is the friendly fast path
+  // that returns a clean 409 before the write. The check is scoped to company_id,
+  // not project_id: PO numbers are sequenced per-USER (issue_po_number reads
   // po_prefix/po_next_seq from user_profiles by auth.uid()), POs are company-wide,
   // and RLS scopes commitments to the tenant — so the company is the real
   // namespace for a number. company_id is re-resolved from the row (RLS-scoped),
-  // never trusted from the client. (TOCTOU race is acceptable debt until the
-  // dedicated unique-index migration lands.)
+  // never trusted from the client. The TOCTOU window between this check and the
+  // UPDATE is now closed by the index (23505 → 409 below).
   if (typeof body.po_number === "string") {
     const next = body.po_number.trim()
     if (!next) return NextResponse.json({ error: "PO number cannot be empty" }, { status: 400 })
@@ -172,7 +173,14 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     .eq("id", id)
     .select()
     .single()
-  if (upErr || !row) return NextResponse.json({ error: upErr?.message ?? "Update failed" }, { status: 500 })
+  if (upErr || !row) {
+    // The unique index can still reject a number that passed the app check above
+    // if a concurrent write took it first (TOCTOU). Map it to the same 409.
+    if (upErr?.code === "23505") {
+      return NextResponse.json({ error: "PO number already in use" }, { status: 409 })
+    }
+    return NextResponse.json({ error: upErr?.message ?? "Update failed" }, { status: 500 })
+  }
 
   return NextResponse.json({ purchase_order: row })
 }

@@ -115,6 +115,14 @@ export async function POST(req: NextRequest) {
     // The number was already consumed by the RPC; recycle it if it was the last
     // issued so the sequence doesn't skip on a failed insert.
     await supabase.rpc("release_po_number", { p_number: po_number })
+    // The company-wide unique index (commitments_company_po_number_uniq) rejects
+    // a duplicate number with 23505. That happens when the caller's po_next_seq
+    // was lowered below an already-issued number, or a teammate already used it —
+    // surface it as a clear 409 (recycling above keeps the sequence from
+    // skipping, so retrying after raising po_next_seq in Settings works).
+    if (insertError?.code === "23505") {
+      return NextResponse.json({ error: "PO number already in use" }, { status: 409 })
+    }
     return NextResponse.json({ error: insertError?.message ?? "Insert failed" }, { status: 500 })
   }
 
