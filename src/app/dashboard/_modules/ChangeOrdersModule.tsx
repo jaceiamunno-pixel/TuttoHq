@@ -94,6 +94,12 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
   const [pcoPdfBusyId, setPcoPdfBusyId]               = useState<string | null>(null)
   const [showImport, setShowImport]                   = useState(false)
   const [importBanner, setImportBanner]               = useState<{ imported: number; total: number; failures: { pco_number: string; reason: string }[] } | null>(null)
+  // Inline PCO-number editor (builder PCOs only). Isolated from the response
+  // form so a 409 collision can be shown next to the field and keep it in edit.
+  const [editingPcoNumber, setEditingPcoNumber]       = useState(false)
+  const [pcoNumberDraft, setPcoNumberDraft]           = useState("")
+  const [pcoNumberError, setPcoNumberError]           = useState<string | null>(null)
+  const [pcoNumberSaving, setPcoNumberSaving]         = useState(false)
 
   function loadChangeOrders(pid = globalProjectId) {
     setCoLoading(true)
@@ -185,6 +191,45 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
       const url = which === "cover" ? d.cover_url : d.backup_url
       if (res.ok && url) { window.open(url, "_blank"); loadChangeOrders() }
     } finally { setPcoPdfBusyId(null) }
+  }
+
+  // Reset the inline PCO-number editor whenever a different CO is opened/closed
+  // so an in-progress edit or error never leaks across rows.
+  useEffect(() => {
+    setEditingPcoNumber(false)
+    setPcoNumberError(null)
+    setPcoNumberDraft(viewCo?.co_number ?? "")
+  }, [viewCo])
+
+  // Rename a builder PCO's number. PATCHes co_number only; the server gates this
+  // to has_pco_detail rows and answers 409 if the number collides with another
+  // PCO in the same project — we keep the field in edit so the user can retry.
+  async function savePcoNumber() {
+    if (!viewCo) return
+    const v = pcoNumberDraft.trim()
+    if (!v) { setPcoNumberError("PCO number cannot be empty"); return }
+    if (v === (viewCo.co_number ?? "")) { setEditingPcoNumber(false); setPcoNumberError(null); return }
+    setPcoNumberSaving(true)
+    setPcoNumberError(null)
+    try {
+      const res = await fetch(`/api/change-orders/${viewCo.id}`, {
+        method: "PATCH", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ co_number: v }),
+      })
+      const d = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        // 409 = collision; any other failure surfaces its message inline too.
+        // Stay in edit state so the entered value isn't lost.
+        setPcoNumberError(d.error || (res.status === 409 ? "PCO number already in use on this project" : "Could not update PCO number"))
+        return
+      }
+      // Reflect the value the server actually stored (e.g. padded "007") so the
+      // header is canonical immediately, then refresh the log so the row +
+      // numeric sort re-sync.
+      setViewCo({ ...viewCo, co_number: typeof d.co_number === "string" ? d.co_number : v })
+      setEditingPcoNumber(false)
+      loadChangeOrders()
+    } finally { setPcoNumberSaving(false) }
   }
 
   async function saveCoStatus() {
@@ -662,7 +707,38 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
             <div className="flex items-start justify-between px-6 py-4 border-b border-[#E2E8F0] flex-shrink-0">
               <div>
                 <div className="flex items-center gap-3">
-                  <h2 className="text-[16px] font-bold text-[#0F172A]">PCO {pcoLabel(viewCo.co_number)}</h2>
+                  {/* PCO number — inline-editable on builder PCOs (not imported,
+                      which are frozen). Other COs show it read-only. */}
+                  {viewCo.has_pco_detail && viewCo.origin !== "imported" ? (
+                    editingPcoNumber ? (
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[16px] font-bold text-[#0F172A]">PCO</span>
+                        <input autoFocus value={pcoNumberDraft}
+                          onChange={e => { setPcoNumberDraft(e.target.value); setPcoNumberError(null) }}
+                          onKeyDown={e => {
+                            if (e.key === "Enter") savePcoNumber()
+                            else if (e.key === "Escape") { setEditingPcoNumber(false); setPcoNumberDraft(viewCo.co_number ?? ""); setPcoNumberError(null) }
+                          }}
+                          className="w-24 h-8 px-2 rounded-md border border-[#E2E8F0] text-[15px] font-bold text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40" />
+                        <button onClick={savePcoNumber} disabled={pcoNumberSaving}
+                          className="h-8 px-3 rounded-md bg-[#7B9BB5] text-white text-[12px] font-semibold hover:bg-[#6A8AA4] transition-colors disabled:opacity-50 flex items-center gap-1.5">
+                          {pcoNumberSaving && <SpinnerIcon className="h-3 w-3" />}{pcoNumberSaving ? "Saving…" : "Save"}
+                        </button>
+                        <button onClick={() => { setEditingPcoNumber(false); setPcoNumberDraft(viewCo.co_number ?? ""); setPcoNumberError(null) }}
+                          className="h-8 px-3 rounded-md border border-[#E2E8F0] text-[12px] text-[#64748B] hover:bg-[#0F172A]/[0.04] transition-colors">Cancel</button>
+                      </div>
+                    ) : (
+                      <button onClick={() => setEditingPcoNumber(true)} title="Edit PCO number"
+                        className="group flex items-center gap-1.5">
+                        <h2 className="text-[16px] font-bold text-[#0F172A]">PCO {pcoLabel(viewCo.co_number)}</h2>
+                        <svg className="w-3.5 h-3.5 text-[#94A3B8] opacity-0 group-hover:opacity-100 transition-opacity" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={ICON.edit} />
+                        </svg>
+                      </button>
+                    )
+                  ) : (
+                    <h2 className="text-[16px] font-bold text-[#0F172A]">PCO {pcoLabel(viewCo.co_number)}</h2>
+                  )}
                   {(() => {
                     const statusColor: Record<string, string> = {
                       "Not submitted": "bg-gray-100 text-gray-500",
@@ -673,6 +749,7 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
                     return <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-semibold ${statusColor[viewCo.status] ?? "bg-gray-100 text-gray-500"}`}>{viewCo.status}</span>
                   })()}
                 </div>
+                {pcoNumberError && <p className="text-[11px] text-red-600 mt-1">{pcoNumberError}</p>}
                 <p className="text-[12px] text-[#64748B] mt-0.5">{viewCo.date ? fmtDateOnly(viewCo.date) : "No date"}</p>
               </div>
               <button onClick={() => setViewCo(null)} className="text-[#64748B] hover:text-[#0F172A] transition-colors mt-0.5">
