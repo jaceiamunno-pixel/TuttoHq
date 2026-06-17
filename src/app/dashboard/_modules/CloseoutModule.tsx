@@ -5,6 +5,7 @@ import type { CloseoutItem, SubmittalRecord, RFI, ChangeOrder, DrawingRecord, Pu
 import { PlusIcon, SpinnerIcon, XIcon, CheckIcon } from "../_shared/icons"
 import { inputCls, labelCls } from "../_shared/ui"
 import { presignAndUpload } from "@/lib/storage-upload"
+import { isFeatureEnabled } from "@/lib/features"
 import CloseoutPackageCreateModal from "@/components/closeout-packages/CloseoutPackageCreateModal"
 import CloseoutPackagesView from "@/components/closeout-packages/CloseoutPackagesView"
 
@@ -427,8 +428,10 @@ export default function CloseoutModule({ globalProjectId, appProjects, teamMembe
                   /* Main closeout dashboard */
                   <div className="p-4 space-y-4">
 
-                    {/* Punch list banner — blocks 100% if open items */}
-                    {openPunchCount > 0 && (
+                    {/* Punch list banner — blocks 100% if open items.
+                        Suppressed while the Punch List feature is hidden so it
+                        doesn't surface a link to a hidden section. */}
+                    {isFeatureEnabled("punchList") && openPunchCount > 0 && (
                       <div className="flex items-center gap-3 px-4 py-2.5 rounded-lg bg-red-500/10 border border-red-500/30">
                         <div className="w-2 h-2 rounded-full bg-red-400 flex-shrink-0" />
                         <span className="text-[12px] text-red-400 font-medium flex-1">{openPunchCount} open punch list item{openPunchCount !== 1 ? "s" : ""} — closeout cannot reach 100% until all punch items are closed.</span>
