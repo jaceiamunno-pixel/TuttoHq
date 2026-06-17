@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useMemo } from "react"
-import type { CloseoutItem, SubcontractorRow, SupplierRow, CloseoutPackage } from "@/app/dashboard/_shared/types"
+import type { CloseoutItem, ProjectVendorRow, CloseoutPackage } from "@/app/dashboard/_shared/types"
 
 // ─── Closeout package create + preview + dispatch modal (Session K1) ────────
 // Mirrors PackageCreateModal: two steps (form → preview), save-as-draft or
@@ -37,8 +37,8 @@ export default function CloseoutPackageCreateModal({
   projectName: string
   items: CloseoutItem[]
   vendorPreset: ClsVendorPreset | null
-  subs: SubcontractorRow[]
-  suppliers: SupplierRow[]
+  subs: ProjectVendorRow[]
+  suppliers: ProjectVendorRow[]
   onClose: () => void
   onDone: () => void
 }) {

@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useMemo } from "react"
-import type { SubmittalRecord, SubcontractorRow, SupplierRow, SubmittalPackage } from "@/app/dashboard/_shared/types"
+import type { SubmittalRecord, VendorRow, SubmittalPackage } from "@/app/dashboard/_shared/types"
 
 // ─── Package create + preview + dispatch modal (Session I) ──────────────────
 // Two steps: a form (vendor / recipient / due date / item review), then a
@@ -22,14 +22,13 @@ export interface VendorPreset {
 }
 
 export default function PackageCreateModal({
-  projectId, projectName, submittals, vendorPreset, subs, suppliers, onClose, onDone,
+  projectId, projectName, submittals, vendorPreset, vendors, onClose, onDone,
 }: {
   projectId: string
   projectName: string
   submittals: SubmittalRecord[]
   vendorPreset: VendorPreset | null
-  subs: SubcontractorRow[]
-  suppliers: SupplierRow[]
+  vendors: VendorRow[]
   onClose: () => void
   onDone: () => void
 }) {
@@ -48,14 +47,17 @@ export default function PackageCreateModal({
   const [pdfUrl, setPdfUrl] = useState<string | null>(null)
 
   // All vendors for the free-text picker (manual / by-section selections have
-  // no preset vendor — the PM still names one recipient).
+  // no preset vendor — the PM still names one recipient). One unified list; the
+  // recorded vendor_type is derived from the vendor's sub/supplier flags.
   const vendorOptions = useMemo(() => {
-    const rows = [
-      ...subs.map(s => ({ id: s.id, type: "subcontractor" as const, name: s.company_name, email: s.email ?? null })),
-      ...suppliers.map(s => ({ id: s.id, type: "supplier" as const, name: s.company_name, email: s.email ?? null })),
-    ]
+    const rows = vendors.map(v => ({
+      id: v.id,
+      type: (v.is_subcontractor ? "subcontractor" : "supplier") as "subcontractor" | "supplier",
+      name: v.company_name,
+      email: v.email ?? null,
+    }))
     return rows.sort((a, b) => a.name.localeCompare(b.name))
-  }, [subs, suppliers])
+  }, [vendors])
 
   function onVendorNameChange(name: string) {
     setVendorName(name)

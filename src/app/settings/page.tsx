@@ -1465,39 +1465,47 @@ export default function SettingsPage() {
     setQuickAddCmOpen(false); setQuickAddName(""); setQuickAddField("")
   }
 
+  // The per-project assignment pickers read the unified vendors master and split
+  // by flag — subs = is_subcontractor, suppliers = is_supplier. RLS scopes every
+  // row to the caller's company; the assignment itself persists to project_vendors
+  // via the role-scoped /api/projects/[id]/{subcontractors,suppliers} routes.
   function loadSubs() {
     setSubsLoading(true)
-    fetch("/api/subcontractors").then(r => r.json()).then(d => { setSubcontractors(d ?? []); setSubsLoaded(true) }).catch(() => {}).finally(() => setSubsLoading(false))
+    fetch("/api/vendors?all=1").then(r => r.json())
+      .then(d => { setSubcontractors((d.vendors ?? []).filter((v: { is_subcontractor?: boolean }) => v.is_subcontractor)); setSubsLoaded(true) })
+      .catch(() => {}).finally(() => setSubsLoading(false))
   }
   function loadSuppliers() {
     setSupplLoading(true)
-    fetch("/api/suppliers").then(r => r.json()).then(d => { setSuppliers(d ?? []); setSupplLoaded(true) }).catch(() => {}).finally(() => setSupplLoading(false))
+    fetch("/api/vendors?all=1").then(r => r.json())
+      .then(d => { setSuppliers((d.vendors ?? []).filter((v: { is_supplier?: boolean }) => v.is_supplier)); setSupplLoaded(true) })
+      .catch(() => {}).finally(() => setSupplLoading(false))
   }
-  // NOTE: the global subcontractor/supplier Directory CRUD now lives in
-  // <VendorsDirectory> (unified vendors master). loadSubs/loadSuppliers and the
-  // subcontractors/suppliers arrays below are retained only for the project-edit
-  // form's per-project assignment UI (a separate surface — see audit notes).
+  // NOTE: the global vendor Directory CRUD lives in <VendorsDirectory> (unified
+  // vendors master). loadSubs/loadSuppliers and the subcontractors/suppliers
+  // arrays below are retained only for the project-edit form's per-project
+  // assignment UI (a separate surface — see audit notes).
 
   async function quickAddSub() {
     if (!quickAddName.trim()) return
-    const res = await fetch("/api/subcontractors", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ company_name: quickAddName.trim(), trade: quickAddField.trim() || null }) })
+    const res = await fetch("/api/vendors", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ company_name: quickAddName.trim(), trade: quickAddField.trim() || null, is_subcontractor: true }) })
     const data = await res.json()
-    if (res.ok) {
-      setSubcontractors(prev => [...prev, data])
+    if (res.ok && data.vendor) {
+      setSubcontractors(prev => [...prev, data.vendor])
       setSubsLoaded(true)
-      setProjectSubIds(prev => [...prev, data.id])
+      setProjectSubIds(prev => [...prev, data.vendor.id])
     }
     setQuickAddSubOpen(false); setQuickAddName(""); setQuickAddField("")
   }
 
   async function quickAddSuppl() {
     if (!quickAddName.trim()) return
-    const res = await fetch("/api/suppliers", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ company_name: quickAddName.trim(), specialty: quickAddField.trim() || null }) })
+    const res = await fetch("/api/vendors", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ company_name: quickAddName.trim(), specialty: quickAddField.trim() || null, is_supplier: true }) })
     const data = await res.json()
-    if (res.ok) {
-      setSuppliers(prev => [...prev, data])
+    if (res.ok && data.vendor) {
+      setSuppliers(prev => [...prev, data.vendor])
       setSupplLoaded(true)
-      setProjectSupIds(prev => [...prev, data.id])
+      setProjectSupIds(prev => [...prev, data.vendor.id])
     }
     setQuickAddSupplOpen(false); setQuickAddName(""); setQuickAddField("")
   }

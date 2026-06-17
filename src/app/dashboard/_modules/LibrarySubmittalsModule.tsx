@@ -6,7 +6,7 @@ import type {
   Division, SubmittalFile, SubmittalRecord, AiResult, NameOptions, UploadStep,
   BatchItem, BatchPhase, Project, TeamMember, OpenFileCtx, FileModalStep,
   CoverFormData, CoverContact, StagedSubmittal, SpecSectionRow, PendingDoc,
-  SubcontractorRow, SupplierRow, SubcontractorPersonRow, SupplierPersonRow,
+  VendorRow, VendorPersonRow,
 } from "../_shared/types"
 import { SUBMITTAL_TYPE_OPTIONS } from "../_shared/types"
 import { CSI_DIVISIONS, CSI_SECTIONS, SECTION_PALETTE, sectionColorMap } from "../_shared/csi"
@@ -197,11 +197,10 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
   // Bulk Import — Stage 1. Detect + review-only; commit ships in Stage 2.
   const [showBulkImport, setShowBulkImport]     = useState(false)
 
-  // Submittal-log tracker — vendors, grouping, inline-save debounce
-  const [vendorSubs, setVendorSubs]             = useState<SubcontractorRow[]>([])
-  const [vendorSuppliers, setVendorSuppliers]   = useState<SupplierRow[]>([])
-  const [subPeople, setSubPeople]               = useState<SubcontractorPersonRow[]>([])
-  const [supPeople, setSupPeople]               = useState<SupplierPersonRow[]>([])
+  // Submittal-log tracker — vendors, grouping, inline-save debounce. One unified
+  // vendors list (each row flagged sub/supplier) + their people, loaded once.
+  const [vendors, setVendors]                   = useState<VendorRow[]>([])
+  const [vendorPeople, setVendorPeople]         = useState<VendorPersonRow[]>([])
   const [groupBySection, setGroupBySection]     = useState(true)
   // Sub-package selection (Session I) — "Select" mode adds a checkbox column.
   const [selectMode, setSelectMode]             = useState(false)
@@ -679,81 +678,57 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
   useEffect(() => { loadSubmittals(activeProjectId) }, [activeProjectId])
 
   // ── Submittal-log inline editing ─────────────────────────────────────────────
-  // Vendors for the inline picker — company-wide subcontractors + suppliers.
+  // Vendors for the inline picker — the whole company-scoped vendors master plus
+  // their people, loaded client-side (mirrors the directory's load-all pattern).
   function loadVendors() {
-    fetch("/api/subcontractors").then(r => r.json())
-      .then(d => setVendorSubs(Array.isArray(d) ? d : [])).catch(() => {})
-    fetch("/api/suppliers").then(r => r.json())
-      .then(d => setVendorSuppliers(Array.isArray(d) ? d : [])).catch(() => {})
-    fetch("/api/subcontractor-people").then(r => r.json())
-      .then(d => setSubPeople(Array.isArray(d) ? d : [])).catch(() => {})
-    fetch("/api/supplier-people").then(r => r.json())
-      .then(d => setSupPeople(Array.isArray(d) ? d : [])).catch(() => {})
+    fetch("/api/vendors?all=1").then(r => r.json())
+      .then(d => setVendors(Array.isArray(d.vendors) ? d.vendors : [])).catch(() => {})
+    fetch("/api/vendor-people").then(r => r.json())
+      .then(d => setVendorPeople(Array.isArray(d.people) ? d.people : [])).catch(() => {})
   }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { if (activeModule === "submittals") loadVendors() }, [activeModule])
 
   // Vendor column label: "Firm — Person", or just the firm when no person is
-  // set (firm-only / legacy rows), or "" when neither (renders "Set vendor…").
+  // set, or "" when no vendor (renders "Set vendor…").
   function vendorLabel(s: SubmittalRecord): string {
-    if (s.vendor_subcontractor_id) {
-      const firm = vendorSubs.find(v => v.id === s.vendor_subcontractor_id)?.company_name ?? "—"
-      const person = s.vendor_subcontractor_person_id
-        ? subPeople.find(p => p.id === s.vendor_subcontractor_person_id)?.name : null
-      return person ? `${firm} — ${person}` : firm
-    }
-    if (s.vendor_supplier_id) {
-      const firm = vendorSuppliers.find(v => v.id === s.vendor_supplier_id)?.company_name ?? "—"
-      const person = s.vendor_supplier_person_id
-        ? supPeople.find(p => p.id === s.vendor_supplier_person_id)?.name : null
-      return person ? `${firm} — ${person}` : firm
-    }
-    return ""
+    if (!s.vendor_id) return ""
+    const firm = vendors.find(v => v.id === s.vendor_id)?.company_name ?? "—"
+    const person = s.vendor_person_id
+      ? vendorPeople.find(p => p.id === s.vendor_person_id)?.name : null
+    return person ? `${firm} — ${person}` : firm
   }
 
-  // ── Inline vendor create (ADR-004) ───────────────────────────────────────────
-  // New firms/people SAVE to the system (reusable). company_id is set server-
-  // side by the column DEFAULT + RLS — never trusted from the client.
-  async function createSubFirm(name: string, trade: string): Promise<SubcontractorRow | null> {
-    const r = await fetch("/api/subcontractors", {
+  // ── Inline vendor create ──────────────────────────────────────────────────────
+  // New firms/people SAVE to the system (reusable). company_id is set server-side
+  // by the column DEFAULT + RLS — never trusted from the client. `kind` records
+  // the is_subcontractor/is_supplier flag on the new vendor so it also surfaces
+  // correctly in the Directory and project-assignment pickers.
+  async function createVendor(name: string, field: string, kind: "sub" | "sup"): Promise<VendorRow | null> {
+    const r = await fetch("/api/vendors", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ company_name: name, trade }),
+      body: JSON.stringify({
+        company_name: name,
+        is_subcontractor: kind === "sub",
+        is_supplier: kind === "sup",
+        ...(kind === "sub" ? { trade: field } : { specialty: field }),
+      }),
     }).catch(() => null)
     if (!r || !r.ok) return null
-    const row = await r.json() as SubcontractorRow
-    setVendorSubs(prev => [...prev, row].sort((a, b) => a.company_name.localeCompare(b.company_name)))
-    return row
-  }
-  async function createSupFirm(name: string, specialty: string): Promise<SupplierRow | null> {
-    const r = await fetch("/api/suppliers", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ company_name: name, specialty }),
-    }).catch(() => null)
-    if (!r || !r.ok) return null
-    const row = await r.json() as SupplierRow
-    setVendorSuppliers(prev => [...prev, row].sort((a, b) => a.company_name.localeCompare(b.company_name)))
-    return row
+    const { vendor } = await r.json() as { vendor: VendorRow }
+    setVendors(prev => [...prev, vendor].sort((a, b) => a.company_name.localeCompare(b.company_name)))
+    return vendor
   }
   type NewPerson = { name: string; email: string; phone: string; role: string }
-  async function createSubPerson(firmId: string, d: NewPerson): Promise<SubcontractorPersonRow | null> {
-    const r = await fetch("/api/subcontractor-people", {
+  async function createVendorPerson(vendorId: string, d: NewPerson): Promise<VendorPersonRow | null> {
+    const r = await fetch("/api/vendor-people", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ subcontractor_id: firmId, ...d }),
+      body: JSON.stringify({ vendor_id: vendorId, ...d }),
     }).catch(() => null)
     if (!r || !r.ok) return null
-    const row = await r.json() as SubcontractorPersonRow
-    setSubPeople(prev => [...prev, row])
-    return row
-  }
-  async function createSupPerson(firmId: string, d: NewPerson): Promise<SupplierPersonRow | null> {
-    const r = await fetch("/api/supplier-people", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ supplier_id: firmId, ...d }),
-    }).catch(() => null)
-    if (!r || !r.ok) return null
-    const row = await r.json() as SupplierPersonRow
-    setSupPeople(prev => [...prev, row])
-    return row
+    const { person } = await r.json() as { person: VendorPersonRow }
+    setVendorPeople(prev => [...prev, person])
+    return person
   }
 
   // ── Sub-package selection (Session I) ────────────────────────────────────────
@@ -779,15 +754,15 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
   // shares one vendor, prefill it; otherwise the PM names the recipient.
   function computeVendorPreset(picked: SubmittalRecord[]): VendorPreset | null {
     if (picked.length === 0) return null
-    const subIds = new Set(picked.map(s => s.vendor_subcontractor_id))
-    const supIds = new Set(picked.map(s => s.vendor_supplier_id))
-    if (subIds.size === 1 && !subIds.has(null) && supIds.size === 1 && supIds.has(null)) {
-      const v = vendorSubs.find(x => x.id === [...subIds][0])
-      if (v) return { id: v.id, type: "subcontractor", name: v.company_name, email: v.email ?? null }
-    }
-    if (supIds.size === 1 && !supIds.has(null) && subIds.size === 1 && subIds.has(null)) {
-      const v = vendorSuppliers.find(x => x.id === [...supIds][0])
-      if (v) return { id: v.id, type: "supplier", name: v.company_name, email: v.email ?? null }
+    const ids = new Set(picked.map(s => s.vendor_id))
+    if (ids.size === 1 && !ids.has(null)) {
+      const v = vendors.find(x => x.id === [...ids][0])
+      if (v) return {
+        id: v.id,
+        type: v.is_subcontractor ? "subcontractor" : v.is_supplier ? "supplier" : "subcontractor",
+        name: v.company_name,
+        email: v.email ?? null,
+      }
     }
     return null
   }
@@ -842,10 +817,8 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
         rows: orderedExportRows(),
         projectName: project.name,
         gcName: project.gc_name,
-        vendorSubs,
-        vendorSuppliers,
-        vendorSubPeople: subPeople,
-        vendorSupPeople: supPeople,
+        vendors,
+        vendorPeople,
         appOrigin: window.location.origin,
         groupedBySection: groupBySection,
         isSearchMode,
@@ -870,10 +843,8 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
         rows: orderedExportRows(),
         projectName: project.name,
         gcName: project.gc_name,
-        vendorSubs,
-        vendorSuppliers,
-        vendorSubPeople: subPeople,
-        vendorSupPeople: supPeople,
+        vendors,
+        vendorPeople,
       })
     } catch (err) {
       alert(err instanceof Error ? err.message : "Export failed")
@@ -1933,15 +1904,9 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
             const vendorOptionsForToolbar = (() => {
               const map = new Map<string, { key: string; label: string; count: number }>()
               for (const s of logSubmittals) {
-                let key: string | null = null, label = "Unknown"
-                if (s.vendor_subcontractor_id) {
-                  key = `sub:${s.vendor_subcontractor_id}`
-                  label = vendorSubs.find(v => v.id === s.vendor_subcontractor_id)?.company_name ?? "Unknown"
-                } else if (s.vendor_supplier_id) {
-                  key = `sup:${s.vendor_supplier_id}`
-                  label = vendorSuppliers.find(v => v.id === s.vendor_supplier_id)?.company_name ?? "Unknown"
-                }
-                if (!key) continue
+                if (!s.vendor_id) continue
+                const key = s.vendor_id
+                const label = vendors.find(v => v.id === s.vendor_id)?.company_name ?? "Unknown"
                 const e = map.get(key) ?? { key, label, count: 0 }
                 e.count++; map.set(key, e)
               }
@@ -1966,12 +1931,9 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                 </span>
                 <span className="text-[#CBD5E1]">·</span>
                 <select value="" onChange={e => {
-                  const v = e.target.value
-                  if (!v) return
-                  const [kind, id] = v.split(":")
-                  setSelectedIds(new Set(logSubmittals.filter(s =>
-                    kind === "sub" ? s.vendor_subcontractor_id === id : s.vendor_supplier_id === id,
-                  ).map(s => s.id)))
+                  const id = e.target.value
+                  if (!id) return
+                  setSelectedIds(new Set(logSubmittals.filter(s => s.vendor_id === id).map(s => s.id)))
                 }}
                   className="h-8 px-2 rounded-md border border-[#E2E8F0] text-[12px] text-[#64748B] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40">
                   <option value="">By vendor…</option>
@@ -2105,18 +2067,13 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                     <td className="px-3 py-1.5 text-[#64748B] whitespace-nowrap">{s.submittal_type ?? "—"}</td>
                     <td className="px-2 py-1.5">
                       <VendorCell
-                        subId={s.vendor_subcontractor_id} supplierId={s.vendor_supplier_id}
-                        subPersonId={s.vendor_subcontractor_person_id} supplierPersonId={s.vendor_supplier_person_id}
-                        subs={vendorSubs} suppliers={vendorSuppliers}
-                        subPeople={subPeople} supPeople={supPeople}
+                        vendorId={s.vendor_id} personId={s.vendor_person_id}
+                        vendors={vendors} people={vendorPeople}
                         onChange={sel => patchSubmittal(s.id, {
-                          vendor_subcontractor_id: sel.subId,
-                          vendor_supplier_id: sel.supId,
-                          vendor_subcontractor_person_id: sel.subPersonId,
-                          vendor_supplier_person_id: sel.supPersonId,
+                          vendor_id: sel.vendorId,
+                          vendor_person_id: sel.personId,
                         })}
-                        onCreateSubFirm={createSubFirm} onCreateSupFirm={createSupFirm}
-                        onCreateSubPerson={createSubPerson} onCreateSupPerson={createSupPerson} />
+                        onCreateVendor={createVendor} onCreatePerson={createVendorPerson} />
                     </td>
                     <td className="px-2 py-1.5"><DateCell value={s.received_date} onChange={v => patchSubmittal(s.id, { received_date: v })} /></td>
                     <td className="px-2 py-1.5"><DateCell value={s.sent_to_ae_date} onChange={v => patchSubmittal(s.id, { sent_to_ae_date: v })} /></td>
@@ -2289,8 +2246,7 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
           projectName={appProjects.find(p => p.id === globalProjectId)?.name ?? "Project"}
           submittals={selectedSubmittals}
           vendorPreset={computeVendorPreset(selectedSubmittals)}
-          subs={vendorSubs}
-          suppliers={vendorSuppliers}
+          vendors={vendors}
           onClose={() => setShowPackageModal(false)}
           onDone={() => {
             setShowPackageModal(false)
@@ -3706,42 +3662,36 @@ function DateCell({ value, onChange }: {
 }
 
 /**
- * Two-step vendor picker (ADR-004 Firm→People). Step 1 picks/creates a FIRM
- * (subcontractor or supplier); step 2 picks/creates a PERSON under that firm
- * (or "firm only", person null). Commit writes BOTH the firm FK and the person
- * FK. New firms/people persist (reusable) via the parent's create handlers.
- * The dropdown is fixed-positioned (anchored via getBoundingClientRect) so it
- * is never clipped by the horizontally-scrolling table.
+ * Two-step vendor picker on the unified vendors master. Step 1 picks/creates a
+ * vendor FIRM (one list — each row is flagged sub/supplier, so no type filter);
+ * step 2 picks/creates a PERSON under that firm (or "firm only", person null).
+ * Commit writes vendor_id + vendor_person_id. New firms/people persist
+ * (reusable) via the parent's create handlers. The dropdown is fixed-positioned
+ * (anchored via getBoundingClientRect) so it is never clipped by the
+ * horizontally-scrolling table.
  */
 function VendorCell({
-  subId, supplierId, subPersonId, supplierPersonId,
-  subs, suppliers, subPeople, supPeople,
-  onChange, onCreateSubFirm, onCreateSupFirm, onCreateSubPerson, onCreateSupPerson,
+  vendorId, personId, vendors, people,
+  onChange, onCreateVendor, onCreatePerson,
 }: {
-  subId: string | null
-  supplierId: string | null
-  subPersonId: string | null
-  supplierPersonId: string | null
-  subs: SubcontractorRow[]
-  suppliers: SupplierRow[]
-  subPeople: SubcontractorPersonRow[]
-  supPeople: SupplierPersonRow[]
-  onChange: (sel: { subId: string | null; supId: string | null; subPersonId: string | null; supPersonId: string | null }) => void
-  onCreateSubFirm: (name: string, trade: string) => Promise<SubcontractorRow | null>
-  onCreateSupFirm: (name: string, specialty: string) => Promise<SupplierRow | null>
-  onCreateSubPerson: (firmId: string, d: { name: string; email: string; phone: string; role: string }) => Promise<SubcontractorPersonRow | null>
-  onCreateSupPerson: (firmId: string, d: { name: string; email: string; phone: string; role: string }) => Promise<SupplierPersonRow | null>
+  vendorId: string | null
+  personId: string | null
+  vendors: VendorRow[]
+  people: VendorPersonRow[]
+  onChange: (sel: { vendorId: string | null; personId: string | null }) => void
+  onCreateVendor: (name: string, field: string, kind: "sub" | "sup") => Promise<VendorRow | null>
+  onCreatePerson: (vendorId: string, d: { name: string; email: string; phone: string; role: string }) => Promise<VendorPersonRow | null>
 }) {
   const [open, setOpen] = useState(false)
   const [pos, setPos]   = useState<{ top: number; left: number } | null>(null)
   const [step, setStep] = useState<"firm" | "person">("firm")
-  const [pendKind, setPendKind]     = useState<"sub" | "sup" | null>(null)
   const [pendFirmId, setPendFirmId] = useState<string | null>(null)
   const [q, setQ] = useState("")
-  // inline create state
-  const [addFirmKind, setAddFirmKind] = useState<"sub" | "sup" | null>(null)
+  // inline create state. addKind also tags the new vendor's is_subcontractor /
+  // is_supplier flag (the field label switches between Trade and Specialty).
+  const [addKind, setAddKind]     = useState<"sub" | "sup" | null>(null)
   const [firmName, setFirmName]   = useState("")
-  const [firmTrade, setFirmTrade] = useState("")
+  const [firmField, setFirmField] = useState("")
   const [addingPerson, setAddingPerson] = useState(false)
   const [pName, setPName]   = useState("")
   const [pEmail, setPEmail] = useState("")
@@ -3761,7 +3711,7 @@ function VendorCell({
   }, [open])
 
   function resetTransient() {
-    setQ(""); setAddFirmKind(null); setFirmName(""); setFirmTrade("")
+    setQ(""); setAddKind(null); setFirmName(""); setFirmField("")
     setAddingPerson(false); setPName(""); setPEmail(""); setPPhone(""); setPRole(""); setBusy(false)
   }
 
@@ -3772,66 +3722,51 @@ function VendorCell({
     resetTransient()
     // Jump straight to person editing when a firm is already chosen; the back
     // arrow returns to firm selection.
-    if (subId)            { setPendKind("sub"); setPendFirmId(subId); setStep("person") }
-    else if (supplierId)  { setPendKind("sup"); setPendFirmId(supplierId); setStep("person") }
-    else                  { setPendKind(null); setPendFirmId(null); setStep("firm") }
+    if (vendorId) { setPendFirmId(vendorId); setStep("person") }
+    else          { setPendFirmId(null); setStep("firm") }
     setOpen(true)
   }
 
-  function commit(kind: "sub" | "sup", firmId: string, personId: string | null) {
-    if (kind === "sub") onChange({ subId: firmId, supId: null, subPersonId: personId, supPersonId: null })
-    else                onChange({ subId: null, supId: firmId, subPersonId: null, supPersonId: personId })
+  function commit(firmId: string, pid: string | null) {
+    onChange({ vendorId: firmId, personId: pid })
     setOpen(false)
   }
 
-  function chooseFirm(kind: "sub" | "sup", firmId: string) {
+  function chooseFirm(firmId: string) {
     resetTransient()
-    setPendKind(kind); setPendFirmId(firmId); setStep("person")
+    setPendFirmId(firmId); setStep("person")
   }
 
   async function submitNewFirm() {
-    if (!addFirmKind || !firmName.trim() || busy) return
+    if (!addKind || !firmName.trim() || busy) return
     setBusy(true)
-    const row = addFirmKind === "sub"
-      ? await onCreateSubFirm(firmName.trim(), firmTrade.trim())
-      : await onCreateSupFirm(firmName.trim(), firmTrade.trim())
+    const row = await onCreateVendor(firmName.trim(), firmField.trim(), addKind)
     setBusy(false)
-    if (row) chooseFirm(addFirmKind, row.id)
+    if (row) chooseFirm(row.id)
   }
 
   async function submitNewPerson() {
-    if (!pendKind || !pendFirmId || !pName.trim() || busy) return
+    if (!pendFirmId || !pName.trim() || busy) return
     setBusy(true)
     const d = { name: pName.trim(), email: pEmail.trim(), phone: pPhone.trim(), role: pRole.trim() }
-    const row = pendKind === "sub"
-      ? await onCreateSubPerson(pendFirmId, d)
-      : await onCreateSupPerson(pendFirmId, d)
+    const row = await onCreatePerson(pendFirmId, d)
     setBusy(false)
-    if (row) commit(pendKind, pendFirmId, row.id)
+    if (row) commit(pendFirmId, row.id)
   }
 
   // ----- closed-button label: "Firm — Person" / "Firm" / placeholder -----
-  const firmLabel =
-    subId ? subs.find(v => v.id === subId)?.company_name :
-    supplierId ? suppliers.find(v => v.id === supplierId)?.company_name : null
-  const personLabel =
-    subPersonId ? subPeople.find(p => p.id === subPersonId)?.name :
-    supplierPersonId ? supPeople.find(p => p.id === supplierPersonId)?.name : null
+  const firmLabel = vendorId ? vendors.find(v => v.id === vendorId)?.company_name : null
+  const personLabel = personId ? people.find(p => p.id === personId)?.name : null
   const label = firmLabel ? (personLabel ? `${firmLabel} — ${personLabel}` : firmLabel) : null
-  const hasVendor = !!(subId || supplierId)
+  const hasVendor = !!vendorId
 
   const ql = q.trim().toLowerCase()
-  const subMatches = subs.filter(v => !ql || v.company_name.toLowerCase().includes(ql))
-  const supMatches = suppliers.filter(v => !ql || v.company_name.toLowerCase().includes(ql))
+  const firmMatches = vendors.filter(v => !ql || v.company_name.toLowerCase().includes(ql))
 
-  const pendFirmLabel = pendKind === "sub"
-    ? subs.find(v => v.id === pendFirmId)?.company_name
-    : suppliers.find(v => v.id === pendFirmId)?.company_name
-  const selectedPersonId = pendKind === "sub" ? subPersonId : supplierPersonId
-  const peopleForFirm = (pendKind === "sub"
-    ? subPeople.filter(p => p.subcontractor_id === pendFirmId)
-    : supPeople.filter(p => p.supplier_id === pendFirmId)
-  ).filter(p => !ql || (p.name ?? "").toLowerCase().includes(ql))
+  const pendFirm = vendors.find(v => v.id === pendFirmId)
+  const peopleForFirm = people
+    .filter(p => p.vendor_id === pendFirmId)
+    .filter(p => !ql || (p.name ?? "").toLowerCase().includes(ql))
 
   const fieldCls = "w-full h-7 px-2 rounded border border-[#E2E8F0] text-[12px] focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40"
 
@@ -3853,53 +3788,44 @@ function VendorCell({
           {step === "firm" && (
             <>
               <div className="p-1.5 border-b border-[#E2E8F0]">
-                <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder="Search firms…" className={fieldCls} />
+                <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder="Search vendors…" className={fieldCls} />
               </div>
               <div className="max-h-64 overflow-y-auto py-1">
                 {hasVendor && (
-                  <button onClick={() => { onChange({ subId: null, supId: null, subPersonId: null, supPersonId: null }); setOpen(false) }}
+                  <button onClick={() => { onChange({ vendorId: null, personId: null }); setOpen(false) }}
                     className="w-full text-left px-2.5 py-1.5 text-[12px] text-[#94A3B8] hover:bg-[#F8F9FA]">
                     Clear vendor
                   </button>
                 )}
-                {subMatches.length > 0 && (
-                  <p className="px-2.5 pt-1 pb-0.5 text-[10px] font-bold uppercase tracking-wide text-[#94A3B8]">Subcontractors</p>
-                )}
-                {subMatches.map(v => (
-                  <button key={v.id} onClick={() => chooseFirm("sub", v.id)}
-                    className={`w-full text-left px-2.5 py-1.5 text-[12px] hover:bg-[#F8F9FA] ${v.id === subId ? "text-[#7B9BB5] font-semibold" : "text-[#0F172A]"}`}>
-                    {v.company_name}{v.trade ? <span className="text-[#94A3B8]"> · {v.trade}</span> : null}
-                  </button>
-                ))}
-                {supMatches.length > 0 && (
-                  <p className="px-2.5 pt-1.5 pb-0.5 text-[10px] font-bold uppercase tracking-wide text-[#94A3B8]">Suppliers</p>
-                )}
-                {supMatches.map(v => (
-                  <button key={v.id} onClick={() => chooseFirm("sup", v.id)}
-                    className={`w-full text-left px-2.5 py-1.5 text-[12px] hover:bg-[#F8F9FA] ${v.id === supplierId ? "text-[#7B9BB5] font-semibold" : "text-[#0F172A]"}`}>
-                    {v.company_name}{v.specialty ? <span className="text-[#94A3B8]"> · {v.specialty}</span> : null}
-                  </button>
-                ))}
-                {subMatches.length === 0 && supMatches.length === 0 && addFirmKind === null && (
-                  <p className="px-2.5 py-1 text-[12px] text-[#94A3B8]">No firms match.</p>
+                {firmMatches.map(v => {
+                  const sub = v.trade ?? v.specialty ?? null
+                  return (
+                    <button key={v.id} onClick={() => chooseFirm(v.id)}
+                      className={`w-full text-left px-2.5 py-1.5 text-[12px] hover:bg-[#F8F9FA] ${v.id === vendorId ? "text-[#7B9BB5] font-semibold" : "text-[#0F172A]"}`}>
+                      {v.company_name}{sub ? <span className="text-[#94A3B8]"> · {sub}</span> : null}
+                    </button>
+                  )
+                })}
+                {firmMatches.length === 0 && addKind === null && (
+                  <p className="px-2.5 py-1 text-[12px] text-[#94A3B8]">No vendors match.</p>
                 )}
 
-                {addFirmKind === null ? (
+                {addKind === null ? (
                   <div className="border-t border-[#E2E8F0] mt-1 pt-1">
-                    <button onClick={() => { setAddFirmKind("sub"); setFirmName(q); setFirmTrade("") }}
+                    <button onClick={() => { setAddKind("sub"); setFirmName(q); setFirmField("") }}
                       className="w-full text-left px-2.5 py-1.5 text-[12px] text-[#7B9BB5] hover:bg-[#F8F9FA]">+ Add new subcontractor</button>
-                    <button onClick={() => { setAddFirmKind("sup"); setFirmName(q); setFirmTrade("") }}
+                    <button onClick={() => { setAddKind("sup"); setFirmName(q); setFirmField("") }}
                       className="w-full text-left px-2.5 py-1.5 text-[12px] text-[#7B9BB5] hover:bg-[#F8F9FA]">+ Add new supplier</button>
                   </div>
                 ) : (
                   <div className="border-t border-[#E2E8F0] mt-1 pt-2 px-2.5 pb-2 space-y-1.5">
-                    <p className="text-[10px] font-bold uppercase tracking-wide text-[#94A3B8]">New {addFirmKind === "sub" ? "subcontractor" : "supplier"}</p>
+                    <p className="text-[10px] font-bold uppercase tracking-wide text-[#94A3B8]">New {addKind === "sub" ? "subcontractor" : "supplier"}</p>
                     <input autoFocus value={firmName} onChange={e => setFirmName(e.target.value)} placeholder="Company name" className={fieldCls} />
-                    <input value={firmTrade} onChange={e => setFirmTrade(e.target.value)} placeholder={addFirmKind === "sub" ? "Trade (optional)" : "Specialty (optional)"} className={fieldCls} />
+                    <input value={firmField} onChange={e => setFirmField(e.target.value)} placeholder={addKind === "sub" ? "Trade (optional)" : "Specialty (optional)"} className={fieldCls} />
                     <div className="flex gap-1.5 pt-0.5">
                       <button disabled={!firmName.trim() || busy} onClick={submitNewFirm}
                         className="flex-1 h-7 rounded bg-[#7B9BB5] text-white text-[12px] font-semibold disabled:opacity-40">{busy ? "Saving…" : "Create"}</button>
-                      <button onClick={() => setAddFirmKind(null)} className="px-2 h-7 rounded border border-[#E2E8F0] text-[12px] text-[#64748B]">Cancel</button>
+                      <button onClick={() => setAddKind(null)} className="px-2 h-7 rounded border border-[#E2E8F0] text-[12px] text-[#64748B]">Cancel</button>
                     </div>
                   </div>
                 )}
@@ -3911,21 +3837,21 @@ function VendorCell({
           {step === "person" && (
             <>
               <div className="p-1.5 border-b border-[#E2E8F0] flex items-center gap-1.5">
-                <button onClick={() => { resetTransient(); setStep("firm") }} title="Back to firms"
+                <button onClick={() => { resetTransient(); setStep("firm") }} title="Back to vendors"
                   className="h-7 w-7 flex items-center justify-center rounded border border-[#E2E8F0] text-[#64748B] hover:border-[#7B9BB5] flex-shrink-0">←</button>
-                <span className="text-[12px] font-semibold text-[#0F172A] truncate">{pendFirmLabel ?? "Firm"}</span>
+                <span className="text-[12px] font-semibold text-[#0F172A] truncate">{pendFirm?.company_name ?? "Firm"}</span>
               </div>
               <div className="p-1.5 border-b border-[#E2E8F0]">
                 <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder="Search people…" className={fieldCls} />
               </div>
               <div className="max-h-60 overflow-y-auto py-1">
-                <button onClick={() => pendKind && pendFirmId && commit(pendKind, pendFirmId, null)}
+                <button onClick={() => pendFirmId && commit(pendFirmId, null)}
                   className="w-full text-left px-2.5 py-1.5 text-[12px] text-[#64748B] hover:bg-[#F8F9FA]">
                   Use firm only (no person)
                 </button>
                 {peopleForFirm.map(p => (
-                  <button key={p.id} onClick={() => pendKind && pendFirmId && commit(pendKind, pendFirmId, p.id)}
-                    className={`w-full text-left px-2.5 py-1.5 text-[12px] hover:bg-[#F8F9FA] ${p.id === selectedPersonId ? "text-[#7B9BB5] font-semibold" : "text-[#0F172A]"}`}>
+                  <button key={p.id} onClick={() => pendFirmId && commit(pendFirmId, p.id)}
+                    className={`w-full text-left px-2.5 py-1.5 text-[12px] hover:bg-[#F8F9FA] ${p.id === personId ? "text-[#7B9BB5] font-semibold" : "text-[#0F172A]"}`}>
                     {p.name || "(unnamed)"}{p.role ? <span className="text-[#94A3B8]"> · {p.role}</span> : null}
                   </button>
                 ))}

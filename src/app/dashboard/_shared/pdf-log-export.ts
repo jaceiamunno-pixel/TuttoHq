@@ -15,8 +15,7 @@
 import { PDFBuilder } from "@/lib/pdf-builder"
 import { computeCoTotals } from "./co-math"
 import type {
-  SubmittalRecord, ChangeOrder,
-  SubcontractorRow, SupplierRow, SubcontractorPersonRow, SupplierPersonRow,
+  SubmittalRecord, ChangeOrder, VendorRow, VendorPersonRow,
 } from "./types"
 
 // ─── Small formatters (kept local so this module is self-contained) ──────────
@@ -73,20 +72,12 @@ function lateLabel(s: SubmittalRecord): string {
 // and the on-screen VendorCell.
 function vendorLabel(
   s: SubmittalRecord,
-  subs: SubcontractorRow[], suppliers: SupplierRow[],
-  subPeople: SubcontractorPersonRow[], supPeople: SupplierPersonRow[],
+  vendors: VendorRow[], people: VendorPersonRow[],
 ): string {
-  if (s.vendor_subcontractor_id) {
-    const firm = subs.find(v => v.id === s.vendor_subcontractor_id)?.company_name ?? ""
-    const person = s.vendor_subcontractor_person_id ? subPeople.find(p => p.id === s.vendor_subcontractor_person_id)?.name : null
-    return firm && person ? `${firm} — ${person}` : firm
-  }
-  if (s.vendor_supplier_id) {
-    const firm = suppliers.find(v => v.id === s.vendor_supplier_id)?.company_name ?? ""
-    const person = s.vendor_supplier_person_id ? supPeople.find(p => p.id === s.vendor_supplier_person_id)?.name : null
-    return firm && person ? `${firm} — ${person}` : firm
-  }
-  return ""
+  if (!s.vendor_id) return ""
+  const firm = vendors.find(v => v.id === s.vendor_id)?.company_name ?? ""
+  const person = s.vendor_person_id ? people.find(p => p.id === s.vendor_person_id)?.name : null
+  return firm && person ? `${firm} — ${person}` : firm
 }
 
 const pcoLabel = (n: string | null) => (n ?? "").replace(/^CO-/i, "")
@@ -154,10 +145,8 @@ export interface ExportSubmittalLogPdfArgs {
   rows: SubmittalRecord[]
   projectName: string
   gcName: string | null
-  vendorSubs: SubcontractorRow[]
-  vendorSuppliers: SupplierRow[]
-  vendorSubPeople: SubcontractorPersonRow[]
-  vendorSupPeople: SupplierPersonRow[]
+  vendors: VendorRow[]
+  vendorPeople: VendorPersonRow[]
 }
 
 export async function exportSubmittalLogToPdf(args: ExportSubmittalLogPdfArgs): Promise<void> {
@@ -195,7 +184,7 @@ export async function exportSubmittalLogToPdf(args: ExportSubmittalLogPdfArgs): 
       s.csi_section ?? "—",
       s.file_name,
       s.submittal_type ?? "—",
-      vendorLabel(s, args.vendorSubs, args.vendorSuppliers, args.vendorSubPeople, args.vendorSupPeople),
+      vendorLabel(s, args.vendors, args.vendorPeople),
       fmtDateShort(s.received_date),
       fmtDateShort(s.sent_to_ae_date),
       fmtDateShort(s.returned_from_ae_date),

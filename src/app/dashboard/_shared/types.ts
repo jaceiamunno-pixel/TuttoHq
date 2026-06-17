@@ -75,10 +75,14 @@ export interface SubmittalRecord {
   returned_from_ae_date: string | null
   returned_to_sub_date: string | null
   submittal_type: string | null
+  // Unified vendor link — the picker writes these (vendors master + vendor_people).
+  vendor_id: string | null
+  vendor_person_id: string | null
+  // Legacy firm/person FKs (pre-unification). Columns remain in the DB (all-null),
+  // no longer read or written, pending a later cleanup. The dropped supplier
+  // columns (vendor_supplier_id / vendor_supplier_person_id) were removed entirely.
   vendor_subcontractor_id: string | null
-  vendor_supplier_id: string | null
   vendor_subcontractor_person_id: string | null
-  vendor_supplier_person_id: string | null
   source: string | null
   spec_section_id: string | null
   // Sub-package workflow (Session I)
@@ -300,11 +304,38 @@ export const SUBMITTAL_TYPE_OPTIONS = [
   "Product Data", "Shop Drawing", "Design Mix", "Sample", "Certification",
   "Warranty", "O&M Manual", "Lab Test", "Attic Stock", "Other",
 ] as const
-export interface SubcontractorRow { id: string; company_name: string; trade: string | null; contact_name?: string | null; email?: string | null }
-export interface SupplierRow { id: string; company_name: string; specialty: string | null; contact_name?: string | null; email?: string | null }
-// People under a firm (ADR-004 Firm→People). FK → parent firm; company-scoped.
-export interface SubcontractorPersonRow { id: string; subcontractor_id: string; name: string | null; email: string | null; phone: string | null; role: string | null }
-export interface SupplierPersonRow { id: string; supplier_id: string; name: string | null; email: string | null; phone: string | null; role: string | null }
+// Unified vendor-master rows the submittal log + its exports read client-side
+// (a subset of /api/vendors?all=1 FULL_COLS). Replaces the old in-memory
+// subcontractor/supplier lists with one typed list; is_subcontractor /
+// is_supplier flags let one picker serve both kinds (no type filter).
+export interface VendorRow {
+  id: string
+  company_name: string
+  is_subcontractor: boolean
+  is_supplier: boolean
+  trade: string | null
+  specialty: string | null
+  contact_name: string | null
+  phone: string | null
+  email: string | null
+}
+// A person under a vendor firm (vendor_people). FK → vendors; company-scoped.
+export interface VendorPersonRow {
+  id: string; vendor_id: string; name: string | null
+  email: string | null; phone: string | null; role: string | null
+}
+// A vendor firm assigned to a project — the shape returned by the role-scoped
+// /api/projects/[id]/{subcontractors,suppliers} routes (project_vendors → vendors).
+// A subset of the master, enough for the closeout/assignment pickers.
+export interface ProjectVendorRow {
+  id: string
+  company_name: string
+  trade?: string | null
+  specialty?: string | null
+  contact_name?: string | null
+  phone?: string | null
+  email?: string | null
+}
 
 // ─── Submittal packages (Session I — outbound dispatch) ──────────────────────
 export type PackageStatus = "draft" | "dispatched" | "partial_received" | "complete"
