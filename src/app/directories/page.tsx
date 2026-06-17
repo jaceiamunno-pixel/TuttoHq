@@ -14,8 +14,7 @@ import AppChrome from "@/components/app-chrome"
 // each list links to its existing management surface. No data layer is
 // duplicated here.
 const LISTS = [
-  { label: "Subcontractors",       desc: "Global list of subcontractors reusable across all projects.", href: "/settings?tab=subcontractors" },
-  { label: "Suppliers",            desc: "Global list of material suppliers reusable across all projects.", href: "/settings?tab=suppliers" },
+  { label: "Vendors",              desc: "One master list of subcontractors & suppliers, reusable across all projects.", href: "/settings?tab=vendors" },
   { label: "Construction Managers", desc: "Global list of CMs reusable across all projects.", href: "/settings?tab=cms" },
 ]
 
@@ -27,7 +26,7 @@ export default function DirectoriesPage() {
           <h1 className="text-[20px] sm:text-[22px] font-bold text-[#0F172A] tracking-tight">Directories</h1>
           <p className="text-[13px] text-[#64748B] mt-0.5 mb-6">Company-wide contact lists, reusable across every project.</p>
 
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             {LISTS.map(l => (
               <Link
                 key={l.label}

@@ -10,6 +10,7 @@ import ProjectSpecBooks from "@/components/project-spec-books"
 import LaborRatesTab from "@/components/labor-rates-tab"
 import ProfileSignature from "@/components/profile-signature"
 import CompanyDetailsCard from "@/components/company-details-card"
+import VendorsDirectory from "@/components/vendors-directory"
 import type { TocEntry, TocDivision } from "@/lib/scope-types"
 import { uploadFileToSignedUrl, presignAndUpload } from "@/lib/storage-upload"
 import {
@@ -34,7 +35,9 @@ type View =
   | "people-team" | "people-contacts"
   | "dir-companies" | "dir-projects"
   | "gmail"
-type DirEntity = "subcontractors" | "suppliers" | "cms"
+// The former "subcontractors" + "suppliers" entities are merged into one
+// "vendors" entity (unified vendors master). CMs remain a separate directory.
+type DirEntity = "vendors" | "cms"
 
 function sectionOfView(v: View): SectionId {
   if (v.startsWith("company-")) return "company"
@@ -74,8 +77,10 @@ const TAB_TO_VIEW: Record<string, { view: View; entity?: DirEntity }> = {
   team:           { view: "people-team" },
   contacts:       { view: "people-contacts" },
   projects:       { view: "dir-projects" },
-  subcontractors: { view: "dir-companies", entity: "subcontractors" },
-  suppliers:      { view: "dir-companies", entity: "suppliers" },
+  vendors:        { view: "dir-companies", entity: "vendors" },
+  // Legacy deep-links now resolve to the unified Vendors directory.
+  subcontractors: { view: "dir-companies", entity: "vendors" },
+  suppliers:      { view: "dir-companies", entity: "vendors" },
   cms:            { view: "dir-companies", entity: "cms" },
   gmail:          { view: "gmail" },
 }
@@ -328,7 +333,7 @@ function DirectoryPanel<T extends { id: string }>({
 
 export default function SettingsPage() {
   const [activeView, setActiveView] = useState<View>("account")
-  const [dirEntity, setDirEntity]   = useState<DirEntity>("subcontractors")
+  const [dirEntity, setDirEntity]   = useState<DirEntity>("vendors")
 
   const [logoUrl, setLogoUrl]           = useState<string | null>(null)
   const [hasCoverPage, setHasCoverPage] = useState(false)
@@ -417,23 +422,15 @@ export default function SettingsPage() {
   const [wizardEditScope, setWizardEditScope] = useState(false)   // editing scope already set on a project
   const [scopeClearing, setScopeClearing]     = useState(false)   // DELETE in flight on the clear path
 
+  // Retained for the project-edit form's per-project assignment UI only; the
+  // global Directory CRUD moved to <VendorsDirectory>.
   const [subcontractors, setSubcontractors] = useState<Subcontractor[]>([])
   const [subsLoading, setSubsLoading]       = useState(false)
   const [subsLoaded, setSubsLoaded]         = useState(false)
-  const [showSubForm, setShowSubForm]       = useState(false)
-  const [editingSub, setEditingSub]         = useState<Subcontractor | null>(null)
-  const [subForm, setSubForm]               = useState({ company_name: "", trade: "", contact_name: "", phone: "", email: "", license_number: "", notes: "" })
-  const [savingSub, setSavingSub]           = useState(false)
-  const [subMessage, setSubMessage]         = useState<{ text: string; ok: boolean } | null>(null)
 
   const [suppliers, setSuppliers]           = useState<Supplier[]>([])
   const [supplLoading, setSupplLoading]     = useState(false)
   const [supplLoaded, setSupplLoaded]       = useState(false)
-  const [showSupplForm, setShowSupplForm]   = useState(false)
-  const [editingSuppl, setEditingSuppl]     = useState<Supplier | null>(null)
-  const [supplForm, setSupplForm]           = useState({ company_name: "", specialty: "", contact_name: "", phone: "", email: "", website: "", notes: "" })
-  const [savingSuppl, setSavingSuppl]       = useState(false)
-  const [supplMessage, setSupplMessage]     = useState<{ text: string; ok: boolean } | null>(null)
 
   const [cms, setCms]                       = useState<ConstructionManager[]>([])
   const [cmsLoading, setCmsLoading]         = useState(false)
@@ -534,8 +531,7 @@ export default function SettingsPage() {
     if (activeView === "people-contacts" && !teamLoaded) loadTeam()
     if (activeView === "dir-projects" && !projectsLoaded) loadProjects()
     if (activeView === "dir-companies") {
-      if (dirEntity === "subcontractors" && !subsLoaded) loadSubs()
-      if (dirEntity === "suppliers" && !supplLoaded) loadSuppliers()
+      // Vendors loads its own data inside <VendorsDirectory>.
       if (dirEntity === "cms" && !cmsLoaded) loadCms()
     }
     if (activeView === "gmail" && !gmailLoaded) loadGmailConnection()
@@ -1477,62 +1473,10 @@ export default function SettingsPage() {
     setSupplLoading(true)
     fetch("/api/suppliers").then(r => r.json()).then(d => { setSuppliers(d ?? []); setSupplLoaded(true) }).catch(() => {}).finally(() => setSupplLoading(false))
   }
-  function flashSub(text: string, ok = true) { setSubMessage({ text, ok }); setTimeout(() => setSubMessage(null), 3000) }
-  function flashSuppl(text: string, ok = true) { setSupplMessage({ text, ok }); setTimeout(() => setSupplMessage(null), 3000) }
-
-  function openAddSub() { setEditingSub(null); setSubForm({ company_name: "", trade: "", contact_name: "", phone: "", email: "", license_number: "", notes: "" }); setShowSubForm(true) }
-  function openEditSub(s: Subcontractor) { setEditingSub(s); setSubForm({ company_name: s.company_name, trade: s.trade ?? "", contact_name: s.contact_name ?? "", phone: s.phone ?? "", email: s.email ?? "", license_number: s.license_number ?? "", notes: s.notes ?? "" }); setShowSubForm(true) }
-  function cancelSubForm() { setShowSubForm(false); setEditingSub(null) }
-
-  async function saveSub(e: React.FormEvent) {
-    e.preventDefault()
-    if (!subForm.company_name.trim()) return
-    setSavingSub(true)
-    try {
-      const url = editingSub ? `/api/subcontractors/${editingSub.id}` : "/api/subcontractors"
-      const method = editingSub ? "PATCH" : "POST"
-      const res = await fetch(url, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(subForm) })
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.error ?? "Save failed")
-      if (editingSub) { setSubcontractors(prev => prev.map(s => s.id === editingSub.id ? data : s)); flashSub("Subcontractor updated") }
-      else { setSubcontractors(prev => [...prev, data]); flashSub("Subcontractor added") }
-      cancelSubForm()
-    } catch (err) { console.error("[settings] subcontractor save failed", err); flashSub("Save failed", false) } finally { setSavingSub(false) }
-  }
-
-  async function deleteSub(s: Subcontractor) {
-    if (!window.confirm(`Delete ${s.company_name}?`)) return
-    const res = await fetch(`/api/subcontractors/${s.id}`, { method: "DELETE" })
-    if (res.ok) { setSubcontractors(prev => prev.filter(x => x.id !== s.id)); flashSub("Deleted") }
-    else flashSub("Delete failed", false)
-  }
-
-  function openAddSuppl() { setEditingSuppl(null); setSupplForm({ company_name: "", specialty: "", contact_name: "", phone: "", email: "", website: "", notes: "" }); setShowSupplForm(true) }
-  function openEditSuppl(s: Supplier) { setEditingSuppl(s); setSupplForm({ company_name: s.company_name, specialty: s.specialty ?? "", contact_name: s.contact_name ?? "", phone: s.phone ?? "", email: s.email ?? "", website: s.website ?? "", notes: s.notes ?? "" }); setShowSupplForm(true) }
-  function cancelSupplForm() { setShowSupplForm(false); setEditingSuppl(null) }
-
-  async function saveSuppl(e: React.FormEvent) {
-    e.preventDefault()
-    if (!supplForm.company_name.trim()) return
-    setSavingSuppl(true)
-    try {
-      const url = editingSuppl ? `/api/suppliers/${editingSuppl.id}` : "/api/suppliers"
-      const method = editingSuppl ? "PATCH" : "POST"
-      const res = await fetch(url, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(supplForm) })
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.error ?? "Save failed")
-      if (editingSuppl) { setSuppliers(prev => prev.map(s => s.id === editingSuppl.id ? data : s)); flashSuppl("Supplier updated") }
-      else { setSuppliers(prev => [...prev, data]); flashSuppl("Supplier added") }
-      cancelSupplForm()
-    } catch (err) { console.error("[settings] supplier save failed", err); flashSuppl("Save failed", false) } finally { setSavingSuppl(false) }
-  }
-
-  async function deleteSuppl(s: Supplier) {
-    if (!window.confirm(`Delete ${s.company_name}?`)) return
-    const res = await fetch(`/api/suppliers/${s.id}`, { method: "DELETE" })
-    if (res.ok) { setSuppliers(prev => prev.filter(x => x.id !== s.id)); flashSuppl("Deleted") }
-    else flashSuppl("Delete failed", false)
-  }
+  // NOTE: the global subcontractor/supplier Directory CRUD now lives in
+  // <VendorsDirectory> (unified vendors master). loadSubs/loadSuppliers and the
+  // subcontractors/suppliers arrays below are retained only for the project-edit
+  // form's per-project assignment UI (a separate surface — see audit notes).
 
   async function quickAddSub() {
     if (!quickAddName.trim()) return
@@ -2858,12 +2802,12 @@ export default function SettingsPage() {
         )}
 
         {activeView === "dir-companies" && (() => {
-          // One generic panel, switched by entity type (subs/suppliers/cms).
-          // Each branch wires the entity's EXISTING handlers/state/fields — no
-          // data-layer change, just unified form + list rendering.
+          // Vendors (unified subs + suppliers) and CMs. The Vendors panel is a
+          // self-contained component on the unified vendors master; CMs keeps the
+          // generic DirectoryPanel on construction_managers.
           const switcher = (
             <div className="inline-flex rounded-lg border border-[#E2E8F0] bg-white p-0.5">
-              {([["subcontractors", "Subcontractors"], ["suppliers", "Suppliers"], ["cms", "CMs"]] as [DirEntity, string][]).map(([k, label]) => (
+              {([["vendors", "Vendors"], ["cms", "CMs"]] as [DirEntity, string][]).map(([k, label]) => (
                 <button
                   key={k}
                   onClick={() => setDirEntity(k)}
@@ -2876,84 +2820,7 @@ export default function SettingsPage() {
               ))}
             </div>
           )
-          if (dirEntity === "subcontractors") return (
-            <DirectoryPanel<Subcontractor>
-              switcher={switcher}
-              title="Subcontractors"
-              subtitle="Global list of subcontractors reusable across all projects."
-              addLabel="Add subcontractor"
-              formTitle={editingSub ? "Edit subcontractor" : "New subcontractor"}
-              emptyText="No subcontractors yet."
-              rows={subcontractors}
-              loading={subsLoading}
-              showForm={showSubForm}
-              editing={!!editingSub}
-              saving={savingSub}
-              canSubmit={!!subForm.company_name.trim()}
-              message={subMessage}
-              onAdd={openAddSub}
-              onCancel={cancelSubForm}
-              onSubmit={saveSub}
-              onEdit={openEditSub}
-              onDelete={deleteSub}
-              fields={[
-                { label: "Company Name", required: true, autoFocus: true, value: subForm.company_name, onChange: v => setSubForm(p => ({ ...p, company_name: v })), placeholder: "e.g. ABC Electrical" },
-                { label: "Trade / Specialty", value: subForm.trade, onChange: v => setSubForm(p => ({ ...p, trade: v })), placeholder: "e.g. Electrical" },
-                { label: "Contact Name", value: subForm.contact_name, onChange: v => setSubForm(p => ({ ...p, contact_name: v })), placeholder: "John Smith" },
-                { label: "Phone", value: subForm.phone, onChange: v => setSubForm(p => ({ ...p, phone: v })), placeholder: "555-000-1234" },
-                { label: "Email", value: subForm.email, onChange: v => setSubForm(p => ({ ...p, email: v })), placeholder: "contact@company.com" },
-                { label: "License Number", value: subForm.license_number, onChange: v => setSubForm(p => ({ ...p, license_number: v })), placeholder: "LIC-123456" },
-                { label: "Notes", fullWidth: true, value: subForm.notes, onChange: v => setSubForm(p => ({ ...p, notes: v })), placeholder: "Any notes…" },
-              ]}
-              columns={[
-                { header: "Company Name", render: s => s.company_name },
-                { header: "Trade", render: s => s.trade ?? "—" },
-                { header: "Contact", render: s => s.contact_name ?? "—" },
-                { header: "Phone", render: s => s.phone ?? "—" },
-                { header: "Email", render: s => s.email ?? "—" },
-                { header: "License", render: s => s.license_number ?? "—" },
-              ]}
-            />
-          )
-          if (dirEntity === "suppliers") return (
-            <DirectoryPanel<Supplier>
-              switcher={switcher}
-              title="Suppliers"
-              subtitle="Global list of material suppliers reusable across all projects."
-              addLabel="Add supplier"
-              formTitle={editingSuppl ? "Edit supplier" : "New supplier"}
-              emptyText="No suppliers yet."
-              rows={suppliers}
-              loading={supplLoading}
-              showForm={showSupplForm}
-              editing={!!editingSuppl}
-              saving={savingSuppl}
-              canSubmit={!!supplForm.company_name.trim()}
-              message={supplMessage}
-              onAdd={openAddSuppl}
-              onCancel={cancelSupplForm}
-              onSubmit={saveSuppl}
-              onEdit={openEditSuppl}
-              onDelete={deleteSuppl}
-              fields={[
-                { label: "Company Name", required: true, autoFocus: true, value: supplForm.company_name, onChange: v => setSupplForm(p => ({ ...p, company_name: v })), placeholder: "e.g. XYZ Lumber Supply" },
-                { label: "Material / Specialty", value: supplForm.specialty, onChange: v => setSupplForm(p => ({ ...p, specialty: v })), placeholder: "e.g. Structural Steel" },
-                { label: "Contact Name", value: supplForm.contact_name, onChange: v => setSupplForm(p => ({ ...p, contact_name: v })), placeholder: "Jane Doe" },
-                { label: "Phone", value: supplForm.phone, onChange: v => setSupplForm(p => ({ ...p, phone: v })), placeholder: "555-000-1234" },
-                { label: "Email", value: supplForm.email, onChange: v => setSupplForm(p => ({ ...p, email: v })), placeholder: "contact@supplier.com" },
-                { label: "Website", value: supplForm.website, onChange: v => setSupplForm(p => ({ ...p, website: v })), placeholder: "https://supplier.com" },
-                { label: "Notes", fullWidth: true, value: supplForm.notes, onChange: v => setSupplForm(p => ({ ...p, notes: v })), placeholder: "Any notes…" },
-              ]}
-              columns={[
-                { header: "Company Name", render: s => s.company_name },
-                { header: "Material/Specialty", render: s => s.specialty ?? "—" },
-                { header: "Contact", render: s => s.contact_name ?? "—" },
-                { header: "Phone", render: s => s.phone ?? "—" },
-                { header: "Email", render: s => s.email ?? "—" },
-                { header: "Website", render: s => s.website ? <a href={s.website} target="_blank" rel="noopener noreferrer" className="text-[#7B9BB5] hover:underline">{s.website.replace(/^https?:\/\//, "")}</a> : "—" },
-              ]}
-            />
-          )
+          if (dirEntity === "vendors") return <VendorsDirectory switcher={switcher} />
           return (
             <DirectoryPanel<ConstructionManager>
               switcher={switcher}
