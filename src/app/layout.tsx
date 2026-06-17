@@ -1,6 +1,7 @@
 ﻿import type { Metadata, Viewport } from "next"
 import { Inter } from "next/font/google"
 import "./globals.css"
+import { KeyboardNavProvider } from "@/components/keyboard-nav"
 
 export const viewport: Viewport = {
   width: "device-width",
@@ -34,7 +35,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en">
       <body className={`${inter.className} bg-[#F4F5F7] text-[#0F172A] antialiased`}>
-        {children}
+        {/* Global arrow-key navigation layer. Mounted once at the app shell so a
+            single document keydown listener serves every route; it is inert on
+            routes that register no regions. */}
+        <KeyboardNavProvider>
+          {children}
+        </KeyboardNavProvider>
       </body>
     </html>
   )
