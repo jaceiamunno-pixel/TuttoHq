@@ -68,12 +68,14 @@ export async function buildPurchaseOrderDocument(
   doc.y -= 36
 
   // ── Meta grid — PO # · Date of Order · Date Required ─────────────────────────
-  doc.ensure(30)
+  doc.ensure(60)
   const mPo = 150, mDate = 150, mReq = CW - mPo - mDate
-  doc.metaCell(M,                mPo,  "PO #",         data.poNumber)
-  doc.metaCell(M + mPo,          mDate, "Date of Order", dateLong)
-  doc.metaCell(M + mPo + mDate,  mReq, "Date Required", data.dateRequired ?? "—")
-  doc.y -= 30
+  const metaH = Math.max(
+    doc.metaCell(M,                mPo,  "PO #",         data.poNumber),
+    doc.metaCell(M + mPo,          mDate, "Date of Order", dateLong),
+    doc.metaCell(M + mPo + mDate,  mReq, "Date Required", data.dateRequired ?? "—"),
+  )
+  doc.y -= metaH
   doc.rule(doc.y + 4, HAIR, 0.6)
   doc.down(8)
 
@@ -89,8 +91,11 @@ export async function buildPurchaseOrderDocument(
     yy -= 22
     for (const ln of lines) {
       if (!ln.t) continue
-      doc.text(doc.clip(ln.font, ln.t, w, ln.size), x, yy - ln.size, ln.font, ln.size, ln.color)
-      yy -= ln.size + 4
+      // Wrap (never clip) — long vendor / project names flow onto extra lines.
+      for (const wl of doc.wrap(ln.font, ln.t, ln.size, w)) {
+        doc.text(wl, x, yy - ln.size, ln.font, ln.size, ln.color)
+        yy -= ln.size + 4
+      }
     }
     return yy
   }
@@ -110,13 +115,15 @@ export async function buildPurchaseOrderDocument(
   doc.down(6)
 
   // ── Terms · Cost Code · CT Sales & Use Tax ───────────────────────────────────
-  doc.ensure(30)
+  doc.ensure(60)
   const t3 = CW / 3
   const taxLabel = data.ctTaxTreatment === "included" ? "Included" : data.ctTaxTreatment === "exempt" ? "Exempt" : "—"
-  doc.metaCell(M,          t3, "Terms",     data.terms ?? "—")
-  doc.metaCell(M + t3,     t3, "Cost Code", data.costCode ?? "—")
-  doc.metaCell(M + t3 * 2, t3, "CT Sales & Use Tax", taxLabel)
-  doc.y -= 30
+  const meta2H = Math.max(
+    doc.metaCell(M,          t3, "Terms",     data.terms ?? "—"),
+    doc.metaCell(M + t3,     t3, "Cost Code", data.costCode ?? "—"),
+    doc.metaCell(M + t3 * 2, t3, "CT Sales & Use Tax", taxLabel),
+  )
+  doc.y -= meta2H
 
   // ── Line items ───────────────────────────────────────────────────────────────
   doc.sectionHeading("Items")
