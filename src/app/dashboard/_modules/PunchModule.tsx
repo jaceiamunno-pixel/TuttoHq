@@ -7,6 +7,7 @@ import { PlusIcon, SpinnerIcon, XIcon } from "../_shared/icons"
 import { PunchStatusBadge, PunchPriorityBadge } from "../_shared/badges"
 import { inputCls, labelCls } from "../_shared/ui"
 import { presignAndUpload } from "@/lib/storage-upload"
+import { useNavRegion, useFocusTrap } from "@/components/keyboard-nav"
 
 // Punch List module — extracted verbatim from dashboard/page.tsx (Step 3 of the split).
 // State, handlers, photo sub-system, action bar, content, and both modals are
@@ -22,6 +23,11 @@ export default function PunchModule({ globalProjectId, appProjects }: {
   const [punchLoading, setPunchLoading]           = useState(false)
   const [showNewPunch, setShowNewPunch]           = useState(false)
   const [viewPunch, setViewPunch]                 = useState<PunchItem | null>(null)
+  // Keyboard-nav: the punch list is a region (order 20); the view/edit modal
+  // traps focus and restores it to the row on Escape.
+  const { regionProps: punchLogProps } = useNavRegion<HTMLTableSectionElement>({ id: "punch-log", order: 20 })
+  const punchModalRef = useRef<HTMLDivElement>(null)
+  useFocusTrap(punchModalRef, !!viewPunch, () => setViewPunch(null))
   const [punchDesc, setPunchDesc]                 = useState("")
   const [punchLocation, setPunchLocation]         = useState("")
   const [punchAssignedTo, setPunchAssignedTo]     = useState("")
@@ -193,12 +199,12 @@ export default function PunchModule({ globalProjectId, appProjects }: {
                     <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-16">Actions</th>
                   </tr>
                 </thead>
-                <tbody>
+                <tbody {...punchLogProps}>
                   {punchItems.map((p, i) => {
                     const isOverdue = p.due_date && new Date(p.due_date) < new Date() && p.status !== "Completed" && p.status !== "Void"
                     const isStruck  = p.status === "Completed" || p.status === "Void"
                     return (
-                      <tr key={p.id} className={`border-b border-[#E2E8F0]/60 hover:bg-[#F8F9FA] transition-colors ${isStruck ? "opacity-50" : ""}`}>
+                      <tr key={p.id} data-nav-item className={`border-b border-[#E2E8F0]/60 hover:bg-[#F8F9FA] transition-colors outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#7B9BB5] ${isStruck ? "opacity-50" : ""}`}>
                         <td className="px-4 py-2.5 text-[#64748B] tabular-nums text-[12px]">{punchItems.length - i}</td>
                         <td className="px-4 py-2.5 text-[12px] font-mono text-[#7B9BB5]">{p.item_number}</td>
                         <td className="px-4 py-2.5 max-w-0">
@@ -214,7 +220,7 @@ export default function PunchModule({ globalProjectId, appProjects }: {
                         <td className="px-4 py-2.5"><PunchPriorityBadge priority={p.priority} /></td>
                         <td className="px-4 py-2.5"><PunchStatusBadge status={p.status} /></td>
                         <td className="px-4 py-2.5">
-                          <button onClick={() => { setViewPunch(p); setPunchEditStatus(p.status); setPunchEditNotes(p.notes ?? "") }}
+                          <button data-nav-primary onClick={() => { setViewPunch(p); setPunchEditStatus(p.status); setPunchEditNotes(p.notes ?? "") }}
                             className="text-[11px] text-[#64748B] hover:text-[#0F172A] px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors">
                             Edit
                           </button>
@@ -346,7 +352,7 @@ export default function PunchModule({ globalProjectId, appProjects }: {
       {viewPunch && (
         <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center"
           onClick={e => { if (e.target === e.currentTarget) setViewPunch(null) }}>
-          <div className="bg-white rounded-xl border border-[#E2E8F0] shadow-2xl w-full sm:w-[500px] mx-4 sm:mx-0 max-h-[90vh] flex flex-col">
+          <div ref={punchModalRef} role="dialog" aria-modal="true" className="bg-white rounded-xl border border-[#E2E8F0] shadow-2xl w-full sm:w-[500px] mx-4 sm:mx-0 max-h-[90vh] flex flex-col">
             <div className="flex-shrink-0 flex items-center justify-between px-6 pt-5 pb-4 border-b border-[#E2E8F0]">
               <div>
                 <span className="text-[11px] font-mono text-[#7B9BB5]">{viewPunch.item_number}</span>

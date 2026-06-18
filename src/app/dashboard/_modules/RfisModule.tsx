@@ -1,12 +1,13 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import type { RFI, Project, TeamMember } from "../_shared/types"
 import { fmtDateOnly } from "../_shared/format"
 import { PlusIcon, SpinnerIcon, XIcon } from "../_shared/icons"
 import { RfiStatusBadge } from "../_shared/badges"
 import { inputCls, labelCls } from "../_shared/ui"
 import { presignAndUpload } from "@/lib/storage-upload"
+import { useNavRegion, useFocusTrap } from "@/components/keyboard-nav"
 
 // RFI Log module — extracted verbatim from dashboard/page.tsx (Step 5 of the split).
 // State, handlers, action bar, content, and both modals are unchanged; the load
@@ -23,6 +24,11 @@ export default function RfisModule({ globalProjectId, appProjects, teamMembers }
   const [rfisLoading, setRfisLoading]                 = useState(false)
   const [showNewRfi, setShowNewRfi]                   = useState(false)
   const [viewRfi, setViewRfi]                         = useState<RFI | null>(null)
+  // Keyboard-nav: the RFI log is a region (order 20); the view/respond modal
+  // traps focus while open and restores it to the row on Escape.
+  const { regionProps: rfiLogProps } = useNavRegion<HTMLTableSectionElement>({ id: "rfi-log", order: 20 })
+  const rfiModalRef = useRef<HTMLDivElement>(null)
+  useFocusTrap(rfiModalRef, !!viewRfi, () => setViewRfi(null))
   const [rfiSubject, setRfiSubject]                   = useState("")
   const [rfiDescription, setRfiDescription]           = useState("")
   const [rfiSubmittedBy, setRfiSubmittedBy]           = useState("")
@@ -173,11 +179,11 @@ export default function RfisModule({ globalProjectId, appProjects, teamMembers }
                     <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-28">Actions</th>
                   </tr>
                 </thead>
-                <tbody>
+                <tbody {...rfiLogProps}>
                   {rfis.map(r => {
                     const isOverdue = r.due_date && new Date(r.due_date) < new Date() && r.status !== "Closed" && r.status !== "Answered" && r.status !== "Void"
                     return (
-                      <tr key={r.id} className="border-b border-[#E2E8F0]/60 hover:bg-[#F8F9FA] transition-colors">
+                      <tr key={r.id} data-nav-item className="border-b border-[#E2E8F0]/60 hover:bg-[#F8F9FA] transition-colors outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#7B9BB5]">
                         <td className="px-4 py-2.5 text-[12px] font-mono text-[#7B9BB5]">{r.rfi_number}</td>
                         <td className="px-4 py-2.5 max-w-0">
                           <p className="text-[#0F172A] font-medium truncate" title={r.subject}>{r.subject}</p>
@@ -197,7 +203,7 @@ export default function RfisModule({ globalProjectId, appProjects, teamMembers }
                         <td className="px-4 py-2.5"><RfiStatusBadge status={r.status} /></td>
                         <td className="px-4 py-2.5">
                           <div className="flex items-center gap-1">
-                            <button onClick={() => { setViewRfi(r); setRfiResponse(r.response ?? ""); setRfiResponseStatus(r.status) }}
+                            <button data-nav-primary onClick={() => { setViewRfi(r); setRfiResponse(r.response ?? ""); setRfiResponseStatus(r.status) }}
                               className="text-[11px] text-[#64748B] hover:text-[#0F172A] px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors">View</button>
                             <button onClick={() => generateRfiPdf(r.id)} disabled={rfiGeneratingPdf}
                               className="text-[11px] text-[#7B9BB5] hover:text-[#7B9BB5] px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors disabled:opacity-50">PDF</button>
@@ -354,7 +360,7 @@ export default function RfisModule({ globalProjectId, appProjects, teamMembers }
       {viewRfi && (
         <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4"
           onClick={e => { if (e.target === e.currentTarget) setViewRfi(null) }}>
-          <div className="bg-white rounded-xl border border-[#E2E8F0] shadow-2xl w-full sm:w-[680px] mx-4 sm:mx-0 flex flex-col max-h-[90vh]">
+          <div ref={rfiModalRef} role="dialog" aria-modal="true" className="bg-white rounded-xl border border-[#E2E8F0] shadow-2xl w-full sm:w-[680px] mx-4 sm:mx-0 flex flex-col max-h-[90vh]">
             <div className="flex items-center justify-between px-6 pt-5 pb-4 border-b border-[#E2E8F0] flex-shrink-0">
               <div className="flex items-center gap-3">
                 <span className="text-[12px] font-mono text-[#7B9BB5] flex-shrink-0">{viewRfi.rfi_number}</span>

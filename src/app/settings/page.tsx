@@ -7,6 +7,7 @@ import { createClient } from "@/lib/supabase/client"
 import { DivisionChecklist, SectionAccordion, isDefaultInScopeDivision } from "@/components/scope-selection"
 import { CSI_DIVISIONS } from "@/app/dashboard/_shared/csi"
 import ProjectSpecBooks from "@/components/project-spec-books"
+import { useNavRegion } from "@/components/keyboard-nav"
 import LaborRatesTab from "@/components/labor-rates-tab"
 import ProfileSignature from "@/components/profile-signature"
 import ProfilePoNumbering from "@/components/profile-po-numbering"
@@ -335,6 +336,11 @@ function DirectoryPanel<T extends { id: string }>({
 export default function SettingsPage() {
   const [activeView, setActiveView] = useState<View>("account")
   const [dirEntity, setDirEntity]   = useState<DirEntity>("vendors")
+
+  // Keyboard-nav region: the settings left-rail. Arrows move between the 5
+  // top-level sections; Enter/→ switches view. Sub-page buttons are NOT marked
+  // (they stay Tab/click-reachable). Single region on /settings — order 10.
+  const { regionProps: settingsNavProps } = useNavRegion({ id: "settings-nav", order: 10 })
 
   const [logoUrl, setLogoUrl]           = useState<string | null>(null)
   const [hasCoverPage, setHasCoverPage] = useState(false)
@@ -1531,15 +1537,16 @@ export default function SettingsPage() {
           {/* Left rail — 5 grouped sections (ADR-006). On desktop the active
               section's sub-pages render beneath it (accordion); on mobile the
               sections become a horizontal strip with sub-pages as pills below. */}
-          <nav className="md:w-52 md:flex-shrink-0">
+          <nav className="md:w-52 md:flex-shrink-0" {...settingsNavProps}>
             <div className="flex md:flex-col gap-1 overflow-x-auto scrollbar-none -mx-4 px-4 md:mx-0 md:px-0 md:overflow-visible">
               {SETTINGS_NAV.map(section => {
                 const isActiveSection = activeSection === section.id
                 return (
                   <div key={section.id} className="md:contents">
                     <button
+                      data-nav-item
                       onClick={() => setActiveView(section.defaultView)}
-                      className={`text-left px-3 py-2 rounded-lg text-[13px] font-medium whitespace-nowrap transition-colors ${
+                      className={`text-left px-3 py-2 rounded-lg text-[13px] font-medium whitespace-nowrap transition-colors outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#7B9BB5] ${
                         isActiveSection
                           ? "bg-[#7B9BB5]/[0.12] text-[#0F172A]"
                           : "text-[#64748B] hover:text-[#0F172A] hover:bg-[#0F172A]/[0.03]"

@@ -1,10 +1,11 @@
 "use client"
 
-import { useState, useEffect, useCallback } from "react"
+import { useState, useEffect, useCallback, useRef } from "react"
 import type { Project, PurchaseOrder, PoLineItem, Vendor, CommitmentInvoice, PoBalance, SupplierContract } from "../_shared/types"
 import { PlusIcon, SpinnerIcon, XIcon } from "../_shared/icons"
 import { inputCls, labelCls } from "../_shared/ui"
 import { VendorPicker } from "../_shared/vendor-picker"
+import { useNavRegion, useFocusTrap } from "@/components/keyboard-nav"
 
 // Purchase Orders module — replaces the old Commitments nav entry. The list is
 // scoped to the ACTIVE project (the project in the route); the form still lets
@@ -42,6 +43,12 @@ export default function PurchaseOrdersModule({ appProjects, globalProjectId }: {
   // Form state (shared by new + edit)
   const [showForm, setShowForm]   = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
+  // Keyboard-nav: the PO log is a region (order 20). Edit is the canonical
+  // "open" for a PO (no separate read view); the editor modal traps focus and
+  // restores it to the row on Escape. (closeForm is hoisted below.)
+  const { regionProps: poLogProps } = useNavRegion<HTMLTableSectionElement>({ id: "purchase-orders-log", order: 20 })
+  const poModalRef = useRef<HTMLDivElement>(null)
+  useFocusTrap(poModalRef, showForm, () => closeForm())
   // The PO number is issued server-side at create (the create route calls
   // issue_po_number); it's unknown until the first save, then displayed and
   // editable. poNumberError holds the inline 409 ("already in use").
@@ -401,9 +408,9 @@ export default function PurchaseOrdersModule({ appProjects, globalProjectId }: {
                     <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-40">Actions</th>
                   </tr>
                 </thead>
-                <tbody>
+                <tbody {...poLogProps}>
                   {pos.map(po => (
-                    <tr key={po.id} className="border-b border-[#E2E8F0]/60 hover:bg-[#F8F9FA] transition-colors">
+                    <tr key={po.id} data-nav-item className="border-b border-[#E2E8F0]/60 hover:bg-[#F8F9FA] transition-colors outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#7B9BB5]">
                       <td className="px-4 py-2.5 font-semibold text-[#0F172A] tabular-nums">{po.po_number ?? "—"}</td>
                       <td className="px-4 py-2.5 max-w-0"><p className="text-[#0F172A] font-medium truncate" title={po.to_company_name}>{po.to_company_name}</p></td>
                       <td className="px-4 py-2.5 text-[#64748B] text-[12px] truncate max-w-[200px]" title={projectName(po.project_id)}>{projectName(po.project_id)}</td>
@@ -413,7 +420,7 @@ export default function PurchaseOrdersModule({ appProjects, globalProjectId }: {
                       <td className="px-4 py-2.5">{statusBadge(po.status)}</td>
                       <td className="px-4 py-2.5">
                         <div className="flex items-center gap-1">
-                          <button onClick={() => openEdit(po)} className="text-[11px] text-[#64748B] hover:text-[#0F172A] px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors">Edit</button>
+                          <button data-nav-primary onClick={() => openEdit(po)} className="text-[11px] text-[#64748B] hover:text-[#0F172A] px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors">Edit</button>
                           <button onClick={() => generatePdf(po.id)} className="text-[11px] text-[#7B9BB5] hover:text-[#5A7A94] px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors">PDF</button>
                           <button onClick={() => deletePO(po.id)} className="text-[11px] text-red-400/60 hover:text-red-400 px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors">Del</button>
                         </div>
@@ -456,7 +463,7 @@ export default function PurchaseOrdersModule({ appProjects, globalProjectId }: {
       {showForm && (
         <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4"
           onClick={e => { if (e.target === e.currentTarget) closeForm() }}>
-          <div className="bg-white rounded-xl border border-[#E2E8F0] shadow-2xl w-full sm:w-[680px] mx-4 sm:mx-0 flex flex-col max-h-[92vh]">
+          <div ref={poModalRef} role="dialog" aria-modal="true" className="bg-white rounded-xl border border-[#E2E8F0] shadow-2xl w-full sm:w-[680px] mx-4 sm:mx-0 flex flex-col max-h-[92vh]">
             <div className="flex items-center justify-between px-6 pt-5 pb-4 border-b border-[#E2E8F0] flex-shrink-0">
               <div className="flex flex-col min-w-0 gap-1">
                 <div className="flex items-center gap-3 min-w-0">
