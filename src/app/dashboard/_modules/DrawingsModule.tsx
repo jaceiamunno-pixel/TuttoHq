@@ -10,12 +10,17 @@ import { PlusIcon, SpinnerIcon, XIcon } from "../_shared/icons"
 import { DrawingStatusBadge } from "../_shared/badges"
 import { inputCls, labelCls } from "../_shared/ui"
 import { presignAndUpload } from "@/lib/storage-upload"
+import type { MarkupDoc } from "@/lib/drawing-markup"
 import dynamic from "next/dynamic"
 
 // Lazy-loaded: the splitter pulls in pdf-lib + unpdf (~180 kB). Code-split so
 // those load only when a user actually opens the import modal, keeping the
 // dashboard's first-load JS lean. Client-only (browser crypto/File APIs).
 const DrawingImportModal = dynamic(() => import("@/components/drawings/DrawingImportModal"), { ssr: false })
+// Same treatment for the markup editor — it pulls in unpdf to raster the sheet
+// page, so it only loads when a user actually opens markup mode (ssr:false: it
+// uses the browser canvas + pointer APIs).
+const MarkupEditor = dynamic(() => import("@/components/drawings/MarkupEditor"), { ssr: false })
 
 // Discipline options for the sheet metadata edit (mirrors drawing-detect's map).
 const SHEET_DISCIPLINES = ["Architectural", "Structural", "Mechanical", "Electrical", "Plumbing", "Civil", "Fire Protection", "Demolition", "Landscape", "General", "Telecom"]
@@ -32,6 +37,11 @@ interface ImportedSheet {
   discipline_prefix: string | null
   title: string | null
   revision_label: string | null
+  // current = the clean original (fork A). The markup LAYER rides alongside:
+  // its own revision id + vector doc, both null when the sheet has no markup.
+  revision_id?: string | null
+  markup_revision_id?: string | null
+  markup_doc?: MarkupDoc | null
   file_url: string | null
   created_at: string
   deleted_at?: string | null
@@ -70,6 +80,12 @@ export default function DrawingsModule({ globalProjectId, appProjects }: {
   const [importedLoading, setImportedLoading]         = useState(false)
   const [viewerSheet, setViewerSheet]                 = useState<ImportedSheet | null>(null)
   const [viewerFull, setViewerFull]                   = useState(false)
+  // In-app markup (ADR-005 Part 2a, fork A). markupMode swaps the read-only
+  // iframe for the vector editor on the SAME viewer. "Save markup" persists the
+  // sheet's single markup LAYER (source='markup') alongside the clean original —
+  // never as current — and the layer's markup_doc re-hydrates the editor on
+  // reopen (see handleSaveMarkups + the markup-revisions route).
+  const [markupMode, setMarkupMode]                   = useState(false)
   const [editingSheetId, setEditingSheetId]           = useState<string | null>(null)
   const [sheetDraft, setSheetDraft]                   = useState({ sheet_number: "", title: "", discipline: "", discipline_prefix: "", revision_label: "" })
   const [savingSheet, setSavingSheet]                 = useState(false)
@@ -221,6 +237,32 @@ export default function DrawingsModule({ globalProjectId, appProjects }: {
 
   // Pre-select the current global project whenever the New Drawing modal opens.
   useEffect(() => { if (showNewDrawing) setDwgProjectId(globalProjectId) }, [showNewDrawing, globalProjectId])
+
+  // Per-open routing (fork A): a sheet that HAS a markup layer opens straight
+  // into the editor (hydrated from markup_doc); a plain sheet opens read-only.
+  useEffect(() => { setMarkupMode(!!viewerSheet?.markup_doc) }, [viewerSheet?.id])
+
+  // Part 2a save: persist the sheet's single markup layer. Vector-only — posts
+  // the serialized doc + the layer id; the route bases off the clean original
+  // and UPDATEs the layer in place (or INSERTs the first one), never flipping
+  // current_revision_id. Returns the layer id so the editor's next save UPDATEs
+  // the same row (no stacking). Refresh the list + open sheet on success.
+  async function handleSaveMarkups(sheetId: string, doc: MarkupDoc, markupRevisionId: string | null): Promise<string | void> {
+    const res = await fetch(`/api/drawings/sheets/${sheetId}/markup-revisions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ markup_doc: doc, markup_revision_id: markupRevisionId }),
+    })
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) { alert(data?.error ?? "Save failed"); return }
+    setViewerSheet(s => s && s.id === sheetId
+      ? { ...s, markup_revision_id: data.markup_revision_id, markup_doc: doc }
+      : s)
+    loadImportedSheets()
+    if (revHistoryFor === sheetId) loadRevisions(sheetId)
+    alert(`Markup ${data.mode === "update" ? "updated" : "saved"} (${data.revision_label}).`)
+    return data.markup_revision_id
+  }
 
   function openAddRevision(d: DrawingRecord) {
     setAddRevisionFor(d)
@@ -684,6 +726,12 @@ export default function DrawingsModule({ globalProjectId, appProjects }: {
               </p>
               <div className="flex items-center gap-3 flex-shrink-0">
                 {viewerSheet.file_url && (
+                  <button onClick={() => setMarkupMode(m => !m)}
+                    className={`text-[12px] font-semibold transition-colors ${markupMode ? "text-[#5A7A94]" : "text-[#7B9BB5] hover:text-[#5A7A94]"}`}>
+                    {markupMode ? "Exit markup" : "Markup"}
+                  </button>
+                )}
+                {viewerSheet.file_url && (
                   <a href={viewerSheet.file_url} target="_blank" rel="noopener noreferrer" className="text-[12px] text-[#7B9BB5] hover:text-[#5A7A94] font-semibold">Open in new tab</a>
                 )}
                 <button onClick={() => setViewerFull(f => !f)} className="text-[12px] text-[#7B9BB5] hover:text-[#5A7A94] font-semibold">
@@ -693,9 +741,17 @@ export default function DrawingsModule({ globalProjectId, appProjects }: {
               </div>
             </div>
             <div className="flex-1 min-h-0 bg-[#F1F3F5]">
-              {viewerSheet.file_url
-                ? <iframe src={`${viewerSheet.file_url}#view=Fit`} title={viewerSheet.sheet_number ?? "sheet"} className="w-full h-full border-none" />
-                : <div className="flex items-center justify-center h-full text-[13px] text-[#94A3B8]">No file attached to this sheet.</div>}
+              {!viewerSheet.file_url
+                ? <div className="flex items-center justify-center h-full text-[13px] text-[#94A3B8]">No file attached to this sheet.</div>
+                : markupMode
+                  ? <MarkupEditor
+                      fileUrl={viewerSheet.file_url}
+                      initialMarkups={viewerSheet.markup_doc}
+                      baseRevisionId={viewerSheet.revision_id}
+                      baseLabel={viewerSheet.revision_label}
+                      markupRevisionId={viewerSheet.markup_revision_id}
+                      onSave={(d, mkId) => handleSaveMarkups(viewerSheet.id, d, mkId)} />
+                  : <iframe src={`${viewerSheet.file_url}#view=Fit`} title={viewerSheet.sheet_number ?? "sheet"} className="w-full h-full border-none" />}
             </div>
           </div>
         </div>
