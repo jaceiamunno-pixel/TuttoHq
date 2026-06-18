@@ -1,7 +1,8 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import type { ChangeOrder, Project } from "../_shared/types"
+import { useFocusTrap } from "@/components/keyboard-nav"
 import { fmtDateOnly } from "../_shared/format"
 import { PlusIcon, SpinnerIcon } from "../_shared/icons"
 import { presignAndUpload } from "@/lib/storage-upload"
@@ -64,6 +65,11 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
   const [coLoading, setCoLoading]                     = useState(false)
   const [showNewCo, setShowNewCo]                     = useState(false)
   const [viewCo, setViewCo]                           = useState<ChangeOrder | null>(null)
+  // Focus trap for the View Change Order modal (the named test case for the
+  // global keyboard-nav layer): while open, Tab + region keys are confined to
+  // the dialog and Escape closes it, restoring focus to the View trigger.
+  const viewCoModalRef = useRef<HTMLDivElement>(null)
+  useFocusTrap(viewCoModalRef, !!viewCo, () => setViewCo(null))
   const [coProjectId, setCoProjectId]                 = useState(globalProjectId)
   const [coDate, setCoDate]                           = useState(() => new Date().toISOString().slice(0, 10))
   const [coProposal, setCoProposal]                   = useState("")
@@ -702,7 +708,7 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
       {viewCo && (
         <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4"
           onClick={e => { if (e.target === e.currentTarget) setViewCo(null) }}>
-          <div className="bg-white border border-[#E2E8F0] rounded-xl w-full max-w-2xl mx-4 sm:mx-0 flex flex-col max-h-[90vh]">
+          <div ref={viewCoModalRef} role="dialog" aria-modal="true" className="bg-white border border-[#E2E8F0] rounded-xl w-full max-w-2xl mx-4 sm:mx-0 flex flex-col max-h-[90vh]">
             {/* Header */}
             <div className="flex items-start justify-between px-6 py-4 border-b border-[#E2E8F0] flex-shrink-0">
               <div>

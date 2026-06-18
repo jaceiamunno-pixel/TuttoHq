@@ -22,6 +22,7 @@ import PackageCreateModal, { type VendorPreset } from "@/components/packages/Pac
 import PackagesView from "@/components/packages/PackagesView"
 import OverflowMenu, { type OverflowEntry } from "@/components/overflow-menu"
 import BulkImportModal from "@/components/bulk-import/BulkImportModal"
+import { useNavRegion, useFocusTrap } from "@/components/keyboard-nav"
 
 // Status options for the inline Status dropdown in the submittal log.
 // "Sent to Sub" is the outbound-dispatch milestone (Session I).
@@ -189,7 +190,17 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
   // PDF preview, plus inline title edit that locks the row against future
   // automated rewrites).
   const [detailSubmittal, setDetailSubmittal]   = useState<SubmittalRecord | null>(null)
+  const detailModalRef = useRef<HTMLDivElement>(null)
   const [detailTitleEditing, setDetailTitleEditing] = useState(false)
+
+  // ── Global keyboard navigation (Part 1) ──────────────────────────────────
+  // The submittal log table is one navigable region: ArrowUp/Down move rows,
+  // ArrowRight / Enter open the focused row's detail view (clicks the row's
+  // [data-nav-primary] title button). The detail modal traps focus while open
+  // and Escape restores focus to the row. closeDetailModal is a hoisted
+  // declaration below, so referencing it here is safe.
+  const { regionProps: logRegionProps } = useNavRegion<HTMLDivElement>({ id: "submittal-log", order: 10 })
+  useFocusTrap(detailModalRef, !!detailSubmittal, () => closeDetailModal())
   const [detailTitleDraft, setDetailTitleDraft]     = useState("")
   const [detailTitleSaving, setDetailTitleSaving]   = useState(false)
   const [detailTitleError, setDetailTitleError]     = useState<string | null>(null)
@@ -1964,8 +1975,9 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
               </div>
             )}
             {/* Desktop tracker table — horizontal scroll on the outer pane,
-                frozen header sticks against it. */}
-            <div className="hidden sm:block">
+                frozen header sticks against it. Registered as the "submittal-log"
+                keyboard-nav region; each <tr> below is a [data-nav-item]. */}
+            <div className="hidden sm:block" {...logRegionProps}>
             <table className="w-full min-w-max text-[12px] border-collapse border-b border-[#E2E8F0]">
               <thead className="sticky top-0 bg-[#F8F9FA] z-10">
                 <tr className="border-b border-[#E2E8F0]">
@@ -1994,7 +2006,7 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                   // the section-color tint that applies to all rows.
                   const hasAttachment = !!s.storage_path
                   return (
-                  <tr key={s.id} className={`border-b border-[#E2E8F0]/60 ${c.bg} ${hasAttachment ? "shadow-[inset_0_0_0_999px_rgba(255,255,255,0.45)]" : ""} ${showSelect && selectedIds.has(s.id) ? "ring-1 ring-inset ring-[#7B9BB5]/40" : ""}`}>
+                  <tr key={s.id} data-nav-item className={`border-b border-[#E2E8F0]/60 ${c.bg} ${hasAttachment ? "shadow-[inset_0_0_0_999px_rgba(255,255,255,0.45)]" : ""} ${showSelect && selectedIds.has(s.id) ? "ring-1 ring-inset ring-[#7B9BB5]/40" : ""} outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#7B9BB5] focus-visible:bg-[#7B9BB5]/[0.06]`}>
                     {showSelect && (
                       <td className="px-3 py-1.5">
                         <input type="checkbox" checked={selectedIds.has(s.id)}
@@ -2019,6 +2031,7 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                         )}
                         <button
                           type="button"
+                          data-nav-primary
                           onClick={() => openDetailModal(s)}
                           title={s.file_name}
                           className={`flex-1 min-w-0 text-left truncate hover:underline focus:outline-none focus:underline ${hasAttachment ? "text-[#0F172A] font-medium" : "text-[#94A3B8] italic"}`}>
@@ -3109,7 +3122,7 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
         return (
         <div className="fixed inset-0 bg-black/70 z-50 flex items-stretch sm:items-center justify-center"
           onClick={e => { if (e.target === e.currentTarget) closeDetailModal() }}>
-          <div className="bg-white sm:rounded-xl border border-[#E2E8F0] shadow-2xl w-full sm:w-[min(96vw,1100px)] sm:max-h-[92vh] flex flex-col">
+          <div ref={detailModalRef} role="dialog" aria-modal="true" className="bg-white sm:rounded-xl border border-[#E2E8F0] shadow-2xl w-full sm:w-[min(96vw,1100px)] sm:max-h-[92vh] flex flex-col">
             {/* Header */}
             <div className="flex items-start justify-between gap-3 px-5 py-4 border-b border-[#E2E8F0]">
               <div className="min-w-0 flex-1">
@@ -3775,12 +3788,18 @@ function VendorCell({
       <button
         ref={btnRef}
         onClick={toggle}
+        aria-haspopup="dialog"
+        aria-expanded={open}
         className={`w-[150px] h-7 px-2 rounded border text-[12px] text-left truncate bg-white transition-colors hover:border-[#7B9BB5]/60 ${open ? "border-[#7B9BB5]" : "border-[#E2E8F0]"} ${label ? "text-[#0F172A]" : "text-[#94A3B8]"}`}
       >
         {label ?? "Set vendor…"}
       </button>
       {open && pos && (
         <div
+          // data-nav-yield: the global arrow-key layer stands down while this
+          // picker is open, so typing/searching and option movement behave
+          // natively instead of being hijacked for row navigation.
+          data-nav-yield
           style={{ position: "fixed", top: pos.top, left: pos.left }}
           className="z-50 w-[260px] bg-white border border-[#E2E8F0] rounded-lg shadow-xl"
         >
