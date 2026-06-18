@@ -63,12 +63,19 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   return NextResponse.json({ ok: true, id })
 }
 
-// DELETE /api/drawings/sheets/[id] — SOFT delete (ADR-005 Subsystem 2). Sets
-// drawing_sheets.deleted_at = now() via the authed RLS-scoped client. Does NOT
-// remove the row or any storage file — the sheet drops out of the live list
-// (which filters deleted_at IS NULL) and into "Recently deleted" for 5 days,
-// after which the scheduled purge hard-deletes it. RLS guarantees a caller can
-// only soft-delete sheets in their own company.
+// DELETE /api/drawings/sheets/[id] — SOFT delete (ADR-005 Subsystem 2) via the
+// soft_delete_drawing_sheet SECURITY DEFINER function (migration 0020),
+// company-scoped via get_my_company_id(). Does NOT remove the row or any storage
+// file — the sheet drops out of the live list (which filters deleted_at IS NULL)
+// and into "Recently deleted" for 5 days, after which the scheduled purge
+// hard-deletes it (cascading its revisions).
+//
+// A bare authed UPDATE stamping deleted_at is REJECTED: the new row fails the
+// SELECT policy (deleted_at IS NULL) that applies to the authenticated role, so
+// PostgREST 403s ("new row violates row-level security policy") — which is why
+// sheet soft-delete silently never worked in prod. The fn (run as owner, bypassing
+// RLS) returns the id on success, or no row if not found / cross-company / already
+// deleted → 404. No pre-fetch needed.
 export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
@@ -77,17 +84,8 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
   const { id } = await params
   if (!id) return NextResponse.json({ error: "id required" }, { status: 400 })
 
-  // .select() returns the affected row only if RLS lets the caller see it, so
-  // an empty result = not found / cross-tenant → 404 (no privileged escalation).
-  const { data, error } = await supabase
-    .from("drawing_sheets")
-    .update({ deleted_at: new Date().toISOString() })
-    .eq("id", id)
-    .is("deleted_at", null)            // idempotent: don't re-stamp an already-deleted row
-    .select("id")
+  const { data: deletedId, error } = await supabase.rpc("soft_delete_drawing_sheet", { p_id: id })
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  if (!data || data.length === 0) {
-    return NextResponse.json({ error: "sheet not found or already deleted" }, { status: 404 })
-  }
+  if (!deletedId) return NextResponse.json({ error: "sheet not found or already deleted" }, { status: 404 })
   return NextResponse.json({ ok: true, id })
 }

@@ -135,9 +135,18 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   return NextResponse.json({ ok: true, sheet_id: sheetId, revision_id: revisionId, storage_path: finalPath })
 }
 
-// GET /api/drawings/sheets/[id]/revisions — full revision history for a sheet
+// GET /api/drawings/sheets/[id]/revisions — revision history for a sheet
 // (proves "both copies stay"). RLS-scoped; signs each file for download.
-export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+//
+// ?deleted=true → the revision recycle-bin. The SELECT RLS policy filters
+// deleted_at IS NULL, so the authed client CANNOT read soft-deleted revisions;
+// list_deleted_drawing_revisions(p_sheet_id) is a SECURITY DEFINER function that
+// is company-scoped internally (get_my_company_id()) AND sheet-scoped, so it can
+// only ever return THIS caller's own deleted revisions for THIS sheet. Unlike
+// sheets there is no recovery countdown — the purge cron only hard-deletes expired
+// *sheets* (cascading their revisions), never standalone revisions, so a deleted
+// revision on a live sheet is recoverable indefinitely.
+export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
@@ -145,6 +154,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
   const { id: sheetId } = await params
   if (!sheetId) return NextResponse.json({ error: "id required" }, { status: 400 })
 
+  // Sheet must be RLS-visible (same company, live) — clean 404 + ownership check.
   const { data: sheet } = await supabase
     .from("drawing_sheets")
     .select("id, current_revision_id")
@@ -152,14 +162,24 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
     .maybeSingle()
   if (!sheet) return NextResponse.json({ error: "sheet not found" }, { status: 404 })
 
-  const { data: revs, error } = await supabase
-    .from("drawing_revisions")
-    .select("id, revision_label, file_size, file_sha256, created_at, storage_path")
-    .eq("sheet_id", sheetId)
-    .order("created_at", { ascending: false })
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  const wantDeleted = req.nextUrl.searchParams.get("deleted") === "true"
 
-  const rows = revs ?? []
+  interface RevRow { id: string; revision_label: string | null; file_size: number | null; created_at: string; storage_path: string | null }
+  let rows: RevRow[]
+  if (wantDeleted) {
+    const { data, error } = await supabase.rpc("list_deleted_drawing_revisions", { p_sheet_id: sheetId })
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    rows = (data ?? []) as RevRow[]      // SECURITY DEFINER fn already orders by deleted_at DESC
+  } else {
+    const { data, error } = await supabase
+      .from("drawing_revisions")
+      .select("id, revision_label, file_size, file_sha256, created_at, storage_path")
+      .eq("sheet_id", sheetId)
+      .order("created_at", { ascending: false })
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    rows = (data ?? []) as RevRow[]
+  }
+
   const signed = await Promise.all(
     rows.map(r => r.storage_path
       ? supabase.storage.from("submittals").createSignedUrl(r.storage_path, 3600)
@@ -171,7 +191,9 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
     revision_label: r.revision_label,
     file_size: r.file_size,
     created_at: r.created_at,
-    is_current: r.id === sheet.current_revision_id,
+    // Deleted revisions are never current (the current_revision_id invariant), so
+    // is_current is always false in the recycle-bin view.
+    is_current: !wantDeleted && r.id === sheet.current_revision_id,
     file_url: (signed[i] as { data: { signedUrl?: string } | null }).data?.signedUrl ?? null,
   }))
 

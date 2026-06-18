@@ -24,22 +24,40 @@ export async function GET(req: NextRequest) {
   // inside the 5-day recovery window. Default → the live list (deleted_at NULL).
   const wantDeleted = req.nextUrl.searchParams.get("deleted") === "true"
   const RECOVERY_DAYS = 5
-  const cutoffIso = new Date(Date.now() - RECOVERY_DAYS * 86400_000).toISOString()
+  const cutoffMs = Date.now() - RECOVERY_DAYS * 86400_000
 
-  let q = supabase
-    .from("drawing_sheets")
-    .select("id, sheet_number, discipline, discipline_prefix, title, current_revision_id, created_at, deleted_at")
-    .eq("project_id", pid)
-  if (wantDeleted) {
-    // Within the window only — anything older is pending hard-purge.
-    q = q.not("deleted_at", "is", null).gte("deleted_at", cutoffIso).order("deleted_at", { ascending: false })
-  } else {
-    q = q.is("deleted_at", null).order("sheet_number", { ascending: true })
+  interface SheetRow {
+    id: string; sheet_number: string | null; discipline: string | null
+    discipline_prefix: string | null; title: string | null
+    current_revision_id: string | null; created_at: string; deleted_at: string | null
+    project_id?: string
   }
-  const { data: sheets, error } = await q
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-
-  const rows = sheets ?? []
+  let rows: SheetRow[]
+  if (wantDeleted) {
+    // The SELECT RLS policy filters deleted_at IS NULL, so the authed client
+    // CANNOT read soft-deleted sheets directly — this view returned nothing after
+    // that policy shipped (unnoticed only because no sheets were deleted yet).
+    // list_deleted_drawing_sheets() is a SECURITY DEFINER fn, company-scoped
+    // internally via get_my_company_id(), returning only this caller's deleted
+    // sheets. Scope to this project + the 5-day recovery window (older rows are
+    // already hard-purged by /api/cron/purge-drawings, so the cutoff mirrors that).
+    const { data, error } = await supabase.rpc("list_deleted_drawing_sheets")
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    // Compare as epochs, not ISO strings: Postgres timestamptz (…+00:00, µs) and
+    // JS toISOString (…Z, ms) don't sort lexicographically the same.
+    rows = ((data ?? []) as SheetRow[])
+      .filter(s => s.project_id === pid && !!s.deleted_at && new Date(s.deleted_at).getTime() >= cutoffMs)
+    // fn already orders by deleted_at DESC
+  } else {
+    const { data, error } = await supabase
+      .from("drawing_sheets")
+      .select("id, sheet_number, discipline, discipline_prefix, title, current_revision_id, created_at, deleted_at")
+      .eq("project_id", pid)
+      .is("deleted_at", null)
+      .order("sheet_number", { ascending: true })
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    rows = (data ?? []) as SheetRow[]
+  }
   const revIds = rows.map(s => s.current_revision_id).filter((v): v is string => !!v)
 
   const revById = new Map<string, { revision_label: string | null; storage_path: string | null }>()

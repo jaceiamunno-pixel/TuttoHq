@@ -101,6 +101,11 @@ export default function DrawingsModule({ globalProjectId, appProjects }: {
   const [revHistoryFor, setRevHistoryFor]             = useState<string | null>(null)
   const [revHistory, setRevHistory]                   = useState<{ id: string; revision_label: string | null; created_at: string; is_current: boolean; file_url: string | null }[]>([])
   const [revHistoryLoading, setRevHistoryLoading]     = useState(false)
+  // Per-sheet revision recycle-bin (only one sheet's Revs panel is open at a time).
+  const [showDeletedRevs, setShowDeletedRevs]         = useState(false)
+  const [deletedRevs, setDeletedRevs]                 = useState<{ id: string; revision_label: string | null; created_at: string; file_url: string | null }[]>([])
+  const [deletedRevsLoading, setDeletedRevsLoading]   = useState(false)
+  const [deletingRevId, setDeletingRevId]             = useState<string | null>(null)
   const revFileRef = useRef<HTMLInputElement>(null)
 
   function loadDrawings(pid = globalProjectId) {
@@ -174,7 +179,10 @@ export default function DrawingsModule({ globalProjectId, appProjects }: {
   async function softDeleteSheet(s: ImportedSheet) {
     if (!confirm(`Delete sheet ${s.sheet_number ?? ""}? It moves to Recently deleted and is permanently removed after 5 days.`)) return
     const res = await fetch(`/api/drawings/sheets/${s.id}`, { method: "DELETE" })
-    if (res.ok) { loadImportedSheets(); if (showDeleted) loadDeletedSheets() }
+    // Always refresh the deleted list (not just when the bin is open) so the
+    // "recently deleted" toggle + count update immediately — otherwise the sheet
+    // vanishes with no visible way to restore it until a full page reload.
+    if (res.ok) { loadImportedSheets(); loadDeletedSheets() }
     else { const d = await res.json().catch(() => ({})); alert(d?.error ?? "Delete failed") }
   }
   async function restoreSheet(s: ImportedSheet) {
@@ -227,9 +235,48 @@ export default function DrawingsModule({ globalProjectId, appProjects }: {
       .finally(() => setRevHistoryLoading(false))
   }
   function toggleRevHistory(sheetId: string) {
+    // Reset the per-sheet recycle-bin whenever the panel closes or switches sheet.
+    setShowDeletedRevs(false); setDeletedRevs([])
     if (revHistoryFor === sheetId) { setRevHistoryFor(null); return }
     setRevHistoryFor(sheetId)
     loadRevisions(sheetId)
+  }
+
+  // ── Revision soft-delete + restore (recycle-bin) ───────────────────────────
+  // Delete = stamp deleted_at server-side. For a NON-markup current revision the
+  // server re-points current_revision_id to the newest remaining revision first;
+  // deleting a sheet's only revision is blocked (409) — delete the whole sheet
+  // instead. We refresh the sheet list too because current/file may have moved.
+  function loadDeletedRevisions(sheetId: string) {
+    setDeletedRevsLoading(true)
+    fetch(`/api/drawings/sheets/${sheetId}/revisions?deleted=true`)
+      .then(r => r.json())
+      .then(d => setDeletedRevs(d.revisions ?? []))
+      .catch(() => setDeletedRevs([]))
+      .finally(() => setDeletedRevsLoading(false))
+  }
+  async function softDeleteRevision(sheetId: string, rev: { id: string; revision_label: string | null }) {
+    if (!confirm(`Delete revision ${rev.revision_label ?? ""}? It moves to the revision recycle-bin and can be restored.`)) return
+    setDeletingRevId(rev.id)
+    try {
+      const res = await fetch(`/api/drawings/sheets/${sheetId}/revisions/${rev.id}`, { method: "DELETE" })
+      if (res.ok) {
+        loadRevisions(sheetId); loadImportedSheets()
+        if (showDeletedRevs) loadDeletedRevisions(sheetId)
+      } else {
+        const d = await res.json().catch(() => ({})); alert(d?.error ?? "Delete failed")
+      }
+    } finally { setDeletingRevId(null) }
+  }
+  async function restoreRevision(sheetId: string, revId: string) {
+    const res = await fetch(`/api/drawings/sheets/${sheetId}/revisions/${revId}/restore`, { method: "POST" })
+    if (res.ok) { loadDeletedRevisions(sheetId); loadRevisions(sheetId); loadImportedSheets() }
+    else { const d = await res.json().catch(() => ({})); alert(d?.error ?? "Restore failed") }
+  }
+  function toggleDeletedRevs(sheetId: string) {
+    const next = !showDeletedRevs
+    setShowDeletedRevs(next)
+    if (next) loadDeletedRevisions(sheetId)
   }
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -409,11 +456,11 @@ export default function DrawingsModule({ globalProjectId, appProjects }: {
                 <p className="text-[12px] font-semibold text-[#0F172A]">
                   Imported sheets <span className="text-[#64748B] font-normal">({importedSheets.length})</span>
                 </p>
-                {deletedSheets.length > 0 && (
-                  <button onClick={toggleDeleted} className="text-[11px] text-[#64748B] hover:text-[#0F172A] font-semibold">
-                    {showDeleted ? "Hide" : "Show"} recently deleted ({deletedSheets.length})
-                  </button>
-                )}
+                {/* Always reachable (not gated on a count that can go stale): clicking
+                    re-fetches the deleted sheets via the list_deleted_drawing_sheets RPC. */}
+                <button onClick={toggleDeleted} className="text-[11px] text-[#64748B] hover:text-[#0F172A] font-semibold">
+                  {showDeleted ? "Hide" : "Show"} recently deleted{deletedSheets.length > 0 ? ` (${deletedSheets.length})` : ""}
+                </button>
               </div>
               {!importedLoading && importedSheets.length > 0 && (
                 <div className="flex flex-wrap items-center gap-2 mb-2">
@@ -546,10 +593,45 @@ export default function DrawingsModule({ globalProjectId, appProjects }: {
                                             <span className="font-mono text-[#5A7A94] w-20">{rv.revision_label ?? "—"}</span>
                                             {rv.is_current ? <span className="text-[9px] bg-emerald-100 text-emerald-700 px-1 rounded">current</span> : <span className="w-[46px]" />}
                                             <span className="text-[#94A3B8]">{fmtDate(rv.created_at)}</span>
-                                            {rv.file_url && <a href={rv.file_url} target="_blank" rel="noopener noreferrer" className="text-[#7B9BB5] hover:text-[#5A7A94] font-semibold ml-auto">Open</a>}
+                                            <span className="ml-auto flex items-center gap-3">
+                                              {rv.file_url && <a href={rv.file_url} target="_blank" rel="noopener noreferrer" className="text-[#7B9BB5] hover:text-[#5A7A94] font-semibold">Open</a>}
+                                              <button onClick={() => softDeleteRevision(s.id, rv)} disabled={deletingRevId === rv.id}
+                                                className="text-red-400 hover:text-red-500 font-semibold disabled:opacity-50 transition-colors">{deletingRevId === rv.id ? "Deleting…" : "Delete"}</button>
+                                            </span>
                                           </li>
                                         ))}
                                       </ul>
+                                    )}
+                                    {/* Revision recycle-bin — soft-deleted revisions are recoverable
+                                        indefinitely (only whole-sheet purge cascades them away). */}
+                                    {!revHistoryLoading && (
+                                      <div className="mt-2 pt-2 border-t border-[#E2E8F0]">
+                                        <button onClick={() => toggleDeletedRevs(s.id)} className="text-[10px] text-[#64748B] hover:text-[#0F172A] font-semibold">
+                                          {showDeletedRevs ? "Hide" : "Show"} deleted revisions{showDeletedRevs && deletedRevs.length > 0 ? ` (${deletedRevs.length})` : ""}
+                                        </button>
+                                        {showDeletedRevs && (
+                                          <div className="mt-1.5">
+                                            {deletedRevsLoading ? (
+                                              <span className="text-[11px] text-[#64748B]">Loading…</span>
+                                            ) : deletedRevs.length === 0 ? (
+                                              <span className="text-[11px] text-[#94A3B8]">No deleted revisions.</span>
+                                            ) : (
+                                              <ul className="space-y-0.5">
+                                                {deletedRevs.map(rv => (
+                                                  <li key={rv.id} className="flex items-center gap-2 text-[11px]">
+                                                    <span className="font-mono text-[#94A3B8] w-20 line-through">{rv.revision_label ?? "—"}</span>
+                                                    <span className="text-[#94A3B8]">{fmtDate(rv.created_at)}</span>
+                                                    <span className="ml-auto flex items-center gap-3">
+                                                      {rv.file_url && <a href={rv.file_url} target="_blank" rel="noopener noreferrer" className="text-[#7B9BB5] hover:text-[#5A7A94] font-semibold">Open</a>}
+                                                      <button onClick={() => restoreRevision(s.id, rv.id)} className="text-[#5A7A94] hover:text-[#3F5A70] font-semibold">Restore</button>
+                                                    </span>
+                                                  </li>
+                                                ))}
+                                              </ul>
+                                            )}
+                                          </div>
+                                        )}
+                                      </div>
                                     )}
                                   </td>
                                 </tr>
