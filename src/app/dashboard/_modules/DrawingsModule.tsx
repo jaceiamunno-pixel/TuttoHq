@@ -10,6 +10,7 @@ import { PlusIcon, SpinnerIcon, XIcon } from "../_shared/icons"
 import { DrawingStatusBadge } from "../_shared/badges"
 import { inputCls, labelCls } from "../_shared/ui"
 import { presignAndUpload } from "@/lib/storage-upload"
+import { useNavRegion } from "@/components/keyboard-nav"
 import type { MarkupDoc } from "@/lib/drawing-markup"
 import dynamic from "next/dynamic"
 
@@ -80,6 +81,14 @@ export default function DrawingsModule({ globalProjectId, appProjects }: {
   const [importedLoading, setImportedLoading]         = useState(false)
   const [viewerSheet, setViewerSheet]                 = useState<ImportedSheet | null>(null)
   const [viewerFull, setViewerFull]                   = useState(false)
+  // Keyboard-nav: the imported drawing-sheets log is a per-project module log,
+  // so it takes order 20 — the same slot every other project-scoped log uses
+  // (RFI/CO/Daily/Punch/PO); only one module mounts per route, so they never
+  // collide. A single region wraps the <tbody> that holds ALL discipline groups,
+  // so arrow nav flows across groups in display order (querySelectorAll returns
+  // [data-nav-item] rows in document order). The viewer/markup editor it opens
+  // is out of scope here, so no focus trap — Enter just opens the sheet.
+  const { regionProps: sheetLogProps } = useNavRegion<HTMLTableSectionElement>({ id: "drawing-sheets-log", order: 20 })
   // In-app markup (ADR-005 Part 2a, fork A). markupMode swaps the read-only
   // iframe for the vector editor on the SAME viewer. "Save markup" persists the
   // sheet's single markup LAYER (source='markup') alongside the clean original —
@@ -507,7 +516,7 @@ export default function DrawingsModule({ globalProjectId, appProjects }: {
                         <th className="px-3 py-2 w-56 text-right font-semibold">Actions</th>
                       </tr>
                     </thead>
-                    <tbody>
+                    <tbody {...sheetLogProps}>
                       {visibleSheets.length === 0 && (
                         <tr><td colSpan={5} className="px-3 py-4 text-center text-[12px] text-[#94A3B8]">No sheets match the current search/filter.</td></tr>
                       )}
@@ -553,7 +562,7 @@ export default function DrawingsModule({ globalProjectId, appProjects }: {
                             </tr>
                           ) : (
                             <Fragment key={s.id}>
-                              <tr className="group border-t border-[#F1F5F9] hover:bg-[#F8FAFC] cursor-pointer"
+                              <tr data-nav-item className="group border-t border-[#F1F5F9] hover:bg-[#F8FAFC] cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#7B9BB5]"
                                 onClick={() => { setViewerSheet(s); setViewerFull(false) }}>
                                 <td className="pl-3 pr-1 py-2 w-8" onClick={e => e.stopPropagation()}>
                                   <input type="checkbox" aria-label={`Select ${s.sheet_number ?? "sheet"}`}
@@ -570,7 +579,7 @@ export default function DrawingsModule({ globalProjectId, appProjects }: {
                                 </td>
                                 <td className="px-3 py-2" onClick={e => e.stopPropagation()}>
                                   <div className="flex items-center justify-end gap-3 whitespace-nowrap text-[#94A3B8]">
-                                    <button onClick={() => { setViewerSheet(s); setViewerFull(false) }} className="hover:text-[#5A7A94] group-hover:text-[#7B9BB5] font-medium transition-colors">View</button>
+                                    <button data-nav-primary onClick={() => { setViewerSheet(s); setViewerFull(false) }} className="hover:text-[#5A7A94] group-hover:text-[#7B9BB5] font-medium transition-colors">View</button>
                                     <button onClick={() => triggerAddRevision(s.id)} disabled={addingRevId === s.id} className="hover:text-[#5A7A94] group-hover:text-[#7B9BB5] font-medium disabled:opacity-50 transition-colors">{addingRevId === s.id ? "Adding…" : "Add rev"}</button>
                                     <button onClick={() => toggleRevHistory(s.id)} className="hover:text-[#5A7A94] group-hover:text-[#7B9BB5] font-medium transition-colors">{revHistoryFor === s.id ? "Hide" : "Revs"}</button>
                                     <button onClick={() => startEditSheet(s)} className="hover:text-[#5A7A94] group-hover:text-[#7B9BB5] font-medium transition-colors">Edit</button>
