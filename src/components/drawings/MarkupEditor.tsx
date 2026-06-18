@@ -30,6 +30,7 @@ const TextIcon = () => <svg className={ic} fill="none" stroke="currentColor" vie
 const UndoIcon = () => <svg className={ic} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M9 14L4 9l5-5M4 9h11a5 5 0 010 10h-3" /></svg>
 const RedoIcon = () => <svg className={ic} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M15 14l5-5-5-5M20 9H9a5 5 0 000 10h3" /></svg>
 const TrashIcon = () => <svg className={ic} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M5 7h14M9 7V5a1 1 0 011-1h4a1 1 0 011 1v2m-7 0v12a1 1 0 001 1h6a1 1 0 001-1V7" /></svg>
+const DownloadIcon = () => <svg className={ic} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M12 3v12m0 0l-4-4m4 4l4-4M5 21h14" /></svg>
 
 const TOOLS: { tool: Tool; label: string; Icon: () => React.ReactElement }[] = [
   { tool: "select", label: "Select", Icon: CursorIcon },
@@ -43,8 +44,10 @@ const STROKE_OPTS: { key: keyof typeof STROKE_PRESETS; label: string }[] = [
   { key: "thin", label: "S" }, { key: "medium", label: "M" }, { key: "thick", label: "L" },
 ]
 
-export default function MarkupEditor({ fileUrl, initialMarkups, baseRevisionId, baseLabel, markupRevisionId, onSave }: {
+export default function MarkupEditor({ fileUrl, sheetNumber, initialMarkups, baseRevisionId, baseLabel, markupRevisionId, onSave }: {
   fileUrl: string
+  /** Sheet number — names the throwaway export download (e.g. "A-101-markup.pdf"). */
+  sheetNumber?: string | null
   /** Markup[] or a stored MarkupDoc — deserializeMarkups handles either. */
   initialMarkups?: Markup[] | MarkupDoc | null
   /** The revision this layer is drawn over (its base) — recorded in the doc. */
@@ -59,13 +62,18 @@ export default function MarkupEditor({ fileUrl, initialMarkups, baseRevisionId, 
   const [pageImg, setPageImg] = useState<string | null>(null)
   const [aspect, setAspect] = useState<number | null>(null) // width / height
   const [renderState, setRenderState] = useState<"loading" | "ready" | "error">("loading")
+  // The FULL-RESOLUTION original PDF bytes, kept for the export (Part 2b) so the
+  // download composites onto the real sheet — never the 1800px viewer raster.
+  // A copy is stashed because getDocumentProxy below transfers/neuters `ab`.
+  const originalBytesRef = useRef<ArrayBuffer | null>(null)
 
   useEffect(() => {
     let alive = true
-    setRenderState("loading"); setPageImg(null); setAspect(null)
+    setRenderState("loading"); setPageImg(null); setAspect(null); originalBytesRef.current = null
     ;(async () => {
       try {
         const ab = await (await fetch(fileUrl)).arrayBuffer()
+        originalBytesRef.current = ab.slice(0)
         const pdf = await getDocumentProxy(new Uint8Array(ab))
         const dataUrl = await renderPageAsImage(pdf, 1, { width: RENDER_WIDTH, toDataURL: true }) as string
         if (!alive) return
@@ -156,6 +164,7 @@ export default function MarkupEditor({ fileUrl, initialMarkups, baseRevisionId, 
   // Inline text editing overlay.
   const [editing, setEditing] = useState<{ id: string | null; x: number; y: number; value: string } | null>(null)
   const [saving, setSaving] = useState(false)
+  const [exporting, setExporting] = useState(false)
   // The markup-layer revision being edited. Seeded from the prop (reopen),
   // updated to the returned id after the first save so same-session re-saves
   // UPDATE the same row instead of stacking a new one.
@@ -293,6 +302,34 @@ export default function MarkupEditor({ fileUrl, initialMarkups, baseRevisionId, 
     } finally { setSaving(false) }
   }
 
+  // Export (Part 2b): flatten the CURRENT markup onto the full-res original sheet
+  // and download a single-page PDF — purely client-side. Writes NO revision, no
+  // DB, no storage; the original is read-only. pdf-lib (+ this composite module)
+  // is dynamically imported so it only loads when a user actually exports.
+  async function exportPdf() {
+    if (present.length === 0) return
+    setExporting(true)
+    try {
+      const bytes = originalBytesRef.current ?? await (await fetch(fileUrl)).arrayBuffer()
+      const { exportMarkedUpSheet, markupExportFilename } = await import("@/lib/drawing-markup-export")
+      const out = await exportMarkedUpSheet(bytes, present)
+      // Copy into a plain ArrayBuffer — pdf-lib's Uint8Array<ArrayBufferLike>
+      // isn't directly assignable to BlobPart under TS's strict typed-array types.
+      const ab = new ArrayBuffer(out.byteLength)
+      new Uint8Array(ab).set(out)
+      const blob = new Blob([ab], { type: "application/pdf" })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement("a")
+      a.href = url
+      a.download = markupExportFilename(sheetNumber)
+      document.body.appendChild(a); a.click(); a.remove()
+      URL.revokeObjectURL(url)
+    } catch (err) {
+      console.error("Markup export failed", err)
+      alert("Couldn’t export this markup as a PDF. Please try again.")
+    } finally { setExporting(false) }
+  }
+
   // ── Keyboard shortcuts ────────────────────────────────────────────────────
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -419,6 +456,12 @@ export default function MarkupEditor({ fileUrl, initialMarkups, baseRevisionId, 
           <button onClick={redo} disabled={future.length === 0} className="h-8 w-8 rounded-md border border-[#E2E8F0] text-[#475569] inline-flex items-center justify-center hover:bg-[#7B9BB5]/10 disabled:opacity-40" title="Redo (Ctrl+Shift+Z)"><RedoIcon /></button>
           <button onClick={deleteSelected} disabled={!selectedId} className="h-8 w-8 rounded-md border border-[#E2E8F0] text-[#475569] inline-flex items-center justify-center hover:bg-red-50 hover:text-red-500 hover:border-red-200 disabled:opacity-40" title="Delete selected (Del)"><TrashIcon /></button>
           <span className="text-[11px] text-[#94A3B8] tabular-nums px-1">{present.length} markup{present.length === 1 ? "" : "s"}</span>
+          <button onClick={exportPdf} disabled={exporting || present.length === 0}
+            className="h-8 px-3 rounded-md border border-[#E2E8F0] text-[#475569] text-[12px] font-semibold hover:bg-[#7B9BB5]/10 transition-colors disabled:opacity-50 inline-flex items-center gap-1.5"
+            title="Download a flattened PDF of this sheet with the markups">
+            {exporting ? <SpinnerIcon className="h-3 w-3" /> : <DownloadIcon />}
+            {exporting ? "Exporting…" : "Export PDF"}
+          </button>
           <button onClick={save} disabled={saving || present.length === 0}
             className="h-8 px-3.5 rounded-md bg-[#7B9BB5] text-white text-[12px] font-semibold hover:bg-[#6A8AA4] transition-colors disabled:opacity-50 inline-flex items-center gap-1.5">
             {saving && <SpinnerIcon className="h-3 w-3" />}
