@@ -4,6 +4,7 @@ import { useEffect, useState } from "react"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
 import { createClient } from "@/lib/supabase/client"
+import { useNavRegion } from "@/components/keyboard-nav"
 
 // Top-level (company-scoped) chrome for the root resources that live OUTSIDE a
 // project: the landing project grid, Library, Directories, Settings. Mirrors
@@ -21,6 +22,11 @@ export default function AppChrome({ children }: { children: React.ReactNode }) {
   const [logoUrl, setLogoUrl]         = useState<string | null>(null)
   const [displayName, setDisplayName] = useState<string | null>(null)
   const [mobileOpen, setMobileOpen]   = useState(false)
+
+  // Keyboard-nav region: the top-level primary nav. Arrows move between the
+  // destinations; Enter/→ navigates. order 10 — the first region for [ / ],
+  // ahead of any content list (e.g. the dashboard project grid, order 20).
+  const { regionProps: primaryNavProps } = useNavRegion({ id: "primary-nav", order: 10 })
 
   useEffect(() => {
     createClient().auth.getUser().then(({ data }) => setUserEmail(data.user?.email ?? null))
@@ -47,12 +53,13 @@ export default function AppChrome({ children }: { children: React.ReactNode }) {
           {brand}
         </Link>
 
-        <nav className="hidden sm:flex items-center gap-0.5 flex-1">
+        <nav className="hidden sm:flex items-center gap-0.5 flex-1" {...primaryNavProps}>
           {NAV.map(n => (
             <Link
               key={n.href}
               href={n.href}
-              className={`h-9 px-3 flex items-center rounded-lg text-[13px] font-medium whitespace-nowrap transition-colors ${isActive(n.href) ? "bg-white/[0.12] text-white" : "text-[#94A3B8] hover:text-white hover:bg-white/[0.06]"}`}
+              data-nav-item
+              className={`h-9 px-3 flex items-center rounded-lg text-[13px] font-medium whitespace-nowrap transition-colors outline-none focus-visible:ring-2 focus-visible:ring-[#7B9BB5] ${isActive(n.href) ? "bg-white/[0.12] text-white" : "text-[#94A3B8] hover:text-white hover:bg-white/[0.06]"}`}
             >
               {n.label}
             </Link>

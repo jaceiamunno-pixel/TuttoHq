@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react"
 import Link from "next/link"
 import AppChrome from "@/components/app-chrome"
 import { createClient } from "@/lib/supabase/client"
+import { useNavRegion } from "@/components/keyboard-nav"
 import { useProjectFavorites, sortByFavorite } from "./_shared/use-project-favorites"
 import type { Project } from "./_shared/types"
 
@@ -39,6 +40,11 @@ export default function DashboardLanding() {
     return sortByFavorite(matched, favorites)
   }, [projects, query, favorites])
 
+  // Keyboard-nav region: the project grid. Arrows move between cards; Enter/→
+  // activates a card (the <Link>'s native navigation opens the project).
+  // order 20 sits after the primary nav (order 10) for [ / ] left-to-right.
+  const { regionProps: projectsGridProps } = useNavRegion<HTMLDivElement>({ id: "projects-grid", order: 20 })
+
   return (
     <AppChrome>
       <div className="flex-1 min-h-0 overflow-y-auto">
@@ -71,14 +77,15 @@ export default function DashboardLanding() {
           ) : filtered.length === 0 ? (
             <p className="text-[13px] text-[#64748B]">No projects match “{query}”.</p>
           ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3" {...projectsGridProps}>
               {filtered.map(p => {
                 const fav = favorites.has(p.id)
                 return (
                 <Link
                   key={p.id}
                   href={`/projects/${p.id}/submittals`}
-                  className="group bg-white rounded-xl border border-[#E2E8F0] p-4 hover:border-[#7B9BB5]/60 hover:shadow-sm transition-all"
+                  data-nav-item
+                  className="group bg-white rounded-xl border border-[#E2E8F0] p-4 hover:border-[#7B9BB5]/60 hover:shadow-sm transition-all outline-none focus-visible:ring-2 focus-visible:ring-[#7B9BB5]"
                 >
                   <div className="flex items-start justify-between gap-2">
                     <h2 className="text-[14px] font-semibold text-[#0F172A] leading-snug group-hover:text-[#456A88] transition-colors">{p.name}</h2>
