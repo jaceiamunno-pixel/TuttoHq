@@ -66,17 +66,27 @@ export async function DELETE(
 
   const { id } = await params
 
-  // RLS-gated ownership check before the cascade. Also pull created_by for
-  // the role gate below — RLS already scopes the SELECT to the company.
+  // Soft-delete (ADR-007): stamp deleted_at instead of a hard DELETE. The raw
+  // DELETE policy on projects was dropped in migration 0015, so a real DELETE
+  // would now silently fail. The old hard delete also cascaded across the child
+  // tables — which, with no FKs to projects, is exactly how the hard-delete
+  // incident orphaned/destroyed data. Children are intentionally left in place:
+  // the RLS SELECT filter (deleted_at IS NULL) hides them via the now-hidden
+  // parent across every picker. Destroying children is the separate admin-only
+  // purge_project RPC (ADR-007 step 4), not this path.
+
+  // RLS-scoped ownership check. Pull created_by for the role/ownership gate.
+  // A live project (deleted_at IS NULL) still passes the SELECT filter, so this
+  // read succeeds for anything deletable from the UI.
   const { data: project, error: selErr } = await supabase
     .from("projects").select("id, created_by").eq("id", id).maybeSingle()
   if (selErr) return NextResponse.json({ error: "Database error" }, { status: 500 })
   if (!project) return NextResponse.json({ error: "Not found" }, { status: 404 })
 
-  // Only the project's creator or a company admin may delete. RLS at the
-  // table level still scopes to company; this is the role/ownership gate
-  // on top. RLS on projects DELETE is deliberately left at company scope
-  // per the multi-user spec — no role check at the policy layer.
+  // Only the project's creator or a company admin may delete — unchanged from
+  // the hard-delete path. RLS scopes to company; this is the role/ownership
+  // gate on top. (Soft-delete is reversible, so this stays a delete-grade gate,
+  // not the stricter admin-only gate that restore/purge use.)
   const { data: role } = await supabase.rpc("get_my_role")
   const isCreator = project.created_by === user.id
   const isAdmin   = role === "admin"
@@ -87,21 +97,11 @@ export async function DELETE(
     )
   }
 
-  // Delete child records first to avoid FK constraint violations. RLS DELETE
-  // policies on every child table scope by company, so the user client only
-  // touches rows in the requester's company.
-  await Promise.all([
-    supabase.from("submittals").delete().eq("project_id", id),
-    supabase.from("rfis").delete().eq("project_id", id),
-    supabase.from("change_orders").delete().eq("project_id", id),
-    supabase.from("punch_items").delete().eq("project_id", id),
-    supabase.from("drawing_log").delete().eq("project_id", id),
-    supabase.from("daily_reports").delete().eq("project_id", id),
-    supabase.from("closeout_items").delete().eq("project_id", id),
-    supabase.from("team_members").delete().eq("project_id", id),
-  ])
-
-  const { error } = await supabase.from("projects").delete().eq("id", id)
+  // The UPDATE rides the existing company-scoped update policy — no new policy.
+  const { error } = await supabase
+    .from("projects")
+    .update({ deleted_at: new Date().toISOString() })
+    .eq("id", id)
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
   return NextResponse.json({ ok: true })
