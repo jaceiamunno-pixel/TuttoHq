@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from "react"
 import type { ChangeOrder, Project } from "../_shared/types"
-import { useFocusTrap } from "@/components/keyboard-nav"
+import { useNavRegion, useFocusTrap } from "@/components/keyboard-nav"
 import { fmtDateOnly } from "../_shared/format"
 import { PlusIcon, SpinnerIcon } from "../_shared/icons"
 import { presignAndUpload } from "@/lib/storage-upload"
@@ -43,11 +43,12 @@ function coLogCompare(a: ChangeOrder, b: ChangeOrder): number {
   return (a.date ?? "9999").localeCompare(b.date ?? "9999")
 }
 
-function CoActionBtn({ label, onClick, icon, className = "", disabled = false }: {
-  label: string; onClick: () => void; icon: string; className?: string; disabled?: boolean
+function CoActionBtn({ label, onClick, icon, className = "", disabled = false, navPrimary = false }: {
+  label: string; onClick: () => void; icon: string; className?: string; disabled?: boolean; navPrimary?: boolean
 }) {
   return (
     <button onClick={onClick} disabled={disabled} title={label} aria-label={label}
+      data-nav-primary={navPrimary || undefined}
       className={`h-7 w-7 inline-flex items-center justify-center rounded hover:bg-[#0F172A]/[0.05] transition-colors disabled:opacity-40 ${className}`}>
       <svg className="h-[15px] w-[15px]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         {icon.split(" M").map((seg, i) => <path key={i} strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.7} d={(i === 0 ? seg : "M" + seg)} />)}
@@ -70,6 +71,9 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
   // the dialog and Escape closes it, restoring focus to the View trigger.
   const viewCoModalRef = useRef<HTMLDivElement>(null)
   useFocusTrap(viewCoModalRef, !!viewCo, () => setViewCo(null))
+  // Keyboard-nav: the CO log is a region (order 20). The view modal above is
+  // already focus-trapped (Part 1), so we register the list only here.
+  const { regionProps: coLogProps } = useNavRegion<HTMLTableSectionElement>({ id: "change-orders-log", order: 20 })
   const [coProjectId, setCoProjectId]                 = useState(globalProjectId)
   const [coDate, setCoDate]                           = useState(() => new Date().toISOString().slice(0, 10))
   const [coProposal, setCoProposal]                   = useState("")
@@ -436,7 +440,7 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
                         <th className="text-right px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-36">Actions</th>
                       </tr>
                     </thead>
-                    <tbody>
+                    <tbody {...coLogProps}>
                       {changeOrders.map(c => {
                         const statusColor: Record<string, string> = {
                           "Not submitted": "bg-gray-100 text-gray-500",
@@ -448,7 +452,7 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
                         const imported = c.origin === "imported"
                         const pdfBusy  = pcoPdfBusyId === c.id
                         return (
-                          <tr key={c.id} className="border-b border-[#E2E8F0]/60 hover:bg-[#F8F9FA] transition-colors">
+                          <tr key={c.id} data-nav-item className="border-b border-[#E2E8F0]/60 hover:bg-[#F8F9FA] transition-colors outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#7B9BB5]">
                             <td className="px-4 py-2.5 text-[12px] font-mono text-[#7B9BB5] whitespace-nowrap">{pcoLabel(c.co_number)}{c.has_pco_detail && <span className="ml-1.5 px-1 py-0.5 rounded bg-[#7B9BB5]/10 text-[#5A7A94] text-[9px] font-sans font-semibold align-middle">PCO</span>}{imported && <span className="ml-1 px-1 py-0.5 rounded bg-amber-100 text-amber-700 text-[9px] font-sans font-semibold align-middle" title="Imported historical PCO — frozen, cannot be edited">Imported</span>}</td>
                             <td className="px-4 py-2.5 text-[12px] text-[#0F172A]">{c.assigned_co_number || "—"}</td>
                             <td className="px-4 py-2.5 align-top">
@@ -472,7 +476,7 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
                                 {c.has_pco_detail && !imported && (
                                   <CoActionBtn label="Edit" onClick={() => setEditPcoId(c.id)} className="text-[#7B9BB5] hover:text-[#5A7A94]" icon={ICON.edit} />
                                 )}
-                                <CoActionBtn label="View" onClick={() => { setViewCo(c); setCoResponseStatus(c.status); setCoAssignedTo(c.assigned_to ?? ""); setCoAssignedCoNumber(c.assigned_co_number ?? ""); setCoRespAmount(c.pricing_sum != null ? String(c.pricing_sum) : ""); setCoRespRealized(c.realized_amount != null ? String(c.realized_amount) : "") }} className="text-[#64748B] hover:text-[#0F172A]" icon={ICON.view} />
+                                <CoActionBtn label="View" navPrimary onClick={() => { setViewCo(c); setCoResponseStatus(c.status); setCoAssignedTo(c.assigned_to ?? ""); setCoAssignedCoNumber(c.assigned_co_number ?? ""); setCoRespAmount(c.pricing_sum != null ? String(c.pricing_sum) : ""); setCoRespRealized(c.realized_amount != null ? String(c.realized_amount) : "") }} className="text-[#64748B] hover:text-[#0F172A]" icon={ICON.view} />
                                 {c.has_pco_detail ? (
                                   <>
                                     <CoActionBtn label="Cover sheet" onClick={() => openPcoPdf(c.id, "cover")} disabled={pdfBusy} className="text-[#7B9BB5]" icon={ICON.cover} />

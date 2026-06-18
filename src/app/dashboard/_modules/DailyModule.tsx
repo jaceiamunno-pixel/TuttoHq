@@ -6,6 +6,7 @@ import { fmtDateOnly } from "../_shared/format"
 import { PlusIcon, SpinnerIcon, XIcon } from "../_shared/icons"
 import { inputCls, labelCls } from "../_shared/ui"
 import { presignAndUpload } from "@/lib/storage-upload"
+import { useNavRegion, useFocusTrap } from "@/components/keyboard-nav"
 import {
   ACTIVE_DAILY_DRAFT_KEY,
   type DailyDraftPhotoRow,
@@ -45,6 +46,9 @@ export default function DailyModule({ globalProjectId, appProjects, teamMembers 
   const [dailyLoading, setDailyLoading]               = useState(false)
   const [showNewDaily, setShowNewDaily]               = useState(false)
   const [viewDaily, setViewDaily]                     = useState<DailyReport | null>(null)
+  // Keyboard-nav: the daily-report list is a region (order 20). (The view-modal
+  // focus trap is set up below, once dailyEditing is declared.)
+  const { regionProps: dailyLogProps } = useNavRegion<HTMLTableSectionElement>({ id: "daily-log", order: 20 })
   const [dailyDate, setDailyDate]                     = useState(() => new Date().toISOString().slice(0, 10))
   const [dailyProjectId, setDailyProjectId]           = useState(globalProjectId)
   const [dailyPreparedBy, setDailyPreparedBy]         = useState("")
@@ -61,6 +65,10 @@ export default function DailyModule({ globalProjectId, appProjects, teamMembers 
   const [dailySaving, setDailySaving]                 = useState(false)
   const [dailySaveError, setDailySaveError]           = useState("")
   const [dailyEditing, setDailyEditing]               = useState(false)
+  // Trap focus in the read-only view modal (open = viewDaily && !dailyEditing);
+  // Escape closes it and restores focus to the row.
+  const dailyViewModalRef = useRef<HTMLDivElement>(null)
+  useFocusTrap(dailyViewModalRef, !!viewDaily && !dailyEditing, () => setViewDaily(null))
   const [dailyEditSaving, setDailyEditSaving]         = useState(false)
   const [dailyPhotos, setDailyPhotos]                 = useState<{id: string; url: string; file_name: string}[]>([])
   const [dailyPhotosLoading, setDailyPhotosLoading]   = useState(false)
@@ -655,11 +663,11 @@ export default function DailyModule({ globalProjectId, appProjects, teamMembers 
                     <th className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-20">Actions</th>
                   </tr>
                 </thead>
-                <tbody>
+                <tbody {...dailyLogProps}>
                   {mergedReports.map((r, i) => {
                     const isPending = pendingIds.has(r.id)
                     return (
-                    <tr key={r.id} className={`border-b border-[#E2E8F0]/60 hover:bg-[#F8F9FA] transition-colors cursor-pointer ${isPending ? "bg-amber-50/40" : ""}`} onClick={() => { setViewDaily(r); setDailyEditing(false) }}>
+                    <tr key={r.id} data-nav-item className={`border-b border-[#E2E8F0]/60 hover:bg-[#F8F9FA] transition-colors cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#7B9BB5] ${isPending ? "bg-amber-50/40" : ""}`} onClick={() => { setViewDaily(r); setDailyEditing(false) }}>
                       <td className="px-4 py-2.5 text-[#64748B] tabular-nums text-[12px]">{mergedReports.length - i}</td>
                       <td className="px-4 py-2.5 text-[#0F172A] font-medium text-[12px] whitespace-nowrap">
                         {fmtDateOnly(r.report_date)}
@@ -953,7 +961,7 @@ export default function DailyModule({ globalProjectId, appProjects, teamMembers 
       {viewDaily && !dailyEditing && (
         <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center"
           onClick={e => { if (e.target === e.currentTarget) setViewDaily(null) }}>
-          <div className="bg-white rounded-xl border border-[#E2E8F0] shadow-2xl w-full sm:w-[620px] mx-4 sm:mx-0 max-h-[85vh] flex flex-col">
+          <div ref={dailyViewModalRef} role="dialog" aria-modal="true" className="bg-white rounded-xl border border-[#E2E8F0] shadow-2xl w-full sm:w-[620px] mx-4 sm:mx-0 max-h-[85vh] flex flex-col">
             <div className="flex items-center justify-between px-6 pt-5 pb-4 border-b border-[#E2E8F0] flex-shrink-0">
               <div>
                 <p className="text-[11px] text-[#64748B] uppercase tracking-widest font-bold">Daily Report</p>
