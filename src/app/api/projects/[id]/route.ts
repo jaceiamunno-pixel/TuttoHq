@@ -97,12 +97,16 @@ export async function DELETE(
     )
   }
 
-  // The UPDATE rides the existing company-scoped update policy — no new policy.
-  const { error } = await supabase
-    .from("projects")
-    .update({ deleted_at: new Date().toISOString() })
-    .eq("id", id)
+  // Soft-delete via the soft_delete_project SECURITY DEFINER function (migration
+  // 0020). A bare authed UPDATE stamping deleted_at is REJECTED: the resulting row
+  // fails the SELECT policy (deleted_at IS NULL) that applies to the authenticated
+  // role, so the write 403s ("new row violates row-level security policy") — which
+  // is why projects soft-delete was broken in prod. The function runs as its owner
+  // (bypasses RLS) and is company-scoped via get_my_company_id(); it returns the id
+  // on success, or no row if not found / cross-company / already deleted.
+  const { data: deletedId, error } = await supabase.rpc("soft_delete_project", { p_id: id })
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  if (!deletedId) return NextResponse.json({ error: "Not found" }, { status: 404 })
 
   return NextResponse.json({ ok: true })
 }
