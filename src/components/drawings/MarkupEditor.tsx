@@ -417,6 +417,10 @@ export default function MarkupEditor({ fileUrl, initialMarkups, onSave }: {
               className="absolute inset-0"
               width={W} height={H}
               style={{ touchAction: "none", cursor }}
+              // While placing text, swallow the mousedown default: clicking the
+              // (non-focusable) SVG would otherwise move focus to <body> right
+              // after the input mounts, blurring it before a key is pressed.
+              onMouseDown={e => { if (tool === "text") e.preventDefault() }}
               onPointerDown={onPointerDown}
               onPointerMove={onPointerMove}
               onPointerUp={onPointerUp}
@@ -437,7 +441,7 @@ export default function MarkupEditor({ fileUrl, initialMarkups, onSave }: {
                   if (e.key === "Enter") { e.preventDefault(); commitText() }
                   else if (e.key === "Escape") { e.preventDefault(); setEditing(null) }
                 }}
-                placeholder="Type…"
+                placeholder="Type, Enter to add"
                 className="absolute z-10 px-1 py-0 bg-white/95 border border-[#7B9BB5] rounded outline-none"
                 style={{
                   left: px(editing.x), top: py(editing.y),
