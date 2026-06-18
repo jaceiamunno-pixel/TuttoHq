@@ -837,6 +837,7 @@ export default function DrawingsModule({ globalProjectId, appProjects }: {
                 : markupMode
                   ? <MarkupEditor
                       fileUrl={viewerSheet.file_url}
+                      sheetNumber={viewerSheet.sheet_number}
                       initialMarkups={viewerSheet.markup_doc}
                       baseRevisionId={viewerSheet.revision_id}
                       baseLabel={viewerSheet.revision_label}
