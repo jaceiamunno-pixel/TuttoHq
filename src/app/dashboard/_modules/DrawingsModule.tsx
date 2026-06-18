@@ -10,7 +10,7 @@ import { PlusIcon, SpinnerIcon, XIcon } from "../_shared/icons"
 import { DrawingStatusBadge } from "../_shared/badges"
 import { inputCls, labelCls } from "../_shared/ui"
 import { presignAndUpload } from "@/lib/storage-upload"
-import type { Markup } from "@/lib/drawing-markup"
+import type { MarkupDoc } from "@/lib/drawing-markup"
 import dynamic from "next/dynamic"
 
 // Lazy-loaded: the splitter pulls in pdf-lib + unpdf (~180 kB). Code-split so
@@ -37,6 +37,11 @@ interface ImportedSheet {
   discipline_prefix: string | null
   title: string | null
   revision_label: string | null
+  // current = the clean original (fork A). The markup LAYER rides alongside:
+  // its own revision id + vector doc, both null when the sheet has no markup.
+  revision_id?: string | null
+  markup_revision_id?: string | null
+  markup_doc?: MarkupDoc | null
   file_url: string | null
   created_at: string
   deleted_at?: string | null
@@ -75,13 +80,12 @@ export default function DrawingsModule({ globalProjectId, appProjects }: {
   const [importedLoading, setImportedLoading]         = useState(false)
   const [viewerSheet, setViewerSheet]                 = useState<ImportedSheet | null>(null)
   const [viewerFull, setViewerFull]                   = useState(false)
-  // In-app markup (ADR-005 Phase 2, Part 1). markupMode swaps the read-only
-  // iframe for the vector editor on the SAME viewer. The serialized arrays are
-  // held in memory ONLY this pass (keyed by sheet id) so re-opening the editor
-  // round-trips them — Part 2 persists them to a new drawing_revisions row once
-  // the jsonb column lands. Nothing here writes to the DB.
+  // In-app markup (ADR-005 Part 2a, fork A). markupMode swaps the read-only
+  // iframe for the vector editor on the SAME viewer. "Save markup" persists the
+  // sheet's single markup LAYER (source='markup') alongside the clean original —
+  // never as current — and the layer's markup_doc re-hydrates the editor on
+  // reopen (see handleSaveMarkups + the markup-revisions route).
   const [markupMode, setMarkupMode]                   = useState(false)
-  const [markupsBySheet, setMarkupsBySheet]           = useState<Record<string, Markup[]>>({})
   const [editingSheetId, setEditingSheetId]           = useState<string | null>(null)
   const [sheetDraft, setSheetDraft]                   = useState({ sheet_number: "", title: "", discipline: "", discipline_prefix: "", revision_label: "" })
   const [savingSheet, setSavingSheet]                 = useState(false)
@@ -234,16 +238,30 @@ export default function DrawingsModule({ globalProjectId, appProjects }: {
   // Pre-select the current global project whenever the New Drawing modal opens.
   useEffect(() => { if (showNewDrawing) setDwgProjectId(globalProjectId) }, [showNewDrawing, globalProjectId])
 
-  // Markup mode is per-open: always start a (re)opened sheet in read-only view.
-  useEffect(() => { setMarkupMode(false) }, [viewerSheet?.id])
+  // Per-open routing (fork A): a sheet that HAS a markup layer opens straight
+  // into the editor (hydrated from markup_doc); a plain sheet opens read-only.
+  useEffect(() => { setMarkupMode(!!viewerSheet?.markup_doc) }, [viewerSheet?.id])
 
-  // Part-1 save: hold the serialized vector array in memory + log it. NO DB
-  // write (the drawing_revisions jsonb column is a Part-2 migration). Keyed by
-  // sheet id so re-entering markup mode re-loads the same markups (round-trip).
-  function handleSaveMarkups(sheetId: string, markups: Markup[]) {
-    setMarkupsBySheet(prev => ({ ...prev, [sheetId]: markups }))
-    console.log("[markup] serialized array (Part 1 — not persisted):", JSON.stringify(markups, null, 2))
-    alert(`Captured ${markups.length} markup${markups.length === 1 ? "" : "s"} in memory.\nSaving to a new revision lands in Part 2 (after the jsonb column).`)
+  // Part 2a save: persist the sheet's single markup layer. Vector-only — posts
+  // the serialized doc + the layer id; the route bases off the clean original
+  // and UPDATEs the layer in place (or INSERTs the first one), never flipping
+  // current_revision_id. Returns the layer id so the editor's next save UPDATEs
+  // the same row (no stacking). Refresh the list + open sheet on success.
+  async function handleSaveMarkups(sheetId: string, doc: MarkupDoc, markupRevisionId: string | null): Promise<string | void> {
+    const res = await fetch(`/api/drawings/sheets/${sheetId}/markup-revisions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ markup_doc: doc, markup_revision_id: markupRevisionId }),
+    })
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) { alert(data?.error ?? "Save failed"); return }
+    setViewerSheet(s => s && s.id === sheetId
+      ? { ...s, markup_revision_id: data.markup_revision_id, markup_doc: doc }
+      : s)
+    loadImportedSheets()
+    if (revHistoryFor === sheetId) loadRevisions(sheetId)
+    alert(`Markup ${data.mode === "update" ? "updated" : "saved"} (${data.revision_label}).`)
+    return data.markup_revision_id
   }
 
   function openAddRevision(d: DrawingRecord) {
@@ -728,8 +746,11 @@ export default function DrawingsModule({ globalProjectId, appProjects }: {
                 : markupMode
                   ? <MarkupEditor
                       fileUrl={viewerSheet.file_url}
-                      initialMarkups={markupsBySheet[viewerSheet.id]}
-                      onSave={markups => handleSaveMarkups(viewerSheet.id, markups)} />
+                      initialMarkups={viewerSheet.markup_doc}
+                      baseRevisionId={viewerSheet.revision_id}
+                      baseLabel={viewerSheet.revision_label}
+                      markupRevisionId={viewerSheet.markup_revision_id}
+                      onSave={(d, mkId) => handleSaveMarkups(viewerSheet.id, d, mkId)} />
                   : <iframe src={`${viewerSheet.file_url}#view=Fit`} title={viewerSheet.sheet_number ?? "sheet"} className="w-full h-full border-none" />}
             </div>
           </div>

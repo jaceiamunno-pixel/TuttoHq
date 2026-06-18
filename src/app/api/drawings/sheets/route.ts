@@ -44,13 +44,29 @@ export async function GET(req: NextRequest) {
 
   const revById = new Map<string, { revision_label: string | null; storage_path: string | null }>()
   if (revIds.length > 0) {
-    // RLS scopes this to the caller's company too — a sheet's revision can
-    // only resolve if it's in the same tenant.
+    // RLS scopes this to the caller's company too — a sheet's current revision
+    // (the clean original under fork A) only resolves if it's in the same tenant.
     const { data: revs } = await supabase
       .from("drawing_revisions")
       .select("id, revision_label, storage_path")
       .in("id", revIds)
     for (const r of revs ?? []) revById.set(r.id, { revision_label: r.revision_label, storage_path: r.storage_path })
+  }
+
+  // The sheet's MARKUP LAYER (fork A): markup revisions ride ALONGSIDE the sheet
+  // — they never become current_revision_id — so surface them separately for the
+  // editor to hydrate on reopen. One layer per sheet (v1): the earliest markup
+  // revision. RLS-scoped (same company only).
+  const markupBySheet = new Map<string, { id: string; markup_doc: unknown }>()
+  const sheetIds = rows.map(s => s.id)
+  if (sheetIds.length > 0) {
+    const { data: mks } = await supabase
+      .from("drawing_revisions")
+      .select("id, sheet_id, markup_doc, created_at")
+      .eq("source", "markup")
+      .in("sheet_id", sheetIds)
+      .order("created_at", { ascending: true })
+    for (const m of mks ?? []) if (!markupBySheet.has(m.sheet_id)) markupBySheet.set(m.sheet_id, { id: m.id, markup_doc: m.markup_doc ?? null })
   }
 
   // Sign the current-revision files (1 h) for inline open/download.
@@ -76,6 +92,12 @@ export async function GET(req: NextRequest) {
       discipline_prefix: s.discipline_prefix,
       title: s.title,
       revision_label: rev?.revision_label ?? null,
+      // current = the clean original (fork A). The markup LAYER (its own revision
+      // id + vector doc) is surfaced separately so the editor hydrates it on
+      // reopen; both null when the sheet has no markup layer.
+      revision_id: s.current_revision_id ?? null,
+      markup_revision_id: markupBySheet.get(s.id)?.id ?? null,
+      markup_doc: markupBySheet.get(s.id)?.markup_doc ?? null,
       file_url: rev?.storage_path ? (urlByPath.get(rev.storage_path) ?? null) : null,
       created_at: s.created_at,
       deleted_at: s.deleted_at,

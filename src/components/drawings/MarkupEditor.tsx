@@ -5,7 +5,7 @@ import { getDocumentProxy, renderPageAsImage } from "unpdf"
 import {
   DEFAULT_STYLE, FONT_PRESETS, MARKUP_COLORS, STROKE_PRESETS,
   boundingBox, deserializeMarkups, hitTest, newMarkupId, serializeMarkups, translateMarkup,
-  type Markup, type MarkupStyle, type Point,
+  type Markup, type MarkupDoc, type MarkupStyle, type Point,
 } from "@/lib/drawing-markup"
 import { SpinnerIcon } from "../../app/dashboard/_shared/icons"
 
@@ -43,10 +43,17 @@ const STROKE_OPTS: { key: keyof typeof STROKE_PRESETS; label: string }[] = [
   { key: "thin", label: "S" }, { key: "medium", label: "M" }, { key: "thick", label: "L" },
 ]
 
-export default function MarkupEditor({ fileUrl, initialMarkups, onSave }: {
+export default function MarkupEditor({ fileUrl, initialMarkups, baseRevisionId, baseLabel, markupRevisionId, onSave }: {
   fileUrl: string
-  initialMarkups?: Markup[]
-  onSave?: (markups: Markup[]) => void
+  /** Markup[] or a stored MarkupDoc — deserializeMarkups handles either. */
+  initialMarkups?: Markup[] | MarkupDoc | null
+  /** The revision this layer is drawn over (its base) — recorded in the doc. */
+  baseRevisionId?: string | null
+  baseLabel?: string | null
+  /** Existing markup-layer revision id (UPDATE target); null until first save. */
+  markupRevisionId?: string | null
+  /** Persist the doc; returns the (new/updated) markup-layer id. May be async. */
+  onSave?: (doc: MarkupDoc, markupRevisionId: string | null) => Promise<string | void> | string | void
 }) {
   // ── Background page render ────────────────────────────────────────────────
   const [pageImg, setPageImg] = useState<string | null>(null)
@@ -148,6 +155,11 @@ export default function MarkupEditor({ fileUrl, initialMarkups, onSave }: {
   const dragRef = useRef<{ id: string; start: Point; original: Markup; snapshot: Markup[]; moved: boolean } | null>(null)
   // Inline text editing overlay.
   const [editing, setEditing] = useState<{ id: string | null; x: number; y: number; value: string } | null>(null)
+  const [saving, setSaving] = useState(false)
+  // The markup-layer revision being edited. Seeded from the prop (reopen),
+  // updated to the returned id after the first save so same-session re-saves
+  // UPDATE the same row instead of stacking a new one.
+  const [markupRevId, setMarkupRevId] = useState<string | null>(markupRevisionId ?? null)
 
   const svgRef = useRef<SVGSVGElement>(null)
   const pxToNorm = useCallback((clientX: number, clientY: number): Point => {
@@ -266,6 +278,19 @@ export default function MarkupEditor({ fileUrl, initialMarkups, onSave }: {
     if (m.type !== "text") return
     setEditing({ id: m.id, x: m.x, y: m.y, value: m.text })
     setSelectedId(m.id)
+  }
+
+  // Hand the full serialized doc (with base provenance) + the layer id to the
+  // parent's save. Async so the toolbar shows a saving state; the returned id
+  // (new or updated layer) is captured so the next save is an UPDATE, not a new
+  // layer.
+  async function save() {
+    if (!onSave || present.length === 0) return
+    setSaving(true)
+    try {
+      const id = await onSave(serializeMarkups(present, { revisionId: baseRevisionId ?? null, label: baseLabel ?? null }), markupRevId)
+      if (typeof id === "string") setMarkupRevId(id)
+    } finally { setSaving(false) }
   }
 
   // ── Keyboard shortcuts ────────────────────────────────────────────────────
@@ -394,9 +419,10 @@ export default function MarkupEditor({ fileUrl, initialMarkups, onSave }: {
           <button onClick={redo} disabled={future.length === 0} className="h-8 w-8 rounded-md border border-[#E2E8F0] text-[#475569] inline-flex items-center justify-center hover:bg-[#7B9BB5]/10 disabled:opacity-40" title="Redo (Ctrl+Shift+Z)"><RedoIcon /></button>
           <button onClick={deleteSelected} disabled={!selectedId} className="h-8 w-8 rounded-md border border-[#E2E8F0] text-[#475569] inline-flex items-center justify-center hover:bg-red-50 hover:text-red-500 hover:border-red-200 disabled:opacity-40" title="Delete selected (Del)"><TrashIcon /></button>
           <span className="text-[11px] text-[#94A3B8] tabular-nums px-1">{present.length} markup{present.length === 1 ? "" : "s"}</span>
-          <button onClick={() => onSave?.(serializeMarkups(present).markups)}
-            className="h-8 px-3.5 rounded-md bg-[#7B9BB5] text-white text-[12px] font-semibold hover:bg-[#6A8AA4] transition-colors">
-            Save markups
+          <button onClick={save} disabled={saving || present.length === 0}
+            className="h-8 px-3.5 rounded-md bg-[#7B9BB5] text-white text-[12px] font-semibold hover:bg-[#6A8AA4] transition-colors disabled:opacity-50 inline-flex items-center gap-1.5">
+            {saving && <SpinnerIcon className="h-3 w-3" />}
+            {saving ? "Saving…" : "Save markup"}
           </button>
         </div>
       </div>

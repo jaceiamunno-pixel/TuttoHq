@@ -78,6 +78,10 @@ export type Markup = LineMarkup | RectMarkup | ArrowMarkup | TextMarkup
 /** The serializable document — this is what Part 2 persists as jsonb. */
 export interface MarkupDoc {
   version: number
+  /** drawing_revisions.id this layer was drawn over (its base). null if unknown. */
+  baseRevisionId: string | null
+  /** The base revision's label at save time — provenance / display lineage. */
+  baseLabel: string | null
   markups: Markup[]
 }
 
@@ -199,10 +203,19 @@ export function translateMarkup(m: Markup, dx: number, dy: number): Markup {
 
 // ── Serialization (the thing Part 2 will store as jsonb) ─────────────────────
 
-/** Pack markups into the versioned, z-ordered document. */
-export function serializeMarkups(markups: Markup[]): MarkupDoc {
+/** Pack markups into the versioned, z-ordered document. `base` records which
+ *  revision the layer was drawn over (provenance for the persisted row). */
+export function serializeMarkups(
+  markups: Markup[],
+  base?: { revisionId: string | null; label: string | null },
+): MarkupDoc {
   const ordered = [...markups].sort((a, b) => a.z - b.z)
-  return { version: MARKUP_DOC_VERSION, markups: ordered }
+  return {
+    version: MARKUP_DOC_VERSION,
+    baseRevisionId: base?.revisionId ?? null,
+    baseLabel: base?.label ?? null,
+    markups: ordered,
+  }
 }
 
 const isFiniteNum = (n: unknown): n is number => typeof n === "number" && Number.isFinite(n)
