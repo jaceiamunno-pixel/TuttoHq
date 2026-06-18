@@ -102,16 +102,14 @@ export default function MarkupEditor({ fileUrl, initialMarkups, onSave }: {
   }, [aspect, area])
 
   // ── Markup state + undo/redo history ──────────────────────────────────────
+  // `initialMarkups` is read once here as the seed. The editor is conditionally
+  // mounted (markup mode on the viewer), so it remounts — and re-seeds — on each
+  // open; that, not a sync effect, is what makes reopening round-trip the saved
+  // markups. (A sync effect would also wipe undo history on every save, since
+  // saving changes the prop's identity.)
   const [present, setPresent] = useState<Markup[]>(() => initialMarkups ? deserializeMarkups(initialMarkups) : [])
   const [past, setPast] = useState<Markup[][]>([])
   const [future, setFuture] = useState<Markup[][]>([])
-
-  // Reload markups when a different set is handed in (e.g. reopening the editor).
-  useEffect(() => {
-    setPresent(initialMarkups ? deserializeMarkups(initialMarkups) : [])
-    setPast([]); setFuture([]); setSelectedId(null)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [initialMarkups])
 
   const commit = useCallback((next: Markup[]) => {
     setPast(p => [...p, present]); setPresent(next); setFuture([])
@@ -120,22 +118,22 @@ export default function MarkupEditor({ fileUrl, initialMarkups, onSave }: {
   const commitFrom = useCallback((snapshot: Markup[], next: Markup[]) => {
     setPast(p => [...p, snapshot]); setPresent(next); setFuture([])
   }, [])
+  // Plain setState calls (no setState nested inside another updater — that
+  // double-fires under dev StrictMode and would duplicate history entries).
   const undo = useCallback(() => {
-    setPast(p => {
-      if (p.length === 0) return p
-      const prev = p[p.length - 1]
-      setFuture(f => [present, ...f]); setPresent(prev); setSelectedId(null)
-      return p.slice(0, -1)
-    })
-  }, [present])
+    if (past.length === 0) return
+    setPast(past.slice(0, -1))
+    setFuture(f => [present, ...f])
+    setPresent(past[past.length - 1])
+    setSelectedId(null)
+  }, [past, present])
   const redo = useCallback(() => {
-    setFuture(f => {
-      if (f.length === 0) return f
-      const next = f[0]
-      setPast(p => [...p, present]); setPresent(next); setSelectedId(null)
-      return f.slice(1)
-    })
-  }, [present])
+    if (future.length === 0) return
+    setFuture(future.slice(1))
+    setPast(p => [...p, present])
+    setPresent(future[0])
+    setSelectedId(null)
+  }, [future, present])
 
   // ── Tool + style + selection ──────────────────────────────────────────────
   const [tool, setTool] = useState<Tool>("select")
