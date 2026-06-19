@@ -118,13 +118,31 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   }
   if (!base) return NextResponse.json({ error: "sheet has no uploaded (non-markup) revision to mark up" }, { status: 409 })
 
-  // NUMBERING: per-sheet markup counter, independent of upload Rev labels.
-  const { count: markupCount, error: cntErr } = await supabase
+  // NUMBERING: a MONOTONIC high-water mark so a number is NEVER reused — even
+  // after a markup is soft-deleted (and maybe later restored). n = (max N across
+  // every "Markup N" label on this sheet, INCLUDING soft-deleted markup rows) + 1.
+  // The authed client can't SELECT soft-deleted rows (RLS filters deleted_at IS
+  // NULL), so we union the live markup labels with the deleted ones from
+  // list_deleted_drawing_revisions() — the SAME company+sheet-scoped SECURITY
+  // DEFINER fn the revisions recycle-bin already uses (no new DB object, no
+  // tenant change). Uploads ("Rev 0", …) are ignored by the regex.
+  const markupLabels: (string | null)[] = []
+  const { data: liveMarkups, error: liveErr } = await supabase
     .from("drawing_revisions")
-    .select("id", { count: "exact", head: true })
+    .select("revision_label")
     .eq("sheet_id", sheetId).eq("source", "markup")
-  if (cntErr) return NextResponse.json({ error: cntErr.message }, { status: 500 })
-  const n = (markupCount ?? 0) + 1
+  if (liveErr) return NextResponse.json({ error: liveErr.message }, { status: 500 })
+  for (const r of liveMarkups ?? []) markupLabels.push(r.revision_label)
+  const { data: deletedRevs, error: delErr } = await supabase
+    .rpc("list_deleted_drawing_revisions", { p_sheet_id: sheetId })
+  if (delErr) return NextResponse.json({ error: delErr.message }, { status: 500 })
+  for (const r of (deletedRevs ?? []) as { revision_label: string | null }[]) markupLabels.push(r.revision_label)
+  let maxN = 0
+  for (const lbl of markupLabels) {
+    const mt = /^Markup (\d+)$/.exec(lbl ?? "")
+    if (mt) { const v = parseInt(mt[1], 10); if (v > maxN) maxN = v }
+  }
+  const n = maxN + 1
   const label = `Markup ${n}`
 
   // Server-authoritative doc: provenance points at the base this markup rode on.

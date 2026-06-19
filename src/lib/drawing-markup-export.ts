@@ -23,7 +23,7 @@
 // counter-rotated so it still reads upright once a viewer applies /Rotate.
 
 import { PDFDocument, StandardFonts, LineCapStyle, degrees, rgb, type PDFPage, type PDFFont } from "pdf-lib"
-import type { Markup, MarkupDoc } from "./drawing-markup"
+import { cloudOutline, CLOUD_SCALLOP_FRAC, type Markup, type MarkupDoc } from "./drawing-markup"
 
 type Color = ReturnType<typeof rgb>
 
@@ -166,6 +166,46 @@ function drawMarkup(
       page.drawText(sanitizeForHelvetica(m.text), {
         x: anchor.x, y: anchor.y, size, font, color, rotate: degrees(rot),
       })
+      break
+    }
+    case "highlight": {
+      const op = m.style.opacity ?? 1
+      if (m.shape === "rect") {
+        // Filled translucent box over the 4 rotation-transformed corners. A
+        // filled SVG path (fill = color, fill-opacity = op, no border) — NOT an
+        // outline; it's a highlighter. drawSvgPath places path-(0,0) at {x,y} and
+        // flips SVG y-down → page y-up, so corner deltas pass as (dx, -dy).
+        const c = [toPage(m.x, m.y), toPage(m.x + m.w, m.y), toPage(m.x + m.w, m.y + m.h), toPage(m.x, m.y + m.h)]
+        const rel = (q: { x: number; y: number }) => `${q.x - c[0].x} ${-(q.y - c[0].y)}`
+        const path = `M 0 0 L ${rel(c[1])} L ${rel(c[2])} L ${rel(c[3])} Z`
+        page.drawSvgPath(path, { x: c[0].x, y: c[0].y, color, opacity: op, borderWidth: 0 })
+      } else {
+        // Translucent thick round-capped band (wider than the pen line case).
+        const t = Math.max(thickness * 2.5, dispH * 0.01)
+        for (let i = 1; i < m.points.length; i++) {
+          page.drawLine({
+            start: toPage(m.points[i - 1].x, m.points[i - 1].y),
+            end: toPage(m.points[i].x, m.points[i].y),
+            thickness: t, color, opacity: op, lineCap: LineCapStyle.Round,
+          })
+        }
+      }
+      break
+    }
+    case "cloud": {
+      // Scalloped OUTLINE (stroke only, no fill) around the bbox. Built from the
+      // toPage()-mapped corners so it stays correct under every /Rotate quadrant,
+      // via the SAME cloudOutline generator the editor uses (matched scallop count
+      // because displayed px preserves the page aspect — see CLOUD_SCALLOP_FRAC).
+      const c = [toPage(m.x, m.y), toPage(m.x + m.w, m.y), toPage(m.x + m.w, m.y + m.h), toPage(m.x, m.y + m.h)]
+      const r = Math.max(2, dispH * CLOUD_SCALLOP_FRAC)
+      const pts = cloudOutline(c, r)
+      for (let i = 1; i < pts.length; i++) {
+        page.drawLine({ start: pts[i - 1], end: pts[i], thickness, color, lineCap: LineCapStyle.Round })
+      }
+      if (pts.length > 1) {
+        page.drawLine({ start: pts[pts.length - 1], end: pts[0], thickness, color, lineCap: LineCapStyle.Round })
+      }
       break
     }
   }
