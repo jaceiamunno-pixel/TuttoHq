@@ -3,8 +3,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { getDocumentProxy, renderPageAsImage } from "unpdf"
 import {
-  DEFAULT_STYLE, FONT_PRESETS, MARKUP_COLORS, STROKE_PRESETS,
-  boundingBox, deserializeMarkups, hitTest, newMarkupId, serializeMarkups, translateMarkup,
+  DEFAULT_STYLE, MARKUP_COLORS,
+  HIGHLIGHT_OPACITY, HIGHLIGHT_DEFAULT_COLOR, CLOUD_SCALLOP_FRAC,
+  boundingBox, cloudOutline, deserializeMarkups, hitTest, newMarkupId, serializeMarkups, translateMarkup,
   type Markup, type MarkupDoc, type MarkupStyle, type Point,
 } from "@/lib/drawing-markup"
 import { SpinnerIcon } from "../../app/dashboard/_shared/icons"
@@ -16,7 +17,7 @@ import { SpinnerIcon } from "../../app/dashboard/_shared/icons"
 // @/lib/drawing-markup. `onSave` just hands that array back — wiring it to a new
 // drawing_revisions row is Part 2, after the jsonb column lands.
 
-type Tool = "select" | "line" | "rect" | "arrow" | "text"
+type Tool = "select" | "line" | "rect" | "arrow" | "text" | "highlight" | "highlightPen" | "cloud"
 
 const RENDER_WIDTH = 1800 // page raster width (px); displayed scaled-to-fit
 
@@ -31,6 +32,9 @@ const UndoIcon = () => <svg className={ic} fill="none" stroke="currentColor" vie
 const RedoIcon = () => <svg className={ic} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M15 14l5-5-5-5M20 9H9a5 5 0 000 10h3" /></svg>
 const TrashIcon = () => <svg className={ic} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M5 7h14M9 7V5a1 1 0 011-1h4a1 1 0 011 1v2m-7 0v12a1 1 0 001 1h6a1 1 0 001-1V7" /></svg>
 const DownloadIcon = () => <svg className={ic} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M12 3v12m0 0l-4-4m4 4l4-4M5 21h14" /></svg>
+const HighlightIcon = () => <svg className={ic} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M4 20h16" /><rect x="6" y="5" width="12" height="9" rx="1" strokeWidth={1.8} /></svg>
+const HighlightPenIcon = () => <svg className={ic} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M4 20h16M5 15c4-6 10 4 14-3" /></svg>
+const CloudIcon = () => <svg className={ic} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M7 17a3.5 3.5 0 01-.5-6.96A4.5 4.5 0 0115 9.5a3 3 0 01.5 5.96" /></svg>
 
 const TOOLS: { tool: Tool; label: string; Icon: () => React.ReactElement }[] = [
   { tool: "select", label: "Select", Icon: CursorIcon },
@@ -38,11 +42,21 @@ const TOOLS: { tool: Tool; label: string; Icon: () => React.ReactElement }[] = [
   { tool: "rect", label: "Box", Icon: RectIcon },
   { tool: "arrow", label: "Arrow", Icon: ArrowIcon },
   { tool: "text", label: "Text", Icon: TextIcon },
+  { tool: "highlight", label: "Highlight", Icon: HighlightIcon },
+  { tool: "highlightPen", label: "Highlight pen", Icon: HighlightPenIcon },
+  { tool: "cloud", label: "Cloud", Icon: CloudIcon },
 ]
 
-const STROKE_OPTS: { key: keyof typeof STROKE_PRESETS; label: string }[] = [
-  { key: "thin", label: "S" }, { key: "medium", label: "M" }, { key: "thick", label: "L" },
-]
+// Numeric size system (replaces S/M/L; wider range, like other markup tools).
+// Stroke weight and text size are different scales, so the toolbar control swaps
+// by context: shape tools edit strokeWidth, the Text tool / a selected text item
+// edits fontSize. Each maps number → fraction-of-page-height via a unit.
+const STROKE_SIZES = [1, 2, 3, 4, 5, 6, 8, 10, 12, 16, 20, 24]
+const STROKE_UNIT = 0.0008 // strokeWidth fraction per unit (default 0.0032 → "4")
+const TEXT_SIZES = [10, 12, 14, 16, 18, 24, 32, 40, 48, 64]
+const TEXT_UNIT = 0.001 // fontSize fraction per unit (default 0.024 → "24")
+const nearestSize = (opts: number[], target: number) =>
+  opts.reduce((best, o) => (Math.abs(o - target) < Math.abs(best - target) ? o : best), opts[0])
 
 export default function MarkupEditor({ fileUrl, sheetNumber, initialMarkups, baseRevisionId, baseLabel, mode = "new", onSave }: {
   fileUrl: string
@@ -189,7 +203,32 @@ export default function MarkupEditor({ fileUrl, sheetNumber, initialMarkups, bas
     commit(present.filter(m => m.id !== selectedId)); setSelectedId(null)
   }, [selectedId, present, commit])
 
+  // Pick a tool. Highlight tools carry translucency (+ a default amber the first
+  // time you enter highlight); leaving highlight drops opacity so the other tools
+  // stay opaque. The colour / stroke swatches still patch the active style.
+  function selectTool(t: Tool) {
+    setTool(t)
+    if (t !== "select") setSelectedId(null)
+    const isHl = t === "highlight" || t === "highlightPen"
+    setStyle(s => isHl
+      ? { ...s, opacity: HIGHLIGHT_OPACITY, color: s.opacity == null ? HIGHLIGHT_DEFAULT_COLOR : s.color }
+      : (s.opacity == null ? s : { ...s, opacity: undefined }))
+  }
+
   // ── Pointer interaction ───────────────────────────────────────────────────
+  // Snap `end` so start→end lands on the nearest 0/45/90°, measured in DISPLAYED
+  // px (the visual angle — normalized space is anisotropic), then mapped back.
+  function snapToAngle(start: Point, end: Point): Point {
+    const dxp = (end.x - start.x) * disp.w, dyp = (end.y - start.y) * disp.h
+    const dist = Math.hypot(dxp, dyp)
+    if (dist === 0) return end
+    const ang = Math.round(Math.atan2(dyp, dxp) / (Math.PI / 4)) * (Math.PI / 4)
+    return {
+      x: disp.w ? start.x + (Math.cos(ang) * dist) / disp.w : start.x,
+      y: disp.h ? start.y + (Math.sin(ang) * dist) / disp.h : start.y,
+    }
+  }
+
   function onPointerDown(e: React.PointerEvent) {
     if (editing) return // let the text input own the click
     const p = pxToNorm(e.clientX, e.clientY)
@@ -220,6 +259,9 @@ export default function MarkupEditor({ fileUrl, sheetNumber, initialMarkups, bas
     if (tool === "line") setDraft({ ...base, type: "line", points: [p] })
     else if (tool === "rect") setDraft({ ...base, type: "rect", x: p.x, y: p.y, w: 0, h: 0 })
     else if (tool === "arrow") setDraft({ ...base, type: "arrow", x1: p.x, y1: p.y, x2: p.x, y2: p.y })
+    else if (tool === "highlight") setDraft({ ...base, type: "highlight", shape: "rect", x: p.x, y: p.y, w: 0, h: 0 })
+    else if (tool === "highlightPen") setDraft({ ...base, type: "highlight", shape: "free", points: [p] })
+    else if (tool === "cloud") setDraft({ ...base, type: "cloud", x: p.x, y: p.y, w: 0, h: 0 })
   }
 
   function onPointerMove(e: React.PointerEvent) {
@@ -234,9 +276,37 @@ export default function MarkupEditor({ fileUrl, sheetNumber, initialMarkups, bas
     }
     if (!draft) return
     const p = pxToNorm(e.clientX, e.clientY)
-    if (draft.type === "line") setDraft({ ...draft, points: [...draft.points, p] })
-    else if (draft.type === "rect") setDraft({ ...draft, w: p.x - draft.x, h: p.y - draft.y })
-    else if (draft.type === "arrow") setDraft({ ...draft, x2: p.x, y2: p.y })
+    // Shift held → constrain (decided per-move off the live shiftKey, so we don't
+    // fight a stroke mid-way). Freehand tools become a straight 2-point segment
+    // anchored at the stroke start; the arrow snaps its end to 0/45/90°.
+    const shift = e.shiftKey
+    switch (draft.type) {
+      case "line":
+        // Shift → a straight segment LOCKED to the nearest 0/45/90° axis (the
+        // endpoint snaps onto that line; it can't sit off-axis). Else freehand.
+        setDraft(shift
+          ? { ...draft, points: [draft.points[0], snapToAngle(draft.points[0], p)] }
+          : { ...draft, points: [...draft.points, p] })
+        break
+      case "highlight":
+        if (draft.shape === "free") {
+          setDraft(shift
+            ? { ...draft, points: [draft.points[0], snapToAngle(draft.points[0], p)] }
+            : { ...draft, points: [...draft.points, p] })
+        } else {
+          setDraft({ ...draft, w: p.x - draft.x, h: p.y - draft.y })
+        }
+        break
+      case "rect":
+      case "cloud":
+        setDraft({ ...draft, w: p.x - draft.x, h: p.y - draft.y })
+        break
+      case "arrow": {
+        const end = shift ? snapToAngle({ x: draft.x1, y: draft.y1 }, p) : p
+        setDraft({ ...draft, x2: end.x, y2: end.y })
+        break
+      }
+    }
   }
 
   function onPointerUp(e: React.PointerEvent) {
@@ -258,7 +328,8 @@ export default function MarkupEditor({ fileUrl, sheetNumber, initialMarkups, bas
   // Reject degenerate drafts (a click with no drag); normalize rect to +w/+h.
   function finalizeDraft(d: Markup): Markup | null {
     if (d.type === "line") return d.points.length >= 2 ? d : null
-    if (d.type === "rect") {
+    if (d.type === "highlight" && d.shape === "free") return d.points.length >= 2 ? d : null
+    if (d.type === "rect" || d.type === "cloud" || (d.type === "highlight" && d.shape === "rect")) {
       const x = Math.min(d.x, d.x + d.w), y = Math.min(d.y, d.y + d.h)
       const w = Math.abs(d.w), h = Math.abs(d.h)
       return w > 0.004 && h > 0.004 ? { ...d, x, y, w, h } : null
@@ -394,6 +465,38 @@ export default function MarkupEditor({ fileUrl, sheetNumber, initialMarkups, bas
           </text>
         )
       }
+      case "highlight": {
+        const op = m.style.opacity ?? 1
+        if (m.shape === "rect") {
+          const b = boundingBox(m)
+          return (
+            <rect key={m.id} x={px(b.x)} y={py(b.y)} width={px(b.w)} height={py(b.h)}
+              fill={m.style.color} fillOpacity={op} stroke="none"
+              style={{ cursor: tool === "select" ? "move" : "default" }} />
+          )
+        }
+        return (
+          <polyline key={m.id} points={m.points.map(p => `${px(p.x)},${py(p.y)}`).join(" ")}
+            fill="none" stroke={m.style.color} strokeOpacity={op}
+            strokeWidth={Math.max(strokePx(m) * 2.5, H * 0.01)}
+            strokeLinecap="round" strokeLinejoin="round"
+            style={{ cursor: tool === "select" ? "move" : "default" }} />
+        )
+      }
+      case "cloud": {
+        const b = boundingBox(m)
+        const corners = [
+          { x: px(b.x), y: py(b.y) }, { x: px(b.x + b.w), y: py(b.y) },
+          { x: px(b.x + b.w), y: py(b.y + b.h) }, { x: px(b.x), y: py(b.y + b.h) },
+        ]
+        const pts = cloudOutline(corners, Math.max(6, H * CLOUD_SCALLOP_FRAC))
+        const d = pts.length ? "M " + pts.map(p => `${p.x} ${p.y}`).join(" L ") + " Z" : ""
+        return (
+          <path key={m.id} d={d} fill="none" stroke={m.style.color} strokeWidth={strokePx(m)}
+            strokeLinecap="round" strokeLinejoin="round"
+            style={{ cursor: tool === "select" ? "move" : "default" }} />
+        )
+      }
     }
     return null
   }
@@ -412,6 +515,14 @@ export default function MarkupEditor({ fileUrl, sheetNumber, initialMarkups, bas
   const ordered = useMemo(() => [...present].sort((a, b) => a.z - b.z), [present])
   const cursor = tool === "select" ? "default" : tool === "text" ? "text" : "crosshair"
 
+  // Size control context: the Text tool / a selected text item edits fontSize;
+  // everything else edits strokeWidth. Drives the numeric Size dropdown below.
+  const selectedType = present.find(m => m.id === selectedId)?.type
+  const sizeIsText = tool === "text" || selectedType === "text"
+  const sizeOptions = sizeIsText ? TEXT_SIZES : STROKE_SIZES
+  const sizeUnit = sizeIsText ? TEXT_UNIT : STROKE_UNIT
+  const sizeValue = nearestSize(sizeOptions, (sizeIsText ? style.fontSize : style.strokeWidth) / sizeUnit)
+
   // ── UI ────────────────────────────────────────────────────────────────────
   const toolBtn = (active: boolean) =>
     `h-8 px-2.5 rounded-md text-[12px] font-semibold inline-flex items-center gap-1.5 transition-colors ${
@@ -423,7 +534,7 @@ export default function MarkupEditor({ fileUrl, sheetNumber, initialMarkups, bas
       <div className="flex-shrink-0 flex flex-wrap items-center gap-x-3 gap-y-2 px-3 py-2 bg-white border-b border-[#E2E8F0]">
         <div className="flex items-center gap-1">
           {TOOLS.map(({ tool: t, label, Icon }) => (
-            <button key={t} onClick={() => { setTool(t); if (t !== "select") setSelectedId(null) }}
+            <button key={t} onClick={() => selectTool(t)}
               className={toolBtn(tool === t)} title={label}><Icon />{label}</button>
           ))}
         </div>
@@ -441,12 +552,14 @@ export default function MarkupEditor({ fileUrl, sheetNumber, initialMarkups, bas
 
         <div className="w-px h-6 bg-[#E2E8F0]" />
 
-        {/* Stroke width */}
-        <div className="flex items-center gap-1">
-          {STROKE_OPTS.map(({ key, label }) => (
-            <button key={key} onClick={() => applyStyle({ strokeWidth: STROKE_PRESETS[key] })}
-              className={toolBtn(style.strokeWidth === STROKE_PRESETS[key])} title={`${key} stroke`}>{label}</button>
-          ))}
+        {/* Size — numeric weight (or text size when the Text tool / a text item is active) */}
+        <div className="flex items-center gap-1.5">
+          <span className="text-[11px] text-[#64748B]">{sizeIsText ? "Text" : "Size"}</span>
+          <select value={sizeValue}
+            onChange={e => applyStyle(sizeIsText ? { fontSize: Number(e.target.value) * sizeUnit } : { strokeWidth: Number(e.target.value) * sizeUnit })}
+            className="h-8 rounded-md border border-[#E2E8F0] bg-white text-[12px] text-[#475569] px-1.5 outline-none focus:border-[#7B9BB5]">
+            {sizeOptions.map(n => <option key={n} value={n}>{n}</option>)}
+          </select>
         </div>
 
         <div className="ml-auto flex items-center gap-1.5">

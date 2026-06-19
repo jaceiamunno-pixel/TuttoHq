@@ -658,6 +658,10 @@ export default function DrawingsModule({ globalProjectId, appProjects }: {
                                                 <>
                                                   <button onClick={() => openMarkupView(s, mk.id)} className="text-[#7B9BB5] hover:text-[#5A7A94] font-semibold">Open</button>
                                                   <button onClick={() => startEditMarkup(s, mk)} className="text-[#7B9BB5] hover:text-[#5A7A94] font-semibold">Edit</button>
+                                                  {/* Markup soft-delete → existing route handles source='markup' (no
+                                                      re-point); it lands in the recycle bin below, restorable. */}
+                                                  <button onClick={() => softDeleteRevision(s.id, rv)} disabled={deletingRevId === rv.id}
+                                                    className="text-red-400 hover:text-red-500 font-semibold disabled:opacity-50 transition-colors">{deletingRevId === rv.id ? "Deleting…" : "Delete"}</button>
                                                 </>
                                               ) : (
                                                 <>
