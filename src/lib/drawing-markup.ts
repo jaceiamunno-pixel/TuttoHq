@@ -122,14 +122,15 @@ export interface MarkupDoc {
 
 // ── Editor presets (kept here so the model + UI agree on one vocabulary) ─────
 
-/** Bluebeam-typical palette; index 0 (red) is the default. */
+/** Bright, saturated markup palette; index 0 (red) is the default, index 2
+ *  (amber/yellow) is the highlighter default. */
 export const MARKUP_COLORS = [
-  "#DC2626", // red
-  "#EA580C", // orange
-  "#CA8A04", // amber
-  "#16A34A", // green
-  "#2563EB", // blue
-  "#0F172A", // near-black
+  "#FF2424", // red
+  "#FF7A00", // orange
+  "#FFC400", // amber / yellow (highlighter default)
+  "#22C55E", // green
+  "#2D7DFF", // blue
+  "#111827", // near-black
 ] as const
 
 /** Stroke widths as fractions of page height. */

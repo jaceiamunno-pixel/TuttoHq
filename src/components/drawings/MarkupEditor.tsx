@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { getDocumentProxy, renderPageAsImage } from "unpdf"
 import {
-  DEFAULT_STYLE, FONT_PRESETS, MARKUP_COLORS, STROKE_PRESETS,
+  DEFAULT_STYLE, MARKUP_COLORS,
   HIGHLIGHT_OPACITY, HIGHLIGHT_DEFAULT_COLOR, CLOUD_SCALLOP_FRAC,
   boundingBox, cloudOutline, deserializeMarkups, hitTest, newMarkupId, serializeMarkups, translateMarkup,
   type Markup, type MarkupDoc, type MarkupStyle, type Point,
@@ -47,9 +47,16 @@ const TOOLS: { tool: Tool; label: string; Icon: () => React.ReactElement }[] = [
   { tool: "cloud", label: "Cloud", Icon: CloudIcon },
 ]
 
-const STROKE_OPTS: { key: keyof typeof STROKE_PRESETS; label: string }[] = [
-  { key: "thin", label: "S" }, { key: "medium", label: "M" }, { key: "thick", label: "L" },
-]
+// Numeric size system (replaces S/M/L; wider range, like other markup tools).
+// Stroke weight and text size are different scales, so the toolbar control swaps
+// by context: shape tools edit strokeWidth, the Text tool / a selected text item
+// edits fontSize. Each maps number → fraction-of-page-height via a unit.
+const STROKE_SIZES = [1, 2, 3, 4, 5, 6, 8, 10, 12, 16, 20, 24]
+const STROKE_UNIT = 0.0008 // strokeWidth fraction per unit (default 0.0032 → "4")
+const TEXT_SIZES = [10, 12, 14, 16, 18, 24, 32, 40, 48, 64]
+const TEXT_UNIT = 0.001 // fontSize fraction per unit (default 0.024 → "24")
+const nearestSize = (opts: number[], target: number) =>
+  opts.reduce((best, o) => (Math.abs(o - target) < Math.abs(best - target) ? o : best), opts[0])
 
 export default function MarkupEditor({ fileUrl, sheetNumber, initialMarkups, baseRevisionId, baseLabel, mode = "new", onSave }: {
   fileUrl: string
@@ -275,11 +282,17 @@ export default function MarkupEditor({ fileUrl, sheetNumber, initialMarkups, bas
     const shift = e.shiftKey
     switch (draft.type) {
       case "line":
-        setDraft(shift ? { ...draft, points: [draft.points[0], p] } : { ...draft, points: [...draft.points, p] })
+        // Shift → a straight segment LOCKED to the nearest 0/45/90° axis (the
+        // endpoint snaps onto that line; it can't sit off-axis). Else freehand.
+        setDraft(shift
+          ? { ...draft, points: [draft.points[0], snapToAngle(draft.points[0], p)] }
+          : { ...draft, points: [...draft.points, p] })
         break
       case "highlight":
         if (draft.shape === "free") {
-          setDraft(shift ? { ...draft, points: [draft.points[0], p] } : { ...draft, points: [...draft.points, p] })
+          setDraft(shift
+            ? { ...draft, points: [draft.points[0], snapToAngle(draft.points[0], p)] }
+            : { ...draft, points: [...draft.points, p] })
         } else {
           setDraft({ ...draft, w: p.x - draft.x, h: p.y - draft.y })
         }
@@ -502,6 +515,14 @@ export default function MarkupEditor({ fileUrl, sheetNumber, initialMarkups, bas
   const ordered = useMemo(() => [...present].sort((a, b) => a.z - b.z), [present])
   const cursor = tool === "select" ? "default" : tool === "text" ? "text" : "crosshair"
 
+  // Size control context: the Text tool / a selected text item edits fontSize;
+  // everything else edits strokeWidth. Drives the numeric Size dropdown below.
+  const selectedType = present.find(m => m.id === selectedId)?.type
+  const sizeIsText = tool === "text" || selectedType === "text"
+  const sizeOptions = sizeIsText ? TEXT_SIZES : STROKE_SIZES
+  const sizeUnit = sizeIsText ? TEXT_UNIT : STROKE_UNIT
+  const sizeValue = nearestSize(sizeOptions, (sizeIsText ? style.fontSize : style.strokeWidth) / sizeUnit)
+
   // ── UI ────────────────────────────────────────────────────────────────────
   const toolBtn = (active: boolean) =>
     `h-8 px-2.5 rounded-md text-[12px] font-semibold inline-flex items-center gap-1.5 transition-colors ${
@@ -531,12 +552,14 @@ export default function MarkupEditor({ fileUrl, sheetNumber, initialMarkups, bas
 
         <div className="w-px h-6 bg-[#E2E8F0]" />
 
-        {/* Stroke width */}
-        <div className="flex items-center gap-1">
-          {STROKE_OPTS.map(({ key, label }) => (
-            <button key={key} onClick={() => applyStyle({ strokeWidth: STROKE_PRESETS[key] })}
-              className={toolBtn(style.strokeWidth === STROKE_PRESETS[key])} title={`${key} stroke`}>{label}</button>
-          ))}
+        {/* Size — numeric weight (or text size when the Text tool / a text item is active) */}
+        <div className="flex items-center gap-1.5">
+          <span className="text-[11px] text-[#64748B]">{sizeIsText ? "Text" : "Size"}</span>
+          <select value={sizeValue}
+            onChange={e => applyStyle(sizeIsText ? { fontSize: Number(e.target.value) * sizeUnit } : { strokeWidth: Number(e.target.value) * sizeUnit })}
+            className="h-8 rounded-md border border-[#E2E8F0] bg-white text-[12px] text-[#475569] px-1.5 outline-none focus:border-[#7B9BB5]">
+            {sizeOptions.map(n => <option key={n} value={n}>{n}</option>)}
+          </select>
         </div>
 
         <div className="ml-auto flex items-center gap-1.5">
