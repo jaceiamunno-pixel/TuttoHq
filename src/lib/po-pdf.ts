@@ -154,7 +154,7 @@ export async function buildPurchaseOrderDocument(
   // ── Insurance / COI boilerplate ───────────────────────────────────────────────
   doc.sectionHeading("Insurance & Conditions")
   doc.paragraph(
-    `The Vendor shall maintain Commercial General Liability, Automobile Liability, and Workers' Compensation insurance in the amounts required by the Contract Documents, and shall name ${company} and the Owner as additional insureds. A current Certificate of Insurance must be on file with ${company} prior to delivery or commencement of work.`,
+    "The Vendor shall maintain Commercial General Liability, Automobile Liability, and Workers' Compensation insurance in the amounts required by the Contract Documents, and shall include Owner, Contractor and their respective officers, directors, agents and employees as additional insureds (collectively \"Indemnitees\") on a primary and non-contributory basis for both completed and ongoing operations. A current Certificate of Insurance must be on file with the Contractor prior to delivery or commencement of work.",
     doc.sans, 9, INK, 6,
   )
   doc.paragraph(
