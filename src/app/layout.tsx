@@ -11,15 +11,15 @@ export const viewport: Viewport = {
 const inter = Inter({ subsets: ["latin"] })
 
 export const metadata: Metadata = {
-  title: "TuttoHQ — Construction Submittal & Document Management Software | Procore Alternative",
-  description: "Manage submittals, RFIs, change orders, punch lists, and daily reports in one platform. AI-powered, Gmail-integrated, and 75% cheaper than Procore. Free 14-day trial.",
-  keywords: "construction submittal management software, submittal tracking software, RFI tracking construction, change order management software, Procore alternative, construction document management",
+  title: "TuttoHQ — Construction Submittal & Document Management Software for General Contractors",
+  description: "AI-classified submittals, spec-book ingestion, and a markup-ready drawing log — plus RFIs, change orders, and purchase orders in one platform. Built for general contractors. Free 14-day trial.",
+  keywords: "construction submittal management software, submittal tracking software, spec book ingestion, construction drawing log software, drawing markup software, RFI tracking construction, change order management software, purchase order tracking construction, construction document management",
   metadataBase: new URL("https://tuttohq.com"),
   alternates: { canonical: "https://tuttohq.com" },
   robots: { index: true, follow: true },
   openGraph: {
     title: "TuttoHQ — Construction Document Management Made Simple",
-    description: "The affordable alternative to Procore for general contractors. Auto-ingest submittals from Gmail, track RFIs and change orders, generate branded PDFs. $199/month unlimited users.",
+    description: "The affordable alternative to heavyweight enterprise construction platforms. AI-classified submittals, spec-book ingestion, a markup-ready drawing log, plus RFIs, change orders, and POs. Built for GCs, not enterprise IT.",
     url: "https://tuttohq.com",
     siteName: "TuttoHQ",
     type: "website",
@@ -27,7 +27,7 @@ export const metadata: Metadata = {
   twitter: {
     card: "summary_large_image",
     title: "TuttoHQ — Construction Document Management Made Simple",
-    description: "The affordable alternative to Procore for general contractors. $199/month, unlimited users, set up in under 10 minutes.",
+    description: "AI-classified submittals, spec-book ingestion, and a markup-ready drawing log, plus RFIs, COs, and POs. The affordable alternative to enterprise construction platforms — unlimited users, set up in under 10 minutes.",
   },
 }
 

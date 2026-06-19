@@ -1,4 +1,4 @@
-﻿"use client"
+"use client"
 
 import { useState, useRef, useEffect } from "react"
 import Link from "next/link"
@@ -7,7 +7,8 @@ import {
   CheckCircle2, XCircle, ChevronDown, ArrowRight,
   Folder, Mail, Bot, FileText, HelpCircle, DollarSign,
   CheckSquare, ClipboardList, LayoutGrid, Users, Building2,
-  Package, Zap, Star, Lock, CreditCard,
+  Package, Zap, Star, Lock, CreditCard, BookOpen, Layers,
+  Receipt, Upload,
 } from "lucide-react"
 
 // ── Animation helper ──────────────────────────────────────────────────────────
@@ -276,90 +277,119 @@ function DashboardMockup() {
 
 // ── Features data ─────────────────────────────────────────────────────────────
 
-const FEATURES = [
-  {
-    icon: Folder,
-    title: "AI Submittal Library",
-    desc: "Every submittal automatically read, categorized by CSI MasterFormat division, and filed. No manual sorting. Ever.",
-  },
-  {
-    icon: Mail,
-    title: "Gmail Integration",
-    desc: "Give manufacturers one email address. Every PDF they send is automatically extracted, categorized, and logged. You never touch it.",
-  },
+// The three differentiators — the moat. Rendered large, up top.
+const HERO_FEATURES = [
   {
     icon: Bot,
-    title: "Claude AI Categorization",
-    desc: "Our AI reads the document, determines the correct CSI division and section with a confidence score, and flags anything unsure for human review.",
+    title: "AI Submittal Library",
+    desc: "Drag a submittal in, upload it, or email it over — TuttoHQ reads each one, classifies it by CSI MasterFormat division and section with a confidence score, and files it automatically. Anything it's unsure about is flagged for human review, never silently guessed.",
   },
   {
-    icon: FileText,
-    title: "One-Click PDF Generation",
-    desc: "Generate a branded, professional submittal package, RFI response, or change order PDF with your company letterhead in one click.",
+    icon: BookOpen,
+    title: "Spec Book Ingestion",
+    desc: "Upload a project's spec book and TuttoHQ parses it into a structured submittal log, organized by CSI section — so your log is built before the first submittal even arrives.",
   },
+  {
+    icon: Layers,
+    title: "Drawing Log + In-App Markup",
+    desc: "Upload a full drawing set and TuttoHQ auto-splits it into sheets. Browse by discipline (A / S / M / E / P…), search by sheet number or title, view in your browser, mark sheets up, and save markups as new revisions — with every prior revision preserved.",
+  },
+]
+
+// Everything else, equal weight.
+const GRID_FEATURES = [
   {
     icon: HelpCircle,
     title: "RFI Tracking",
-    desc: "Create, assign, and respond to RFIs. Know exactly who has the ball at every moment. Never miss a due date.",
+    desc: "Create, assign, and track RFIs. Know exactly who has the ball — and never miss a due date.",
   },
   {
     icon: DollarSign,
     title: "Change Order Management",
-    desc: "Track every CO, approval status, and running contract total. Know your current contract value at all times.",
+    desc: "Build and track change orders and PCOs with running contract totals. Import historical change orders preserving each source document's stated totals.",
+  },
+  {
+    icon: Receipt,
+    title: "Purchase Orders & Commitments",
+    desc: "Issue POs, set supplier contract values, and draw down each contract with release orders. See contract-remaining at a glance.",
+  },
+  {
+    icon: Upload,
+    title: "Bulk Import of Approved Submittals",
+    desc: "Bring an in-progress project's existing signed submittals in at once. Each is logged exactly as-is, with a clean copy filed to your library.",
   },
   {
     icon: CheckSquare,
     title: "Punch List",
-    desc: "Create, assign, and close punch list items by trade. Export to PDF for walkthroughs.",
+    desc: "Create, assign, and close punch items by trade. Export to PDF for walkthroughs.",
   },
   {
     icon: ClipboardList,
     title: "Daily Reports",
-    desc: "Log daily site activity, crew counts, weather, and delays. Exportable as PDF.",
+    desc: "Log crew, weather, delays, and site photos. Works offline on-site and syncs when you reconnect. Export to PDF.",
   },
   {
-    icon: LayoutGrid,
-    title: "Drawing Log",
-    desc: "Upload and version drawings. Old revisions archived but always accessible.",
-  },
-  {
-    icon: Users,
-    title: "Team Directory",
-    desc: "Add your whole team. Assign submittals, RFIs, and COs by name with one click.",
+    icon: FileText,
+    title: "One-Click Branded PDFs",
+    desc: "Generate branded submittal packages, RFI responses, change orders, and PO documents on your company letterhead — in one click.",
   },
   {
     icon: Building2,
     title: "Project Management",
-    desc: "Organize everything by project. Every document, RFI, and CO tied to the right job.",
+    desc: "Organize every document, RFI, CO, and PO by project.",
+  },
+  {
+    icon: Users,
+    title: "Team Directory",
+    desc: "Add your team and assign work by name.",
   },
   {
     icon: Package,
     title: "Batch Import",
-    desc: "Import all your projects and team members from a CSV in seconds. No manual data entry.",
+    desc: "Import your projects and team members from a CSV in seconds. No manual data entry.",
   },
 ]
 
-const COMPARISON_ROWS = [
-  { feature: "Submittal Management", tutto: true, procore: true },
-  { feature: "RFI Tracking", tutto: true, procore: true },
-  { feature: "Change Order Management", tutto: true, procore: true },
-  { feature: "Punch List", tutto: true, procore: true },
-  { feature: "Daily Reports", tutto: true, procore: true },
-  { feature: "Drawing Log", tutto: true, procore: true },
-  { feature: "AI Auto-Categorization", tutto: true, procore: false },
-  { feature: "Gmail Auto-Intake", tutto: true, procore: false },
-  { feature: "One-Click Branded PDFs", tutto: true, procore: false },
-  { feature: "Setup Time", tutto: "Under 10 minutes", procore: "4–6 weeks" },
-  { feature: "Training Required", tutto: "None", procore: "Extensive" },
-  { feature: "Price", tutto: "$199/mo", procore: "$833+/mo" },
-  { feature: "Contract Required", tutto: "No", procore: "Yes" },
-  { feature: "Per-User Fees", tutto: "No", procore: "Yes" },
+const COMPARISON_ROWS: {
+  feature: string
+  tutto: boolean | string
+  legacy: boolean | string
+}[] = [
+  { feature: "Submittal Management", tutto: true, legacy: true },
+  { feature: "RFI Tracking", tutto: true, legacy: true },
+  { feature: "Change Order Management", tutto: true, legacy: true },
+  { feature: "Purchase Orders & Commitments", tutto: true, legacy: true },
+  { feature: "Punch List", tutto: true, legacy: true },
+  { feature: "Daily Reports", tutto: true, legacy: true },
+  { feature: "Drawing Log + In-App Markup", tutto: true, legacy: true },
+  { feature: "AI Submittal Classification", tutto: true, legacy: false },
+  { feature: "Spec Book Auto-Ingestion", tutto: true, legacy: false },
+  { feature: "Bulk Import of Approved Submittals", tutto: true, legacy: false },
+  { feature: "One-Click Branded PDFs", tutto: true, legacy: false },
+  { feature: "Setup Time", tutto: "Under 10 minutes", legacy: "4–6 weeks" },
+  { feature: "Training Required", tutto: "None", legacy: "Extensive" },
+  {
+    feature: "Pricing",
+    tutto: "Simple flat pricing, no per-user fees",
+    legacy: "Per-seat enterprise licensing",
+  },
+  { feature: "Built For", tutto: "General contractors", legacy: "Enterprise IT departments" },
+  { feature: "Contract Required", tutto: "No", legacy: "Yes" },
+]
+
+// Values rendered in red in the legacy column (the "cost" of the heavyweight path).
+const LEGACY_NEGATIVES = [
+  "4–6 weeks",
+  "Extensive",
+  "Yes",
+  "Per-seat enterprise licensing",
+  "Enterprise IT departments",
 ]
 
 const FAQS = [
   {
-    q: "We already use Procore. Is it worth switching?",
-    a: "If you are paying $800+ per month and still managing some documents in email, yes. TuttoHQ takes under 10 minutes to set up. You can run both in parallel during your trial and decide.",
+    q: "We already use a big enterprise platform. Is it worth switching?",
+    a: "If you're paying enterprise per-seat pricing and still managing some documents in email, yes. TuttoHQ takes under 10 minutes to set up. You can run both in parallel during your trial and decide.",
   },
   {
     q: "What if my team is not tech savvy?",
@@ -367,19 +397,19 @@ const FAQS = [
   },
   {
     q: "Do I have to import all my old data?",
-    a: "No. Start fresh with new projects going forward. You can add historical data at any time via CSV import.",
+    a: "No. Start fresh with new projects going forward — or move a live project over with bulk import of approved submittals and CSV import for projects and team. You can add historical data at any time.",
   },
   {
     q: "What happens after the free trial?",
-    a: "You enter your card and continue at $199/month. If you decide it is not for you, cancel before the trial ends and you pay nothing. No calls required.",
+    a: "You continue on a simple flat plan — unlimited users, unlimited projects, no per-seat fees. If you decide it is not for you, cancel before the trial ends and you pay nothing. No calls required.",
   },
   {
     q: "Is my data secure?",
     a: "All data is stored in Supabase with row-level security. Files are stored in private encrypted buckets. We never share or sell your data.",
   },
   {
-    q: "Can I connect my own Gmail?",
-    a: "Yes. You connect your own dedicated submittals Gmail address. Your emails never touch our servers — they go directly from Gmail to your TuttoHQ account via OAuth.",
+    q: "Can I email submittals in?",
+    a: "Yes. Email intake is one of several ways to get documents in — alongside drag-and-drop upload, spec book ingestion, and bulk import. Files land in your library classified and ready.",
   },
   {
     q: "What if I need a feature you do not have?",
@@ -440,29 +470,17 @@ const SCHEMA = {
       "@type": "SoftwareApplication",
       name: "TuttoHQ",
       description:
-        "TuttoHQ is a construction submittal management platform for general contractors. It automatically ingests submittals from Gmail, categorizes them with AI by CSI MasterFormat division, tracks RFIs and change orders, and generates branded PDFs. It costs $199 per month with unlimited users and no contracts.",
+        "TuttoHQ is construction document management software for general contractors. It reads and classifies submittals with AI by CSI MasterFormat division, ingests project spec books into a structured submittal log, manages a drawing log with an in-app viewer and markup, and tracks RFIs, change orders, purchase orders, punch lists, and daily reports — with one-click branded PDFs. Unlimited users, no per-seat fees, and no contracts.",
       applicationCategory: "BusinessApplication",
       operatingSystem: "Web",
       url: "https://tuttohq.com",
-      offers: {
-        "@type": "Offer",
-        price: "199",
-        priceCurrency: "USD",
-        priceSpecification: {
-          "@type": "UnitPriceSpecification",
-          price: "199",
-          priceCurrency: "USD",
-          unitCode: "MON",
-        },
-        trialPeriodDays: "14",
-      },
     },
     {
       "@type": "Organization",
       name: "TuttoHQ",
       url: "https://tuttohq.com",
       description:
-        "TuttoHQ provides construction document management software for general contractors, including submittal tracking, RFI management, change order tracking, punch lists, daily reports, and drawing logs.",
+        "TuttoHQ provides construction document management software for general contractors, including AI submittal classification, spec book ingestion, a markup-ready drawing log, RFI tracking, change order and purchase order management, punch lists, and daily reports.",
     },
     {
       "@type": "FAQPage",
@@ -531,10 +549,12 @@ export default function LandingPage() {
                 transition={{ duration: 0.65, delay: 0.2, ease: [0.22, 1, 0.36, 1] }}
                 className="text-[17px] sm:text-[19px] text-[#8b9ab5] leading-relaxed mb-10 max-w-3xl mx-auto"
               >
-                TuttoHQ automatically ingests submittals from your email, reads them with AI,
-                categorizes them by CSI division, and generates branded PDFs — in seconds.
-                Everything Procore does, at{" "}
-                <strong className="text-[#e8edf5]">75% less cost</strong>, set up in{" "}
+                TuttoHQ reads every submittal with AI, files it by CSI division, and keeps your spec
+                logs, drawings, RFIs, change orders, and POs in one place. The{" "}
+                <strong className="text-[#e8edf5]">
+                  affordable alternative to heavyweight enterprise platforms
+                </strong>{" "}
+                — built for GCs, not enterprise IT, and set up in{" "}
                 <strong className="text-[#e8edf5]">under 10 minutes</strong>.
               </motion.p>
 
@@ -586,29 +606,16 @@ export default function LandingPage() {
           </div>
         </section>
 
-        {/* ═══ SOCIAL PROOF BAR ════════════════════════════════════════════════ */}
+        {/* ═══ VALUE STATEMENT ═════════════════════════════════════════════════ */}
         <section className="border-y border-[#1e2d4a]/40 bg-[#08101e]/70 py-12">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
             <FadeUp>
-              <p className="text-center text-[12px] font-bold text-[#3d506a] uppercase tracking-widest mb-8">
-                Trusted by general contractors managing $100M+ in projects
+              <p className="text-[16px] sm:text-[18px] text-[#8b9ab5] leading-relaxed">
+                Built for the general contractors who would rather run jobs than wrangle software —
+                the affordable alternative to heavyweight enterprise construction platforms, with
+                <strong className="text-[#e8edf5]"> every document module your project needs</strong> in
+                one place.
               </p>
-              <div className="flex flex-wrap justify-center items-center gap-10 md:gap-16">
-                {[
-                  "Apex Construction",
-                  "Meridian Build Group",
-                  "Cornerstone GC",
-                  "Summit Contractors",
-                  "Heritage Construction",
-                ].map((name) => (
-                  <div
-                    key={name}
-                    className="text-[15px] font-extrabold text-[#1e2d4a] tracking-tight select-none"
-                  >
-                    {name}
-                  </div>
-                ))}
-              </div>
             </FadeUp>
           </div>
         </section>
@@ -668,12 +675,35 @@ export default function LandingPage() {
                 One Platform. Every Document. Zero Chaos.
               </h2>
               <p className="text-[17px] text-[#8b9ab5] max-w-2xl mx-auto">
-                Here is everything you get when you sign up for TuttoHQ today:
+                It starts with three things no spreadsheet or inbox can do:
               </p>
             </FadeUp>
 
-            <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-5 mt-16">
-              {FEATURES.map((f, i) => (
+            {/* Hero features — the differentiators */}
+            <div className="grid lg:grid-cols-3 gap-5 mt-14">
+              {HERO_FEATURES.map((f, i) => (
+                <FadeUp key={f.title} delay={i * 0.08}>
+                  <div className="group relative h-full rounded-2xl border border-[#7B9BB5]/25 bg-gradient-to-b from-[#0e1a30] to-[#0c1526] p-7 hover:border-[#7B9BB5]/50 transition-all duration-300 overflow-hidden">
+                    <div className="absolute inset-x-0 top-0 h-[2px] bg-gradient-to-r from-transparent via-[#7B9BB5]/50 to-transparent" />
+                    <div className="w-12 h-12 rounded-xl bg-[#7B9BB5]/15 border border-[#7B9BB5]/30 flex items-center justify-center mb-5 group-hover:bg-[#7B9BB5]/25 transition-colors">
+                      <f.icon className="w-6 h-6 text-[#7B9BB5]" />
+                    </div>
+                    <h3 className="text-[18px] font-bold text-[#f0f4ff] mb-2.5">{f.title}</h3>
+                    <p className="text-[14px] text-[#8b9ab5] leading-relaxed">{f.desc}</p>
+                  </div>
+                </FadeUp>
+              ))}
+            </div>
+
+            {/* Everything else */}
+            <FadeUp className="text-center mt-20 mb-2">
+              <h3 className="text-[22px] sm:text-[26px] font-extrabold text-[#e8edf5] tracking-tight">
+                Plus every document module your project needs
+              </h3>
+            </FadeUp>
+
+            <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-5 mt-10">
+              {GRID_FEATURES.map((f, i) => (
                 <FadeUp key={f.title} delay={(i % 6) * 0.06}>
                   <div className="group rounded-xl border border-[#1e2d4a]/60 bg-[#0c1526] p-6 h-full hover:border-[#7B9BB5]/40 transition-all duration-300">
                     <div className="w-10 h-10 rounded-xl bg-[#7B9BB5]/10 border border-[#7B9BB5]/20 flex items-center justify-center mb-4 group-hover:bg-[#7B9BB5]/20 transition-colors">
@@ -709,22 +739,22 @@ export default function LandingPage() {
                 },
                 {
                   n: "2",
-                  title: "Connect your dedicated submittals Gmail address",
-                  time: "1 click",
-                },
-                {
-                  n: "3",
-                  title: "Import your projects and team members from a CSV",
+                  title: "Import your projects and team from a CSV — or add them by hand",
                   time: "2 minutes",
                 },
                 {
+                  n: "3",
+                  title: "Upload a spec book — TuttoHQ parses it into a submittal log by CSI section",
+                  time: "1 upload",
+                },
+                {
                   n: "4",
-                  title: "Tell your subs and manufacturers to email submittals to your new address",
-                  time: "Send one email",
+                  title: "Add submittals, drawing sets, and approved docs — upload, email them in, or bulk import",
+                  time: "A few clicks",
                 },
                 {
                   n: "5",
-                  title: "Watch submittals appear in your library automatically, categorized and ready",
+                  title: "Watch your library, drawing log, and RFI / CO / PO tracking stay current as work comes in",
                   time: "Forever",
                 },
               ].map((step, i) => (
@@ -750,6 +780,13 @@ export default function LandingPage() {
                 </FadeUp>
               ))}
             </div>
+
+            <FadeUp delay={0.1}>
+              <p className="mt-12 text-center text-[14px] text-[#4f617a] flex items-center justify-center gap-2">
+                <Mail className="w-4 h-4" />
+                Prefer email? Submittals emailed in are read, classified, and filed automatically too.
+              </p>
+            </FadeUp>
           </div>
         </section>
 
@@ -758,7 +795,7 @@ export default function LandingPage() {
           <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8">
             <FadeUp className="text-center mb-4">
               <h2 className="text-3xl sm:text-4xl lg:text-5xl font-extrabold text-[#f0f4ff] tracking-tight mb-4">
-                TuttoHQ vs Procore — An Honest Comparison
+                TuttoHQ vs. Legacy Enterprise Platforms
               </h2>
               <p className="text-[16px] text-[#8b9ab5] max-w-2xl mx-auto">
                 We are not for every contractor. We are for contractors who want a system that works
@@ -774,11 +811,11 @@ export default function LandingPage() {
                   </div>
                   <div className="px-5 py-5 text-center border-l border-[#1e2d4a]/60">
                     <div className="text-[15px] font-extrabold text-[#7B9BB5]">TuttoHQ</div>
-                    <div className="text-[11px] text-[#3d506a] mt-0.5">$199/month</div>
+                    <div className="text-[11px] text-[#3d506a] mt-0.5">Built for GCs</div>
                   </div>
                   <div className="px-5 py-5 text-center border-l border-[#1e2d4a]/60">
-                    <div className="text-[14px] font-bold text-[#4f617a]">Procore</div>
-                    <div className="text-[11px] text-[#3d506a] mt-0.5">$833+/month</div>
+                    <div className="text-[14px] font-bold text-[#4f617a]">Legacy Enterprise Platform</div>
+                    <div className="text-[11px] text-[#3d506a] mt-0.5">Built for enterprise IT</div>
                   </div>
                 </div>
 
@@ -790,7 +827,7 @@ export default function LandingPage() {
                     }`}
                   >
                     <div className="px-5 py-4 text-[14px] text-[#c8d3e8]">{row.feature}</div>
-                    <div className="px-5 py-4 flex items-center justify-center border-l border-[#1e2d4a]/25">
+                    <div className="px-5 py-4 flex items-center justify-center text-center border-l border-[#1e2d4a]/25">
                       {typeof row.tutto === "boolean" ? (
                         row.tutto ? (
                           <CheckCircle2 className="w-5 h-5 text-emerald-400" />
@@ -801,9 +838,9 @@ export default function LandingPage() {
                         <span className="text-[13px] font-bold text-emerald-400">{row.tutto}</span>
                       )}
                     </div>
-                    <div className="px-5 py-4 flex items-center justify-center border-l border-[#1e2d4a]/25">
-                      {typeof row.procore === "boolean" ? (
-                        row.procore ? (
+                    <div className="px-5 py-4 flex items-center justify-center text-center border-l border-[#1e2d4a]/25">
+                      {typeof row.legacy === "boolean" ? (
+                        row.legacy ? (
                           <CheckCircle2 className="w-5 h-5 text-[#4f617a]" />
                         ) : (
                           <XCircle className="w-5 h-5 text-[#ef4444]/60" />
@@ -811,12 +848,12 @@ export default function LandingPage() {
                       ) : (
                         <span
                           className={`text-[13px] font-semibold ${
-                            ["4–6 weeks", "Extensive", "Yes"].includes(row.procore as string)
+                            LEGACY_NEGATIVES.includes(row.legacy)
                               ? "text-[#f87171]"
                               : "text-[#4f617a]"
                           }`}
                         >
-                          {row.procore}
+                          {row.legacy}
                         </span>
                       )}
                     </div>
@@ -829,7 +866,7 @@ export default function LandingPage() {
               <div className="mt-8 rounded-xl border border-[#1e2d4a]/40 bg-[#0c1526] p-6 text-center">
                 <p className="text-[15px] text-[#8b9ab5] leading-relaxed">
                   <strong className="text-[#e8edf5]">
-                    Procore is built for enterprise construction firms
+                    Heavyweight enterprise platforms are built for firms
                   </strong>{" "}
                   with dedicated IT teams and 6-figure software budgets.{" "}
                   <strong className="text-[#e8edf5]">
@@ -846,7 +883,7 @@ export default function LandingPage() {
           <div className="max-w-xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
             <FadeUp>
               <h2 className="text-3xl sm:text-4xl lg:text-5xl font-extrabold text-[#f0f4ff] tracking-tight mb-4">
-                One Price. Every Feature. Unlimited Users.
+                Simple, Flat Pricing. Unlimited Users. No Per-Seat Fees.
               </h2>
             </FadeUp>
 
@@ -859,17 +896,15 @@ export default function LandingPage() {
 
                   <div className="inline-flex items-center gap-1.5 px-4 py-1 rounded-full bg-[#7B9BB5]/15 border border-[#7B9BB5]/25 text-[12px] font-bold text-[#7B9BB5] mb-8">
                     <Star className="w-3 h-3 fill-[#7B9BB5]" />
-                    Most affordable full-featured platform
+                    The affordable, full-featured platform
                   </div>
 
-                  <div className="mb-3">
-                    <span className="text-[72px] sm:text-[88px] font-extrabold text-[#f0f4ff] tracking-tight leading-none">
-                      $199
-                    </span>
-                    <span className="text-[22px] text-[#4f617a] ml-2">/ month</span>
-                  </div>
+                  <p className="text-[20px] sm:text-[24px] font-extrabold text-[#f0f4ff] leading-snug mb-3">
+                    Pricing scales with your business — not your headcount.
+                  </p>
                   <p className="text-[15px] text-[#8b9ab5] mb-10">
-                    Everything included. No feature tiers, no per-user fees, no surprises.
+                    No per-user fees, no feature tiers, no contracts, no surprises. Tell us about
+                    your team and we will give you a straight number.
                   </p>
 
                   <div className="grid sm:grid-cols-2 gap-3 mb-10 text-left">
@@ -880,11 +915,11 @@ export default function LandingPage() {
                       "Free 14-day trial",
                       "No credit card required",
                       "Cancel anytime — no contracts",
-                      "AI auto-categorization",
-                      "Gmail auto-intake",
+                      "AI submittal classification",
+                      "Spec book ingestion",
+                      "Drawing log with markup",
+                      "Every document module your project needs",
                       "Branded PDF generation",
-                      "All 6 core modules",
-                      "Priority customer support",
                       "New features as they ship",
                     ].map((item) => (
                       <div key={item} className="flex items-center gap-2.5">
@@ -900,6 +935,13 @@ export default function LandingPage() {
                   >
                     Start Your Free 14-Day Trial
                   </Link>
+                  <a
+                    href="mailto:hello@tuttohq.com?subject=TuttoHQ%20pricing"
+                    className="mt-3 inline-flex items-center justify-center gap-2 w-full py-3.5 rounded-xl border border-[#7B9BB5]/35 text-[15px] font-semibold text-[#c8d3e8] hover:bg-[#7B9BB5]/10 hover:border-[#7B9BB5]/50 transition-all"
+                  >
+                    <Mail className="w-4 h-4" />
+                    Talk to us about pricing
+                  </a>
                   <p className="text-[12px] text-[#3d506a] mt-4">
                     No credit card required · Cancel anytime
                   </p>
@@ -914,7 +956,7 @@ export default function LandingPage() {
                   <strong className="text-[#e8edf5]">
                     One missed submittal that delays a project costs more than a year of TuttoHQ.
                   </strong>{" "}
-                  One unanswered RFI that becomes a claim costs more than 10 years of TuttoHQ.
+                  One unanswered RFI that becomes a claim costs more than a decade of it.
                 </p>
               </div>
             </FadeUp>
@@ -931,57 +973,6 @@ export default function LandingPage() {
               </h2>
             </FadeUp>
             <FAQAccordion />
-          </div>
-        </section>
-
-        {/* ═══ TESTIMONIALS ════════════════════════════════════════════════════ */}
-        <section className="py-24 lg:py-36">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-            <FadeUp className="text-center mb-16">
-              <h2 className="text-3xl sm:text-4xl lg:text-5xl font-extrabold text-[#f0f4ff] tracking-tight">
-                What Contractors Are Saying
-              </h2>
-            </FadeUp>
-
-            <div className="grid md:grid-cols-3 gap-6">
-              {[
-                {
-                  quote:
-                    "We were forwarding submittal emails to a shared Google Drive folder. It was a disaster. TuttoHQ replaced that in one afternoon and now everything is automatic.",
-                  author: "Project Manager",
-                  company: "Commercial GC, Chicago IL",
-                },
-                {
-                  quote:
-                    "The change order tracking alone is worth $199 a month. We used to track COs in Excel and we were always unsure of our current contract value. Now it updates automatically.",
-                  author: "Owner",
-                  company: "Mid-Size GC, Dallas TX",
-                },
-                {
-                  quote:
-                    "Setup took 8 minutes. I connected our Gmail, imported our projects from a spreadsheet, and sent one email to our subs. That was it. The next submittal came in categorized automatically.",
-                  author: "Project Engineer",
-                  company: "GC, Atlanta GA",
-                },
-              ].map((t, i) => (
-                <FadeUp key={i} delay={i * 0.1}>
-                  <div className="rounded-2xl border border-[#1e2d4a]/60 bg-[#0c1526] p-7 h-full flex flex-col">
-                    <div className="flex gap-1 mb-5">
-                      {[...Array(5)].map((_, s) => (
-                        <Star key={s} className="w-4 h-4 fill-[#f59e0b] text-[#f59e0b]" />
-                      ))}
-                    </div>
-                    <blockquote className="text-[15px] text-[#c8d3e8] leading-relaxed flex-1 mb-6">
-                      &ldquo;{t.quote}&rdquo;
-                    </blockquote>
-                    <div>
-                      <div className="text-[14px] font-bold text-[#e8edf5]">{t.author}</div>
-                      <div className="text-[12px] text-[#4f617a] mt-0.5">{t.company}</div>
-                    </div>
-                  </div>
-                </FadeUp>
-              ))}
-            </div>
           </div>
         </section>
 
