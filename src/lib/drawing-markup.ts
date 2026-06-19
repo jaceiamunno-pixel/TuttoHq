@@ -122,14 +122,16 @@ export interface MarkupDoc {
 
 // ── Editor presets (kept here so the model + UI agree on one vocabulary) ─────
 
-/** Bright, saturated markup palette; index 0 (red) is the default, index 2
- *  (amber/yellow) is the highlighter default. */
+/** Bold, fully-saturated marker palette — chosen to POP on a white sheet (high
+ *  saturation, not high luminance, which washes out). index 0 (red) is the
+ *  default stroke colour; index 2 (amber) is the highlighter default. */
 export const MARKUP_COLORS = [
-  "#FF2424", // red
+  "#FF0000", // red (pure)
   "#FF7A00", // orange
-  "#FFC400", // amber / yellow (highlighter default)
-  "#22C55E", // green
-  "#2D7DFF", // blue
+  "#FFB300", // amber (highlighter default)
+  "#00B050", // green
+  "#0052FF", // blue
+  "#C400C4", // magenta
   "#111827", // near-black
 ] as const
 
