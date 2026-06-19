@@ -75,20 +75,26 @@ export async function GET(req: NextRequest) {
   // — they never become current_revision_id — so surface them separately for the
   // editor to hydrate on reopen. One layer per sheet (v1): the earliest markup
   // revision. RLS-scoped (same company only).
-  const markupBySheet = new Map<string, { id: string; markup_doc: unknown }>()
+  const markupBySheet = new Map<string, { id: string; markup_doc: unknown; storage_path: string | null }>()
   const sheetIds = rows.map(s => s.id)
   if (sheetIds.length > 0) {
     const { data: mks } = await supabase
       .from("drawing_revisions")
-      .select("id, sheet_id, markup_doc, created_at")
+      .select("id, sheet_id, markup_doc, storage_path, created_at")
       .eq("source", "markup")
       .in("sheet_id", sheetIds)
       .order("created_at", { ascending: true })
-    for (const m of mks ?? []) if (!markupBySheet.has(m.sheet_id)) markupBySheet.set(m.sheet_id, { id: m.id, markup_doc: m.markup_doc ?? null })
+    for (const m of mks ?? []) if (!markupBySheet.has(m.sheet_id)) markupBySheet.set(m.sheet_id, { id: m.id, markup_doc: m.markup_doc ?? null, storage_path: m.storage_path ?? null })
   }
 
-  // Sign the current-revision files (1 h) for inline open/download.
-  const toSign = [...revById.values()].map(r => r.storage_path).filter((p): p is string => !!p)
+  // Sign the current-revision files AND each markup layer's clean-original base
+  // (fork A: a markup row references its base original's storage_path). Surfacing
+  // the base lets the viewer flatten/edit over the ACTUAL base the markup was
+  // drawn on, never over a newer `current`. Deduped — base often == current.
+  const toSign = [...new Set([
+    ...[...revById.values()].map(r => r.storage_path),
+    ...[...markupBySheet.values()].map(m => m.storage_path),
+  ].filter((p): p is string => !!p))]
   const urlByPath = new Map<string, string>()
   if (toSign.length > 0) {
     const signed = await Promise.all(
@@ -116,6 +122,10 @@ export async function GET(req: NextRequest) {
       revision_id: s.current_revision_id ?? null,
       markup_revision_id: markupBySheet.get(s.id)?.id ?? null,
       markup_doc: markupBySheet.get(s.id)?.markup_doc ?? null,
+      // Signed URL of the clean original the markup was drawn over (its base).
+      // VIEW flattens onto THIS and EDIT re-bases onto THIS — never a newer
+      // `current`. null for plain sheets (no markup layer).
+      markup_base_url: ((p) => p ? (urlByPath.get(p) ?? null) : null)(markupBySheet.get(s.id)?.storage_path),
       file_url: rev?.storage_path ? (urlByPath.get(rev.storage_path) ?? null) : null,
       created_at: s.created_at,
       deleted_at: s.deleted_at,

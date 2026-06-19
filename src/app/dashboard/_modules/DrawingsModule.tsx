@@ -22,6 +22,9 @@ const DrawingImportModal = dynamic(() => import("@/components/drawings/DrawingIm
 // page, so it only loads when a user actually opens markup mode (ssr:false: it
 // uses the browser canvas + pointer APIs).
 const MarkupEditor = dynamic(() => import("@/components/drawings/MarkupEditor"), { ssr: false })
+// Read-only flattened view of a saved markup revision (Part 2c) — reuses the 2b
+// composite (pulls pdf-lib), so it too loads only when a markup sheet is viewed.
+const FlattenedMarkupView = dynamic(() => import("@/components/drawings/FlattenedMarkupView"), { ssr: false })
 
 // Discipline options for the sheet metadata edit (mirrors drawing-detect's map).
 const SHEET_DISCIPLINES = ["Architectural", "Structural", "Mechanical", "Electrical", "Plumbing", "Civil", "Fire Protection", "Demolition", "Landscape", "General", "Telecom"]
@@ -43,6 +46,9 @@ interface ImportedSheet {
   revision_id?: string | null
   markup_revision_id?: string | null
   markup_doc?: MarkupDoc | null
+  // Signed URL of the markup's clean-original base (the sheet it was drawn over).
+  // VIEW flattens onto this and EDIT re-bases onto this; null on plain sheets.
+  markup_base_url?: string | null
   file_url: string | null
   created_at: string
   deleted_at?: string | null
@@ -294,9 +300,11 @@ export default function DrawingsModule({ globalProjectId, appProjects }: {
   // Pre-select the current global project whenever the New Drawing modal opens.
   useEffect(() => { if (showNewDrawing) setDwgProjectId(globalProjectId) }, [showNewDrawing, globalProjectId])
 
-  // Per-open routing (fork A): a sheet that HAS a markup layer opens straight
-  // into the editor (hydrated from markup_doc); a plain sheet opens read-only.
-  useEffect(() => { setMarkupMode(!!viewerSheet?.markup_doc) }, [viewerSheet?.id])
+  // Per-open routing (Part 2c): EVERY sheet opens READ-ONLY. A markup sheet shows
+  // its markup flattened onto the clean base (FlattenedMarkupView); a plain sheet
+  // shows the raw PDF. The editor is entered explicitly via the header button
+  // ("Edit markup" on a markup sheet, "Markup" to start one on a plain sheet).
+  useEffect(() => { setMarkupMode(false) }, [viewerSheet?.id])
 
   // Part 2a save: persist the sheet's single markup layer. Vector-only — posts
   // the serialized doc + the layer id; the route bases off the clean original
@@ -312,7 +320,10 @@ export default function DrawingsModule({ globalProjectId, appProjects }: {
     const data = await res.json().catch(() => ({}))
     if (!res.ok) { alert(data?.error ?? "Save failed"); return }
     setViewerSheet(s => s && s.id === sheetId
-      ? { ...s, markup_revision_id: data.markup_revision_id, markup_doc: doc }
+      // Keep markup_base_url; a sheet that just got its FIRST markup falls back to
+      // file_url (the base the editor drew over) so an immediate read-only view
+      // flattens onto the same sheet. A fresh list load resolves it canonically.
+      ? { ...s, markup_revision_id: data.markup_revision_id, markup_doc: doc, markup_base_url: s.markup_base_url ?? s.file_url }
       : s)
     loadImportedSheets()
     if (revHistoryFor === sheetId) loadRevisions(sheetId)
@@ -817,10 +828,13 @@ export default function DrawingsModule({ globalProjectId, appProjects }: {
               </p>
               <div className="flex items-center gap-3 flex-shrink-0">
                 {viewerSheet.file_url && (
-                  <button onClick={() => setMarkupMode(m => !m)}
-                    className={`text-[12px] font-semibold transition-colors ${markupMode ? "text-[#5A7A94]" : "text-[#7B9BB5] hover:text-[#5A7A94]"}`}>
-                    {markupMode ? "Exit markup" : "Markup"}
-                  </button>
+                  markupMode
+                    ? <button onClick={() => setMarkupMode(false)}
+                        className="text-[12px] font-semibold text-[#5A7A94] transition-colors">Done</button>
+                    : <button onClick={() => setMarkupMode(true)}
+                        className="text-[12px] font-semibold text-[#7B9BB5] hover:text-[#5A7A94] transition-colors">
+                        {viewerSheet.markup_doc ? "Edit markup" : "Markup"}
+                      </button>
                 )}
                 {viewerSheet.file_url && (
                   <a href={viewerSheet.file_url} target="_blank" rel="noopener noreferrer" className="text-[12px] text-[#7B9BB5] hover:text-[#5A7A94] font-semibold">Open in new tab</a>
@@ -835,15 +849,24 @@ export default function DrawingsModule({ globalProjectId, appProjects }: {
               {!viewerSheet.file_url
                 ? <div className="flex items-center justify-center h-full text-[13px] text-[#94A3B8]">No file attached to this sheet.</div>
                 : markupMode
+                  // EDIT: editor over the markup's CLEAN BASE (markup_base_url) —
+                  // never `current` — so a re-edit re-bases off the same original.
                   ? <MarkupEditor
-                      fileUrl={viewerSheet.file_url}
+                      fileUrl={viewerSheet.markup_base_url ?? viewerSheet.file_url}
                       sheetNumber={viewerSheet.sheet_number}
                       initialMarkups={viewerSheet.markup_doc}
                       baseRevisionId={viewerSheet.revision_id}
                       baseLabel={viewerSheet.revision_label}
                       markupRevisionId={viewerSheet.markup_revision_id}
                       onSave={(d, mkId) => handleSaveMarkups(viewerSheet.id, d, mkId)} />
-                  : <iframe src={`${viewerSheet.file_url}#view=Fit`} title={viewerSheet.sheet_number ?? "sheet"} className="w-full h-full border-none" />}
+                  // VIEW (read-only): a markup sheet shows its vectors flattened
+                  // onto the clean base; a plain sheet shows the raw current PDF.
+                  : viewerSheet.markup_doc
+                    ? <FlattenedMarkupView
+                        baseUrl={viewerSheet.markup_base_url ?? viewerSheet.file_url}
+                        markups={viewerSheet.markup_doc}
+                        title={viewerSheet.sheet_number} />
+                    : <iframe src={`${viewerSheet.file_url}#view=Fit`} title={viewerSheet.sheet_number ?? "sheet"} className="w-full h-full border-none" />}
             </div>
           </div>
         </div>
