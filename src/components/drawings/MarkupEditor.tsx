@@ -44,7 +44,7 @@ const STROKE_OPTS: { key: keyof typeof STROKE_PRESETS; label: string }[] = [
   { key: "thin", label: "S" }, { key: "medium", label: "M" }, { key: "thick", label: "L" },
 ]
 
-export default function MarkupEditor({ fileUrl, sheetNumber, initialMarkups, baseRevisionId, baseLabel, markupRevisionId, onSave }: {
+export default function MarkupEditor({ fileUrl, sheetNumber, initialMarkups, baseRevisionId, baseLabel, mode = "new", onSave }: {
   fileUrl: string
   /** Sheet number — names the throwaway export download (e.g. "A-101-markup.pdf"). */
   sheetNumber?: string | null
@@ -53,10 +53,12 @@ export default function MarkupEditor({ fileUrl, sheetNumber, initialMarkups, bas
   /** The revision this layer is drawn over (its base) — recorded in the doc. */
   baseRevisionId?: string | null
   baseLabel?: string | null
-  /** Existing markup-layer revision id (UPDATE target); null until first save. */
-  markupRevisionId?: string | null
-  /** Persist the doc; returns the (new/updated) markup-layer id. May be async. */
-  onSave?: (doc: MarkupDoc, markupRevisionId: string | null) => Promise<string | void> | string | void
+  /** Save intent: "new" stores a fresh numbered markup, "edit" updates the one
+   *  being edited. Drives the Save button label only — the parent's onSave
+   *  closure carries the actual new-vs-edit decision + target id. */
+  mode?: "new" | "edit"
+  /** Persist the serialized doc. The parent decides new-vs-edit + target id. */
+  onSave?: (doc: MarkupDoc) => Promise<unknown> | unknown
 }) {
   // ── Background page render ────────────────────────────────────────────────
   const [pageImg, setPageImg] = useState<string | null>(null)
@@ -165,10 +167,6 @@ export default function MarkupEditor({ fileUrl, sheetNumber, initialMarkups, bas
   const [editing, setEditing] = useState<{ id: string | null; x: number; y: number; value: string } | null>(null)
   const [saving, setSaving] = useState(false)
   const [exporting, setExporting] = useState(false)
-  // The markup-layer revision being edited. Seeded from the prop (reopen),
-  // updated to the returned id after the first save so same-session re-saves
-  // UPDATE the same row instead of stacking a new one.
-  const [markupRevId, setMarkupRevId] = useState<string | null>(markupRevisionId ?? null)
 
   const svgRef = useRef<SVGSVGElement>(null)
   const pxToNorm = useCallback((clientX: number, clientY: number): Point => {
@@ -289,16 +287,16 @@ export default function MarkupEditor({ fileUrl, sheetNumber, initialMarkups, bas
     setSelectedId(m.id)
   }
 
-  // Hand the full serialized doc (with base provenance) + the layer id to the
-  // parent's save. Async so the toolbar shows a saving state; the returned id
-  // (new or updated layer) is captured so the next save is an UPDATE, not a new
-  // layer.
+  // Hand the full serialized doc (with base provenance) to the parent's save.
+  // The parent owns the persistence intent: in "new" mode each save stores a
+  // fresh numbered markup; in "edit" mode it updates the specific markup it
+  // opened. The editor no longer captures/reuses a returned id — a new markup is
+  // its own revision, never folded back into the same row.
   async function save() {
     if (!onSave || present.length === 0) return
     setSaving(true)
     try {
-      const id = await onSave(serializeMarkups(present, { revisionId: baseRevisionId ?? null, label: baseLabel ?? null }), markupRevId)
-      if (typeof id === "string") setMarkupRevId(id)
+      await onSave(serializeMarkups(present, { revisionId: baseRevisionId ?? null, label: baseLabel ?? null }))
     } finally { setSaving(false) }
   }
 
@@ -465,7 +463,7 @@ export default function MarkupEditor({ fileUrl, sheetNumber, initialMarkups, bas
           <button onClick={save} disabled={saving || present.length === 0}
             className="h-8 px-3.5 rounded-md bg-[#7B9BB5] text-white text-[12px] font-semibold hover:bg-[#6A8AA4] transition-colors disabled:opacity-50 inline-flex items-center gap-1.5">
             {saving && <SpinnerIcon className="h-3 w-3" />}
-            {saving ? "Saving…" : "Save markup"}
+            {saving ? "Saving…" : mode === "edit" ? "Save changes" : "Save as new revision"}
           </button>
         </div>
       </div>

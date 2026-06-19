@@ -22,6 +22,9 @@ const DrawingImportModal = dynamic(() => import("@/components/drawings/DrawingIm
 // page, so it only loads when a user actually opens markup mode (ssr:false: it
 // uses the browser canvas + pointer APIs).
 const MarkupEditor = dynamic(() => import("@/components/drawings/MarkupEditor"), { ssr: false })
+// Read-only flattened view of a saved markup revision (Part 2c) — reuses the 2b
+// composite (pulls pdf-lib), so it too loads only when a markup sheet is viewed.
+const FlattenedMarkupView = dynamic(() => import("@/components/drawings/FlattenedMarkupView"), { ssr: false })
 
 // Discipline options for the sheet metadata edit (mirrors drawing-detect's map).
 const SHEET_DISCIPLINES = ["Architectural", "Structural", "Mechanical", "Electrical", "Plumbing", "Civil", "Fire Protection", "Demolition", "Landscape", "General", "Telecom"]
@@ -38,16 +41,26 @@ interface ImportedSheet {
   discipline_prefix: string | null
   title: string | null
   revision_label: string | null
-  // current = the clean original (fork A). The markup LAYER rides alongside:
-  // its own revision id + vector doc, both null when the sheet has no markup.
+  // current = the clean upload (fork A). Markups ride alongside as their own
+  // NUMBERED revisions (never current); a sheet can have many (Markup 1, 2, …).
+  // Each carries the signed base it was drawn over so VIEW flattens / EDIT re-bases
+  // onto that exact base, never a newer current. Empty/absent on plain sheets.
   revision_id?: string | null
-  markup_revision_id?: string | null
-  markup_doc?: MarkupDoc | null
+  markups?: Array<{
+    id: string
+    revision_label: string | null
+    markup_doc: MarkupDoc
+    markup_base_url: string | null
+    created_at: string
+  }>;
   file_url: string | null
   created_at: string
   deleted_at?: string | null
   days_remaining?: number | null
 }
+
+// One saved markup revision on a sheet (Markup 1, Markup 2, …).
+type SheetMarkup = NonNullable<ImportedSheet["markups"]>[number]
 
 // Drawing Log module — extracted verbatim from dashboard/page.tsx (Step 1 of the split).
 // State, handlers, action bar, content, and modal are unchanged; the only
@@ -89,12 +102,16 @@ export default function DrawingsModule({ globalProjectId, appProjects }: {
   // [data-nav-item] rows in document order). The viewer/markup editor it opens
   // is out of scope here, so no focus trap — Enter just opens the sheet.
   const { regionProps: sheetLogProps } = useNavRegion<HTMLTableSectionElement>({ id: "drawing-sheets-log", order: 20 })
-  // In-app markup (ADR-005 Part 2a, fork A). markupMode swaps the read-only
-  // iframe for the vector editor on the SAME viewer. "Save markup" persists the
-  // sheet's single markup LAYER (source='markup') alongside the clean original —
-  // never as current — and the layer's markup_doc re-hydrates the editor on
-  // reopen (see handleSaveMarkups + the markup-revisions route).
-  const [markupMode, setMarkupMode]                   = useState(false)
+  // In-app markup (ADR-005 Part 2d, fork A, numbered). The sheet viewer DEFAULTS
+  // to the clean current upload. From there the user can open a saved markup
+  // read-only (openMarkupId → FlattenedMarkupView) or open the vector editor
+  // (editorOpen) in one of two intents: "new" (a fresh numbered markup over the
+  // clean current) or "edit" (changing one existing markup, editMarkupTarget).
+  // Markups never become current; each save routes through handleSaveMarkups.
+  const [openMarkupId, setOpenMarkupId]               = useState<string | null>(null)
+  const [editorOpen, setEditorOpen]                   = useState(false)
+  const [editorMode, setEditorMode]                   = useState<"new" | "edit">("new")
+  const [editMarkupTarget, setEditMarkupTarget]       = useState<SheetMarkup | null>(null)
   const [editingSheetId, setEditingSheetId]           = useState<string | null>(null)
   const [sheetDraft, setSheetDraft]                   = useState({ sheet_number: "", title: "", discipline: "", discipline_prefix: "", revision_label: "" })
   const [savingSheet, setSavingSheet]                 = useState(false)
@@ -294,30 +311,57 @@ export default function DrawingsModule({ globalProjectId, appProjects }: {
   // Pre-select the current global project whenever the New Drawing modal opens.
   useEffect(() => { if (showNewDrawing) setDwgProjectId(globalProjectId) }, [showNewDrawing, globalProjectId])
 
-  // Per-open routing (fork A): a sheet that HAS a markup layer opens straight
-  // into the editor (hydrated from markup_doc); a plain sheet opens read-only.
-  useEffect(() => { setMarkupMode(!!viewerSheet?.markup_doc) }, [viewerSheet?.id])
+  // Viewer state is reset explicitly at each open site (below) rather than via an
+  // effect keyed on the sheet id — so opening STRAIGHT into the editor (Edit from
+  // history) is not immediately clobbered by a reset on the same render.
 
-  // Part 2a save: persist the sheet's single markup layer. Vector-only — posts
-  // the serialized doc + the layer id; the route bases off the clean original
-  // and UPDATEs the layer in place (or INSERTs the first one), never flipping
-  // current_revision_id. Returns the layer id so the editor's next save UPDATEs
-  // the same row (no stacking). Refresh the list + open sheet on success.
-  async function handleSaveMarkups(sheetId: string, doc: MarkupDoc, markupRevisionId: string | null): Promise<string | void> {
+  // Open a sheet in the viewer at its CLEAN default (raw current upload).
+  function openSheetViewer(s: ImportedSheet) {
+    setViewerSheet(s); setViewerFull(false)
+    setOpenMarkupId(null); setEditorOpen(false); setEditMarkupTarget(null); setEditorMode("new")
+  }
+  // Open one saved markup read-only (its vectors flattened over its own base).
+  function openMarkupView(s: ImportedSheet, markupId: string) {
+    setViewerSheet(s); setViewerFull(false)
+    setEditorOpen(false); setEditMarkupTarget(null); setOpenMarkupId(markupId)
+  }
+  // Open the editor to change ONE existing markup in place (mode="edit").
+  function startEditMarkup(s: ImportedSheet, mk: SheetMarkup) {
+    setViewerSheet(s); setViewerFull(false)
+    setOpenMarkupId(null); setEditMarkupTarget(mk); setEditorMode("edit"); setEditorOpen(true)
+  }
+  // Start a FRESH numbered markup over the open sheet's clean current (mode="new").
+  function startNewMarkup() {
+    setOpenMarkupId(null); setEditMarkupTarget(null); setEditorMode("new"); setEditorOpen(true)
+  }
+  // Return the viewer to its clean default (leave the editor / read-only markup).
+  function exitMarkup() {
+    setEditorOpen(false); setOpenMarkupId(null); setEditMarkupTarget(null); setEditorMode("new")
+  }
+
+  // Save a markup (Part 2d) — two explicit intents:
+  //  - "new"  → POST mode:"new" (no id): route INSERTs a fresh NUMBERED markup
+  //             over the sheet's current clean upload; every new save is its own rev.
+  //  - "edit" → POST mode:"edit" + the specific markup id: route UPDATEs that one
+  //             markup in place (same number, same base).
+  // The route never flips current_revision_id. On success refresh the sheet list +
+  // open rev history, drop back to the clean view, and toast the returned label.
+  async function handleSaveMarkups(sheetId: string, doc: MarkupDoc, mode: "new" | "edit", markupRevisionId: string | null): Promise<void> {
     const res = await fetch(`/api/drawings/sheets/${sheetId}/markup-revisions`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ markup_doc: doc, markup_revision_id: markupRevisionId }),
+      body: JSON.stringify(
+        mode === "edit"
+          ? { markup_doc: doc, mode, markup_revision_id: markupRevisionId }
+          : { markup_doc: doc, mode },
+      ),
     })
     const data = await res.json().catch(() => ({}))
     if (!res.ok) { alert(data?.error ?? "Save failed"); return }
-    setViewerSheet(s => s && s.id === sheetId
-      ? { ...s, markup_revision_id: data.markup_revision_id, markup_doc: doc }
-      : s)
     loadImportedSheets()
     if (revHistoryFor === sheetId) loadRevisions(sheetId)
+    exitMarkup()
     alert(`Markup ${data.mode === "update" ? "updated" : "saved"} (${data.revision_label}).`)
-    return data.markup_revision_id
   }
 
   function openAddRevision(d: DrawingRecord) {
@@ -563,7 +607,7 @@ export default function DrawingsModule({ globalProjectId, appProjects }: {
                           ) : (
                             <Fragment key={s.id}>
                               <tr data-nav-item className="group border-t border-[#F1F5F9] hover:bg-[#F8FAFC] cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#7B9BB5]"
-                                onClick={() => { setViewerSheet(s); setViewerFull(false) }}>
+                                onClick={() => openSheetViewer(s)}>
                                 <td className="pl-3 pr-1 py-2 w-8" onClick={e => e.stopPropagation()}>
                                   <input type="checkbox" aria-label={`Select ${s.sheet_number ?? "sheet"}`}
                                     checked={selectedSheetIds.has(s.id)}
@@ -579,7 +623,7 @@ export default function DrawingsModule({ globalProjectId, appProjects }: {
                                 </td>
                                 <td className="px-3 py-2" onClick={e => e.stopPropagation()}>
                                   <div className="flex items-center justify-end gap-3 whitespace-nowrap text-[#94A3B8]">
-                                    <button data-nav-primary onClick={() => { setViewerSheet(s); setViewerFull(false) }} className="hover:text-[#5A7A94] group-hover:text-[#7B9BB5] font-medium transition-colors">View</button>
+                                    <button data-nav-primary onClick={() => openSheetViewer(s)} className="hover:text-[#5A7A94] group-hover:text-[#7B9BB5] font-medium transition-colors">View</button>
                                     <button onClick={() => triggerAddRevision(s.id)} disabled={addingRevId === s.id} className="hover:text-[#5A7A94] group-hover:text-[#7B9BB5] font-medium disabled:opacity-50 transition-colors">{addingRevId === s.id ? "Adding…" : "Add rev"}</button>
                                     <button onClick={() => toggleRevHistory(s.id)} className="hover:text-[#5A7A94] group-hover:text-[#7B9BB5] font-medium transition-colors">{revHistoryFor === s.id ? "Hide" : "Revs"}</button>
                                     <button onClick={() => startEditSheet(s)} className="hover:text-[#5A7A94] group-hover:text-[#7B9BB5] font-medium transition-colors">Edit</button>
@@ -597,18 +641,35 @@ export default function DrawingsModule({ globalProjectId, appProjects }: {
                                       <span className="text-[11px] text-[#94A3B8]">No revisions.</span>
                                     ) : (
                                       <ul className="space-y-0.5">
-                                        {revHistory.map(rv => (
+                                        {revHistory.map(rv => {
+                                          // The history feed includes markup rows (source='markup') alongside
+                                          // uploaded revisions; cross-ref the sheet's markups[] so a markup row
+                                          // gets Open(flatten)/Edit instead of Open(base file)/Delete.
+                                          const mk = s.markups?.find(m => m.id === rv.id)
+                                          return (
                                           <li key={rv.id} className="flex items-center gap-2 text-[11px]">
                                             <span className="font-mono text-[#5A7A94] w-20">{rv.revision_label ?? "—"}</span>
-                                            {rv.is_current ? <span className="text-[9px] bg-emerald-100 text-emerald-700 px-1 rounded">current</span> : <span className="w-[46px]" />}
+                                            {mk
+                                              ? <span className="text-[9px] bg-[#7B9BB5]/15 text-[#5A7A94] px-1 rounded">markup</span>
+                                              : rv.is_current ? <span className="text-[9px] bg-emerald-100 text-emerald-700 px-1 rounded">current</span> : <span className="w-[46px]" />}
                                             <span className="text-[#94A3B8]">{fmtDate(rv.created_at)}</span>
                                             <span className="ml-auto flex items-center gap-3">
-                                              {rv.file_url && <a href={rv.file_url} target="_blank" rel="noopener noreferrer" className="text-[#7B9BB5] hover:text-[#5A7A94] font-semibold">Open</a>}
-                                              <button onClick={() => softDeleteRevision(s.id, rv)} disabled={deletingRevId === rv.id}
-                                                className="text-red-400 hover:text-red-500 font-semibold disabled:opacity-50 transition-colors">{deletingRevId === rv.id ? "Deleting…" : "Delete"}</button>
+                                              {mk ? (
+                                                <>
+                                                  <button onClick={() => openMarkupView(s, mk.id)} className="text-[#7B9BB5] hover:text-[#5A7A94] font-semibold">Open</button>
+                                                  <button onClick={() => startEditMarkup(s, mk)} className="text-[#7B9BB5] hover:text-[#5A7A94] font-semibold">Edit</button>
+                                                </>
+                                              ) : (
+                                                <>
+                                                  {rv.file_url && <a href={rv.file_url} target="_blank" rel="noopener noreferrer" className="text-[#7B9BB5] hover:text-[#5A7A94] font-semibold">Open</a>}
+                                                  <button onClick={() => softDeleteRevision(s.id, rv)} disabled={deletingRevId === rv.id}
+                                                    className="text-red-400 hover:text-red-500 font-semibold disabled:opacity-50 transition-colors">{deletingRevId === rv.id ? "Deleting…" : "Delete"}</button>
+                                                </>
+                                              )}
                                             </span>
                                           </li>
-                                        ))}
+                                          )
+                                        })}
                                       </ul>
                                     )}
                                     {/* Revision recycle-bin — soft-deleted revisions are recoverable
@@ -817,10 +878,13 @@ export default function DrawingsModule({ globalProjectId, appProjects }: {
               </p>
               <div className="flex items-center gap-3 flex-shrink-0">
                 {viewerSheet.file_url && (
-                  <button onClick={() => setMarkupMode(m => !m)}
-                    className={`text-[12px] font-semibold transition-colors ${markupMode ? "text-[#5A7A94]" : "text-[#7B9BB5] hover:text-[#5A7A94]"}`}>
-                    {markupMode ? "Exit markup" : "Markup"}
-                  </button>
+                  (editorOpen || openMarkupId)
+                    ? <button onClick={exitMarkup}
+                        className="text-[12px] font-semibold text-[#5A7A94] transition-colors">Done</button>
+                    : <button onClick={startNewMarkup}
+                        className="text-[12px] font-semibold text-[#7B9BB5] hover:text-[#5A7A94] transition-colors">
+                        Markup
+                      </button>
                 )}
                 {viewerSheet.file_url && (
                   <a href={viewerSheet.file_url} target="_blank" rel="noopener noreferrer" className="text-[12px] text-[#7B9BB5] hover:text-[#5A7A94] font-semibold">Open in new tab</a>
@@ -834,16 +898,34 @@ export default function DrawingsModule({ globalProjectId, appProjects }: {
             <div className="flex-1 min-h-0 bg-[#F1F3F5]">
               {!viewerSheet.file_url
                 ? <div className="flex items-center justify-center h-full text-[13px] text-[#94A3B8]">No file attached to this sheet.</div>
-                : markupMode
+                : editorOpen
+                  // EDITOR. "new" → draw over the CLEAN CURRENT upload (a fresh
+                  // numbered markup). "edit" → re-open one existing markup over the
+                  // exact base it was drawn on (its own markup_base_url + doc).
                   ? <MarkupEditor
-                      fileUrl={viewerSheet.file_url}
+                      mode={editorMode}
+                      fileUrl={editorMode === "edit" ? (editMarkupTarget?.markup_base_url ?? viewerSheet.file_url) : viewerSheet.file_url}
                       sheetNumber={viewerSheet.sheet_number}
-                      initialMarkups={viewerSheet.markup_doc}
-                      baseRevisionId={viewerSheet.revision_id}
-                      baseLabel={viewerSheet.revision_label}
-                      markupRevisionId={viewerSheet.markup_revision_id}
-                      onSave={(d, mkId) => handleSaveMarkups(viewerSheet.id, d, mkId)} />
-                  : <iframe src={`${viewerSheet.file_url}#view=Fit`} title={viewerSheet.sheet_number ?? "sheet"} className="w-full h-full border-none" />}
+                      initialMarkups={editorMode === "edit" ? editMarkupTarget?.markup_doc : null}
+                      baseRevisionId={editorMode === "edit" ? (editMarkupTarget?.markup_doc.baseRevisionId ?? null) : viewerSheet.revision_id}
+                      baseLabel={editorMode === "edit" ? (editMarkupTarget?.markup_doc.baseLabel ?? null) : viewerSheet.revision_label}
+                      onSave={d => editorMode === "edit"
+                        ? handleSaveMarkups(viewerSheet.id, d, "edit", editMarkupTarget?.id ?? null)
+                        : handleSaveMarkups(viewerSheet.id, d, "new", null)} />
+                  : openMarkupId
+                    // READ-ONLY VIEW of one opened markup: its vectors flattened
+                    // over its own base. Falls back to the clean PDF if not found.
+                    ? (() => {
+                        const mk = viewerSheet.markups?.find(m => m.id === openMarkupId)
+                        return mk
+                          ? <FlattenedMarkupView
+                              baseUrl={mk.markup_base_url ?? viewerSheet.file_url}
+                              markups={mk.markup_doc}
+                              title={viewerSheet.sheet_number} />
+                          : <iframe src={`${viewerSheet.file_url}#view=Fit`} title={viewerSheet.sheet_number ?? "sheet"} className="w-full h-full border-none" />
+                      })()
+                    // DEFAULT: every sheet opens to the raw clean current upload.
+                    : <iframe src={`${viewerSheet.file_url}#view=Fit`} title={viewerSheet.sheet_number ?? "sheet"} className="w-full h-full border-none" />}
             </div>
           </div>
         </div>

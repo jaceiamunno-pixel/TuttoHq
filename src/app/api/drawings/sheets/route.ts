@@ -71,24 +71,34 @@ export async function GET(req: NextRequest) {
     for (const r of revs ?? []) revById.set(r.id, { revision_label: r.revision_label, storage_path: r.storage_path })
   }
 
-  // The sheet's MARKUP LAYER (fork A): markup revisions ride ALONGSIDE the sheet
-  // — they never become current_revision_id — so surface them separately for the
-  // editor to hydrate on reopen. One layer per sheet (v1): the earliest markup
-  // revision. RLS-scoped (same company only).
-  const markupBySheet = new Map<string, { id: string; markup_doc: unknown }>()
+  // The sheet's MARKUP REVISIONS (fork A, numbered): markups ride ALONGSIDE the
+  // sheet — they never become current_revision_id — and a sheet can now have MANY
+  // (Markup 1, Markup 2, …). Surface the full list per sheet, created_at ASC so
+  // they read in numbered order. RLS-scoped (same company only).
+  const markupsBySheet = new Map<string, Array<{ id: string; markup_doc: unknown; storage_path: string | null; revision_label: string | null; created_at: string }>>()
   const sheetIds = rows.map(s => s.id)
   if (sheetIds.length > 0) {
     const { data: mks } = await supabase
       .from("drawing_revisions")
-      .select("id, sheet_id, markup_doc, created_at")
+      .select("id, sheet_id, markup_doc, storage_path, revision_label, created_at")
       .eq("source", "markup")
       .in("sheet_id", sheetIds)
       .order("created_at", { ascending: true })
-    for (const m of mks ?? []) if (!markupBySheet.has(m.sheet_id)) markupBySheet.set(m.sheet_id, { id: m.id, markup_doc: m.markup_doc ?? null })
+    for (const m of mks ?? []) {
+      const arr = markupsBySheet.get(m.sheet_id) ?? []
+      arr.push({ id: m.id, markup_doc: m.markup_doc ?? null, storage_path: m.storage_path ?? null, revision_label: m.revision_label ?? null, created_at: m.created_at })
+      markupsBySheet.set(m.sheet_id, arr)
+    }
   }
 
-  // Sign the current-revision files (1 h) for inline open/download.
-  const toSign = [...revById.values()].map(r => r.storage_path).filter((p): p is string => !!p)
+  // Sign the current-revision files AND every markup's base (each markup row
+  // references the base upload it was drawn over via storage_path). Surfacing the
+  // base lets the viewer flatten/edit over the ACTUAL base the markup was drawn
+  // on, never over a newer `current`. Deduped — a base often == current.
+  const toSign = [...new Set([
+    ...[...revById.values()].map(r => r.storage_path),
+    ...[...markupsBySheet.values()].flat().map(m => m.storage_path),
+  ].filter((p): p is string => !!p))]
   const urlByPath = new Map<string, string>()
   if (toSign.length > 0) {
     const signed = await Promise.all(
@@ -110,12 +120,19 @@ export async function GET(req: NextRequest) {
       discipline_prefix: s.discipline_prefix,
       title: s.title,
       revision_label: rev?.revision_label ?? null,
-      // current = the clean original (fork A). The markup LAYER (its own revision
-      // id + vector doc) is surfaced separately so the editor hydrates it on
-      // reopen; both null when the sheet has no markup layer.
+      // current = the clean upload (fork A). Markups ride alongside as their own
+      // numbered revisions (never current_revision_id); surfaced as a list so the
+      // viewer can open/edit any one of them. Empty array for plain sheets.
       revision_id: s.current_revision_id ?? null,
-      markup_revision_id: markupBySheet.get(s.id)?.id ?? null,
-      markup_doc: markupBySheet.get(s.id)?.markup_doc ?? null,
+      markups: (markupsBySheet.get(s.id) ?? []).map(m => ({
+        id: m.id,
+        revision_label: m.revision_label,
+        markup_doc: m.markup_doc,
+        // Signed URL of the base this markup was drawn over. VIEW flattens onto
+        // THIS and EDIT re-bases onto THIS — never a newer `current`.
+        markup_base_url: m.storage_path ? (urlByPath.get(m.storage_path) ?? null) : null,
+        created_at: m.created_at,
+      })),
       file_url: rev?.storage_path ? (urlByPath.get(rev.storage_path) ?? null) : null,
       created_at: s.created_at,
       deleted_at: s.deleted_at,
