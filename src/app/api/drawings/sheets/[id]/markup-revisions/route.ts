@@ -3,22 +3,27 @@ import { randomUUID } from "crypto"
 import { createClient } from "@/lib/supabase/server"
 import { deserializeMarkups, MARKUP_DOC_VERSION, type MarkupDoc } from "@/lib/drawing-markup"
 
-// POST /api/drawings/sheets/[id]/markup-revisions — save the sheet's in-app
-// markup layer (ADR-005 Part 2a, "original-is-sacred" model). CAREFUL-LANE.
+// POST /api/drawings/sheets/[id]/markup-revisions — save an in-app markup as a
+// NUMBERED markup revision (ADR-005 Part 2d, "original-is-sacred" model + history).
+// CAREFUL-LANE.
 //
-// MODEL (fork A):
-//  - A markup is ALWAYS based off the sheet's CLEAN ORIGINAL revision (the
-//    earliest source <> 'markup' revision) — never off current_revision_id and
-//    never off another markup. This is what kills the compounding bug.
+// MODEL (fork A, numbered):
+//  - Each save is EXPLICIT intent: mode:"new" INSERTs a brand-new numbered markup;
+//    mode:"edit" UPDATEs one specific existing markup in place. We never infer
+//    insert-vs-update from whether a markup already exists.
+//  - BASE for a new markup = the sheet's CURRENT clean upload (current_revision_id,
+//    requiring source<>'markup'); if current is somehow a markup or null we fall
+//    back to the LATEST source<>'markup' revision (created_at DESC). This makes a
+//    markup ride on top of whatever upload is current, and baseRevisionId is
+//    recorded in the doc so it composites over the exact base it was drawn on.
+//  - NUMBERING: markups have their own per-sheet counter, independent of the
+//    upload Rev-N namespace. n = (count of existing source='markup' rows) + 1.
+//    Label = `Markup ${n}`. Uploaded revisions keep their own Rev labels untouched.
 //  - VECTOR-ONLY: the row stores the serialized MarkupDoc in markup_doc and
-//    REFERENCES the original's file (storage_path/file_sha256/file_size) — no
-//    storage copy, no flattened file (flatten-on-render is Part 2b).
-//  - ONE markup layer per sheet (v1): if the sheet already has a markup revision
-//    we UPDATE it in place; otherwise we INSERT one. Either way the label is
-//    "{original} · markup" — it can never compound.
-//  - The markup revision does NOT become current_revision_id. The clean original
-//    stays current, so every surface outside the editor keeps rendering the real
-//    drawing.
+//    REFERENCES the base file (storage_path/file_sha256/file_size) — no storage
+//    copy, no flattened file (flatten-on-render lives in the viewer/export).
+//  - A markup revision NEVER becomes current_revision_id. The clean upload stays
+//    current, so every surface outside the editor keeps rendering the real drawing.
 //
 // Tenant scoping mirrors a normal revision exactly: company_id is never client-
 // supplied (rides the DEFAULT get_my_company_id(), enforced by the RLS WITH
@@ -35,6 +40,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const body = await req.json().catch(() => null)
   const doc: unknown = body?.markup_doc
   if (!doc || typeof doc !== "object") return NextResponse.json({ error: "markup_doc required" }, { status: 400 })
+  // Explicit intent. Anything other than "edit" is treated as "new".
+  const mode: "new" | "edit" = body?.mode === "edit" ? "edit" : "new"
   const clientMarkupRevId: string | null = typeof body?.markup_revision_id === "string" ? body.markup_revision_id : null
 
   // Re-validate the vector payload server-side — never trust client jsonb
@@ -45,79 +52,98 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   // Target sheet must be RLS-visible (same company) and live.
   const { data: sheet, error: selErr } = await supabase
     .from("drawing_sheets")
-    .select("id, deleted_at")
+    .select("id, current_revision_id, deleted_at")
     .eq("id", sheetId)
     .maybeSingle()
   if (selErr) return NextResponse.json({ error: selErr.message }, { status: 500 })
   if (!sheet) return NextResponse.json({ error: "sheet not found" }, { status: 404 })
   if (sheet.deleted_at) return NextResponse.json({ error: "cannot mark up a deleted sheet" }, { status: 409 })
 
-  // BASE = the sheet's clean original: the EARLIEST non-markup revision. Never a
-  // markup, so the base + label can never compound. RLS-scoped (same company).
-  const { data: original, error: baseErr } = await supabase
-    .from("drawing_revisions")
-    .select("id, storage_path, file_sha256, file_size, revision_label, created_at")
-    .eq("sheet_id", sheetId)
-    .neq("source", "markup")
-    .order("created_at", { ascending: true })
-    .limit(1)
-    .maybeSingle()
-  if (baseErr) return NextResponse.json({ error: baseErr.message }, { status: 500 })
-  if (!original) return NextResponse.json({ error: "sheet has no original (non-markup) revision to mark up" }, { status: 409 })
-
-  // Server-authoritative doc: provenance always points at the clean original.
-  const storedDoc: MarkupDoc = {
-    version: MARKUP_DOC_VERSION,
-    baseRevisionId: original.id,
-    baseLabel: original.revision_label,
-    markups,
-  }
-  const label = `${original.revision_label ?? "Rev"} · markup`
-  // The layer REFERENCES the original's file (vector-only — no copy, no flatten).
-  const fileRefs = {
-    storage_path: original.storage_path,
-    file_sha256: original.file_sha256,
-    file_size: original.file_size,
-  }
-
-  // SINGLE LAYER: target the existing markup revision if there is one — the
-  // client's id if it's a valid markup rev for THIS sheet, else the sheet's
-  // existing markup rev. Only when none exists do we INSERT. Server-enforced, so
-  // a stale/missing client id can never stack a second layer.
-  let targetId: string | null = null
-  if (clientMarkupRevId) {
-    const { data: m } = await supabase
+  // ── mode: "edit" — UPDATE one specific markup in place ─────────────────────
+  // Requires a markup_revision_id that is a source='markup' row for THIS sheet
+  // (RLS already scopes to the caller's company). Invalid/missing → 400; we never
+  // silently fall back to insert. We keep the row's existing label (no renumber)
+  // and its recorded base — only the vector doc changes.
+  if (mode === "edit") {
+    if (!clientMarkupRevId) return NextResponse.json({ error: "markup_revision_id required for edit" }, { status: 400 })
+    const { data: existing, error: exErr } = await supabase
       .from("drawing_revisions")
-      .select("id")
+      .select("id, revision_label, markup_doc")
       .eq("id", clientMarkupRevId).eq("sheet_id", sheetId).eq("source", "markup")
       .maybeSingle()
-    targetId = m?.id ?? null
-  }
-  if (!targetId) {
-    const { data: existing } = await supabase
-      .from("drawing_revisions")
-      .select("id")
-      .eq("sheet_id", sheetId).eq("source", "markup")
-      .order("created_at", { ascending: true })
-      .limit(1)
-      .maybeSingle()
-    targetId = existing?.id ?? null
-  }
+    if (exErr) return NextResponse.json({ error: exErr.message }, { status: 500 })
+    if (!existing) return NextResponse.json({ error: "markup_revision_id is not a markup for this sheet" }, { status: 400 })
 
-  if (targetId) {
-    // UPDATE the existing layer in place — no new row, current_revision_id
-    // untouched. RLS UPDATE policy enforces the tenant.
+    // Preserve the base this markup was drawn over (from its stored doc) — editing
+    // vectors must not re-base it onto a newer current upload.
+    const prior = (existing.markup_doc ?? null) as Partial<MarkupDoc> | null
+    const storedDoc: MarkupDoc = {
+      version: MARKUP_DOC_VERSION,
+      baseRevisionId: prior?.baseRevisionId ?? null,
+      baseLabel: prior?.baseLabel ?? null,
+      markups,
+    }
     const { error: updErr } = await supabase
       .from("drawing_revisions")
-      .update({ markup_doc: storedDoc, revision_label: label, ...fileRefs })
-      .eq("id", targetId)
+      .update({ markup_doc: storedDoc })   // label + file refs untouched (no renumber, same base)
+      .eq("id", existing.id)
     if (updErr) return NextResponse.json({ error: `markup update failed: ${updErr.message}` }, { status: 500 })
-    return NextResponse.json({ ok: true, mode: "update", sheet_id: sheetId, markup_revision_id: targetId, revision_label: label })
+    return NextResponse.json({ ok: true, mode: "update", sheet_id: sheetId, markup_revision_id: existing.id, revision_label: existing.revision_label })
   }
 
-  // INSERT the sheet's first markup layer. company_id omitted → DEFAULT
-  // get_my_company_id(); RLS WITH CHECK enforces the tenant. current_revision_id
-  // is NOT flipped — the clean original stays current (fork A).
+  // ── mode: "new" — INSERT a fresh numbered markup ───────────────────────────
+  // BASE = the sheet's current clean upload, else the latest non-markup revision.
+  let base: { id: string; storage_path: string | null; file_sha256: string | null; file_size: number | null; revision_label: string | null } | null = null
+  if (sheet.current_revision_id) {
+    const { data: cur } = await supabase
+      .from("drawing_revisions")
+      .select("id, storage_path, file_sha256, file_size, revision_label, source")
+      .eq("id", sheet.current_revision_id).eq("sheet_id", sheetId)
+      .maybeSingle()
+    if (cur && cur.source !== "markup") base = cur
+  }
+  if (!base) {
+    // Fallback: current is null or (defensively) points at a markup — use the
+    // newest uploaded revision instead.
+    const { data: latest, error: baseErr } = await supabase
+      .from("drawing_revisions")
+      .select("id, storage_path, file_sha256, file_size, revision_label")
+      .eq("sheet_id", sheetId)
+      .neq("source", "markup")
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    if (baseErr) return NextResponse.json({ error: baseErr.message }, { status: 500 })
+    base = latest
+  }
+  if (!base) return NextResponse.json({ error: "sheet has no uploaded (non-markup) revision to mark up" }, { status: 409 })
+
+  // NUMBERING: per-sheet markup counter, independent of upload Rev labels.
+  const { count: markupCount, error: cntErr } = await supabase
+    .from("drawing_revisions")
+    .select("id", { count: "exact", head: true })
+    .eq("sheet_id", sheetId).eq("source", "markup")
+  if (cntErr) return NextResponse.json({ error: cntErr.message }, { status: 500 })
+  const n = (markupCount ?? 0) + 1
+  const label = `Markup ${n}`
+
+  // Server-authoritative doc: provenance points at the base this markup rode on.
+  const storedDoc: MarkupDoc = {
+    version: MARKUP_DOC_VERSION,
+    baseRevisionId: base.id,
+    baseLabel: base.revision_label,
+    markups,
+  }
+  // The markup REFERENCES the base file (vector-only — no copy, no flatten).
+  const fileRefs = {
+    storage_path: base.storage_path,
+    file_sha256: base.file_sha256,
+    file_size: base.file_size,
+  }
+
+  // INSERT a new markup row. company_id omitted → DEFAULT get_my_company_id();
+  // RLS WITH CHECK enforces the tenant. current_revision_id is NOT flipped — the
+  // clean upload stays current (fork A).
   const revisionId = randomUUID()
   const { data: revision, error: revErr } = await supabase
     .from("drawing_revisions")
