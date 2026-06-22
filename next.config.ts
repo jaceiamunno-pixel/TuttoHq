@@ -52,11 +52,19 @@ const withSerwist = withSerwistInit({
   // exceeding this limit at build time — check that log to confirm what dropped.
   // (A smaller precache also installs faster and is less eviction-prone on iOS.)
   maximumFileSizeToCacheInBytes: 800_000,
-  // Precache what injectManifest can't see on its own: the /offline route (the
-  // navigation fallback document, per-build revision) + the web manifest + the
-  // PWA icons (content-hashed). With these pinned, an installed client always
-  // has its fallback document and brand assets available in a dead zone.
+  // Precache what injectManifest can't see on its own:
+  //   • /dashboard — the start_url client SHELL (statically prerendered, ○ in
+  //     the build). This is the Step-1.1 deterministic offline shell: pinned
+  //     with a per-build revision so an offline cold launch ALWAYS has the shell
+  //     document, with NO dependence on the runtime NetworkFirst cache having
+  //     captured it during a prior online session. The SW serves it as the
+  //     navigation fallback for /dashboard (see sw.ts). Versioned by build →
+  //     a redeploy re-precaches it, and the install-and-wait + reload prompt
+  //     keeps a stale shell from ever activating against new chunks.
+  //   • /offline — the dead-zone fallback document for never-primed routes.
+  //   • /manifest.webmanifest + icons (content-hashed) — brand/install assets.
   additionalPrecacheEntries: [
+    { url: "/dashboard", revision: BUILD_REVISION },
     { url: "/offline", revision: BUILD_REVISION },
     { url: "/manifest.webmanifest", revision: BUILD_REVISION },
     ...PUBLIC_ASSET_PRECACHE,

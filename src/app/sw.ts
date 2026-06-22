@@ -52,6 +52,17 @@ const cacheRealRendersOnly: SerwistPlugin = {
 
 const isSameOrigin = (url: URL) => url.origin === self.location.origin
 
+// The start_url (and the offline shell entry) is /dashboard. A document request
+// for it on an offline cold launch must resolve to the PRECACHED shell, not the
+// /offline page — deterministically, with no dependence on a prior runtime cache
+// hit. Other app routes (/projects, /library, …) are reached via the shell once
+// it boots, so they don't need their own offline document.
+const isDashboardDocument = (request: Request) => {
+  if (request.destination !== "document") return false
+  const path = new URL(request.url).pathname
+  return path === "/dashboard" || path.startsWith("/dashboard/")
+}
+
 const runtimeCaching: RuntimeCaching[] = [
   // (1) /api/* — NETWORK-ONLY, NEVER CACHED. Listed first so nothing below can
   // intercept it. Mutations must never replay from cache, and a GET must never
@@ -118,11 +129,23 @@ const serwist = new Serwist({
   navigationPreload: false,
   runtimeCaching,
   fallbacks: {
+    // Order matters — the first matching entry wins.
     entries: [
       {
-        // Document navigations that miss BOTH network and cache get the branded
-        // offline page instead of the browser's error screen. Dashboard/daily,
-        // primed online once, serve their own cached shell and never reach this.
+        // (1) Protected cold launch (start_url /dashboard) with the network gone
+        // and nothing in the runtime page cache (i.e. NO priming): serve the
+        // PRECACHED client shell. This is THE Step-1.1 fix — the offline shell
+        // is now deterministic (precache), not dependent on NetworkFirst having
+        // captured /dashboard during an earlier online session. The shell boots
+        // client-side, trusts the last-known session, and renders the dashboard
+        // + the offline daily-report entry.
+        url: "/dashboard",
+        matcher: ({ request }) => isDashboardDocument(request),
+      },
+      {
+        // (2) Any other document navigation that misses network + cache (a
+        // never-primed network-only route in a dead zone) → the branded offline
+        // page instead of the browser's error screen.
         url: "/offline",
         matcher: ({ request }) => request.destination === "document",
       },

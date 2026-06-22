@@ -1,22 +1,52 @@
 "use client"
 
 import { useEffect, useMemo, useState } from "react"
+import dynamic from "next/dynamic"
 import Link from "next/link"
 import AppChrome from "@/components/app-chrome"
 import { createClient } from "@/lib/supabase/client"
 import { useNavRegion } from "@/components/keyboard-nav"
 import { useProjectFavorites, sortByFavorite } from "./_shared/use-project-favorites"
+import { useSessionGate } from "@/lib/use-session-gate"
+import { readLastProject, type LastProject } from "@/lib/last-project"
 import type { Project } from "./_shared/types"
+
+function CenteredNote({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="flex-1 min-h-0 flex items-center justify-center px-6">
+      <p className="text-[13px] text-[#64748B] text-center">{children}</p>
+    </div>
+  )
+}
+
+// The daily-report capture flow, loaded on demand. ssr:false keeps it out of the
+// dashboard's initial bundle; its chunk is precached, so the dynamic import
+// resolves from cache offline (ADR-009 Phase 1, Step 1.1 — offline daily entry).
+const DailyModule = dynamic(() => import("./_modules/DailyModule"), {
+  ssr: false,
+  loading: () => <CenteredNote>Loading…</CenteredNote>,
+})
 
 // ── Landing dashboard (ADR-006 Phase 2) ─────────────────────────────────────
 // Project-first home: a project GRID + picker, nothing else. Pick a project →
 // its work modules open inside the project shell (/projects/[id]/...). This is
 // intentionally thin — no activity feed, no attention list (out of scope).
+//
+// ADR-009 Step 1.1: this is ALSO the precached offline SHELL (start_url). On an
+// offline cold launch the SW serves this document; it gates on the last-known
+// session (client-side, offline-tolerant) and, when offline, surfaces a direct
+// entry into the last-opened project's daily report — the grid itself is
+// /api-driven and empty in a dead zone.
 export default function DashboardLanding() {
+  const gate = useSessionGate()
   const [projects, setProjects] = useState<Project[]>([])
   const [loading, setLoading]   = useState(true)
   const [query, setQuery]       = useState("")
   const [userEmail, setUserEmail] = useState<string | null>(null)
+
+  const [offline, setOffline]         = useState(false)
+  const [lastProject, setLastProject] = useState<LastProject | null>(null)
+  const [dailyOpen, setDailyOpen]     = useState(false)
 
   // Per-user project favorites — keyed by the signed-in user (see hook).
   const { favorites, toggleFavorite } = useProjectFavorites(userEmail)
@@ -29,6 +59,22 @@ export default function DashboardLanding() {
       .then(d => setProjects(d.projects ?? []))
       .catch(() => {})
       .finally(() => setLoading(false))
+  }, [])
+
+  // Offline awareness + the last-opened project (both client-only reads). The
+  // last project is persisted by ProjectChrome whenever a project is opened
+  // online; it's what makes the daily flow reachable with no network.
+  useEffect(() => {
+    setOffline(!navigator.onLine)
+    setLastProject(readLastProject())
+    const goOnline = () => setOffline(false)
+    const goOffline = () => setOffline(true)
+    window.addEventListener("online", goOnline)
+    window.addEventListener("offline", goOffline)
+    return () => {
+      window.removeEventListener("online", goOnline)
+      window.removeEventListener("offline", goOffline)
+    }
   }, [])
 
   const filtered = useMemo(() => {
@@ -45,10 +91,73 @@ export default function DashboardLanding() {
   // order 20 sits after the primary nav (order 10) for [ / ] left-to-right.
   const { regionProps: projectsGridProps } = useNavRegion<HTMLDivElement>({ id: "projects-grid", order: 20 })
 
+  // ── Auth gate (offline-tolerant; see useSessionGate) ──────────────────────
+  // Online auth is still enforced by middleware; this is the offline decision.
+  if (gate === "checking") {
+    return <AppChrome><CenteredNote>Loading…</CenteredNote></AppChrome>
+  }
+  if (gate === "offline-no-session") {
+    return (
+      <AppChrome>
+        <div className="flex-1 min-h-0 flex items-center justify-center px-6">
+          <div className="max-w-sm text-center">
+            <p className="text-[14px] font-semibold text-[#0F172A]">You&rsquo;re offline and signed out</p>
+            <p className="text-[13px] text-[#64748B] mt-1">Reconnect to sign in. Any daily reports you saved are still on this device and will sync once you&rsquo;re back online.</p>
+          </div>
+        </div>
+      </AppChrome>
+    )
+  }
+
+  // ── Offline daily-report capture (entered from the offline card below) ────
+  // Renders DailyModule standalone (it is prop-only — no project-route context),
+  // bypassing the server project layout, which can't run offline.
+  if (offline && dailyOpen && lastProject) {
+    return (
+      <AppChrome>
+        <div className="flex-shrink-0 flex items-center gap-2 px-4 py-2 border-b border-[#E2E8F0] bg-white">
+          <button
+            onClick={() => setDailyOpen(false)}
+            className="text-[12px] font-medium text-[#7B9BB5] hover:text-[#456A88] transition-colors"
+          >
+            ← All projects
+          </button>
+          <span className="text-[12px] text-[#64748B] truncate">Offline · {lastProject.name}</span>
+        </div>
+        <DailyModule globalProjectId={lastProject.id} appProjects={[]} teamMembers={[]} />
+      </AppChrome>
+    )
+  }
+
   return (
     <AppChrome>
       <div className="flex-1 min-h-0 overflow-y-auto">
         <div className="max-w-[1100px] mx-auto px-4 sm:px-6 py-8 sm:py-10">
+
+          {/* Offline entry into the daily flow — the grid below can't load over
+              the network in a dead zone, so this is the way in. */}
+          {offline && (
+            lastProject ? (
+              <div className="mb-6 bg-[#0A1628] rounded-xl px-4 py-4 flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-[13px] font-semibold text-white">You&rsquo;re offline</p>
+                  <p className="text-[12px] text-[#94A3B8] mt-0.5 truncate">Daily reports still work. Continue on {lastProject.name}.</p>
+                </div>
+                <button
+                  onClick={() => setDailyOpen(true)}
+                  className="flex-shrink-0 inline-flex items-center h-9 px-4 rounded-md bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors"
+                >
+                  Open Daily Report
+                </button>
+              </div>
+            ) : (
+              <div className="mb-6 bg-[#0A1628] rounded-xl px-4 py-4">
+                <p className="text-[13px] font-semibold text-white">You&rsquo;re offline</p>
+                <p className="text-[12px] text-[#94A3B8] mt-0.5">Open a project once while online to enable its daily report offline.</p>
+              </div>
+            )
+          )}
+
           <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3 mb-6">
             <div>
               <h1 className="text-[20px] sm:text-[22px] font-bold text-[#0F172A] tracking-tight">Projects</h1>
@@ -67,13 +176,19 @@ export default function DashboardLanding() {
           {loading ? (
             <p className="text-[13px] text-[#64748B]">Loading…</p>
           ) : projects.length === 0 ? (
-            <div className="bg-white rounded-xl border border-[#E2E8F0] px-6 py-12 text-center">
-              <p className="text-[14px] font-semibold text-[#0F172A]">No projects yet</p>
-              <p className="text-[13px] text-[#64748B] mt-1 mb-4">Create your first project to start tracking submittals, RFIs, and more.</p>
-              <Link href="/settings?tab=projects" className="inline-flex items-center h-9 px-4 rounded-md bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors">
-                Add a project in Settings
-              </Link>
-            </div>
+            offline ? (
+              // Don't claim "No projects yet" in a dead zone — the grid simply
+              // can't load. Point at the offline daily shortcut above.
+              <p className="text-[13px] text-[#64748B]">Projects can&rsquo;t load while offline. {lastProject ? "Use the daily-report shortcut above." : "Reconnect to see your projects."}</p>
+            ) : (
+              <div className="bg-white rounded-xl border border-[#E2E8F0] px-6 py-12 text-center">
+                <p className="text-[14px] font-semibold text-[#0F172A]">No projects yet</p>
+                <p className="text-[13px] text-[#64748B] mt-1 mb-4">Create your first project to start tracking submittals, RFIs, and more.</p>
+                <Link href="/settings?tab=projects" className="inline-flex items-center h-9 px-4 rounded-md bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors">
+                  Add a project in Settings
+                </Link>
+              </div>
+            )
           ) : filtered.length === 0 ? (
             <p className="text-[13px] text-[#64748B]">No projects match “{query}”.</p>
           ) : (
