@@ -50,6 +50,49 @@ const cacheRealRendersOnly: SerwistPlugin = {
     response.status === 200 && !response.redirected ? response : null,
 }
 
+// Precache poison guard (ADR-009 Phase 1, Step 1.1 hardening). The /dashboard
+// shell is precached by fetching it at SW install — WITH credentials, so the
+// request passes through middleware. In a narrow window (refresh token fully
+// expired at install time) middleware 302s /dashboard → /login and the precache
+// fetch follows it, resolving to the LOGIN document. Serwist would otherwise
+// copy that redirected response and store it as the precached shell, so a later
+// offline cold launch would serve a login page the user can't get past — the
+// exact dead-zone lockout this feature exists to prevent.
+//
+// This plugin runs as the precache strategy's `cacheWillUpdate`. Returning null
+// makes Serwist's precache install REJECT this entry atomically (cachePut →
+// false → "bad-precaching-response"): the new SW never installs/activates, so
+// the PREVIOUS service worker keeps serving its own good shell + matching
+// chunks. A login document can therefore never become the precached shell. On
+// the next install with a valid session the real shell is precached normally.
+const rejectAuthRedirectInPrecache: SerwistPlugin = {
+  cacheWillUpdate: async ({ response }) => {
+    // KEEP THIS >=400 REJECT — do not "simplify" it away. Serwist only installs
+    // its default precache cacheability plugin (defaultPrecacheCacheabilityPlugin,
+    // which rejects >=400) when NO custom cacheWillUpdate exists
+    // (_useDefaultCacheabilityPluginIfNeeded). Providing this plugin suppresses
+    // that default, so without re-implementing the reject here, error responses
+    // — and, via the always-on copyRedirectedCacheableResponsesPlugin, redirect
+    // bodies — would silently become cacheable again, reopening the
+    // login-as-shell hole guarded below.
+    if (!response || response.status >= 400) return null
+    let finalPath = ""
+    try {
+      finalPath = new URL(response.url).pathname
+    } catch {
+      // Unparseable response URL — treat as safe; don't block a legit asset.
+    }
+    // response.url is the FINAL url after any redirect (reliable at store time;
+    // it does NOT survive into the cache, which is why we check here and not on
+    // activate). EXACT-segment match — `=== "/login"` is the case middleware
+    // actually produces; `startsWith("/login/")` covers future /login/* subpaths.
+    // This is NOT a substring test, so app paths that merely contain "login"
+    // (e.g. /login-help, /account/login, /logins) are unaffected.
+    if (finalPath === "/login" || finalPath.startsWith("/login/")) return null
+    return response
+  },
+}
+
 const isSameOrigin = (url: URL) => url.origin === self.location.origin
 
 // The start_url (and the offline shell entry) is /dashboard. A document request
@@ -117,6 +160,9 @@ const serwist = new Serwist({
   // chunk is excluded by maximumFileSizeToCacheInBytes in next.config — offline
   // HEIC is Step 2, gated on on-device WASM-in-worker verification.
   precacheEntries: self.__SW_MANIFEST,
+  // Reject an auth-redirect (login) response at precache store time, so a login
+  // document can never become the precached /dashboard shell (see plugin above).
+  precacheOptions: { plugins: [rejectAuthRedirectInPrecache] },
   // Do NOT silently swap. A new SW installs and WAITS; the page detects it and
   // shows an explicit "new version — reload" prompt (pwa-provider.tsx), which
   // posts SKIP_WAITING below. This is the single highest-blast-radius guard: a
