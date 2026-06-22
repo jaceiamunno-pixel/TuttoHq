@@ -229,6 +229,12 @@ export async function drainPhotoQueue(): Promise<DrainStats> {
   let skipped = 0
   let stuck = 0
   try {
+    // TEMP DIAGNOSTIC (strip with the real fix) — sync-queue depth at drain
+    // start (logged before the offline short-circuit so it shows when offline).
+    try {
+      const queued = await listPhotosToSync()
+      console.info(`[daily drain] ${queued.length} photos in sync queue`)
+    } catch { /* diagnostic only */ }
     if (typeof navigator !== "undefined" && navigator.onLine === false) {
       // Cheap short-circuit. Doesn't prevent retries — the next `online`
       // event will call us again.

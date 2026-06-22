@@ -461,6 +461,9 @@ export default function DailyModule({ globalProjectId, appProjects, teamMembers 
           // failed filename for the batch (not last-wins) so the create gate
           // can list them all and force an explicit decision.
           console.error("[daily draft] photo compression failed", err)
+          // TEMP DIAGNOSTIC (strip with the real fix) — surfaces an offline
+          // HEIC + heic2any dynamic-import failure: file.type/name + message.
+          console.warn(`[daily ingest] compress failed type=${file.type || "?"} name=${file.name} err=${err instanceof Error ? err.message : String(err)}`)
           failedNames.push(file.name)
         }
         setPhotoCompressProgress({ done: i + 1, total: files.length })
@@ -471,6 +474,8 @@ export default function DailyModule({ globalProjectId, appProjects, teamMembers 
       compressor.dispose()
       setPhotoCompressProgress(null)
     }
+    // TEMP DIAGNOSTIC (strip with the real fix) — batch drop count.
+    console.info(`[daily ingest] dropped ${failedNames.length} of ${files.length} photos at compression`)
     if (failedNames.length > 0) {
       // Accumulate across batches; a changed dropped-set must be re-acknowledged
       // before the report can be created without those photos (see createDaily).
@@ -529,6 +534,16 @@ export default function DailyModule({ globalProjectId, appProjects, teamMembers 
   // online one. Sync runner does the eventual upload, idempotently.
   async function createDaily(e?: React.FormEvent, opts?: { ackDropped?: boolean }) {
     e?.preventDefault()
+
+    // TEMP DIAGNOSTIC (strip with the real fix) — connectivity + how many
+    // photos are actually in IDB for this draft vs how many were dropped at
+    // compression. Logs before the guards so it fires even on an early return.
+    try {
+      const idbCount = draftId ? (await listDailyDraftPhotos(draftId)).length : 0
+      console.info(`[daily create] online=${typeof navigator !== "undefined" ? navigator.onLine : "n/a"} draftPhotos=${idbCount} dropped=${droppedPhotoNames.length}`)
+    } catch (err) {
+      console.warn("[daily create] diag count failed", err)
+    }
 
     // FIX 2 — Hard, logic-level completeness guard (defense-in-depth). The
     // submit button's disabled attribute is only a UI gate; a programmatic /
