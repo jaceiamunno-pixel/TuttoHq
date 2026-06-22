@@ -57,6 +57,62 @@ function lateState(s: SubmittalRecord): "late" | "ontime" | null {
   return d > 14 ? "late" : "ontime"
 }
 
+// ─── Ball-in-Court (derived — display only, no schema) ───────────────────────
+// Who currently "holds" the submittal, derived purely from which workflow date
+// is the latest filled in the chain. Evaluated latest-milestone-first: the most
+// advanced date that is set wins.
+type BallInCourtParty = "GC_REVIEW" | "AE" | "GC_RETURN" | "SUB" | "NOT_STARTED"
+
+function getBallInCourt(s: SubmittalRecord): { party: BallInCourtParty; label: string; sinceDate: string | null } {
+  if (s.returned_to_sub_date)  return { party: "SUB",         label: "Returned to sub",     sinceDate: s.returned_to_sub_date }
+  if (s.returned_from_ae_date) return { party: "GC_RETURN",   label: "GC — to return",      sinceDate: s.returned_from_ae_date }
+  if (s.sent_to_ae_date)       return { party: "AE",          label: "Architect/Engineer",  sinceDate: s.sent_to_ae_date }
+  if (s.received_date)         return { party: "GC_REVIEW",   label: "GC — in review",      sinceDate: s.received_date }
+  return { party: "NOT_STARTED", label: "Not started", sinceDate: null }
+}
+
+/** Days the ball has sat with the current party: floor(today − sinceDate). Null until started. */
+function daysInCourt(s: SubmittalRecord, today: string): number | null {
+  const since = getBallInCourt(s).sinceDate
+  if (!since) return null
+  const t1 = Date.parse(since), t2 = Date.parse(today)
+  if (Number.isNaN(t1) || Number.isNaN(t2)) return null
+  return Math.floor((t2 - t1) / 86_400_000)
+}
+
+/** Soft overdue flag: a due date exists, today is past it, and the sub doesn't already hold it. */
+function isOverdue(s: SubmittalRecord, today: string): boolean {
+  if (!s.due_date) return false
+  if (getBallInCourt(s).party === "SUB") return false
+  return today > s.due_date // both are YYYY-MM-DD — lexical compare == date compare
+}
+
+// Chip tone per party — same rounded-full status-chip palette as Late / On Time.
+const BIC_TONE: Record<BallInCourtParty, string> = {
+  GC_REVIEW:   "bg-sky-100 text-sky-700",
+  AE:          "bg-violet-100 text-violet-700",
+  GC_RETURN:   "bg-amber-100 text-amber-800",
+  SUB:         "bg-green-100 text-green-700",
+  NOT_STARTED: "bg-[#F1F5F9] text-[#94A3B8]",
+}
+
+// Party filter buckets for the log toolbar (GC = either GC milestone).
+const COURT_FILTERS = [
+  { key: "all",         label: "All" },
+  { key: "gc",          label: "GC" },
+  { key: "ae",          label: "A/E" },
+  { key: "sub",         label: "Sub" },
+  { key: "not_started", label: "Not started" },
+] as const
+type CourtFilter = (typeof COURT_FILTERS)[number]["key"]
+
+function courtBucket(party: BallInCourtParty): CourtFilter {
+  if (party === "GC_REVIEW" || party === "GC_RETURN") return "gc"
+  if (party === "AE")  return "ae"
+  if (party === "SUB") return "sub"
+  return "not_started"
+}
+
 // Small inline document icon for the Source column.
 function SourceIcon({ className = "h-4 w-4" }: { className?: string }) {
   return (
@@ -213,6 +269,11 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
   const [vendors, setVendors]                   = useState<VendorRow[]>([])
   const [vendorPeople, setVendorPeople]         = useState<VendorPersonRow[]>([])
   const [groupBySection, setGroupBySection]     = useState(true)
+  // Ball-in-Court (derived, display only) — toolbar party filter, overdue-only
+  // toggle, and the sortable days-in-court column (null = default grouping sort).
+  const [courtFilter, setCourtFilter] = useState<CourtFilter>("all")
+  const [overdueOnly, setOverdueOnly] = useState(false)
+  const [courtSort, setCourtSort]     = useState<null | "asc" | "desc">(null)
   // Sub-package selection (Session I) — "Select" mode adds a checkbox column.
   const [selectMode, setSelectMode]             = useState(false)
   const [selectedIds, setSelectedIds]           = useState<Set<string>>(new Set())
@@ -1556,6 +1617,29 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
               {searching ? <SpinnerIcon className="h-3.5 w-3.5" /> : "Search"}
             </button>
           </form>
+          {/* Ball-in-Court filters — client-side over the already-fetched log rows. */}
+          <div className="flex flex-wrap items-center gap-2 px-4 pb-2.5">
+            <span className="text-[10px] font-bold text-[#64748B] uppercase tracking-wider">Ball-in-court</span>
+            <div className="flex rounded-md border border-[#E2E8F0] overflow-hidden">
+              {COURT_FILTERS.map(f => (
+                <button key={f.key} type="button" onClick={() => setCourtFilter(f.key)}
+                  className={`h-7 px-2.5 text-[12px] font-medium whitespace-nowrap transition-colors ${courtFilter === f.key ? "bg-[#7B9BB5] text-white" : "bg-white text-[#64748B] hover:bg-[#F8F9FA]"}`}>
+                  {f.label}
+                </button>
+              ))}
+            </div>
+            <button type="button" onClick={() => setOverdueOnly(v => !v)}
+              title="Show only items past their due date and not yet returned to the sub"
+              className={`h-7 px-2.5 rounded-md border text-[12px] font-medium whitespace-nowrap transition-colors ${overdueOnly ? "border-red-300 bg-red-50 text-red-700" : "border-[#E2E8F0] text-[#64748B] hover:bg-[#F8F9FA]"}`}>
+              Overdue only
+            </button>
+            {(courtFilter !== "all" || overdueOnly) && (
+              <button type="button" onClick={() => { setCourtFilter("all"); setOverdueOnly(false) }}
+                className="h-7 px-2 text-[12px] font-medium text-[#94A3B8] hover:text-[#0F172A] transition-colors">
+                Clear
+              </button>
+            )}
+          </div>
           {searchAiSummary && (
             <p className="px-4 pb-2 text-[12px] text-[#64748B] italic">{searchAiSummary}</p>
           )}
@@ -1893,8 +1977,25 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
           ) : (() => {
             // Sort + colour-band the rows. Grouped: spec section, then type,
             // then number. Ungrouped: per-project submittal number.
-            const rows = [...displaySubmittals]
-            if (groupBySection) {
+            // Date-only "today" for all ball-in-court math (matches lateState).
+            const today = new Date().toISOString().slice(0, 10)
+            // Client-side ball-in-court filtering over the already-fetched rows.
+            const rows = displaySubmittals.filter(s => {
+              if (courtFilter !== "all" && courtBucket(getBallInCourt(s).party) !== courtFilter) return false
+              if (overdueOnly && !isOverdue(s, today)) return false
+              return true
+            })
+            if (courtSort) {
+              // Sort by days-in-court; longest-waiting first (desc) is the default.
+              // Not-started rows (null days) always sink to the bottom.
+              rows.sort((a, b) => {
+                const da = daysInCourt(a, today), db = daysInCourt(b, today)
+                if (da === null && db === null) return 0
+                if (da === null) return 1
+                if (db === null) return -1
+                return courtSort === "desc" ? db - da : da - db
+              })
+            } else if (groupBySection) {
               rows.sort((a, b) =>
                 (a.csi_section ?? "").localeCompare(b.csi_section ?? "") ||
                 (a.submittal_type ?? "").localeCompare(b.submittal_type ?? "") ||
@@ -1906,7 +2007,7 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
             const colorFor = (sec: string | null) => SECTION_PALETTE[colorIdx.get(sec ?? "—") ?? 0]
             const HEADERS = ["Subm. #", "Spec #", "Description", "Type of Subm.", "Vendor",
               "Received", "To A/E", "Returned A/E", "Returned to Sub", "Approval (Days)",
-              "Status", "Late / On Time", "Source", "Actions"]
+              "Status", "Ball-in-Court", "Late / On Time", "Source", "Actions"]
             // Select mode (Session I) — adds a leading checkbox column + the
             // package-selection toolbar. Off during search to avoid ambiguity.
             const showSelect = selectMode && !isSearchMode
@@ -1989,7 +2090,21 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                     </th>
                   )}
                   {HEADERS.map(h => (
-                    <th key={h} className="text-left px-3 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-wider whitespace-nowrap">{h}</th>
+                    h === "Ball-in-Court" ? (
+                      <th key={h} className="text-left px-3 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-wider whitespace-nowrap">
+                        <button type="button"
+                          onClick={() => setCourtSort(c => c === null ? "desc" : c === "desc" ? "asc" : null)}
+                          title="Sort by days-in-court (longest-waiting first)"
+                          className="inline-flex items-center gap-1 uppercase tracking-wider hover:text-[#0F172A] transition-colors">
+                          {h}
+                          <span className={`text-[9px] ${courtSort ? "text-[#7B9BB5]" : "text-[#CBD5E1]"}`}>
+                            {courtSort === "desc" ? "▼" : courtSort === "asc" ? "▲" : "↕"}
+                          </span>
+                        </button>
+                      </th>
+                    ) : (
+                      <th key={h} className="text-left px-3 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-wider whitespace-nowrap">{h}</th>
+                    )
                   ))}
                 </tr>
               </thead>
@@ -2101,6 +2216,25 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                       </select>
                     </td>
                     <td className="px-3 py-1.5 whitespace-nowrap">
+                      {(() => {
+                        const bic = getBallInCourt(s)
+                        const days = daysInCourt(s, today)
+                        const overdue = isOverdue(s, today)
+                        return (
+                          <span
+                            title={bic.sinceDate
+                              ? `Since ${fmtDate(bic.sinceDate)}${overdue && s.due_date ? ` — overdue (due ${fmtDate(s.due_date)})` : ""}`
+                              : "No workflow dates yet"}
+                            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold ${BIC_TONE[bic.party]}`}>
+                            {bic.label}
+                            {days !== null && (
+                              <span className={`tabular-nums ${overdue ? "text-red-700 font-bold" : "opacity-60"}`}>· {days} d</span>
+                            )}
+                          </span>
+                        )
+                      })()}
+                    </td>
+                    <td className="px-3 py-1.5 whitespace-nowrap">
                       {late === "late"
                         ? <span className="inline-flex px-2 py-0.5 rounded-full text-[11px] font-semibold bg-red-100 text-red-700">Late</span>
                         : late === "ontime"
@@ -2147,6 +2281,13 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                   </tr>
                   )
                 })}
+                {rows.length === 0 && (
+                  <tr>
+                    <td colSpan={HEADERS.length + (showSelect ? 1 : 0)} className="px-4 py-10 text-center text-[13px] text-[#64748B]">
+                      No submittals match the current ball-in-court filter.
+                    </td>
+                  </tr>
+                )}
               </tbody>
             </table>
             </div>
@@ -2156,6 +2297,9 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                 const c = colorFor(s.csi_section)
                 const late = lateState(s)
                 const vendor = vendorLabel(s)
+                const bic = getBallInCourt(s)
+                const courtDays = daysInCourt(s, today)
+                const overdue = isOverdue(s, today)
                 return (
                 <div key={s.id} className={`rounded-xl border border-[#E2E8F0] border-l-4 ${c.border} p-3 shadow-sm ${c.bg}`}>
                   <div className="flex items-start justify-between gap-2 mb-1.5">
@@ -2187,6 +2331,16 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                     {s.submittal_type ? ` · ${s.submittal_type}` : ""}
                     {vendor ? ` · ${vendor}` : ""}
                   </p>
+                  <div className="mb-1.5">
+                    <span
+                      title={bic.sinceDate ? `Since ${fmtDate(bic.sinceDate)}` : "No workflow dates yet"}
+                      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold ${BIC_TONE[bic.party]}`}>
+                      {bic.label}
+                      {courtDays !== null && (
+                        <span className={`tabular-nums ${overdue ? "text-red-700 font-bold" : "opacity-60"}`}>· {courtDays} d</span>
+                      )}
+                    </span>
+                  </div>
                   {late && (
                     <p className={`text-[11px] mb-1.5 font-semibold ${late === "late" ? "text-red-600" : "text-green-700"}`}>
                       {late === "late" ? "Late" : "On Time"}
@@ -2213,6 +2367,9 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                 </div>
                 )
               })}
+              {rows.length === 0 && (
+                <p className="px-1 py-8 text-center text-[13px] text-[#64748B]">No submittals match the current filter.</p>
+              )}
             </div>
             </>
             )
