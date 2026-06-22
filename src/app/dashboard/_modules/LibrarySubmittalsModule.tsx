@@ -2005,9 +2005,9 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
             }
             const colorIdx = sectionColorMap(rows.map(r => r.csi_section))
             const colorFor = (sec: string | null) => SECTION_PALETTE[colorIdx.get(sec ?? "—") ?? 0]
-            const HEADERS = ["Subm. #", "Spec #", "Description", "Type of Subm.", "Vendor",
+            const HEADERS = ["Subm. #", "Spec #", "Description", "Ball-in-Court", "Type of Subm.", "Vendor",
               "Received", "To A/E", "Returned A/E", "Returned to Sub", "Approval (Days)",
-              "Status", "Ball-in-Court", "Late / On Time", "Source", "Actions"]
+              "Status", "Late / On Time", "Source", "Actions"]
             // Select mode (Session I) — adds a leading checkbox column + the
             // package-selection toolbar. Off during search to avoid ambiguity.
             const showSelect = selectMode && !isSearchMode
@@ -2192,6 +2192,25 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                         )}
                       </div>
                     </td>
+                    <td className="px-3 py-1.5 whitespace-nowrap">
+                      {(() => {
+                        const bic = getBallInCourt(s)
+                        const days = daysInCourt(s, today)
+                        const overdue = isOverdue(s, today)
+                        return (
+                          <span
+                            title={bic.sinceDate
+                              ? `Since ${fmtDate(bic.sinceDate)}${overdue && s.due_date ? ` — overdue (due ${fmtDate(s.due_date)})` : ""}`
+                              : "No workflow dates yet"}
+                            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold ${BIC_TONE[bic.party]}`}>
+                            {bic.label}
+                            {days !== null && (
+                              <span className={`tabular-nums ${overdue ? "text-red-700 font-bold" : "opacity-60"}`}>· {days} d</span>
+                            )}
+                          </span>
+                        )
+                      })()}
+                    </td>
                     <td className="px-3 py-1.5 text-[#64748B] whitespace-nowrap">{s.submittal_type ?? "—"}</td>
                     <td className="px-2 py-1.5">
                       <VendorCell
@@ -2214,25 +2233,6 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                         className="h-7 px-1.5 rounded border border-[#E2E8F0] text-[12px] text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40">
                         {LOG_STATUS_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
                       </select>
-                    </td>
-                    <td className="px-3 py-1.5 whitespace-nowrap">
-                      {(() => {
-                        const bic = getBallInCourt(s)
-                        const days = daysInCourt(s, today)
-                        const overdue = isOverdue(s, today)
-                        return (
-                          <span
-                            title={bic.sinceDate
-                              ? `Since ${fmtDate(bic.sinceDate)}${overdue && s.due_date ? ` — overdue (due ${fmtDate(s.due_date)})` : ""}`
-                              : "No workflow dates yet"}
-                            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold ${BIC_TONE[bic.party]}`}>
-                            {bic.label}
-                            {days !== null && (
-                              <span className={`tabular-nums ${overdue ? "text-red-700 font-bold" : "opacity-60"}`}>· {days} d</span>
-                            )}
-                          </span>
-                        )
-                      })()}
                     </td>
                     <td className="px-3 py-1.5 whitespace-nowrap">
                       {late === "late"
@@ -2326,11 +2326,6 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                     </div>
                     <StatusBadge status={s.review_status ?? "Received"} />
                   </div>
-                  <p className="text-[11px] text-[#64748B] mb-1">
-                    <span className={`inline-block px-1.5 rounded font-mono font-semibold ${c.chip}`}>{s.csi_section ?? "—"}</span>
-                    {s.submittal_type ? ` · ${s.submittal_type}` : ""}
-                    {vendor ? ` · ${vendor}` : ""}
-                  </p>
                   <div className="mb-1.5">
                     <span
                       title={bic.sinceDate ? `Since ${fmtDate(bic.sinceDate)}` : "No workflow dates yet"}
@@ -2341,6 +2336,11 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                       )}
                     </span>
                   </div>
+                  <p className="text-[11px] text-[#64748B] mb-1">
+                    <span className={`inline-block px-1.5 rounded font-mono font-semibold ${c.chip}`}>{s.csi_section ?? "—"}</span>
+                    {s.submittal_type ? ` · ${s.submittal_type}` : ""}
+                    {vendor ? ` · ${vendor}` : ""}
+                  </p>
                   {late && (
                     <p className={`text-[11px] mb-1.5 font-semibold ${late === "late" ? "text-red-600" : "text-green-700"}`}>
                       {late === "late" ? "Late" : "On Time"}
