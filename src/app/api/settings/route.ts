@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
+import { clampLogoScalePct, LOGO_SCALE_DEFAULT } from "@/lib/logo-scale"
 
 export async function GET() {
   const supabase = await createClient()
@@ -28,6 +29,9 @@ export async function GET() {
     address_line2: settings?.address_line2 ?? null,
     phone: settings?.phone ?? null,
     default_oh_p_percent: settings?.default_oh_p_percent ?? null,
+    // Clamped on the way out so a stale/out-of-range stored value never reaches
+    // the slider; missing row → the column default (130).
+    logo_scale_pct: settings ? clampLogoScalePct(settings.logo_scale_pct) : LOGO_SCALE_DEFAULT,
   })
 }
 
@@ -63,6 +67,16 @@ export async function PATCH(req: NextRequest) {
       }
       updates.default_oh_p_percent = n
     }
+  }
+
+  // Per-tenant logo size %. Column is NOT NULL — always store a clamped integer
+  // (50–200); non-numeric input falls back to the default rather than nulling.
+  if (body.logo_scale_pct !== undefined) {
+    const n = Number(body.logo_scale_pct)
+    if (!Number.isFinite(n)) {
+      return NextResponse.json({ error: "logo_scale_pct must be a number between 50 and 200" }, { status: 400 })
+    }
+    updates.logo_scale_pct = clampLogoScalePct(n)
   }
 
   if (Object.keys(updates).length === 0) {

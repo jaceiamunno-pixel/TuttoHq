@@ -2,6 +2,7 @@
 
 import React from "react";
 import "./submittal-coversheet.css";
+import { clampLogoScalePct } from "@/lib/logo-scale";
 
 export type StampBox = {
   role: "GC" | "Architect" | "Engineer" | "Subcontractor";
@@ -13,6 +14,10 @@ export type SubmittalCoversheetProps = {
   // Branding
   gcLogoUrl?: string;
   gcName?: string;
+  /** Per-tenant logo size % (company_settings.logo_scale_pct). Multiplies the
+   *  CSS 0.45in base height so the on-screen preview tracks the PDF size intent.
+   *  Width cap (1.6in, from .tt-brand__logo) is not scaled. */
+  logoScalePct?: number;
 
   // Project block
   projectName: string;
@@ -83,6 +88,7 @@ const StampCell = ({ stamp }: { stamp: StampBox }) => (
 export default function SubmittalCoversheet({
   gcLogoUrl,
   gcName,
+  logoScalePct,
   projectName,
   projectNumber,
   projectLocation,
@@ -120,6 +126,7 @@ export default function SubmittalCoversheet({
               src={gcLogoUrl}
               alt={gcName ?? "General Contractor"}
               className="tt-brand__logo"
+              style={{ maxHeight: `${(0.45 * (clampLogoScalePct(logoScalePct) / 100)).toFixed(3)}in` }}
             />
           ) : (
             <span className="tt-brand__name">{gcName ?? ""}</span>

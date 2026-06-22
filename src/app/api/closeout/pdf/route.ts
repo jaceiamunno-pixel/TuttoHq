@@ -55,6 +55,7 @@ export async function POST(req: NextRequest) {
     documentType: "Closeout Package",
     documentNumber: project.name,
     logoBytes,
+    logoScalePct: settingsRes.data?.logo_scale_pct ?? undefined,
   })
 
   // Project info

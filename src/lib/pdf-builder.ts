@@ -1,4 +1,5 @@
 import { PDFDocument, StandardFonts, rgb, PDFFont, PDFPage, PDFImage } from "pdf-lib"
+import { clampLogoScalePct } from "./logo-scale"
 
 // ─── Design tokens ────────────────────────────────────────────────────────────
 // The shared TuttoHQ PDF design system. Steel-blue "coversheet" skin: clean
@@ -72,6 +73,10 @@ export interface PDFDocMeta {
    *  set, the logo is also vertically centered on the title block instead of
    *  top-aligned. Width is always capped at 150pt regardless. */
   logoMaxH?: number
+  /** Per-tenant logo size as a PERCENT multiplier on the base height above
+   *  (company_settings.logo_scale_pct). Clamped 50–200; missing → 130. The 150pt
+   *  width cap is NOT scaled (distortion guard). */
+  logoScalePct?: number
   /** Page orientation. "landscape" swaps width/height — used for wide,
    *  many-column log tables (Submittal Log, Change-Order log). Default portrait. */
   orientation?: "portrait" | "landscape"
@@ -233,10 +238,12 @@ export class PDFBuilder {
       if (this.meta.logoBytes) {
         const img = await this.embedImage(this.meta.logoBytes)
         if (img) {
-          // Height capped at logoMaxH (default 34); width always capped at 150 so
-          // a wide wordmark can't reach the title. min(...,1) keeps it from
-          // upscaling past native resolution.
-          const maxH = this.meta.logoMaxH ?? 34
+          // Height capped at logoMaxH (default 34) scaled by the tenant's
+          // logo_scale_pct; width always capped at 150 so a wide wordmark can't
+          // reach the title. min(...,1) keeps it from upscaling past native
+          // resolution.
+          const baseMaxH = this.meta.logoMaxH ?? 34
+          const maxH = baseMaxH * (clampLogoScalePct(this.meta.logoScalePct) / 100)
           const scale = Math.min(maxH / img.height, 150 / img.width, 1)
           const dw = img.width * scale, dh = img.height * scale
           // Default: top-aligned with the title. With an enlarged logo, center it
