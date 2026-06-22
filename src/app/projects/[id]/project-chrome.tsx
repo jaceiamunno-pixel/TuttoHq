@@ -7,6 +7,7 @@ import { createClient } from "@/lib/supabase/client"
 import type { Project, TeamMember } from "@/app/dashboard/_shared/types"
 import { isFeatureEnabled, type FeatureKey } from "@/lib/features"
 import { useProjectFavorites, sortByFavorite } from "@/app/dashboard/_shared/use-project-favorites"
+import { rememberLastProject } from "@/lib/last-project"
 
 // The project verified by the server-side route guard (layout.tsx). Only the
 // fields the chrome needs to display.
@@ -202,6 +203,13 @@ export default function ProjectChrome({ project, children }: { project: ShellPro
     fetch("/api/projects").then(r => r.json()).then(d => setAppProjects(d.projects ?? [])).catch(() => {})
     fetch("/api/team").then(r => r.json()).then(d => setTeamMembers(d.members ?? [])).catch(() => {})
   }, [])
+
+  // Remember the open project (client-side) so the daily-report flow is
+  // reachable offline from the dashboard shell — the grid there is /api-driven
+  // and empty in a dead zone (ADR-009 Phase 1, Step 1.1).
+  useEffect(() => {
+    rememberLastProject({ id: project.id, name: project.name })
+  }, [project.id, project.name])
 
   function navigateModule(m: string) {
     if (m === "library") { router.push("/library"); return }

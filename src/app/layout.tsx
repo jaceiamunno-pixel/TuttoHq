@@ -2,10 +2,14 @@
 import { Inter } from "next/font/google"
 import "./globals.css"
 import { KeyboardNavProvider } from "@/components/keyboard-nav"
+import PwaProvider from "@/components/pwa-provider"
 
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
+  // Tints the browser/standalone UI chrome to the navy brand surface (Chrome
+  // reads this; iOS reads the apple meta below). ADR-009 Phase 1.
+  themeColor: "#0A1628",
 }
 
 const inter = Inter({ subsets: ["latin"] })
@@ -29,6 +33,23 @@ export const metadata: Metadata = {
     title: "TuttoHQ — Construction Document Management Made Simple",
     description: "AI-classified submittals, spec-book ingestion, and a markup-ready drawing log, plus RFIs, COs, and POs. The affordable alternative to enterprise construction platforms — unlimited users, set up in under 10 minutes.",
   },
+  // ── PWA installability (ADR-009 Phase 1) ──────────────────────────────────
+  // The <link rel="manifest"> is auto-injected by the app/manifest.ts route
+  // convention. iOS ignores the manifest for home-screen install, so it still
+  // needs the legacy apple meta tags + an apple-touch-icon below.
+  applicationName: "TuttoHQ",
+  appleWebApp: {
+    capable: true,
+    title: "TuttoHQ",
+    // "default" keeps the iOS status bar non-overlapping with the existing
+    // fixed app header (no safe-area work needed in Step 1). Revisit with
+    // "black-translucent" + safe-area insets when the shell is made inset-aware.
+    statusBarStyle: "default",
+  },
+  formatDetection: { telephone: false },
+  icons: {
+    apple: [{ url: "/icons/apple-touch-icon.png", sizes: "180x180", type: "image/png" }],
+  },
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
@@ -41,6 +62,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <KeyboardNavProvider>
           {children}
         </KeyboardNavProvider>
+        {/* PWA glue: SW registration + update prompt, offline banner, durable
+            storage, reconnect session re-verify. Renders only transient
+            overlays; inert otherwise. */}
+        <PwaProvider />
       </body>
     </html>
   )

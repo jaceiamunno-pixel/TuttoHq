@@ -1,0 +1,18 @@
+{
+  // Dedicated type-check config for the service worker (src/app/sw.ts).
+  //
+  // The SW needs the WebWorker lib (ServiceWorkerGlobalScope, FetchEvent,
+  // clients, …), but the app deliberately keeps lib = ["dom"] and casts `self`
+  // in its workers. Rather than leak the worker lib into app type-checking, the
+  // SW is excluded from the main tsconfig and checked here instead.
+  //
+  // Run: npx tsc -p tsconfig.sw.json --noEmit
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "lib": ["webworker", "esnext"],
+    "types": [],
+    "noEmit": true
+  },
+  "include": ["src/app/sw.ts"],
+  "exclude": ["node_modules"]
+}

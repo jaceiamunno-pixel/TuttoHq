@@ -60,5 +60,13 @@ export async function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico|api/gmail-intake|api/cron).*)"],
+  // PWA surfaces are excluded so the auth check never rewrites them to a /login
+  // redirect (ADR-009 Phase 1): the service worker script (sw.js), the web
+  // manifest, the icons, and the static offline-fallback document must all be
+  // fetchable regardless of session state. The SW itself answers protected
+  // navigations from cache when offline, so middleware getUser() never runs in
+  // a dead zone.
+  matcher: [
+    "/((?!_next/static|_next/image|favicon.ico|api/gmail-intake|api/cron|sw.js|manifest.webmanifest|icons|offline).*)",
+  ],
 }
