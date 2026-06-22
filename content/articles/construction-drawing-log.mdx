@@ -1,0 +1,67 @@
+---
+title: "Drawing Logs: How General Contractors Keep Sheets and Revisions Straight"
+slug: "construction-drawing-log"
+description: "A drawing log tracks every sheet in a project's drawing set and every revision to it. Here's what belongs in one, why teams build on the wrong sheet, and how sheet-level revision tracking prevents it."
+publishedDate: "2026-06-22"
+author: "TuttoHQ"
+---
+
+A drawing log is the master index of a project's drawing set — every sheet, its discipline, its current revision, and its history. Its job is to answer one question instantly for anyone on the project: *is this the current version of this sheet, or am I about to build off something that's been superseded?*
+
+That question isn't academic. Building off a superseded sheet is one of the most expensive mistakes in construction, because the work is already in place before anyone notices the drawing changed. A drawing log exists to make the current version unambiguous.
+
+## What a drawing set actually contains
+
+Construction drawings are organized by discipline, and the sheet number encodes which one. The first letter (or letters) tells you the discipline:
+
+- **A** — Architectural
+- **S** — Structural
+- **C** — Civil
+- **G** — General
+- **M** — Mechanical
+- **E** — Electrical
+- **P** — Plumbing
+- **FP** — Fire Protection
+
+So a sheet numbered A-101 is an architectural sheet; S-201 is structural; M-401 is mechanical. A full commercial set can run hundreds of sheets across these disciplines, and each sheet can be revised multiple times over the life of the project through addenda, bulletins, ASIs, and revised issues.
+
+## What belongs in the log
+
+A working drawing log captures enough per sheet to manage the set without opening every file:
+
+| Field | Why it matters |
+|-------|----------------|
+| Sheet number | The stable identifier (A-101). |
+| Discipline | Derived from the sheet number; drives how the set is browsed. |
+| Sheet title | What the sheet shows. |
+| Current revision | The single most important field — which version is live. |
+| Revision history | Every prior version, so superseded sheets are traceable, not lost. |
+| Issue date | When the current revision was issued. |
+
+The current-revision field is the heart of it. Everything else is reference; that one field is what tells the crew in the field whether the sheet in their hands is the one to build from.
+
+## Why teams build off the wrong sheet
+
+The failures are predictable, and they almost always come from the log and the actual files drifting apart:
+
+- **Revisions replace the original instead of stacking on it.** When a revised A-101 comes in and overwrites the old A-101, the history is gone — and if anyone was mid-work off the old version, there's no record of what changed.
+- **Whole-set re-issues bury the change.** A new full set gets issued for a handful of revised sheets, and the few that actually changed are lost in a 300-sheet drop. Nobody knows which sheets to re-check.
+- **The log lags the files.** A revised sheet lands in a folder but the log still points at the old revision, so the index actively misleads.
+- **No single source of truth.** Different team members hold different versions of the set, and there's no authoritative answer to "what's current."
+
+## Sheet-level revision tracking is the fix
+
+The discipline that keeps a drawing log honest is tracking revisions at the **sheet level**, not the set level:
+
+1. **Each sheet has its own revision chain.** A-101 might be on revision 3 while A-102 is still on revision 1. The log tracks each sheet's current revision independently, so a change to one sheet doesn't muddy the others.
+2. **A revision is a new version, never a replacement.** When a sheet is revised, the new version is added to that sheet's history and becomes current — the old version stays accessible. You can always see what changed and when, which is exactly what you need when a dispute or a field question comes up.
+3. **The current version is one click away.** The log doesn't just *say* A-101 is on revision 3; it links to the actual current file. The status and the document never drift apart.
+4. **Browse by discipline, find by number.** Because the set is large, the log should group sheets by discipline and let you search by sheet number or title — so finding the current structural foundation sheet takes seconds, not scrolling.
+
+This is also why sheet-level tracking is *practical* and not just tidy: revising one sheet stores one sheet, not the whole set. Keeping every revision of every sheet is entirely manageable when a revision is a single 2–10 MB sheet rather than a re-stored 300-sheet set.
+
+## The bottom line
+
+A drawing log is the authoritative answer to "is this the current sheet?" It earns that authority by tracking revisions at the sheet level — each sheet with its own independent revision chain, every revision kept as a new version rather than overwriting the last, and the current file always one click from the log entry. Build it that way and nobody builds off a superseded drawing. Let the log and the files drift apart, or let whole-set re-issues bury the sheets that actually changed, and you find out about the stale drawing after the work is already in place.
+
+TuttoHQ splits an uploaded drawing set into individual sheets, auto-detects discipline from the sheet number, and keeps every revision as a new version under its sheet — so the current drawing is always unambiguous and the full history is always there. [Start a free trial](/signup) to keep your drawing set straight.
