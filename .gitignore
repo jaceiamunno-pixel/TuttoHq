@@ -6,7 +6,7 @@ node_modules/
 .vercel
 
 # TypeScript incremental build cache
-tsconfig.tsbuildinfo
+*.tsbuildinfo
 
 # Local debugging / Excel-export harness
 scripts/
@@ -16,3 +16,9 @@ scripts/out/
 
 # Local Claude Code state
 .claude/
+
+# Serwist build artifacts (the SW + injected precache manifest are generated
+# from src/app/sw.ts on every build — never hand-edit or commit them).
+/public/sw.js
+/public/sw.js.map
+/public/swe-worker-*.js

@@ -17,5 +17,8 @@
     "paths": { "@/*": ["./src/*"] }
   },
   "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],
-  "exclude": ["node_modules"]
+  // The service worker is type-checked separately (tsconfig.sw.json) under the
+  // WebWorker lib so the worker globals never leak into app type-checking;
+  // public/sw.js is the Serwist build artifact. Both are excluded here.
+  "exclude": ["node_modules", "src/app/sw.ts", "public/sw.js"]
 }
