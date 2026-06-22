@@ -14,7 +14,7 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
 
   const [subRes, settingsRes] = await Promise.all([
     supabase.from("submittals").select("*").eq("id", id).maybeSingle(),
-    supabase.from("company_settings").select("logo_path").maybeSingle(),
+    supabase.from("company_settings").select("logo_path, logo_scale_pct").maybeSingle(),
   ])
 
   const sub = subRes.data
@@ -45,6 +45,7 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
     documentType: "Submittal Transmittal",
     documentNumber: sub.submittal_number,
     logoBytes,
+    logoScalePct: settingsRes.data?.logo_scale_pct ?? undefined,
   })
 
   if (project) {

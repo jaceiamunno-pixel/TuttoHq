@@ -57,6 +57,8 @@ export interface CloseoutPackagePdfInput {
   project: { name?: string | null; number?: string | null; location?: string | null; gc_name?: string | null; architect?: string | null }
   gcName: string
   logoBytes: ArrayBuffer | null
+  /** Per-tenant logo size percent (company_settings.logo_scale_pct). */
+  logoScalePct?: number | null
   dueDate: string | null
   generationDate: Date
   items: CloseoutPackagePdfItem[]
@@ -76,6 +78,7 @@ export async function buildCloseoutPackagePdf(input: CloseoutPackagePdfInput): P
     documentNumber: input.trackingRef,
     generationDate: input.generationDate,
     logoBytes: input.logoBytes,
+    logoScalePct: input.logoScalePct ?? undefined,
     brandName: input.gcName,
   })
 
@@ -165,7 +168,7 @@ export async function composeCloseoutPackagePdf(
 
   const [projectRes, settingsRes] = await Promise.all([
     supabase.from("projects").select("name, number, location, gc_name, architect").eq("id", pkgRow.project_id).maybeSingle(),
-    supabase.from("company_settings").select("logo_path").maybeSingle(),
+    supabase.from("company_settings").select("logo_path, logo_scale_pct").maybeSingle(),
   ])
   const project = (projectRes.data ?? {}) as {
     name?: string | null; number?: string | null; location?: string | null
@@ -206,6 +209,7 @@ export async function composeCloseoutPackagePdf(
     project,
     gcName: project.gc_name ?? "",
     logoBytes,
+    logoScalePct: settingsRes.data?.logo_scale_pct ?? undefined,
     dueDate: pkgRow.due_date,
     generationDate: new Date(),
     items,

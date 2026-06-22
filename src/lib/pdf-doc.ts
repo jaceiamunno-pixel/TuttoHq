@@ -12,6 +12,7 @@ import { PDFDocument, PDFFont, PDFPage, StandardFonts, rgb } from "pdf-lib"
 import fontkit from "@pdf-lib/fontkit"
 import fs from "node:fs"
 import path from "node:path"
+import { clampLogoScalePct } from "./logo-scale"
 
 export type RGB = ReturnType<typeof rgb>
 
@@ -61,6 +62,9 @@ export interface PdfDocAssets {
   phone: string | null
   addressLine1?: string | null
   addressLine2?: string | null
+  /** Per-tenant logo size as a PERCENT multiplier on the 52pt base height
+   *  (company_settings.logo_scale_pct). Clamped 50–200; missing → 130. */
+  logoScalePct?: number | null
 }
 
 // ─── Lightweight renderer shared by all documents ───────────────────────────────
@@ -276,7 +280,10 @@ export async function companyBlock(d: PdfDoc, assets: PdfDocAssets) {
   if (assets.logoBytes) {
     const emb = await d.embedImage(assets.logoBytes)
     if (emb) {
-      const scale = Math.min(52 / emb.h, 150 / emb.w, 1)
+      // Base height 52pt scaled by the tenant's logo_scale_pct; width stays
+      // capped at 150pt (distortion guard, never scaled).
+      const maxH = 52 * (clampLogoScalePct(assets.logoScalePct) / 100)
+      const scale = Math.min(maxH / emb.h, 150 / emb.w, 1)
       const dw = emb.w * scale, dh = emb.h * scale
       d.page.drawImage(emb.img, { x: M, y: top - dh, width: dw, height: dh })
       textX = M + dw + 16

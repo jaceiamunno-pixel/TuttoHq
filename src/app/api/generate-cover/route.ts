@@ -48,7 +48,7 @@ export async function POST(req: NextRequest) {
   // Fetch company logo as raw bytes
   const { data: settings } = await supabase
     .from("company_settings")
-    .select("logo_path")
+    .select("logo_path, logo_scale_pct")
     .maybeSingle()
 
   let logoBytes: ArrayBuffer | null = null
@@ -109,7 +109,7 @@ export async function POST(req: NextRequest) {
     copyTo:                copyTo         || "",
   }
 
-  const coverBytes = await buildCoversheetPdf(coversheetProps, logoBytes, reviewer)
+  const coverBytes = await buildCoversheetPdf(coversheetProps, logoBytes, reviewer, settings?.logo_scale_pct ?? undefined)
 
   // Merge cover page with original submittal PDF (if any)
   const mergedDoc = await PDFDocument.create()

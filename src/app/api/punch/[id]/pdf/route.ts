@@ -21,7 +21,7 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
     if (p) project = p
   }
 
-  const { data: settings } = await supabase.from("company_settings").select("logo_path").maybeSingle()
+  const { data: settings } = await supabase.from("company_settings").select("logo_path, logo_scale_pct").maybeSingle()
   let logoBytes: ArrayBuffer | null = null
   if (settings?.logo_path) {
     const { data: blob } = await supabase.storage.from("company-assets").download(settings.logo_path)
@@ -32,6 +32,7 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
     documentType: "Punch List Item",
     documentNumber: item.item_number,
     logoBytes,
+    logoScalePct: settings?.logo_scale_pct ?? undefined,
   })
 
   if (project.name || project.number) {

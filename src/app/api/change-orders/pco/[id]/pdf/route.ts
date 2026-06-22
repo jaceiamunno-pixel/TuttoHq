@@ -53,7 +53,7 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
     if (p) project = p
   }
   const { data: settings } = await supabase.from("company_settings")
-    .select("logo_path, address_line1, address_line2, phone").maybeSingle()
+    .select("logo_path, address_line1, address_line2, phone, logo_scale_pct").maybeSingle()
   let logoBytes: ArrayBuffer | null = null
   if (settings?.logo_path) {
     const { data: blob } = await supabase.storage.from("company-assets").download(settings.logo_path)
@@ -100,6 +100,7 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
     phone: settings?.phone ?? null,
     addressLine1: settings?.address_line1 ?? null,
     addressLine2: settings?.address_line2 ?? null,
+    logoScalePct: settings?.logo_scale_pct ?? undefined,
   })
 
   // ── Store at fixed paths + return fresh signed URLs ──────────────────────────

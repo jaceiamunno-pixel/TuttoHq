@@ -32,7 +32,7 @@ export async function POST(req: NextRequest) {
   if (!pcos || pcos.length === 0) return NextResponse.json({ error: "No PCOs to import" }, { status: 400 })
 
   // Company letterhead context — fetched once for the whole batch.
-  const { data: settings } = await supabase.from("company_settings").select("logo_path, phone").maybeSingle()
+  const { data: settings } = await supabase.from("company_settings").select("logo_path, phone, logo_scale_pct").maybeSingle()
   let logoBytes: ArrayBuffer | null = null
   if (settings?.logo_path) {
     const { data: blob } = await supabase.storage.from("company-assets").download(settings.logo_path)
@@ -153,7 +153,7 @@ export async function POST(req: NextRequest) {
       try {
         const docData = payloadToDocData(p, { name: ctx.name, number: ctx.number, location: ctx.location })
         const companyName = companyRow?.name ?? ctx.gc_name ?? null
-        const { cover, backup } = await buildPcoDocuments(docData, { logoBytes, sigBytes: null, companyName, phone: settings?.phone ?? null })
+        const { cover, backup } = await buildPcoDocuments(docData, { logoBytes, sigBytes: null, companyName, phone: settings?.phone ?? null, logoScalePct: settings?.logo_scale_pct ?? undefined })
         const backupPath = `${companyId}/change-orders/${newId}/backup.pdf`
         const coverPath  = `${companyId}/change-orders/${newId}/cover.pdf`
         await supabase.storage.from("submittals").upload(backupPath, Buffer.from(backup), { contentType: "application/pdf", upsert: true })

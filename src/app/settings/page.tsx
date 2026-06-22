@@ -22,6 +22,13 @@ import {
   MAX_CADENCE_DAY,
   MAX_REMINDER_COUNT,
 } from "@/lib/reminder-settings"
+import { LOGO_SCALE_MIN, LOGO_SCALE_MAX, LOGO_SCALE_DEFAULT, clampLogoScalePct } from "@/lib/logo-scale"
+
+// Live logo-size preview geometry (mirrors the PDF header so the on-screen
+// approximation matches generated output): the submittal coversheet's 42pt base
+// height, the 526pt content width, drawn into a 460px-wide mock header.
+const LOGO_PREVIEW_BASE_MAXH = 42
+const LOGO_PREVIEW_PX_PER_PT = 460 / 526
 
 // Settings is organized into 5 left-rail sections (ADR-006: 11 flat tabs → 5
 // grouped sections). Each "View" is a leaf page under a section; single-page
@@ -352,6 +359,16 @@ export default function SettingsPage() {
   const [uploadingCover, setUploadingCover] = useState(false)
   const [companyMessage, setCompanyMessage] = useState<{ text: string; ok: boolean } | null>(null)
 
+  // ── Per-tenant logo size (company_settings.logo_scale_pct) ────────────────
+  const [logoScalePct, setLogoScalePct]           = useState<number>(LOGO_SCALE_DEFAULT)
+  const [savedLogoScalePct, setSavedLogoScalePct] = useState<number>(LOGO_SCALE_DEFAULT)
+  const [savingLogoScale, setSavingLogoScale]     = useState(false)
+  // Natural pixel dims of the uploaded logo — the live preview needs them to run
+  // the exact PDF fit math (Math.min(maxH/h, 150/w, 1)). Captured on img load.
+  const [logoNatural, setLogoNatural]   = useState<{ w: number; h: number } | null>(null)
+  const [previewSheetUrl, setPreviewSheetUrl] = useState<string | null>(null)
+  const [previewingSheet, setPreviewingSheet] = useState(false)
+
   // ── Company-wide reminder defaults (Session K2) ───────────────────────────
   // Saved values from /api/settings/reminders are mirrored into the input
   // strings; "dirty" is computed against the saved snapshot so Save disables
@@ -480,7 +497,12 @@ export default function SettingsPage() {
   useEffect(() => {
     fetch("/api/settings")
       .then(r => r.json())
-      .then(d => { setLogoUrl(d.logo_url); setHasCoverPage(d.has_cover_page); setDisplayName(d.display_name ?? ""); setSavedDisplayName(d.display_name ?? "") })
+      .then(d => {
+        setLogoUrl(d.logo_url); setHasCoverPage(d.has_cover_page)
+        setDisplayName(d.display_name ?? ""); setSavedDisplayName(d.display_name ?? "")
+        const pct = clampLogoScalePct(d.logo_scale_pct)
+        setLogoScalePct(pct); setSavedLogoScalePct(pct)
+      })
       .finally(() => setLoadingCompany(false))
 
     fetch("/api/settings/reminders")
@@ -692,6 +714,54 @@ export default function SettingsPage() {
     finally { setSavingDisplayName(false) }
   }
 
+  // Persist the logo size %. Admin-gated server-side (PATCH /api/settings). The
+  // value is clamped both here-adjacent (the slider enforces 50–200) and again
+  // on the server. Returns whether the write succeeded.
+  async function saveLogoScale(): Promise<boolean> {
+    setSavingLogoScale(true)
+    try {
+      const res = await fetch("/api/settings", {
+        method: "PATCH", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ logo_scale_pct: logoScalePct }),
+      })
+      if (res.ok) { setSavedLogoScalePct(logoScalePct); flashCompany("Logo size saved"); return true }
+      flashCompany("Could not save logo size", false); return false
+    } catch { flashCompany("Could not save logo size", false); return false }
+    finally { setSavingLogoScale(false) }
+  }
+
+  // Render ONE real coversheet at the chosen size, on demand. Saves first when
+  // the slider is dirty so the generated sheet (generate-cover reads the stored
+  // value) reflects exactly what's on screen. No submittal/project ids are sent,
+  // so the route renders a cover only and writes nothing to the DB or storage.
+  async function handlePreviewSheet() {
+    setPreviewingSheet(true)
+    try {
+      if (logoScalePct !== savedLogoScalePct) {
+        const ok = await saveLogoScale()
+        if (!ok) return
+      }
+      const res = await fetch("/api/generate-cover", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          projectName: "Sample Project",
+          projectNumber: "2025-001",
+          gcName: displayName || "",
+          specSectionTitle: "Logo Size Preview",
+          specSectionNo: "01 00 00",
+          description: "Representative coversheet rendered at your selected logo size.",
+          submittalNo: "1",
+          revisionNo: "0",
+        }),
+      })
+      if (!res.ok) { flashCompany("Could not render preview sheet", false); return }
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      setPreviewSheetUrl(prev => { if (prev) URL.revokeObjectURL(prev); return url })
+    } catch { flashCompany("Could not render preview sheet", false) }
+    finally { setPreviewingSheet(false) }
+  }
+
   function flashTeam(text: string, ok = true) {
     setTeamMessage({ text, ok })
     setTimeout(() => setTeamMessage(null), 3000)
@@ -766,7 +836,7 @@ export default function SettingsPage() {
     setUploadingLogo(true)
     try {
       const data = await uploadAsset("logo", file)
-      if (data.logo_url) setLogoUrl(data.logo_url)
+      if (data.logo_url) { setLogoUrl(data.logo_url); setLogoNatural(null) }
       flashCompany("Logo updated successfully")
     } catch (err) {
       console.error("[settings] logo upload failed", err)
@@ -1645,6 +1715,89 @@ export default function SettingsPage() {
                     </div>
                   </div>
                   <input ref={logoInputRef} type="file" accept="image/*" onChange={handleLogoChange} className="hidden" />
+
+                  {/* Logo size on PDFs — per-tenant scale across every generated document */}
+                  <div className="mt-5 pt-5 border-t border-[#E2E8F0]">
+                    <h3 className="text-[13px] font-semibold text-[#0F172A] mb-0.5">Logo size on PDFs</h3>
+                    <p className="text-[12px] text-[#64748B] mb-3">
+                      Scales your logo on every generated PDF — submittal coversheets, RFIs, change orders, purchase orders, daily reports, and more. The preview below uses the same fit math as the PDF.
+                    </p>
+                    <div className="flex items-center gap-3 max-w-[460px] mb-4">
+                      <input
+                        type="range"
+                        min={LOGO_SCALE_MIN} max={LOGO_SCALE_MAX} step={5}
+                        value={logoScalePct}
+                        onChange={e => setLogoScalePct(Number(e.target.value))}
+                        disabled={currentRole !== "admin"}
+                        className="flex-1 accent-[#7B9BB5] disabled:opacity-50"
+                      />
+                      <span className="w-12 text-right text-[13px] font-semibold text-[#0F172A] tabular-nums">{logoScalePct}%</span>
+                      <button
+                        onClick={saveLogoScale}
+                        disabled={currentRole !== "admin" || savingLogoScale || logoScalePct === savedLogoScalePct}
+                        className="h-9 px-4 rounded-md bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors disabled:opacity-50 flex-shrink-0"
+                      >
+                        {savingLogoScale ? "Saving…" : "Save"}
+                      </button>
+                    </div>
+                    {currentRole !== "admin" && (
+                      <p className="text-[11px] text-[#94A3B8] mb-3 -mt-2">Only company admins can change the logo size.</p>
+                    )}
+
+                    {/* Representative live preview — approximate document header, no server round-trip */}
+                    <p className="text-[11px] text-[#64748B] mb-1.5">Approximate header preview</p>
+                    <div className="rounded-lg border border-[#E2E8F0] bg-white px-4 py-3 max-w-[480px]">
+                      {logoUrl ? (
+                        <div className="flex items-start justify-between gap-4" style={{ minHeight: 56 }}>
+                          <div className="flex-1 min-w-0">
+                            <div className="text-[13px] font-semibold text-[#0F172A] truncate">Submittal Coversheet</div>
+                            <div className="text-[10px] text-[#94A3B8] mt-0.5">CS-001 · Generated preview</div>
+                          </div>
+                          {(() => {
+                            const sc = clampLogoScalePct(logoScalePct) / 100
+                            let wPx: number | undefined, hPx: number | undefined
+                            if (logoNatural) {
+                              const maxH = LOGO_PREVIEW_BASE_MAXH * sc
+                              const fit = Math.min(maxH / logoNatural.h, 150 / logoNatural.w, 1)
+                              wPx = logoNatural.w * fit * LOGO_PREVIEW_PX_PER_PT
+                              hPx = logoNatural.h * fit * LOGO_PREVIEW_PX_PER_PT
+                            }
+                            return (
+                              <img
+                                src={logoUrl}
+                                alt="Logo size preview"
+                                onLoad={e => setLogoNatural({ w: e.currentTarget.naturalWidth, h: e.currentTarget.naturalHeight })}
+                                style={hPx ? { width: wPx, height: hPx } : { maxHeight: 48 }}
+                                className="object-contain flex-shrink-0"
+                              />
+                            )
+                          })()}
+                        </div>
+                      ) : (
+                        <p className="text-[12px] text-[#94A3B8]">Upload a logo to preview its size.</p>
+                      )}
+                    </div>
+
+                    {/* On-demand real sheet — one true render per click */}
+                    <div className="flex items-center gap-3 mt-4">
+                      <button
+                        onClick={handlePreviewSheet}
+                        disabled={!logoUrl || previewingSheet}
+                        className="h-8 px-4 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] hover:bg-[#F4F5F7] transition-colors disabled:opacity-50"
+                      >
+                        {previewingSheet ? "Rendering…" : "Preview on real sheet"}
+                      </button>
+                      <span className="text-[11px] text-[#64748B]">Saves your size, then renders one real coversheet PDF.</span>
+                    </div>
+                    {previewSheetUrl && (
+                      <iframe
+                        src={previewSheetUrl}
+                        title="Logo size preview sheet"
+                        className="mt-3 w-full max-w-[480px] rounded-lg border border-[#E2E8F0]"
+                        style={{ height: 360 }}
+                      />
+                    )}
+                  </div>
 
                   <div className="mt-5 pt-5 border-t border-[#E2E8F0]">
                     <h3 className="text-[13px] font-semibold text-[#0F172A] mb-0.5">Company display name</h3>

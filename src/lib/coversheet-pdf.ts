@@ -27,6 +27,7 @@ export async function buildCoversheetPdf(
   props: SubmittalCoversheetProps,
   logoBytes: ArrayBuffer | null = null,
   reviewer: CoversheetReviewer | null = null,
+  logoScalePct?: number | null,
 ): Promise<Uint8Array> {
   const {
     gcName,
@@ -42,8 +43,11 @@ export async function buildCoversheetPdf(
     logoBytes,
     brandName: gcName || null,
     // Enlarge the square company seal so it fills the header band and sits
-    // centered against the title block (vs. the compact 34pt default).
+    // centered against the title block (vs. the compact 34pt default). The
+    // tenant's logo_scale_pct then multiplies this 42pt base, so the coversheet
+    // seal stays proportionally larger than other docs while still scaling.
     logoMaxH: 42,
+    logoScalePct: logoScalePct ?? undefined,
   })
 
   // Project block
