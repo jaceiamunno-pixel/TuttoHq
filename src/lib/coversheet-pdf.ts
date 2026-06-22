@@ -41,6 +41,9 @@ export async function buildCoversheetPdf(
     documentType: "Submittal Coversheet",
     logoBytes,
     brandName: gcName || null,
+    // Enlarge the square company seal so it fills the header band and sits
+    // centered against the title block (vs. the compact 34pt default).
+    logoMaxH: 42,
   })
 
   // Project block

@@ -67,6 +67,11 @@ export interface PDFDocMeta {
   logoBytes?: ArrayBuffer | null
   /** Company name — drawn top-right in place of the logo when no logo is set. */
   brandName?: string | null
+  /** Max rendered height (pt) of the header logo. Defaults to 34 (compact mark).
+   *  Set larger (e.g. the coversheet's square seal) to fill the header band; when
+   *  set, the logo is also vertically centered on the title block instead of
+   *  top-aligned. Width is always capped at 150pt regardless. */
+  logoMaxH?: number
   /** Page orientation. "landscape" swaps width/height — used for wide,
    *  many-column log tables (Submittal Log, Change-Order log). Default portrait. */
   orientation?: "portrait" | "landscape"
@@ -228,9 +233,18 @@ export class PDFBuilder {
       if (this.meta.logoBytes) {
         const img = await this.embedImage(this.meta.logoBytes)
         if (img) {
-          const scale = Math.min(34 / img.height, 150 / img.width, 1)
+          // Height capped at logoMaxH (default 34); width always capped at 150 so
+          // a wide wordmark can't reach the title. min(...,1) keeps it from
+          // upscaling past native resolution.
+          const maxH = this.meta.logoMaxH ?? 34
+          const scale = Math.min(maxH / img.height, 150 / img.width, 1)
           const dw = img.width * scale, dh = img.height * scale
-          this.page.drawImage(img, { x: this.M + this.CW - dw, y: top - dh, width: dw, height: dh })
+          // Default: top-aligned with the title. With an enlarged logo, center it
+          // on the title + subtitle block (title baseline top-15, subtitle
+          // baseline top-30 → block center ≈ top-17) so the seal sits balanced
+          // against the title and still clears the header rule at top-42.
+          const y = this.meta.logoMaxH ? (top - 17) - dh / 2 : top - dh
+          this.page.drawImage(img, { x: this.M + this.CW - dw, y, width: dw, height: dh })
           logoDrawn = true
         }
       }
