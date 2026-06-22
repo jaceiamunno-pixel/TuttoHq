@@ -18,6 +18,7 @@ import {
   listPhotosForSavedReport,
   putDailyDraft,
   putPendingDailyReport,
+  reconcileOrphanedDailyPhotos,
   removePendingDailyReport,
   tagDraftWithSavedReport,
 } from "@/lib/idb-photos"
@@ -84,6 +85,22 @@ export default function DailyModule({ globalProjectId, appProjects, teamMembers 
   const [draftPhotos, setDraftPhotos]                 = useState<DailyDraftPhotoRow[]>([])
   const [photoCompressProgress, setPhotoCompressProgress] = useState<{ done: number; total: number } | null>(null)
   const [dailyPhotoUploadError, setDailyPhotoUploadError] = useState("")
+  // ── Unified "photo issues on this report" model ─────────────────────────
+  // Replaces the transient last-wins dailyPhotoUploadError for create-path
+  // issues so a dropped/deferred photo is LOUD and persistent, never silent.
+  //   droppedPhotoNames  — files that failed to COMPRESS: they never reached
+  //                        IDB and will NOT attach. Accumulated across the
+  //                        batch/session (not last-wins).
+  //   droppedAck         — the user has seen the dropped list and explicitly
+  //                        chosen to create the report without them.
+  //   photoAttachDeferred — a tag failure left photos safe in IDB but unlinked;
+  //                        the report still saved, the photos will be retried
+  //                        (mount sweep + a Create retry re-tag them).
+  const [droppedPhotoNames, setDroppedPhotoNames] = useState<string[]>([])
+  const [droppedAck, setDroppedAck] = useState(false)
+  const [photoAttachDeferred, setPhotoAttachDeferred] = useState(false)
+  // One-shot guard so the orphan-reconciliation sweep runs once per mount.
+  const didSweepRef = useRef(false)
   const dailyPhotosToAddRef = useRef<HTMLInputElement>(null)
   // Direct-camera capture on the New Report form. Same handler as the
   // picker — both routes feed ingestPhotosToDraft so behavior is
@@ -203,6 +220,10 @@ export default function DailyModule({ globalProjectId, appProjects, teamMembers 
   // any user interaction with the form.
   function openNewDailyDraft() {
     setDailyPhotoUploadError("")
+    // Clean slate for the unified photo-issues surface on a fresh New Report.
+    setDroppedPhotoNames([])
+    setDroppedAck(false)
+    setPhotoAttachDeferred(false)
     if (dailyPhotosToAddRef.current) dailyPhotosToAddRef.current.value = ""
     if (dailyTakePhotoRef.current)  dailyTakePhotoRef.current.value  = ""
     if (!draftId) {
@@ -254,7 +275,29 @@ export default function DailyModule({ globalProjectId, appProjects, teamMembers 
   useEffect(() => {
     let cancelled = false
     refreshPendingReports()
-    drainPhotoQueue().then(() => {
+    // FIX 4 — one-shot orphan-reconciliation sweep on mount, BEFORE the first
+    // drain, so any photo re-tagged here enters the by_target index and uploads
+    // in the same pass. Guarded to run once per mount. Local-only; the
+    // safe-tag predicate lives in reconcileOrphanedDailyPhotos.
+    const reconcileThenDrain = async () => {
+      if (!didSweepRef.current) {
+        didSweepRef.current = true
+        try {
+          const activeDraftId =
+            typeof window !== "undefined" ? window.localStorage.getItem(ACTIVE_DAILY_DRAFT_KEY) : null
+          const { repaired, reports } = await reconcileOrphanedDailyPhotos(activeDraftId)
+          // Telemetry: emit a repaired-count whenever the sweep fires so prod
+          // has visibility into how many orphaned photos this rescues.
+          console.info(
+            `[daily reconcile] orphan sweep: repaired ${repaired} photo(s) across ${reports} report(s)`,
+          )
+        } catch (err) {
+          console.error("[daily reconcile] sweep failed", err)
+        }
+      }
+      await drainPhotoQueue()
+    }
+    reconcileThenDrain().then(() => {
       if (!cancelled) {
         refreshSyncingCounts()
         refreshPendingReports()
@@ -405,6 +448,7 @@ export default function DailyModule({ globalProjectId, appProjects, teamMembers 
     // desktop tab. Per-file failures stay isolated (logged + flagged, batch
     // continues), exactly as before.
     const compressor = createPhotoCompressor()
+    const failedNames: string[] = []
     try {
       let nextOrder = draftPhotos.length
       for (let i = 0; i < files.length; i++) {
@@ -413,9 +457,11 @@ export default function DailyModule({ globalProjectId, appProjects, teamMembers 
           const photo = await compressor.compress(file)
           await addDailyDraftPhoto(draftId, photo, nextOrder++)
         } catch (err) {
+          // FIX 3 — a dropped photo must be LOUD, never silent. Collect EVERY
+          // failed filename for the batch (not last-wins) so the create gate
+          // can list them all and force an explicit decision.
           console.error("[daily draft] photo compression failed", err)
-          const msg = err instanceof Error ? err.message : "unknown error"
-          setDailyPhotoUploadError(`${file.name}: could not be processed (${msg})`)
+          failedNames.push(file.name)
         }
         setPhotoCompressProgress({ done: i + 1, total: files.length })
       }
@@ -424,6 +470,12 @@ export default function DailyModule({ globalProjectId, appProjects, teamMembers 
     } finally {
       compressor.dispose()
       setPhotoCompressProgress(null)
+    }
+    if (failedNames.length > 0) {
+      // Accumulate across batches; a changed dropped-set must be re-acknowledged
+      // before the report can be created without those photos (see createDaily).
+      setDroppedPhotoNames((prev) => [...prev, ...failedNames])
+      setDroppedAck(false)
     }
   }
 
@@ -475,8 +527,27 @@ export default function DailyModule({ globalProjectId, appProjects, teamMembers 
   //
   // Net effect: an offline create is locally indistinguishable from an
   // online one. Sync runner does the eventual upload, idempotently.
-  async function createDaily(e: React.FormEvent) {
-    e.preventDefault()
+  async function createDaily(e?: React.FormEvent, opts?: { ackDropped?: boolean }) {
+    e?.preventDefault()
+
+    // FIX 2 — Hard, logic-level completeness guard (defense-in-depth). The
+    // submit button's disabled attribute is only a UI gate; a programmatic /
+    // Enter-key / assistive-tech submit can bypass it and tag a PARTIAL photo
+    // set. Refuse to proceed while a batch is still compressing/ingesting,
+    // independent of the button's disabled state. The live "Processing… Create
+    // enables when done" line is the user-facing message and stays accurate.
+    if (photoCompressProgress) {
+      console.warn("[daily create] blocked: photo batch still processing")
+      return
+    }
+
+    // FIX 3 — never let create silently fire against an incomplete set. If any
+    // photo failed to COMPRESS (it never reached IDB and will not attach),
+    // require an explicit decision: the persistent dropped-photos banner and
+    // its "Create without these photos" button are the acknowledgement surface.
+    const ackDropped = opts?.ackDropped ?? droppedAck
+    if (droppedPhotoNames.length > 0 && !ackDropped) return
+
     setDailySaving(true)
     setDailySaveError("")
     setDailyPhotoUploadError("")
@@ -510,11 +581,18 @@ export default function DailyModule({ globalProjectId, appProjects, teamMembers 
         fields,
         createdAt: draftCreatedAt || Date.now(),
       })
+      // FIX 1 — the photo→report linkage must survive a tag failure. Track a
+      // clean success; only that lets us retire the draft below. On throw we
+      // KEEP the draft intact so the photos stay re-taggable (a Create retry
+      // re-tags; the mount sweep also recovers them) and tell the user the
+      // photos are deferred — never a clean close that hides the loss.
+      let tagOk = true
       if (draftId) {
         try {
           await tagDraftWithSavedReport(draftId, clientReportId)
         } catch (err) {
           console.error("[daily create] tagDraftWithSavedReport failed", err)
+          tagOk = false
         }
       }
 
@@ -540,23 +618,35 @@ export default function DailyModule({ globalProjectId, appProjects, teamMembers 
         console.warn("[daily create] POST failed, queued for sync:", err)
       }
 
-      // ─── Regardless of POST outcome, the report exists in the user's
-      //     world (pending list + already-linked photos). Reset form.
-      if (typeof window !== "undefined") {
-        window.localStorage.removeItem(ACTIVE_DAILY_DRAFT_KEY)
-      }
-      setDraftId(null)
-      setDraftCreatedAt(0)
-      setDraftPhotos([])
-      setShowNewDaily(false)
-      setDailyDate(new Date().toISOString().slice(0, 10)); setDailyProjectId(""); setDailyPreparedBy(""); setDailyWeather(""); setDailyTemp(""); setDailyManpower(""); setDailyWorkPerformed(""); setDailyEquipment(""); setDailyMaterials(""); setDailyVisitors(""); setDailyIssues(""); setDailySafety("")
-      if (dailyPhotosToAddRef.current) dailyPhotosToAddRef.current.value = ""
-      if (dailyTakePhotoRef.current)  dailyTakePhotoRef.current.value  = ""
-
+      // The report now exists in the user's world (pending list / server row)
+      // regardless of POST outcome — refresh the shared surfaces either way.
       loadDaily()
       await refreshPendingReports()
       refreshSyncingCounts()
       drainPhotoQueue().catch(() => {})
+
+      if (tagOk) {
+        // ─── Clean success: retire the draft and reset the form. ──────────
+        if (typeof window !== "undefined") {
+          window.localStorage.removeItem(ACTIVE_DAILY_DRAFT_KEY)
+        }
+        setDraftId(null)
+        setDraftCreatedAt(0)
+        setDraftPhotos([])
+        setDroppedPhotoNames([])
+        setDroppedAck(false)
+        setPhotoAttachDeferred(false)
+        setShowNewDaily(false)
+        setDailyDate(new Date().toISOString().slice(0, 10)); setDailyProjectId(""); setDailyPreparedBy(""); setDailyWeather(""); setDailyTemp(""); setDailyManpower(""); setDailyWorkPerformed(""); setDailyEquipment(""); setDailyMaterials(""); setDailyVisitors(""); setDailyIssues(""); setDailySafety("")
+        if (dailyPhotosToAddRef.current) dailyPhotosToAddRef.current.value = ""
+        if (dailyTakePhotoRef.current)  dailyTakePhotoRef.current.value  = ""
+      } else {
+        // ─── FIX 1: tag failed. The report is saved/queued, but the photos
+        //     are still in IDB UNLINKED. Keep the draft + pointer + draftId so
+        //     they stay re-taggable, keep the form OPEN, and surface a loud,
+        //     persistent notice. The mount sweep + a Create retry recover them.
+        setPhotoAttachDeferred(true)
+      }
     } catch (err) {
       // Any uncaught failure on the create path — most likely an IndexedDB
       // write rejecting/stalling while photos are still being ingested —
@@ -927,14 +1017,32 @@ export default function DailyModule({ globalProjectId, appProjects, teamMembers 
                         {dailyPhotoUploadError && (
                           <p className="text-[12px] text-red-500 mt-2">{dailyPhotoUploadError}</p>
                         )}
+                        {droppedPhotoNames.length > 0 && (
+                          <p className="text-[12px] text-amber-600 mt-2">
+                            ⚠ {droppedPhotoNames.length} photo{droppedPhotoNames.length !== 1 ? "s" : ""} couldn’t be processed and will not be attached: {droppedPhotoNames.join(", ")}
+                          </p>
+                        )}
                       </div>
                     </>
                   )}
                 </div>
                 <div className="flex items-center justify-between gap-2 px-6 py-4 border-t border-[#E2E8F0] flex-shrink-0">
+                  {/* Unified photo-issues + status surface (priority chain). */}
                   {!isEdit && photoCompressProgress ? (
                     <p className="text-[12px] text-[#64748B] flex-1 mr-2 flex items-center gap-1.5">
                       <SpinnerIcon className="h-3 w-3" /> Processing {Math.min(photoCompressProgress.done + 1, photoCompressProgress.total)} of {photoCompressProgress.total} photos… Create enables when done.
+                    </p>
+                  ) : !isEdit && droppedPhotoNames.length > 0 && !droppedAck ? (
+                    <p className="text-[12px] text-amber-600 flex-1 mr-2">
+                      ⚠ {droppedPhotoNames.length} photo{droppedPhotoNames.length !== 1 ? "s" : ""} couldn’t be processed and won’t attach: {droppedPhotoNames.join(", ")}. Choose “Create without {droppedPhotoNames.length !== 1 ? "them" : "it"}” or remove {droppedPhotoNames.length !== 1 ? "them" : "it"}.
+                    </p>
+                  ) : !isEdit && photoAttachDeferred ? (
+                    <p className="text-[12px] text-amber-600 flex-1 mr-2">
+                      Report saved — some photos haven’t attached yet. They’ll be retried automatically; tap “Create Report” to retry now.
+                    </p>
+                  ) : !isEdit && droppedPhotoNames.length > 0 ? (
+                    <p className="text-[12px] text-amber-600 flex-1 mr-2">
+                      ⚠ {droppedPhotoNames.length} photo{droppedPhotoNames.length !== 1 ? "s" : ""} won’t be attached (couldn’t be processed): {droppedPhotoNames.join(", ")}.
                     </p>
                   ) : !isEdit && dailySaveError ? (
                     <p className="text-[12px] text-red-500 flex-1 mr-2">{dailySaveError}</p>
@@ -944,7 +1052,19 @@ export default function DailyModule({ globalProjectId, appProjects, teamMembers 
                       className="h-8 px-4 rounded-md border border-[#E2E8F0] text-[13px] text-[#64748B] hover:bg-[#0F172A]/[0.04] transition-colors">
                       Cancel
                     </button>
-                    <button type="submit" disabled={isEdit ? dailyEditSaving : (dailySaving || !!photoCompressProgress || dailyPhotoUploading)}
+                    {/* FIX 3 — explicit decision to create WITHOUT the dropped
+                        photos. The main Create button is disabled until this is
+                        chosen (or the dropped set is cleared), so create can
+                        never silently fire against an incomplete set. */}
+                    {!isEdit && droppedPhotoNames.length > 0 && !droppedAck && (
+                      <button type="button"
+                        onClick={() => { setDroppedAck(true); createDaily(undefined, { ackDropped: true }) }}
+                        disabled={dailySaving || !!photoCompressProgress || dailyPhotoUploading}
+                        className="h-8 px-4 rounded-md border border-amber-500 text-[13px] text-amber-700 bg-amber-50 hover:bg-amber-100 transition-colors disabled:opacity-50">
+                        Create without {droppedPhotoNames.length} photo{droppedPhotoNames.length !== 1 ? "s" : ""}
+                      </button>
+                    )}
+                    <button type="submit" disabled={isEdit ? dailyEditSaving : (dailySaving || !!photoCompressProgress || dailyPhotoUploading || (droppedPhotoNames.length > 0 && !droppedAck))}
                       className="h-8 px-4 rounded-md bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors disabled:opacity-50 flex items-center gap-2">
                       {(isEdit ? dailyEditSaving : dailySaving) && <SpinnerIcon className="h-3 w-3" />}
                       {isEdit ? (dailyEditSaving ? "Saving…" : "Save Changes") : (dailySaving ? "Creating…" : "Create Report")}

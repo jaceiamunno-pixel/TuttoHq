@@ -269,6 +269,94 @@ export async function tagDraftWithSavedReport(
   await tx.done
 }
 
+// ─── Reconciliation sweep (recovery net for already-orphaned photos) ─────────
+//
+// An orphan is a photo row whose savedReportId was never stamped — the key is
+// ABSENT, so the row is excluded from the by_target index and is therefore
+// invisible to the sync runner and every badge. This happens when a create
+// tagged a partial set, or a tag transaction failed after the report was
+// already queued/saved.
+//
+// Safety property (LOAD-BEARING): the ONLY value ever written to a photo's
+// savedReportId is that photo's OWN draftId, read off the row itself. It is
+// structurally impossible to tag a photo onto a different report — the report
+// id always equals the draft id (clientReportId = draftId; server upserts on
+// client_id), for both the create path and the view-modal path.
+//
+// A photo is re-tagged IFF its draft has durable, client-only evidence that the
+// report was actually saved:
+//   - the draft row carries savedReportId === draftId (tag succeeded for the
+//     draft but a late photo missed the cursor), OR
+//   - a pending_daily_reports row with id === draftId still exists (report
+//     created locally, POST not yet confirmed).
+// An abandoned draft has neither, so it is never resurrected. The draft the
+// user may still be composing is excluded via activeDraftId.
+//
+// Idempotent and concurrency-safe: each draft is handled in its own
+// transaction; rows are re-read inside the write tx and skipped if already
+// stamped, so a concurrent create that tagged a row first is never clobbered.
+
+export async function reconcileOrphanedDailyPhotos(
+  activeDraftId: string | null,
+): Promise<{ repaired: number; reports: number }> {
+  const db = await getDB()
+  const all = (await db.getAll(PHOTOS_STORE)) as StoredDailyDraftPhotoRow[]
+  // Orphans: savedReportId absent (undefined) or null — `== null` catches both.
+  const orphans = all.filter((r) => r.savedReportId == null && !!r.draftId)
+  if (orphans.length === 0) return { repaired: 0, reports: 0 }
+
+  // Group by draftId so each draft's saved-evidence is checked once.
+  const byDraft = new Map<string, StoredDailyDraftPhotoRow[]>()
+  for (const o of orphans) {
+    const arr = byDraft.get(o.draftId)
+    if (arr) arr.push(o)
+    else byDraft.set(o.draftId, [o])
+  }
+
+  let repaired = 0
+  const repairedReports = new Set<string>()
+
+  for (const [draftId, rows] of byDraft) {
+    // Exclude the draft the user may be actively composing — its untagged
+    // photos are legitimately pending creation, not orphans.
+    if (activeDraftId && draftId === activeDraftId) continue
+
+    // One transaction per draft: read the saved-evidence and write the stamps
+    // atomically so the decision and the writes can't be split by a concurrent
+    // create touching the same rows.
+    const tx = db.transaction([DRAFTS_STORE, PHOTOS_STORE, PENDING_REPORTS_STORE], "readwrite")
+    const draft = (await tx.objectStore(DRAFTS_STORE).get(draftId)) as DailyDraftRow | undefined
+    const pending = (await tx
+      .objectStore(PENDING_REPORTS_STORE)
+      .get(draftId)) as PendingDailyReportRow | undefined
+    const wasSaved = draft?.savedReportId === draftId || pending != null
+
+    if (wasSaved) {
+      // Mirror tagDraftWithSavedReport: stamp the draft row too (when not
+      // already stamped) so removeDraftIfEmpty can retire it once its photos
+      // finish syncing. The value is the draft's own id — never a foreign id.
+      if (draft && draft.savedReportId !== draftId) {
+        await tx
+          .objectStore(DRAFTS_STORE)
+          .put({ ...draft, savedReportId: draftId, updatedAt: Date.now() })
+      }
+      const photosStore = tx.objectStore(PHOTOS_STORE)
+      for (const row of rows) {
+        const cur = (await photosStore.get(row.id)) as StoredDailyDraftPhotoRow | undefined
+        // Skip if a concurrent create already tagged it (idempotent).
+        if (cur && cur.savedReportId == null) {
+          await photosStore.put({ ...cur, savedReportId: draftId })
+          repaired++
+          repairedReports.add(draftId)
+        }
+      }
+    }
+    await tx.done
+  }
+
+  return { repaired, reports: repairedReports.size }
+}
+
 /** Increment the attempts counter — bookkeeping only, never gates deletion. */
 export async function noteSyncAttempt(photoId: string): Promise<void> {
   const db = await getDB()
