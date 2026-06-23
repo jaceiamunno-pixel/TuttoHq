@@ -90,12 +90,25 @@ export function computeScheduleCpm(
     durationDays: deriveDurationDays(t.start_date, t.end_date, t.is_milestone, calendar),
     isMilestone: t.is_milestone,
   }))
-  const dependencies: Dependency[] = depRows.map((d) => ({
-    predecessorId: d.predecessor_id,
-    successorId: d.successor_id,
-    depType: d.dep_type as DependencyType,
-    lagDays: d.lag_days,
-  }))
+  // Only edges whose BOTH endpoints are live tasks in this set may reach the engine.
+  // A soft-deleted task's edges PERSIST (soft_delete_schedule_task just sets
+  // deleted_at; the FK CASCADE fires only on a hard delete — kept so a restore is
+  // lossless), so depRows can contain "dangling" edges pointing at a deleted task.
+  // Feeding one to computeCpm makes it return 'unknown_task' BEFORE cycle detection,
+  // which would (a) fail the cycle gate OPEN (wouldCreateCycle sees a non-'cycle'
+  // error and allows the insert) and (b) collapse the whole-project CPM overlay on
+  // GET. A soft-deleted task is not part of the live schedule graph, so dropping its
+  // edges yields the correct live subgraph for BOTH the overlay and the acyclicity
+  // check — a cycle can only matter among live, schedulable tasks.
+  const liveIds = new Set(taskRows.map((t) => t.id))
+  const dependencies: Dependency[] = depRows
+    .filter((d) => liveIds.has(d.predecessor_id) && liveIds.has(d.successor_id))
+    .map((d) => ({
+      predecessorId: d.predecessor_id,
+      successorId: d.successor_id,
+      depType: d.dep_type as DependencyType,
+      lagDays: d.lag_days,
+    }))
   // projectStartIso must be a valid ISO date even for an empty set; the engine
   // returns an empty (but ok:true) result regardless of the anchor when tasks=[].
   const projectStartIso = earliestStart(taskRows) ?? "2000-01-01"
@@ -172,19 +185,19 @@ export function assembleSchedule(
 
 // CYCLE GATE — run the SAME engine over the would-be graph (existing edges + the
 // proposed one) BEFORE inserting. Returns the offending node ids when the new edge
-// would close a cycle, so the route can reject 409 without mutating the DB. Callers
-// must have already confirmed both endpoints are tasks in the set (so the only
-// non-ok outcome here is 'cycle', never unknown_task).
+// would close a cycle, so the route can reject 409 without mutating the DB.
+// computeScheduleCpm drops dangling edges, so over a live graph the engine can only
+// return ok (acyclic) or 'cycle'. We FAIL CLOSED: only a certified-acyclic ok result
+// permits the insert; a cycle — or any unexpected non-ok — rejects, so the DB never
+// stores a graph the engine couldn't prove acyclic.
 export function wouldCreateCycle(
   taskRows: ScheduleTaskRow[],
   depRows: ScheduleDependencyRow[],
   proposed: ProposedEdge,
 ): { cycle: true; cycleNodeIds: string[] } | { cycle: false } {
   const result = computeScheduleCpm(taskRows, [...depRows, proposed])
-  if (!result.ok && result.error === "cycle") {
-    return { cycle: true, cycleNodeIds: result.cycleNodeIds }
-  }
-  return { cycle: false }
+  if (result.ok) return { cycle: false }
+  return { cycle: true, cycleNodeIds: result.error === "cycle" ? result.cycleNodeIds : [] }
 }
 
 // Map a Postgres CHECK violation (23514) on schedule_tasks to a clean 400 message

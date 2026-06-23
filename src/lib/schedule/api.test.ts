@@ -156,6 +156,54 @@ describe('computeScheduleCpm — empty set', () => {
   });
 });
 
+describe('dangling edges from a soft-deleted task (regression — PR #45 pre-merge blocker)', () => {
+  // A soft-deleted task's edges persist (lossless restore) but its id is absent from
+  // the live task set. The seam must drop those edges before the engine runs, or the
+  // cycle gate fails OPEN and the GET overlay collapses.
+
+  it('GET keeps the CPM overlay when an edge points at a soft-deleted (absent) task', () => {
+    // Edge A→B persists but A was soft-deleted (not in taskRows). B must still compute.
+    const out = assembleSchedule([taskRow('B', MON, FRI)], [depRow('e1', 'A', 'B')]);
+    expect(out.cpm.ok).toBe(true);
+    if (!out.cpm.ok) return;
+    const b = out.tasks.find((t) => t.id === 'B')!;
+    expect(b.isCritical).toBe(true);
+    expect(b.earlyStart).toBe(0); // no LIVE predecessor → starts at day 0
+  });
+
+  it('cycle gate is NOT bypassed by a dangling edge — a real live cycle is still rejected', () => {
+    // X→B persists (X soft-deleted); live chain B→C→D; proposing D→B closes the live
+    // cycle B→C→D→B. Pre-fix this slipped through (X→B → unknown_task → cycle:false).
+    const tasks = [taskRow('B', MON, FRI), taskRow('C', NEXT_MON, NEXT_FRI), taskRow('D', '2024-01-15', '2024-01-19')];
+    const deps = [depRow('eX', 'X', 'B'), depRow('e1', 'B', 'C'), depRow('e2', 'C', 'D')];
+    const gate = wouldCreateCycle(tasks, deps, { predecessor_id: 'D', successor_id: 'B', dep_type: 'FS', lag_days: 0 });
+    expect(gate.cycle).toBe(true);
+    if (!gate.cycle) return;
+    expect([...gate.cycleNodeIds].sort()).toEqual(['B', 'C', 'D']);
+  });
+
+  it('a dangling edge does not block a legitimate acyclic insert', () => {
+    // X→B persists; proposing B→C is acyclic and must be allowed.
+    const gate = wouldCreateCycle(
+      [taskRow('B', MON, FRI), taskRow('C', NEXT_MON, NEXT_FRI)],
+      [depRow('eX', 'X', 'B')],
+      { predecessor_id: 'B', successor_id: 'C', dep_type: 'FS', lag_days: 0 },
+    );
+    expect(gate.cycle).toBe(false);
+  });
+
+  it('computeScheduleCpm drops dangling edges and still honors the live ones', () => {
+    // Z→A is dangling (Z absent); A→B is live. A→B must still drive B; no unknown_task.
+    const out = computeScheduleCpm(
+      [taskRow('A', MON, FRI), taskRow('B', NEXT_MON, NEXT_FRI)],
+      [depRow('eZ', 'Z', 'A'), depRow('e1', 'A', 'B')],
+    );
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    expect(out.tasks.find((t) => t.id === 'B')!.earlyStart).toBe(5); // A→B respected
+  });
+});
+
 describe('CHECK-violation → friendly message mappers', () => {
   it('maps the schedule_tasks CHECKs (23514)', () => {
     expect(scheduleTaskCheckMessage({ code: '23514', message: 'violates schedule_task_date_order' })).toMatch(/on or after/);
