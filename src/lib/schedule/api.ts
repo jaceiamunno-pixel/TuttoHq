@@ -6,7 +6,7 @@ import {
   type DependencyType,
   type WorkingCalendar,
   type CpmResult,
-} from "@/lib/schedule/cpm"
+} from "./cpm"
 
 // ── Schedule API mapping seam — ADR-011 Phase 3, Slice 2 ─────────────────────
 // The CPM engine (cpm.ts) is PURE and DB-agnostic. This module is the ONLY place
