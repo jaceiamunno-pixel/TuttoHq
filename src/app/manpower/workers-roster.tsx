@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useMemo, useState } from "react"
+import ManpowerCalendar from "@/components/manpower-calendar"
 
 // ── Workers roster (Manpower Phase 2) ───────────────────────────────────────
 // Company-scoped CRUD over the workers table. All reads/writes go through the
@@ -160,10 +161,7 @@ export default function WorkersRoster() {
         </div>
 
         {tab === "schedule" ? (
-          <div className="bg-white rounded-xl border border-[#E2E8F0] px-6 py-14 text-center">
-            <p className="text-[14px] font-semibold text-[#0F172A]">Scheduling calendar</p>
-            <p className="text-[13px] text-[#64748B] mt-1">The manpower calendar — assigning workers to projects by day — arrives in the next phase. Build your roster here first.</p>
-          </div>
+          <ManpowerCalendar />
         ) : (
           <>
             {/* Toolbar */}
