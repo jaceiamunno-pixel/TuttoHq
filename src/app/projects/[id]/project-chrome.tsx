@@ -85,6 +85,7 @@ const MODULE_SLUG: Record<string, string> = {
 const BOTTOM_LINKS = [
   { href: "/library",     label: "Library" },
   { href: "/directories", label: "Directories" },
+  { href: "/manpower",    label: "Manpower" },
   { href: "/settings",    label: "Settings" },
 ]
 
