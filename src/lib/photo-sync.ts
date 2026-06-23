@@ -43,6 +43,13 @@ export const MAX_ATTEMPTS = 10
 const BACKOFF_BASE_MS = 1_000
 const BACKOFF_CAP_MS  = 256_000
 
+/** Max photos uploaded concurrently in a single drain pass. Bounded so a
+ *  job-site phone overlaps the high-latency PUT round-trips (minutes → seconds
+ *  for a 20-photo batch) without opening an unbounded number of sockets or
+ *  hammering /api/photos. Only the OUTER per-photo iteration parallelizes;
+ *  each uploadOne() stays internally sequential. */
+const CONCURRENCY = 4
+
 export interface DrainStats {
   uploaded: number
   failed: number
@@ -247,30 +254,59 @@ export async function drainPhotoQueue(): Promise<DrainStats> {
 
     const now = Date.now()
     const photos = await listPhotosToSync()
-    for (const photo of photos) {
-      if (inFlight.has(photo.id)) { skipped++; continue }
-      if (isStuck(photo)) { stuck++; continue }
-      if (isWithinBackoff(photo, now)) { skipped++; continue }
 
-      inFlight.add(photo.id)
-      notify()  // UI: photo enters "uploading"
-      try {
-        await uploadOne(photo)
-        // BOTH Storage and the DB row confirmed. This is the only legitimate
-        // delete-from-IDB call site — see removePhotoFromIDB header comment.
-        await removePhotoFromIDB(photo.id)
-        uploaded++
-      } catch (err) {
-        console.error("[photo-sync] upload failed for", photo.id, err)
-        failed++
-        // IDB row stays put. The next drain pass will respect the new
-        // (incremented) attempts + backoff window. Storage upsert + DB
-        // upsert make the eventual retry replay-safe.
-      } finally {
-        inFlight.delete(photo.id)
-        notify()  // UI: photo leaves "uploading" → waiting or removed
+    // Bounded-concurrency worker pool. The PUT-to-Storage round-trip dominates
+    // wall-clock on cellular, so overlapping CONCURRENCY photos collapses a
+    // 20-photo batch from sum-of-latencies to ~max-per-batch — without opening
+    // unbounded sockets. uploadOne() itself stays sequential (presign → PUT →
+    // POST); only this OUTER iteration parallelizes.
+    //
+    // The workers share one cursor into `photos`. `photos[cursor++]` is a
+    // synchronous read-modify-write with no await between the read and the
+    // increment, so each index is claimed by exactly one worker — race-free in
+    // JS's single-threaded model. The skip guards + inFlight claim are
+    // evaluated per photo at claim time, identical to the old serial pass, so
+    // a row that became in-flight/stuck/backed-off since listPhotosToSync()
+    // is still respected. The shared uploaded/failed/skipped/stuck counters
+    // are likewise only mutated synchronously between awaits, so their
+    // increments can't interleave.
+    let cursor = 0
+    async function photoWorker(): Promise<void> {
+      while (cursor < photos.length) {
+        const photo = photos[cursor++]
+        if (inFlight.has(photo.id)) { skipped++; continue }
+        if (isStuck(photo)) { stuck++; continue }
+        if (isWithinBackoff(photo, now)) { skipped++; continue }
+
+        inFlight.add(photo.id)
+        notify()  // UI: photo enters "uploading"
+        try {
+          await uploadOne(photo)
+          // BOTH Storage and the DB row confirmed. This is the only legitimate
+          // delete-from-IDB call site — see removePhotoFromIDB header comment.
+          await removePhotoFromIDB(photo.id)
+          uploaded++
+        } catch (err) {
+          console.error("[photo-sync] upload failed for", photo.id, err)
+          failed++
+          // IDB row stays put. The next drain pass will respect the new
+          // (incremented) attempts + backoff window. Storage upsert + DB
+          // upsert make the eventual retry replay-safe. A failure here drops
+          // only this photo — sibling workers keep draining the rest.
+        } finally {
+          inFlight.delete(photo.id)
+          notify()  // UI: photo leaves "uploading" → waiting or removed
+        }
       }
     }
+
+    // Spawn at most CONCURRENCY workers (fewer when there are fewer photos),
+    // then await the WHOLE pool before any tail cleanup runs below.
+    const workers = Array.from(
+      { length: Math.min(CONCURRENCY, photos.length) },
+      () => photoWorker(),
+    )
+    await Promise.all(workers)
 
     // Tail cleanup: any draft whose report is saved AND has zero remaining
     // photos can be removed from IDB. Cheap and bounded.
