@@ -1,6 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import ScheduleImportModal from "./schedule-import-modal"
 
 // ── Per-project Schedule — the Gantt UI (ADR-011 Phase 3, Slice 3) ───────────
 // A classic two-panel Gantt over the Slice-2 API. The LEFT panel is a phase-grouped
@@ -192,6 +193,7 @@ export default function ProjectSchedule({ projectId, projectName }: { projectId:
   const [zoom, setZoom] = useState<Zoom>("week")
   const [taskForm, setTaskForm] = useState<{ mode: "create" | "edit"; task: ScheduleTask | null } | null>(null)
   const [depOpen, setDepOpen] = useState(false)
+  const [importOpen, setImportOpen] = useState(false)
 
   const load = useCallback(() => {
     setLoading(true)
@@ -469,6 +471,12 @@ export default function ProjectSchedule({ projectId, projectName }: { projectId:
         </div>
         <div className="flex items-center gap-2">
           <button
+            onClick={() => setImportOpen(true)}
+            className="h-9 px-3.5 rounded-md border border-[#E2E8F0] bg-white text-[13px] font-semibold text-[#0F172A] hover:bg-[#F8FAFC] whitespace-nowrap"
+          >
+            Import PDF
+          </button>
+          <button
             onClick={() => setDepOpen(true)}
             className="h-9 px-3.5 rounded-md border border-[#E2E8F0] bg-white text-[13px] font-semibold text-[#0F172A] hover:bg-[#F8FAFC] whitespace-nowrap"
           >
@@ -690,6 +698,14 @@ export default function ProjectSchedule({ projectId, projectName }: { projectId:
           onClose={() => setDepOpen(false)}
           onChanged={load}
           onDelete={deleteDep}
+        />
+      )}
+
+      {importOpen && (
+        <ScheduleImportModal
+          projectId={projectId}
+          onClose={() => setImportOpen(false)}
+          onCommitted={() => load()} // refetch so imported tasks appear in the Gantt + calendar
         />
       )}
     </div>
