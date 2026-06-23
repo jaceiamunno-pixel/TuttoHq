@@ -38,7 +38,7 @@ export type PdfPageWords = PdfWord[]
 
 // ── Outputs ──────────────────────────────────────────────────────────────────
 
-export type ScheduleFamily = "msp" | "p6" | "asta" | "unknown"
+export type ScheduleFamily = "msp" | "p6" | "asta" | "calendar" | "unknown"
 
 /** A committable task proposed to the review UI. Group/summary rows are NOT
  *  emitted as tasks — they only contribute their name to descendants' `phase`. */
