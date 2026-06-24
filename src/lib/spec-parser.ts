@@ -113,9 +113,12 @@ export async function extractPdfPages(buffer: Buffer): Promise<string[]> {
 
 type TitleTier =
   | "section-prefix"   // line literally contains "SECTION" keyword + clean title (best)
-  | "header-block"     // CSI number in page top block + PART 1 below (structural)
+  | "header-block"     // title ANCHORED to the on-page SECTION line (structural, trusted)
   | "bare-same-line"   // bare number + clean title on same line
   | "lookahead"        // bare number + clean title on the next non-blank line
+  | "header-scan"      // un-anchored top-block scrape (no SECTION/DOCUMENT line to
+                       //   anchor to) — low confidence: loses to an anchored header,
+                       //   beats a lookahead, and is always handed to review
   | "running-header"   // number changed in the running header; no body text (scanned)
   | "no-clean-title"   // candidate exists but no clean title — anchor only
 
@@ -371,9 +374,10 @@ function prevNonEmpty(lines: string[], i: number): string | null {
   return null
 }
 
-/** Strip a leading "NNNNNN –" / "SECTION NNNNNN -" prefix off a title line. */
+/** Strip a leading "NNNNNN –" / "SECTION NNNNNN -" / "DOCUMENT NNNNNN -"
+ *  prefix off a title line. */
 function stripSectionNumberPrefix(line: string): string {
-  const m = line.match(/^\s*(?:SECTION\s+)?\d{2}\s?\d{2}\s?\d{2}(?:\.\d{1,2})?\s*[-–—:]?\s*(.*)$/i)
+  const m = line.match(/^\s*(?:(?:SECTION|DOCUMENT)\s+)?\d{2}\s?\d{2}\s?\d{2}(?:\.\d{1,2})?\s*[-–—:]?\s*(.*)$/i)
   return m ? m[1] : line
 }
 
@@ -398,30 +402,96 @@ function findHeaderBlockNumber(lines: string[], blockEnd: number): string | null
   return null
 }
 
-/** The standalone title line in a header block: the first top-block line that
- *  is not the running header, not "Project No."/"Page N", not a numbered
- *  article, and that passes the title-shape gate. Stops at PART 1. */
-function findHeaderBlockTitle(lines: string[], blockEnd: number): string {
+/** The section title in a header block, ANCHORED to this section's on-page
+ *  header line. Firms write the header three ways, all handled structurally
+ *  (no house-style vocabulary):
+ *    1. keyword + inline title  — "SECTION 14 24 00 – Hydraulic Elevators"
+ *    2. keyword, title below    — "SECTION 03 01 31" ⏎ "CONCRETE PATCHING"
+ *                                  (incl. wrapped: ⏎ "GLASS FIBER REINFORCED"
+ *                                   ⏎ "CONCRETE")
+ *    3. bare number + inline    — "230523 – Piping, Valves, and Fittings" (KPMB)
+ *  The header line is found by the section number AT LINE START. This excludes
+ *  the page's running banner (firm/owner, address "New Haven, CT", date) which
+ *  carries no leading number, AND — crucially — the running-FOOTER band, which
+ *  is either number-at-end ("…CONCRETE PATCHING 03 01 31-1") or number-at-start
+ *  with only a page number after it ("282301 - 1"): the latter is told apart
+ *  from a real bare header by requiring a VALID inline title (a page number
+ *  fails `validateTitle`).
+ *
+ *  When no such header line exists (number only in the running header/footer,
+ *  title printed as a bare banner line), there is nothing to anchor to: it
+ *  falls back to the legacy top-block scan and reports `anchored: false`, so
+ *  the caller hands this lower-confidence guess to review. */
+function findHeaderBlockTitle(
+  lines: string[],
+  blockEnd: number,
+  num: string,
+): { title: string; anchored: boolean } {
+  const [d1, d2, d3] = num.split(" ")
+  // This section's number at line start, optionally behind a SECTION/DOCUMENT
+  // keyword, with the rest of the line captured as a possible inline title.
+  // m[1] = keyword (or undefined), m[2] = inline remainder.
+  const headerRe = new RegExp(
+    `^\\s*(SECTION\\s+|DOCUMENT\\s+)?${d1}\\s?${d2}\\s?${d3}(?:\\.\\d{1,2})?(?!\\d)\\s*(?:[-–—:]\\s*)?(.*)$`, "i",
+  )
+  let keywordAnchor = -1
+  for (let j = 0; j < blockEnd; j++) {
+    const m = lines[j].match(headerRe)
+    if (!m) continue
+    const inline = validateTitle(m[2] ?? "")
+    if (inline) return { title: inline, anchored: true }   // form 1 or 3 — inline title
+    // No inline title. A keyword header anchors the title on the line(s) below
+    // (form 2); a bare "NNNNNN - 1" footer band does NOT (skip it, keep scanning).
+    if (m[1] && keywordAnchor === -1) keywordAnchor = j
+  }
+
+  if (keywordAnchor !== -1) {
+    // Join a (possibly wrapped) title from the line(s) below the keyword header.
+    // Each continuation must itself be title-shaped (Title-Case/ALL-CAPS, short,
+    // no sentence punctuation, no mid-line CSI number) so body prose is never
+    // glued on; the scan stops at PART 1 / a numbered article / the running
+    // header / a blank line.
+    const parts: string[] = []
+    for (let j = keywordAnchor + 1; j < blockEnd && parts.length < 3; j++) {
+      const line = lines[j].trim()
+      if (!line) { if (parts.length) break; continue }
+      if (PART1_MARKER.test(line)) break
+      if (RUNNING_HEADER_LINE.test(line)) { if (parts.length) break; continue }
+      if (isBodyFragment(line)) break
+      if (!passesTitleShape(line) || letterCount(line) < 1 || line.length > 60) break
+      const startsWithNum = /^\s*(?:SECTION\s+)?\d{2}\s?\d{2}\s?\d{2}/i.test(line)
+      CSI_NUMBER_ANYWHERE.lastIndex = 0
+      if (!startsWithNum && CSI_NUMBER_ANYWHERE.test(line)) break
+      // Stop if this line just repeats the title (some firms echo the title on
+      // the next line, sometimes with a trailing date) — don't double it up.
+      const lower = line.toLowerCase()
+      if (parts.some(p => { const a = p.toLowerCase(); return a === lower || lower.startsWith(a) || a.startsWith(lower) })) break
+      parts.push(line)
+    }
+    const joined = validateTitle(parts.join(" "))
+    if (joined) return { title: joined, anchored: true }
+    // Keyword header but no usable title below — fall through to the legacy scan.
+  }
+
+  // No header line to anchor to — legacy top-block scan (lower confidence). A
+  // real title line either STARTS with the section number ("Section 018119
+  // Construction IAQ Requirements", "230000 – General Provisions") or carries
+  // no number at all ("Summary", "Storm Sewer Systems"). Any line with a CSI
+  // number that is NOT at the start is the page banner or a cross-reference —
+  // skip it.
   for (let j = 0; j < blockEnd; j++) {
     const line = lines[j].trim()
     if (!line) continue
     if (PART1_MARKER.test(line)) break
     if (RUNNING_HEADER_LINE.test(line)) continue
-    // A real title line either STARTS with the section number
-    // ("Section 018119 Construction IAQ Requirements", "230000 – General
-    // Provisions") or carries no number at all ("Summary", "Storm Sewer
-    // Systems"). Any line with a CSI number that is NOT at the start is the
-    // page banner ("…Project Section 01 10 00KPMB") or a cross-reference — skip
-    // it. This survives the running-header number being glued to the next token
-    // with no space.
     const startsWithNum = /^\s*(?:SECTION\s+)?\d{2}\s?\d{2}\s?\d{2}/i.test(line)
     CSI_NUMBER_ANYWHERE.lastIndex = 0
     if (!startsWithNum && CSI_NUMBER_ANYWHERE.test(line)) continue
     if (isBodyFragment(line)) continue
     const t = validateTitle(stripSectionNumberPrefix(line))
-    if (t) return t
+    if (t) return { title: t, anchored: false }
   }
-  return ""
+  return { title: "", anchored: false }
 }
 
 /** The section number carried in a page's running header (top 3 lines): a
@@ -474,11 +544,14 @@ function findCandidatesInPage(
     if (hasPart1) {
       const num = findHeaderBlockNumber(lines, blockEnd)
       if (num) {
-        const title = findHeaderBlockTitle(lines, blockEnd)
+        const { title, anchored } = findHeaderBlockTitle(lines, blockEnd, num)
         out.push({
           specNumber: num,
           specTitle: title,
-          tier: title ? "header-block" : "no-clean-title",
+          // Anchored to the on-page SECTION line → trusted "header-block".
+          // An un-anchored top-block scrape → "header-scan" (ranks below a
+          // clean lookahead, handed to review). No title → anchor only.
+          tier: title ? (anchored ? "header-block" : "header-scan") : "no-clean-title",
           page,
           globalOffset: pageStartOffset,   // section starts at the top of this page
         })
@@ -558,11 +631,14 @@ function findCandidatesInPage(
 
 const TIER_RANK: Record<TitleTier, number> = {
   "section-prefix":   0,
-  "header-block":     1,
+  "header-block":     1,   // anchored to the SECTION/DOCUMENT header — trusted
   "bare-same-line":   2,
-  "lookahead":        3,
-  "running-header":   4,
-  "no-clean-title":   5,
+  "header-scan":      3,   // un-anchored top-block scrape: beats a (possibly
+                           //   footer-band-induced, garbage) lookahead, but loses
+                           //   to an anchored header; always flagged for review
+  "lookahead":        4,
+  "running-header":   5,
+  "no-clean-title":   6,
 }
 
 /**
@@ -783,12 +859,15 @@ export async function parseSpecBook(buffer: Buffer): Promise<SpecParseResult> {
     let titleSource: ParsedSection["titleSource"] =
       h.tier === "section-prefix" ? "section-prefix" :
       h.tier === "header-block"   ? "header-block" :
+      h.tier === "header-scan"    ? "header-block" :  // un-anchored variant of the same source
       h.tier === "bare-same-line" ? "bare-same-line" :
       h.tier === "lookahead"      ? "lookahead" :
       "masterformat-fallback"  // placeholder — overwritten below if Layer 2 hits
-    // A running-header-delta boundary has no body text we could read, so it is
-    // always handed to review even after a TOC title is joined on.
-    let needsTitleReview = h.tier === "running-header"
+    // A running-header-delta boundary has no readable body, and a header-scan
+    // title is an un-anchored top-block guess: flag both for review. (A later
+    // TOC join can clear a header-scan flag when it supplies a canonical title;
+    // the scanned-page density check below re-flags the running-header case.)
+    let needsTitleReview = h.tier === "running-header" || h.tier === "header-scan"
 
     if (h.tier === "no-clean-title" || h.tier === "running-header" || specTitle === "") {
       const footerTitle = extractFooterTitle(fullText)
@@ -883,7 +962,11 @@ function applyTocJoin(sections: ParsedSection[], pages: string[]): void {
       s.titleSource === "footer-pattern" ||
       !passesTitleShape(s.specTitle) ||
       DANGLING_TAIL.test(s.specTitle)
-    if (weak && passesTitleShape(canonical) && letterCount(canonical) >= 3) {
+    // Only ENRICH when the canonical TOC title is itself clean — never replace a
+    // body title with a TOC entry that is truncated/dangling (some TOCs clip
+    // long titles, e.g. "…Subgrade Preparation for"). A dangling canonical can
+    // still flag the section for review (above) but must not become the title.
+    if (weak && passesTitleShape(canonical) && letterCount(canonical) >= 3 && !DANGLING_TAIL.test(canonical)) {
       // ENRICH — replace the weak title with the canonical TOC title.
       s.specTitle = smartTitleCase(canonical)
       s.titleSource = "toc-enriched"
