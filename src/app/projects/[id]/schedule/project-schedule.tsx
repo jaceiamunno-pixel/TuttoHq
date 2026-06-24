@@ -37,7 +37,12 @@ interface ScheduleTask {
   start_date: string | null
   end_date: string | null
   is_milestone: boolean
-  duration_days: number
+  // Null for a dateless backlog row (the planning board treats null as "no nominal
+  // length" → a 1-day drop). A dated row always carries a derived working-day count.
+  duration_days: number | null
+  // Days inside the bar the planner marked non-working (migration 0024). Default '{}'
+  // → []. The planning board hatches these; they subtract from the derived duration.
+  voided_dates: string[]
   percent_complete: number
   actual_start_date: string | null
   actual_end_date: string | null
@@ -577,10 +582,15 @@ export default function ProjectSchedule({ projectId, projectName }: { projectId:
           {loadError ? null : (
             <ScheduleCalendar
               tasks={datedTasks}
+              backlogTasks={backlogTasks}
               criticalSet={criticalSet}
               projectId={projectId}
               projectName={projectName}
               onEditTask={(t) => setTaskForm({ mode: "edit", task: tasksById.get(t.id) ?? null })}
+              // Planning board writes go through the same PATCH→refetch path as the
+              // Gantt drag, so calendar + Gantt + backlog stay consistent after a drop,
+              // resize, or void.
+              onPatchTask={patchTask}
             />
           )}
         </div>

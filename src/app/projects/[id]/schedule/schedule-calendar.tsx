@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useMemo, useState } from "react"
+import { useCallback, useMemo, useRef, useState } from "react"
 
 // ── Schedule month-calendar view (ADR-011 / ADR-012) ─────────────────────────
 // A read-only month-grid rendering of the SAME schedule_tasks the Gantt loads —
@@ -30,9 +30,30 @@ import { useCallback, useMemo, useState } from "react"
 interface CalendarTask {
   id: string
   name: string
+  phase?: string | null
   start_date: string // YYYY-MM-DD (stored date — the chip's day; NOT the CPM overlay)
-  duration_days: number
+  // Present + non-null for a dated/scheduled task; the planning board spans the bar
+  // across [start_date, end_date]. The read-only chip view only reads start_date.
+  end_date?: string | null
+  duration_days: number | null
   is_milestone: boolean
+  // Days inside the bar marked non-working (migration 0024). The planning board hatches
+  // these; absent/undefined → none.
+  voided_dates?: string[] | null
+  percent_complete?: number
+  crew_size?: number | null
+  status?: string
+}
+
+// The undated backlog rows shown in the planning rail. A drag onto a day cell schedules
+// one (assigns start/end). duration_days drives the auto-span on drop (null → 1-day).
+interface BacklogTask {
+  id: string
+  name: string
+  phase?: string | null
+  duration_days: number | null
+  is_milestone: boolean
+  crew_size?: number | null
 }
 
 const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"]
@@ -72,22 +93,65 @@ function buildMonthGrid(year: number, month0: number, tKey: string): Cell[][] {
   return rows
 }
 
-const durationLabel = (t: CalendarTask) =>
-  t.is_milestone || t.duration_days === 0 ? "milestone" : `${t.duration_days} day${t.duration_days === 1 ? "" : "s"}`
+const durationLabel = (t: { is_milestone: boolean; duration_days: number | null }) =>
+  t.is_milestone || t.duration_days === 0
+    ? "milestone"
+    : t.duration_days == null
+      ? ""
+      : `${t.duration_days} day${t.duration_days === 1 ? "" : "s"}`
+
+// ── Planning-board date helpers — LOCAL-time parts, matching buildMonthGrid ───
+// buildMonthGrid builds cells with local `new Date(...)`; these mirror that so a key
+// (YYYY-MM-DD) ↔ Date round-trips without a UTC-midnight shift.
+function keyToDate(key: string): Date {
+  const [y, m, d] = key.split("-").map(Number)
+  return new Date(y, m - 1, d)
+}
+function addDaysKey(key: string, n: number): string {
+  const dt = keyToDate(key)
+  dt.setDate(dt.getDate() + n)
+  return ymd(dt)
+}
+const isWeekendKey = (key: string) => { const d = keyToDate(key).getDay(); return d === 0 || d === 6 }
+// Working days forward from `key` (key = day 0); skips Sat/Sun. Used to AUTO-SPAN a
+// dropped task: end = start + (duration − 1) working days. The route re-derives the
+// stored duration from the dates, so this only needs to land the calendar end-day.
+function addWorkingDaysKey(key: string, n: number): string {
+  if (n <= 0) return key
+  const dt = keyToDate(key)
+  let added = 0
+  while (added < n) {
+    dt.setDate(dt.getDate() + 1)
+    const dow = dt.getDay()
+    if (dow !== 0 && dow !== 6) added++
+  }
+  return ymd(dt)
+}
 
 // Filename-safe slug of the project name for the downloaded PDF.
 const slug = (s: string) => s.replace(/[^a-zA-Z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "project"
 
 export default function ScheduleCalendar({
-  tasks, criticalSet, onEditTask, projectId, projectName,
+  tasks, backlogTasks = [], criticalSet, onEditTask, onPatchTask, projectId, projectName,
 }: {
   tasks: CalendarTask[]
+  backlogTasks?: BacklogTask[]
   criticalSet: Set<string>
   onEditTask: (task: CalendarTask) => void
+  // Generic PATCH passthrough (project-schedule.patchTask) — schedules/resizes/voids a
+  // task and refetches. Optional so the read-only export path renders without it.
+  onPatchTask?: (id: string, patch: Record<string, unknown>) => Promise<boolean>
   projectId: string
   projectName: string
 }) {
   const tKey = useMemo(() => todayKey(), [])
+
+  // ── Planning board — an EXPAND of this calendar (not a new tab). When on, the month
+  // grid spans bars across [start,end] and a backlog rail sits alongside for drag-to-
+  // schedule. The read-only chip grid + export scope panel show when it's off. Only
+  // available when a writer (onPatchTask) is wired in.
+  const canPlan = !!onPatchTask
+  const [planning, setPlanning] = useState(false)
 
   // ── Scope state — pure UI over the loaded tasks (no fetch / route / schema) ───
   // `excluded` holds the EXPLICITLY-unchecked ids; everything else is checked. This
@@ -136,13 +200,16 @@ export default function ScheduleCalendar({
     setExcluded((s) => { const n = new Set(s); for (const t of pickerTasks) n.delete(t.id); return n })
   }, [pickerTasks])
 
-  // The months that actually contain SHOWN tasks (by start day), ascending. One of
-  // these is shown at a time — matching how the PM's multi-page calendar reads.
+  // The months that actually contain tasks (by start day), ascending. One is shown at
+  // a time — matching how the PM's multi-page calendar reads. In planning mode the
+  // pager spans EVERY dated task (not just the export-checked subset) so a bar is never
+  // stranded on an unreachable month.
   const months = useMemo(() => {
     const set = new Set<string>()
-    for (const t of shownTasks) if (t.start_date) set.add(monthKeyOf(t.start_date))
+    const src = planning ? tasks : shownTasks
+    for (const t of src) if (t.start_date) set.add(monthKeyOf(t.start_date))
     return [...set].sort()
-  }, [shownTasks])
+  }, [planning, tasks, shownTasks])
 
   // Default to the first month at or after the current one, else the last (so a
   // wholly-past schedule opens on its most recent month). Empty → current month.
@@ -174,8 +241,8 @@ export default function ScheduleCalendar({
 
   const grid = useMemo(() => buildMonthGrid(year, month0, tKey), [year, month0, tKey])
   const monthCount = useMemo(
-    () => shownTasks.filter((t) => t.start_date && monthKeyOf(t.start_date) === current).length,
-    [shownTasks, current],
+    () => (planning ? tasks : shownTasks).filter((t) => t.start_date && monthKeyOf(t.start_date) === current).length,
+    [planning, tasks, shownTasks, current],
   )
 
   const canPrev = idx > 0
@@ -219,7 +286,38 @@ export default function ScheduleCalendar({
 
   return (
     <div>
+      {/* ── Expand-to-plan toggle — flips this read calendar into the planning board
+          (drag backlog → schedule, drag a bar edge → resize, click a day → void). ── */}
+      {canPlan && (
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+          <div className="min-w-0">
+            {planning ? (
+              <p className="text-[12px] text-[#64748B]">
+                <span className="font-semibold text-[#475569]">Planning board</span> — drag a backlog task onto a day to schedule it, drag a bar’s right edge to set the finish, click a day inside a bar to mark it non-working.
+              </p>
+            ) : (
+              <p className="text-[12px] text-[#64748B]">View the month, or expand to the planning board to schedule the backlog by dragging onto the calendar.</p>
+            )}
+          </div>
+          <button
+            onClick={() => setPlanning((p) => !p)}
+            className={`flex-shrink-0 h-8 px-3.5 rounded-md text-[12px] font-semibold inline-flex items-center gap-1.5 transition-colors ${
+              planning
+                ? "bg-[#7B9BB5] text-white hover:bg-[#6A8AA4]"
+                : "border border-[#E2E8F0] bg-white text-[#0F172A] hover:bg-[#F8FAFC]"
+            }`}
+          >
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={planning ? "M9 9L4 4m0 0v5m0-5h5m6 6l5 5m0 0v-5m0 5h-5" : "M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"} /></svg>
+            {planning ? "Exit planning" : "Expand to plan"}
+            {!planning && backlogTasks.length > 0 && (
+              <span className="ml-0.5 inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-[#EEF2F6] text-[#475569] text-[10px] font-bold">{backlogTasks.length}</span>
+            )}
+          </button>
+        </div>
+      )}
+
       {/* ── Scope panel: keyword filter + per-task checkboxes + Export ─────────── */}
+      {!planning && (
       <div className="mb-4 rounded-xl border border-[#E2E8F0] bg-white p-3 sm:p-4">
         <div className="flex flex-wrap items-center gap-2">
           <div className="relative flex-1 min-w-[180px]">
@@ -284,6 +382,7 @@ export default function ScheduleCalendar({
           {exportError && <span className="text-red-600 font-medium">{exportError}</span>}
         </div>
       </div>
+      )}
 
       {/* Month chrome: ◀ Month Year ▶ — pages only across months that hold tasks */}
       <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
@@ -312,7 +411,18 @@ export default function ScheduleCalendar({
         </div>
       </div>
 
-      {/* The month grid — always rendered (it IS the empty state). */}
+      {/* ── Planning board (expanded) — spanned bars + backlog rail ───────────── */}
+      {planning && onPatchTask ? (
+        <PlanningBoard
+          grid={grid}
+          tasks={tasks}
+          backlogTasks={backlogTasks}
+          criticalSet={criticalSet}
+          onPatchTask={onPatchTask}
+          onEditTask={onEditTask}
+        />
+      ) : (
+      /* The month grid — always rendered (it IS the empty state). */
       <div className="rounded-xl border border-[#E2E8F0] bg-white overflow-hidden">
         <div className="grid grid-cols-7 bg-[#FAFBFC] border-b border-[#E2E8F0]">
           {DOW.map((d) => (
@@ -355,6 +465,7 @@ export default function ScheduleCalendar({
           })}
         </div>
       </div>
+      )}
     </div>
   )
 }
@@ -379,5 +490,398 @@ function TaskChip({ task, critical, onClick }: { task: CalendarTask; critical: b
       )}
       <span className="min-w-0 break-words">{label}</span>
     </button>
+  )
+}
+
+// ── Planning board — spanned bars over the month grid + a draggable backlog rail ──
+// EXPAND of the calendar view (Step 4b). Bars draw CONTINUOUSLY across every cell in
+// [start,end] INCLUDING weekends (the line never breaks). Every interaction is
+// cell-grid based — drop = which cell, edge-drag = which cell the pointer is over —
+// so it stays stable on the day grid (no pixel/zoom math like the Gantt canvas):
+//   • DROP a backlog task on a day → schedules it (start = that day; end auto-spans the
+//     task's working-day duration, or 1 day when it has none).
+//   • DRAG a bar's trailing edge along the row → end_date = the day under the pointer
+//     (resizes an already-scheduled bar too).
+//   • CLICK a day inside a bar → toggles it void (hatched + subtracted from duration);
+//     the bar still draws straight across it.
+// Every write goes through onPatchTask (project-schedule.patchTask), which refetches, so
+// the Gantt + calendar + backlog stay in lock-step.
+
+const DAYNUM_H = 24 // px reserved at the top of each week row for the day numbers
+const LANE_H = 22 // px per stacked bar lane
+const PLAN_BAR_H = 18
+
+interface PlanSeg {
+  task: CalendarTask
+  startCol: number // 0..6 within the week
+  endCol: number // 0..6 within the week
+  lane: number
+  isHead: boolean // the bar's true start lands in this week (label + rounded left)
+  isTail: boolean // the bar's true end lands in this week (resize grip + rounded right)
+}
+
+function PlanningBoard({ grid, tasks, backlogTasks, criticalSet, onPatchTask, onEditTask }: {
+  grid: Cell[][]
+  tasks: CalendarTask[]
+  backlogTasks: BacklogTask[]
+  criticalSet: Set<string>
+  onPatchTask: (id: string, patch: Record<string, unknown>) => Promise<boolean>
+  onEditTask: (task: CalendarTask) => void
+}) {
+  // Capture lives on the WEEKS WRAPPER (stable across re-renders) — NOT the grip, which
+  // can unmount mid-drag when a bar grows into a new week. So the move/up handlers ride
+  // the wrapper and keep firing even as the bars re-layout.
+  const gridRef = useRef<HTMLDivElement>(null)
+  const dragRef = useRef<{ id: string; startKey: string } | null>(null)
+  const [resize, setResize] = useState<{ id: string; endKey: string } | null>(null)
+  const [dropHover, setDropHover] = useState<string | null>(null)
+
+  const weeks = grid
+  const gridFirst = weeks[0][0].key
+  const gridLast = weeks[weeks.length - 1][6].key
+
+  // Dated tasks intersecting the visible grid (string compare is fine for YYYY-MM-DD).
+  const dated = useMemo(
+    () => tasks.filter((t) => t.start_date && t.end_date && t.start_date <= gridLast && (t.end_date as string) >= gridFirst),
+    [tasks, gridFirst, gridLast],
+  )
+
+  // The end key used for LAYOUT: the live preview while a bar is being resized, else the
+  // stored end. Geometry follows the preview; lane packing (below) stays on stored ends
+  // so lanes don't reshuffle mid-drag.
+  const effEnd = useCallback(
+    (t: CalendarTask) => (resize && resize.id === t.id ? resize.endKey : (t.end_date as string)),
+    [resize],
+  )
+
+  // Global lane packing (sorted by start; stored ends) so a task keeps ONE lane across
+  // every week it spans → the bar reads as a single continuous band. Greedy: reuse the
+  // lowest lane whose last end is strictly before this task's start.
+  const { laneOf, laneCount } = useMemo(() => {
+    const sorted = [...dated].sort((a, b) =>
+      a.start_date < b.start_date ? -1 : a.start_date > b.start_date ? 1 : a.id < b.id ? -1 : 1,
+    )
+    const laneEnds: string[] = []
+    const map = new Map<string, number>()
+    for (const t of sorted) {
+      const end = t.end_date as string
+      let lane = 0
+      while (lane < laneEnds.length && !(laneEnds[lane] < t.start_date)) lane++
+      if (laneEnds[lane] === undefined || laneEnds[lane] < end) laneEnds[lane] = end
+      map.set(t.id, lane)
+    }
+    return { laneOf: map, laneCount: Math.max(1, laneEnds.length) }
+  }, [dated])
+
+  const WEEK_H = DAYNUM_H + laneCount * LANE_H + 6
+
+  // Per-week bar segments, clamped to the week, each at the task's global lane.
+  const weekSegs = useMemo(() => {
+    return weeks.map((week) => {
+      const weekFirst = week[0].key
+      const weekLast = week[6].key
+      const segs: PlanSeg[] = []
+      for (const t of dated) {
+        const tStart = t.start_date
+        const tEnd = effEnd(t)
+        if (tStart > weekLast || tEnd < weekFirst) continue
+        const segStart = tStart > weekFirst ? tStart : weekFirst
+        const segEnd = tEnd < weekLast ? tEnd : weekLast
+        const startCol = week.findIndex((c) => c.key === segStart)
+        const endCol = week.findIndex((c) => c.key === segEnd)
+        segs.push({
+          task: t,
+          startCol: startCol < 0 ? 0 : startCol,
+          endCol: endCol < 0 ? 6 : endCol,
+          lane: laneOf.get(t.id) ?? 0,
+          isHead: tStart >= weekFirst && tStart <= weekLast,
+          isTail: tEnd >= weekFirst && tEnd <= weekLast,
+        })
+      }
+      return segs
+    })
+  }, [weeks, dated, effEnd, laneOf])
+
+  // Pure cell-grid hit test: which day key is under (x,y)? Uniform week height + 7 equal
+  // columns → integer divide, clamp to the grid. No pixel/zoom math.
+  const cellFromPoint = useCallback((clientX: number, clientY: number): string | null => {
+    const el = gridRef.current
+    if (!el) return null
+    const rect = el.getBoundingClientRect()
+    if (rect.width === 0) return null
+    let col = Math.floor(((clientX - rect.left) / rect.width) * 7)
+    col = Math.max(0, Math.min(6, col))
+    let wk = Math.floor((clientY - rect.top) / WEEK_H)
+    wk = Math.max(0, Math.min(weeks.length - 1, wk))
+    return weeks[wk][col].key
+  }, [weeks, WEEK_H])
+
+  // ── Resize (edge-drag) ─────────────────────────────────────────────────────
+  const startResize = useCallback((e: React.PointerEvent, t: CalendarTask) => {
+    e.preventDefault()
+    e.stopPropagation()
+    gridRef.current?.setPointerCapture(e.pointerId)
+    dragRef.current = { id: t.id, startKey: t.start_date }
+    setResize({ id: t.id, endKey: (t.end_date as string) ?? t.start_date })
+  }, [])
+  const moveResize = useCallback((e: React.PointerEvent) => {
+    const d = dragRef.current
+    if (!d) return
+    const key = cellFromPoint(e.clientX, e.clientY)
+    if (!key) return
+    const endKey = key < d.startKey ? d.startKey : key // clamp end ≥ start
+    setResize((r) => (r && r.id === d.id && r.endKey === endKey ? r : { id: d.id, endKey }))
+  }, [cellFromPoint])
+  const endResize = useCallback(async (e: React.PointerEvent) => {
+    const d = dragRef.current
+    if (!d) return
+    dragRef.current = null
+    const key = cellFromPoint(e.clientX, e.clientY)
+    setResize(null)
+    if (!key) return
+    const endKey = key < d.startKey ? d.startKey : key
+    const t = tasks.find((x) => x.id === d.id)
+    if (t && endKey !== t.end_date) await onPatchTask(d.id, { end_date: endKey })
+  }, [cellFromPoint, tasks, onPatchTask])
+
+  // ── Drop a backlog task onto a day → schedule it ───────────────────────────
+  const handleDrop = useCallback(async (cellKey: string, id: string) => {
+    setDropHover(null)
+    const bt = backlogTasks.find((b) => b.id === id)
+    if (!bt) return
+    const dur = bt.is_milestone ? 0 : (bt.duration_days ?? 0)
+    // Auto-span: a real duration → end = start + (dur−1) working days; else a 1-day chip.
+    const endKey = dur > 1 ? addWorkingDaysKey(cellKey, dur - 1) : cellKey
+    await onPatchTask(id, { start_date: cellKey, end_date: endKey, status: "not_started" })
+  }, [backlogTasks, onPatchTask])
+
+  // ── Toggle a single day inside a bar void ──────────────────────────────────
+  const toggleVoid = useCallback(async (t: CalendarTask, dayKey: string) => {
+    const cur = Array.isArray(t.voided_dates) ? t.voided_dates : []
+    const next = cur.includes(dayKey) ? cur.filter((d) => d !== dayKey) : [...cur, dayKey]
+    await onPatchTask(t.id, { voided_dates: next })
+  }, [onPatchTask])
+
+  return (
+    <div className="flex flex-col lg:flex-row gap-4 items-start">
+      {/* Calendar with spanned bars */}
+      <div className="flex-1 min-w-0 w-full rounded-xl border border-[#E2E8F0] bg-white overflow-hidden">
+        <div className="grid grid-cols-7 bg-[#FAFBFC] border-b border-[#E2E8F0]">
+          {DOW.map((d) => (
+            <div key={d} className="py-2 text-center text-[10px] sm:text-[11px] font-semibold uppercase tracking-wide text-[#64748B]">
+              <span className="sm:hidden">{d[0]}</span>
+              <span className="hidden sm:inline">{d}</span>
+            </div>
+          ))}
+        </div>
+        {/* Weeks wrapper = the pointer-capture + hit-test surface. */}
+        <div
+          ref={gridRef}
+          className="relative select-none touch-none"
+          onPointerMove={moveResize}
+          onPointerUp={endResize}
+          onPointerCancel={endResize}
+          onDragOver={(e) => { e.preventDefault(); setDropHover(cellFromPoint(e.clientX, e.clientY)) }}
+          onDragLeave={() => setDropHover(null)}
+          onDrop={(e) => { e.preventDefault(); const id = e.dataTransfer.getData("text/plain"); const k = cellFromPoint(e.clientX, e.clientY); setDropHover(null); if (id && k) handleDrop(k, id) }}
+        >
+          {weeks.map((week, wIdx) => (
+            <div key={wIdx} className="relative border-b border-[#EEF1F4] last:border-b-0" style={{ height: WEEK_H }}>
+              {/* Background day cells */}
+              <div className="absolute inset-0 grid grid-cols-7">
+                {week.map((cell) => {
+                  const weekend = isWeekendKey(cell.key)
+                  const over = dropHover === cell.key
+                  return (
+                    <div
+                      key={cell.key}
+                      className={`relative border-r border-[#F1F5F9] last:border-r-0 ${!cell.inMonth ? "bg-[#FAFBFC]" : weekend ? "bg-[#FBFCFD]" : "bg-white"} ${over ? "ring-2 ring-inset ring-[#7B9BB5] z-[1]" : ""}`}
+                    >
+                      <span
+                        className={`absolute top-1 left-1.5 text-[11px] font-semibold ${
+                          cell.isToday
+                            ? "grid place-items-center w-5 h-5 -ml-0.5 rounded-full bg-[#7B9BB5] text-white"
+                            : !cell.inMonth ? "text-[#CBD5E1]" : "text-[#475569]"
+                        }`}
+                      >
+                        {cell.day}
+                      </span>
+                    </div>
+                  )
+                })}
+              </div>
+              {/* Bars overlay */}
+              {weekSegs[wIdx].map((seg) => (
+                <PlanBar
+                  key={seg.task.id}
+                  seg={seg}
+                  week={week}
+                  critical={criticalSet.has(seg.task.id)}
+                  onToggleVoid={toggleVoid}
+                  onStartResize={startResize}
+                  onEdit={onEditTask}
+                />
+              ))}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <BacklogRail tasks={backlogTasks} />
+    </div>
+  )
+}
+
+// ── One spanned bar segment within a week ────────────────────────────────────
+// The bar is a flex strip of per-day sub-cells (each a void toggle); the line stays
+// unbroken across weekends and voided days (voids just overlay a hatch). The head
+// segment carries the name label; the tail segment carries the resize grip.
+function PlanBar({ seg, week, critical, onToggleVoid, onStartResize, onEdit }: {
+  seg: PlanSeg
+  week: Cell[]
+  critical: boolean
+  onToggleVoid: (t: CalendarTask, dayKey: string) => void
+  onStartResize: (e: React.PointerEvent, t: CalendarTask) => void
+  onEdit: (t: CalendarTask) => void
+}) {
+  const { task, startCol, endCol, isHead, isTail, lane } = seg
+  const leftPct = (startCol / 7) * 100
+  const widthPct = ((endCol - startCol + 1) / 7) * 100
+  const voided = new Set(Array.isArray(task.voided_dates) ? task.voided_dates : [])
+  const days: string[] = []
+  for (let c = startCol; c <= endCol; c++) days.push(week[c].key)
+  const bg = critical ? "#DC2626" : "#5E7E98"
+  const border = critical ? "#DC2626" : "#4E6E88"
+  const title = `${task.name} · ${durationLabel(task) || "task"}${voided.size ? ` · ${voided.size} day(s) voided` : ""}`
+
+  // Milestone: a single diamond marker, no resize/void.
+  if (task.is_milestone) {
+    return (
+      <button
+        type="button"
+        title={`${task.name} · milestone`}
+        onClick={() => onEdit(task)}
+        className="absolute grid place-items-center"
+        style={{ left: `${leftPct}%`, width: `${widthPct}%`, top: DAYNUM_H + lane * LANE_H, height: PLAN_BAR_H }}
+      >
+        <span className="w-3 h-3 rotate-45 rounded-[2px] border" style={{ background: bg, borderColor: border }} />
+      </button>
+    )
+  }
+
+  return (
+    <div
+      title={title}
+      className="absolute"
+      style={{ left: `${leftPct}%`, width: `${widthPct}%`, top: DAYNUM_H + lane * LANE_H, height: PLAN_BAR_H }}
+    >
+      <div
+        className="relative w-full h-full flex overflow-hidden border"
+        style={{
+          background: bg,
+          borderColor: border,
+          borderTopLeftRadius: isHead ? 4 : 0,
+          borderBottomLeftRadius: isHead ? 4 : 0,
+          borderTopRightRadius: isTail ? 4 : 0,
+          borderBottomRightRadius: isTail ? 4 : 0,
+        }}
+      >
+        {days.map((dayKey, i) => {
+          const isVoid = voided.has(dayKey)
+          return (
+            <button
+              key={dayKey}
+              type="button"
+              title={isVoid ? "Non-working day — click to restore" : "Click to mark this day non-working"}
+              onClick={(e) => { e.stopPropagation(); onToggleVoid(task, dayKey) }}
+              className="relative flex-1 min-w-0 h-full"
+              style={{ borderRight: i < days.length - 1 ? "1px solid rgba(255,255,255,0.18)" : "none" }}
+            >
+              {isVoid && (
+                <span
+                  className="absolute inset-0"
+                  style={{ backgroundImage: "repeating-linear-gradient(45deg, rgba(255,255,255,0.6) 0 3px, rgba(255,255,255,0) 3px 6px)" }}
+                />
+              )}
+            </button>
+          )
+        })}
+        {/* Name label rides the head segment; pointer-events-none so day clicks pass through. */}
+        {isHead && (
+          <span className="absolute inset-0 flex items-center pl-1.5 pr-1 pointer-events-none">
+            <span className="truncate text-[10px] font-semibold text-white">{task.name}</span>
+          </span>
+        )}
+      </div>
+      {/* Resize grip on the tail — drag to set the finish day. */}
+      {isTail && (
+        <div
+          onPointerDown={(e) => onStartResize(e, task)}
+          title="Drag to set the finish date"
+          className="absolute top-0 right-0 h-full w-2.5 cursor-ew-resize touch-none"
+        >
+          <span className="absolute inset-y-[3px] right-[2px] w-[3px] rounded bg-white/80" />
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── Backlog rail — draggable undated tasks alongside the planning calendar ────
+function BacklogRail({ tasks }: { tasks: BacklogTask[] }) {
+  const groups = useMemo(() => {
+    const m = new Map<string, BacklogTask[]>()
+    for (const t of tasks) {
+      const k = t.phase?.trim() || "Unassigned"
+      if (!m.has(k)) m.set(k, [])
+      m.get(k)!.push(t)
+    }
+    return [...m.entries()]
+  }, [tasks])
+
+  return (
+    <div className="w-full lg:w-72 flex-shrink-0 rounded-xl border border-[#E2E8F0] bg-white flex flex-col max-h-[70vh]">
+      <div className="px-4 py-3 border-b border-[#E2E8F0] flex-shrink-0">
+        <h3 className="text-[13px] font-bold text-[#0F172A]">Backlog</h3>
+        <p className="text-[11px] text-[#64748B] mt-0.5">
+          {tasks.length === 0 ? "Nothing unscheduled." : `Drag a task onto a day to schedule it (${tasks.length}).`}
+        </p>
+      </div>
+      <div className="flex-1 overflow-y-auto">
+        {tasks.length === 0 ? (
+          <p className="px-4 py-8 text-center text-[12px] text-[#94A3B8]">No backlog tasks — everything has dates.</p>
+        ) : (
+          groups.map(([phase, list]) => (
+            <div key={phase}>
+              <div className="sticky top-0 z-10 flex items-center gap-2 px-4 py-1.5 bg-[#F4F7FA] border-b border-[#E2E8F0]">
+                <span className="text-[10px] font-bold uppercase tracking-wide text-[#475569] truncate">{phase}</span>
+                <span className="text-[10px] text-[#94A3B8]">{list.length}</span>
+              </div>
+              <ul>
+                {list.map((t) => (
+                  <li key={t.id} className="px-3 py-2 border-b border-[#F1F5F9]">
+                    <div
+                      draggable
+                      onDragStart={(e) => { e.dataTransfer.setData("text/plain", t.id); e.dataTransfer.effectAllowed = "move" }}
+                      title={`${t.name} — drag onto a day`}
+                      className="rounded-lg border border-[#E2E8F0] bg-[#F8FAFC] px-2.5 py-2 cursor-grab active:cursor-grabbing hover:bg-[#EEF2F6] transition-colors"
+                    >
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        {t.is_milestone && <span className="w-2 h-2 rotate-45 flex-shrink-0 bg-[#475569]" />}
+                        <span className="truncate text-[12px] font-medium text-[#0F172A]">{t.name}</span>
+                      </div>
+                      <p className="text-[10px] text-[#64748B] mt-0.5">
+                        {t.is_milestone ? "Milestone" : durationLabel(t) || "Task"}
+                        {t.crew_size != null && <> · crew {t.crew_size}</>}
+                      </p>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ))
+        )}
+      </div>
+    </div>
   )
 }

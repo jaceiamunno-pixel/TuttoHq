@@ -26,6 +26,12 @@ export interface ScheduleTaskRow {
   start_date: string | null
   end_date: string | null
   is_milestone: boolean
+  // Specific days inside the bar the planner marked non-working (migration 0024:
+  // date[] NOT NULL DEFAULT '{}'). A voided working day inside [start,end] is
+  // subtracted from the derived duration (see deriveDurationDays). Optional here so
+  // the engine tolerates a row read before the column existed; treated as [] when
+  // absent.
+  voided_dates?: string[] | null
   [key: string]: unknown
 }
 
@@ -58,20 +64,56 @@ function parseIsoDate(iso: string): Date {
   return new Date(Date.UTC(y, m - 1, d))
 }
 
-// Derive the engine's WORKING-day duration from the stored bar dates. A milestone
-// is 0; otherwise it's the inclusive working-day span (start..end), so a single-day
-// task = 1. We derive from the dates — NOT a client-sent duration_days — so the
-// engine input and the stored bar can never disagree. Floored at 1 for a real task
-// in case both endpoints land on the same weekend day (collapses to one slot).
+// Count the voided days that actually SHORTEN a bar. A voided date is subtracted from
+// the working-day duration only when it (a) is itself a working day and (b) lands
+// inside the inclusive [start,end] span — i.e. on an otherwise-counted day. A void on
+// a weekend (never counted) or outside the span is harmless and ignored. Deduped, and
+// malformed/non-string entries are skipped defensively, so a repeat or stray value can
+// never double-subtract.
+function countVoidedWorkingDays(
+  start_date: string,
+  end_date: string,
+  voided_dates: readonly string[] | null | undefined,
+  calendar: WorkingCalendar,
+): number {
+  if (!voided_dates || voided_dates.length === 0) return 0
+  const startMs = parseIsoDate(start_date).getTime()
+  const endMs = parseIsoDate(end_date).getTime()
+  const seen = new Set<string>()
+  let count = 0
+  for (const raw of voided_dates) {
+    if (typeof raw !== "string") continue
+    const iso = raw.slice(0, 10)
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(iso) || seen.has(iso)) continue
+    const d = parseIsoDate(iso)
+    const ms = d.getTime()
+    if (ms < startMs || ms > endMs) continue // outside the span → ignored
+    if (!calendar.isWorkingDay(d)) continue // weekend void wasn't counted anyway
+    seen.add(iso)
+    count++
+  }
+  return count
+}
+
+// Derive the engine's WORKING-day duration from the stored bar dates, minus any days
+// the planner voided inside the span. A milestone is 0; otherwise it's the inclusive
+// working-day span (start..end), so a single-day task = 1, less one for each voided
+// working day that lands inside the bar. We derive from the dates + voids — NOT a
+// client-sent duration_days — so the engine input and the stored bar can never
+// disagree. Floored at 1 for a real task in case both endpoints land on the same
+// weekend day (collapses to one slot) or every counted day is voided.
 export function deriveDurationDays(
   start_date: string,
   end_date: string,
   is_milestone: boolean,
+  voided_dates: readonly string[] = [],
   calendar: WorkingCalendar = createWorkingCalendar(),
 ): number {
   if (is_milestone) return 0
-  const span = calendar.workingDaysBetween(parseIsoDate(start_date), parseIsoDate(end_date))
-  return Math.max(1, span + 1)
+  const inclusiveSpan =
+    calendar.workingDaysBetween(parseIsoDate(start_date), parseIsoDate(end_date)) + 1
+  const voided = countVoidedWorkingDays(start_date, end_date, voided_dates, calendar)
+  return Math.max(1, inclusiveSpan - voided)
 }
 
 // Day 0 of the schedule = the earliest task start_date in the set (ISO strings sort
@@ -103,7 +145,15 @@ export function computeScheduleCpm(
   )
   const tasks: Task[] = datedRows.map((t) => ({
     id: t.id,
-    durationDays: deriveDurationDays(t.start_date, t.end_date, t.is_milestone, calendar),
+    // Voided in-span working days shrink the engine duration too, so the CPM overlay
+    // and the stored bar agree on work content (a row without the column → []).
+    durationDays: deriveDurationDays(
+      t.start_date,
+      t.end_date,
+      t.is_milestone,
+      Array.isArray(t.voided_dates) ? t.voided_dates : [],
+      calendar,
+    ),
     isMilestone: t.is_milestone,
   }))
   // Only edges whose BOTH endpoints are live tasks in this set may reach the engine.

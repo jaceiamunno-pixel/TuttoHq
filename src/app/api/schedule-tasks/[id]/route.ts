@@ -11,7 +11,7 @@ import { deriveDurationDays, scheduleTaskCheckMessage } from "@/lib/schedule/api
 // re-resolved from the client.
 
 const TASK_COLS =
-  "id, project_id, name, phase, start_date, end_date, is_milestone, duration_days, " +
+  "id, project_id, name, phase, start_date, end_date, is_milestone, duration_days, voided_dates, " +
   "percent_complete, actual_start_date, actual_end_date, sort_order, wbs_code, status, crew_size, notes, created_at, created_by"
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
@@ -24,7 +24,8 @@ const strOrNull = (v: unknown): string | null =>
 
 // PATCH /api/schedule-tasks/[id] — edit from an explicit allow-list:
 // name, phase, start_date, end_date, is_milestone, percent_complete, status,
-// crew_size, wbs_code, sort_order, notes, actual_start_date, actual_end_date.
+// crew_size, voided_dates, wbs_code, sort_order, notes, actual_start_date,
+// actual_end_date.
 // Dates are conditionally optional: a 'backlog' row may be dateless, so the route
 // supports BOTH scheduling a backlog task (set both dates + a dated status) and
 // sending one back to the backlog (status='backlog' + null dates). When the patch
@@ -112,6 +113,27 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       patch.crew_size = n
     }
   }
+  // voided_dates: the planning-board's per-day non-working overrides (migration 0024:
+  // date[] NOT NULL DEFAULT '{}'). Must be an ARRAY of valid YYYY-MM-DD strings; a
+  // non-array or any malformed element is a 400. An empty array is allowed and CLEARS
+  // all voids. Deduped here so the stored array stays clean (the duration math dedupes
+  // too). A voided day outside the bar is accepted and simply ignored by the duration
+  // recompute below — it costs nothing and lets a future resize re-activate it.
+  if ("voided_dates" in body) {
+    const v = body.voided_dates
+    if (!Array.isArray(v)) {
+      return NextResponse.json({ error: "voided_dates must be an array of YYYY-MM-DD strings" }, { status: 400 })
+    }
+    const seen = new Set<string>()
+    const out: string[] = []
+    for (const el of v) {
+      if (typeof el !== "string" || !DATE_RE.test(el)) {
+        return NextResponse.json({ error: "voided_dates entries must each be YYYY-MM-DD" }, { status: 400 })
+      }
+      if (!seen.has(el)) { seen.add(el); out.push(el) }
+    }
+    patch.voided_dates = out
+  }
 
   if (Object.keys(patch).length === 0) {
     return NextResponse.json({ error: "No editable fields provided" }, { status: 400 })
@@ -125,11 +147,11 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   // raw "x in body".
   if (
     "start_date" in patch || "end_date" in patch ||
-    "is_milestone" in patch || "status" in patch
+    "is_milestone" in patch || "status" in patch || "voided_dates" in patch
   ) {
     const { data: current } = await supabase
       .from("schedule_tasks")
-      .select("start_date, end_date, is_milestone, status")
+      .select("start_date, end_date, is_milestone, status, voided_dates")
       .eq("id", id)
       .maybeSingle()
     if (!current) return NextResponse.json({ error: "Task not found" }, { status: 404 })
@@ -138,6 +160,9 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     const finalEnd = ("end_date" in patch ? patch.end_date : current.end_date) as string | null
     const finalMilestone = ("is_milestone" in patch ? patch.is_milestone : current.is_milestone) as boolean
     const finalStatus = ("status" in patch ? patch.status : current.status) as string
+    // The voids that drive the recompute: the patched array if present, else the row's
+    // current array (date[] NOT NULL → always an array, but guard to [] defensively).
+    const finalVoided = (("voided_dates" in patch ? patch.voided_dates : current.voided_dates) ?? []) as string[]
 
     // Date-presence invariant — mirrors the DB CHECK (both dates OR status='backlog').
     // Only a backlog row may be dateless; any dated status requires BOTH endpoints.
@@ -151,8 +176,11 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
     // Cached duration only when both dates exist; a dateless backlog row has no span,
     // so duration_days is null (deriveDurationDays would deref a null date otherwise).
+    // When dated, the final voids subtract from the working-day span so a voided in-span
+    // day drops the duration by one. Voids on a dateless backlog row stay stored but
+    // don't affect duration (it's null) — they apply once the row is scheduled.
     patch.duration_days = finalStart && finalEnd
-      ? deriveDurationDays(finalStart, finalEnd, finalMilestone)
+      ? deriveDurationDays(finalStart, finalEnd, finalMilestone, finalVoided)
       : null
   }
 

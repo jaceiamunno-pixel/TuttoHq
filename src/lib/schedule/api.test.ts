@@ -50,6 +50,50 @@ describe('deriveDurationDays', () => {
   it('counts only working days across a weekend (Mon→next Mon = 6)', () => {
     expect(deriveDurationDays(MON, NEXT_MON, false)).toBe(6);
   });
+
+  // ── Voided days (migration 0024 / planning board) ──────────────────────────
+  const WED = '2024-01-03'; // Wed (inside Mon–Fri)
+  const SAT = '2024-01-06'; // Sat (weekend, never counted)
+  it('subtracts a voided working day inside the span (Mon→Fri void Wed = 4)', () => {
+    expect(deriveDurationDays(MON, FRI, false, [WED])).toBe(4);
+  });
+  it('subtracts each distinct voided in-span working day (void Wed+Thu = 3)', () => {
+    expect(deriveDurationDays(MON, FRI, false, [WED, '2024-01-04'])).toBe(3);
+  });
+  it('ignores a voided weekend day (it was never counted)', () => {
+    expect(deriveDurationDays(MON, NEXT_MON, false, [SAT])).toBe(6);
+  });
+  it('ignores a voided date outside the span', () => {
+    expect(deriveDurationDays(MON, FRI, false, [NEXT_MON])).toBe(5);
+  });
+  it('dedupes a repeated voided date (no double-subtract)', () => {
+    expect(deriveDurationDays(MON, FRI, false, [WED, WED])).toBe(4);
+  });
+  it('floors at 1 even when every counted day is voided', () => {
+    expect(deriveDurationDays(MON, FRI, false, [MON, '2024-01-02', WED, '2024-01-04', FRI])).toBe(1);
+  });
+  it('stays 0 for a milestone regardless of voids', () => {
+    expect(deriveDurationDays(MON, FRI, true, [WED])).toBe(0);
+  });
+  it('empty voids array is a no-op (Mon→Fri = 5)', () => {
+    expect(deriveDurationDays(MON, FRI, false, [])).toBe(5);
+  });
+});
+
+describe('computeScheduleCpm — voided in-span days shrink the CPM duration', () => {
+  it('a void on a 5-day bar pulls earlyFinish in by one working day', () => {
+    const voidedRow: ScheduleTaskRow = {
+      id: 'A', start_date: MON, end_date: FRI, is_milestone: false, name: 'A',
+      voided_dates: ['2024-01-03'], // Wed
+    };
+    const out = assembleSchedule([voidedRow], []);
+    expect(out.cpm.ok).toBe(true);
+    if (!out.cpm.ok) return;
+    // 5 working days less the voided Wed = 4 → EF offset 4, project length 4 days.
+    expect(out.cpm.projectDurationDays).toBe(4);
+    const a = out.tasks.find((t) => t.id === 'A')!;
+    expect(a.earlyFinish).toBe(4);
+  });
 });
 
 describe('assembleSchedule — FS chain', () => {
