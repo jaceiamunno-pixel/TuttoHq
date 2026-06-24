@@ -142,6 +142,30 @@ function mergeTocs(tocs: Toc[]): Toc {
   return { sections, divisions }
 }
 
+/**
+ * Builds a Toc from a spec book's ALREADY-PARSED spec_sections — the
+ * authoritative post-parse list (every division incl. 00–04, correct titles,
+ * no TOC annotation suffixes). Used for the post-parse scope picker instead of
+ * re-parsing the table of contents, whose front-matter density gap can drop
+ * the early divisions. Division names come from the CSI table (same as the
+ * saved-scope reconstruction).
+ */
+function tocFromSpecSections(rows: { spec_number: string; spec_title: string }[]): Toc {
+  const sections: TocEntry[] = rows
+    .map(s => ({ specNumber: s.spec_number, specTitle: s.spec_title, divisionCode: s.spec_number.slice(0, 2) }))
+    .sort((a, b) => a.specNumber.localeCompare(b.specNumber))
+  const counts = new Map<string, number>()
+  for (const s of sections) counts.set(s.divisionCode, (counts.get(s.divisionCode) ?? 0) + 1)
+  const divisions: TocDivision[] = [...counts.entries()]
+    .map(([code, sectionCount]) => ({
+      code,
+      name: CSI_DIVISIONS.find(dv => dv.num === code)?.name ?? `Division ${code}`,
+      sectionCount,
+    }))
+    .sort((a, b) => a.code.localeCompare(b.code))
+  return { sections, divisions }
+}
+
 interface ConstructionManager {
   id: string; company_name: string; contact_name: string | null
   phone: string | null; email: string | null; address: string | null; notes: string | null; created_at: string
@@ -1106,15 +1130,25 @@ export default function SettingsPage() {
       const docs: { id: string }[] = d.documents ?? []
       if (docs.length === 0) return false
 
-      // Parse every volume's TOC in parallel, then merge.
+      // Build each volume's section list in parallel, then merge. Prefer the
+      // volume's ALREADY-PARSED spec_sections (authoritative: all divisions
+      // incl. 00–04, the corrected titles, no TOC annotation suffixes). Only a
+      // volume that hasn't been parsed yet falls back to re-parsing its table of
+      // contents — keeping genuine pre-parse scoping working.
       const results = await Promise.all(docs.map(async doc => {
         try {
+          const sb = await fetch(`/api/spec-books/${doc.id}`)
+          if (sb.ok) {
+            const sbData = await sb.json()
+            const parsed: { spec_number: string; spec_title: string }[] = sbData.sections ?? []
+            if (parsed.length > 0) return tocFromSpecSections(parsed)
+          }
           const tocRes = await fetch(`/api/spec-books/${doc.id}/toc`, { method: "POST" })
           if (!tocRes.ok) return null
           const tocData = await tocRes.json()
           return { sections: tocData.sections ?? [], divisions: tocData.divisions ?? [] } as Toc
         } catch (err) {
-          console.error(`[settings] TOC parse failed for doc ${doc.id}`, err)
+          console.error(`[settings] scope source load failed for doc ${doc.id}`, err)
           return null
         }
       }))
