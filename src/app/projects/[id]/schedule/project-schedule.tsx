@@ -30,8 +30,10 @@ interface ScheduleTask {
   project_id: string
   name: string
   phase: string | null
-  start_date: string
-  end_date: string
+  // Nullable since migration 0023 — a 'backlog' task carries no dates. The dated
+  // views filter these out (see datedTasks); the type now matches the API row.
+  start_date: string | null
+  end_date: string | null
   is_milestone: boolean
   duration_days: number
   percent_complete: number
@@ -100,7 +102,8 @@ function localTodayIso(): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
 }
 const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
-function fmtShort(iso: string): string {
+function fmtShort(iso: string | null): string {
+  if (!iso) return "" // tolerate a null/empty date so a stray backlog row can't crash a label
   const [, m, d] = iso.slice(0, 10).split("-").map(Number)
   return `${MON[m - 1]} ${d}`
 }
@@ -178,8 +181,10 @@ function buildRows(tasks: ScheduleTask[]): { rows: Row[]; indexByTask: Map<strin
 // A bar's calendar geometry. Prefers the computed overlay dates (the engine's
 // schedule); falls back to stored dates when the overlay is absent (cpm:{ok:false}).
 function barDates(t: ScheduleTask): { start: string; end: string } {
-  const start = t.earlyStartDate ?? t.start_date
-  const end = t.is_milestone ? start : (t.earlyFinishDate ?? t.end_date)
+  // Dated rows only ever reach here (datedTasks filters out null-dated backlog),
+  // but fall back to "" defensively so a null can never reach parseISO/.slice.
+  const start = t.earlyStartDate ?? t.start_date ?? ""
+  const end = t.is_milestone ? start : (t.earlyFinishDate ?? t.end_date ?? start)
   return { start, end }
 }
 
@@ -216,8 +221,23 @@ export default function ProjectSchedule({ projectId, projectName }: { projectId:
 
   useEffect(load, [load])
 
+  // ── Backlog partition — the prod-down fix ──────────────────────────────────
+  // Backlog (status='backlog') rows carry null start/end (migration 0023). The CPM
+  // engine already skips them server-side (api.ts → datedRows); the dated Gantt /
+  // timeline / calendar must do the same or null date math crashes the page. Filter
+  // ONCE here so every timeline consumer (rows, bounds, bars, edges, calendar) sees
+  // only dated tasks. Undated tasks are surfaced as a count, never placed on an axis.
+  const datedTasks = useMemo(
+    () => tasks.filter(
+      (t): t is ScheduleTask & { start_date: string; end_date: string } =>
+        t.start_date != null && t.end_date != null,
+    ),
+    [tasks],
+  )
+  const backlogCount = tasks.length - datedTasks.length
+
   const tasksById = useMemo(() => new Map(tasks.map(t => [t.id, t])), [tasks])
-  const { rows, indexByTask } = useMemo(() => buildRows(tasks), [tasks])
+  const { rows, indexByTask } = useMemo(() => buildRows(datedTasks), [datedTasks])
   const criticalSet = useMemo(
     () => new Set(cpm?.ok ? cpm.criticalTaskIds : []),
     [cpm],
@@ -226,19 +246,19 @@ export default function ProjectSchedule({ projectId, projectName }: { projectId:
   // Date domain — snapped to whole months so the axis tiles cleanly. Drawn from the
   // bar geometry (overlay-or-stored), defaulting to the current month when empty.
   const { domainStart, domainEnd } = useMemo(() => {
-    if (tasks.length === 0) {
+    if (datedTasks.length === 0) {
       const t = localTodayIso()
       return { domainStart: firstOfMonthIso(t), domainEnd: lastOfMonthIso(t) }
     }
     let min: string | null = null
     let max: string | null = null
-    for (const t of tasks) {
+    for (const t of datedTasks) {
       const { start, end } = barDates(t)
       if (min === null || start < min) min = start
       if (max === null || end > max) max = end
     }
     return { domainStart: firstOfMonthIso(min!), domainEnd: lastOfMonthIso(max!) }
-  }, [tasks])
+  }, [datedTasks])
 
   const pxPerDay = ZOOM[zoom].pxPerDay
   const totalDays = dayDiff(domainStart, domainEnd) + 1
@@ -308,7 +328,9 @@ export default function ProjectSchedule({ projectId, projectName }: { projectId:
     }
     e.preventDefault()
     ;(e.currentTarget as Element).setPointerCapture(e.pointerId)
-    dragRef.current = { taskId: task.id, mode, startX: e.clientX, origStart: task.start_date, origEnd: task.end_date }
+    // Only dated bars are draggable (backlog rows never render here), so the stored
+    // dates are non-null at runtime; "" keeps the type honest if one ever slips in.
+    dragRef.current = { taskId: task.id, mode, startX: e.clientX, origStart: task.start_date ?? "", origEnd: task.end_date ?? "" }
     setPreview({ taskId: task.id, mode, deltaDays: 0 })
   }
   function onBarPointerMove(e: React.PointerEvent) {
@@ -466,7 +488,7 @@ export default function ProjectSchedule({ projectId, projectName }: { projectId:
           <h1 className="text-[20px] sm:text-[22px] font-bold text-[#0F172A] tracking-tight">Schedule</h1>
           <p className="text-[13px] text-[#64748B] mt-0.5">
             {view === "calendar" ? "Month-calendar lookahead" : "Critical-path Gantt"} for {projectName}.
-            {cpm?.ok && tasks.length > 0 && (
+            {cpm?.ok && datedTasks.length > 0 && (
               <> Finish <span className="font-semibold text-[#475569]">{fmtShort(cpm.projectEnd)}</span> · {cpm.projectDurationDays} working day{cpm.projectDurationDays === 1 ? "" : "s"} · {cpm.criticalTaskIds.length} critical</>
             )}
           </p>
@@ -523,13 +545,23 @@ export default function ProjectSchedule({ projectId, projectName }: { projectId:
           <button onClick={load} className="text-[12px] font-semibold text-red-600 hover:text-red-700">Retry</button>
         </div>
       )}
+      {/* Imported backlog (undated) tasks have no place on a dated axis yet — surface
+          a count so they're visibly accounted for, not silently dropped. The full
+          backlog sidebar is a separate, later task. */}
+      {backlogCount > 0 && !loading && (
+        <div className="mx-4 sm:mx-6 mb-2 rounded-lg border border-[#E2E8F0] bg-[#F8FAFC] px-3 py-2">
+          <p className="text-[12px] text-[#64748B]">
+            <span className="font-semibold text-[#475569]">{backlogCount}</span> unscheduled task{backlogCount === 1 ? "" : "s"} (no dates) — in the backlog, not shown on the timeline.
+          </p>
+        </div>
+      )}
 
       {/* ── Calendar view — month-grid rendering of the SAME loaded tasks ──────── */}
       {view === "calendar" && (
         <div className="flex-1 min-h-0 overflow-y-auto px-4 sm:px-6 pb-6">
           {loadError ? null : (
             <ScheduleCalendar
-              tasks={tasks}
+              tasks={datedTasks}
               criticalSet={criticalSet}
               projectId={projectId}
               projectName={projectName}
