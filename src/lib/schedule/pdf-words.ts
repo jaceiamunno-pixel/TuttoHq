@@ -1,11 +1,12 @@
-// ── unpdf positional-text seam (server only) ─────────────────────────────────
+// ── positional-text seam (server only) ───────────────────────────────────────
 // The schedule-import parser needs per-word x/y to derive column bands from the
 // header row. unpdf's extractText() merges a page into one string and loses
 // positions, so we go one level lower: getDocumentProxy() returns the pdf.js
 // document, and page.getTextContent() yields text items with a transform matrix,
 // an advance width, and a fontName (the only thing that separates Asta summary
-// rows from leaf rows). This is the SAME unpdf/pdfjs already used by
-// spec-parser.ts — no new dependency. Node runtime.
+// rows from leaf rows). pdf.js stays the PRIMARY extractor — it is the same
+// unpdf/pdfjs already used by spec-parser.ts and every file that parses today
+// keeps the byte-identical path. Node runtime.
 //
 // We map every item through the page viewport (convertToViewportPoint) so the
 // coordinates are in DISPLAYED orientation. That is a no-op for upright pages but
@@ -13,6 +14,16 @@
 // would otherwise put the table on a sideways axis and break column detection.
 // Display-space y grows downward, so we flip it back to "higher = top" to match
 // the PDF convention the parser expects.
+//
+// FALLBACK (MuPDF): some GC exports keep their whole text layer inside an
+// optional-content (/OC) form XObject — pdf.js (and pdfplumber/pypdf) return
+// ZERO characters for those pages, so the parser sees an empty page and bails.
+// MuPDF — the same engine PyMuPDF/fitz wraps, here as the pure-WASM `mupdf`
+// package, no Python — reads it. We only invoke it on pages where pdf.js came up
+// empty, and only swap when MuPDF actually recovered more text, so files that
+// already parse never load the WASM and never change. MuPDF's default stext path
+// skips the /OC-gated XObject too; building the stext from an explicit display
+// list with showExtras (toDisplayList(true)) is what descends into it.
 
 import { getDocumentProxy, getResolvedPDFJS } from "unpdf"
 import type { PdfPageWords, PdfWord } from "./import-parse"
@@ -20,8 +31,40 @@ import type { PdfPageWords, PdfWord } from "./import-parse"
 interface RawItem { str?: string; transform?: number[]; width?: number; fontName?: string }
 interface Viewport { height: number; convertToViewportPoint(x: number, y: number): number[] }
 
-/** Extract one positioned-word list per page (1-based by array index + 1). */
+// Below this many text-layer characters a page is treated as effectively empty
+// and handed to the MuPDF fallback (the /OC-gated case returns ~0 from pdf.js).
+const MIN_PAGE_CHARS = 16
+
+const pageChars = (words: PdfPageWords) => words.reduce((n, w) => n + w.str.length, 0)
+
+/** Extract one positioned-word list per page (1-based by array index + 1). pdf.js
+ *  is primary; any page it returns empty for is retried through the MuPDF fallback. */
 export async function extractPdfWords(buffer: Buffer): Promise<PdfPageWords[]> {
+  const pages = await extractWordsViaPdfjs(buffer)
+
+  const emptyPages = pages
+    .map((words, i) => (pageChars(words) < MIN_PAGE_CHARS ? i : -1))
+    .filter((i) => i >= 0)
+  if (emptyPages.length === 0) return pages
+
+  try {
+    const mupdfPages = await extractWordsViaMupdf(buffer)
+    for (const i of emptyPages) {
+      // Only replace when MuPDF genuinely recovered more text — never regress a
+      // page pdf.js already read (e.g. a sparse Gantt-only continuation page).
+      if (mupdfPages[i] && pageChars(mupdfPages[i]) > pageChars(pages[i])) {
+        pages[i] = mupdfPages[i]
+      }
+    }
+  } catch (e) {
+    // MuPDF is best-effort recovery; if the WASM can't load, keep pdf.js output.
+    console.error("schedule-import: MuPDF fallback extraction failed:", e)
+  }
+  return pages
+}
+
+/** Primary extractor: pdf.js text items mapped to displayed orientation. */
+async function extractWordsViaPdfjs(buffer: Buffer): Promise<PdfPageWords[]> {
   const pdf = await getDocumentProxy(new Uint8Array(buffer))
   const pages: PdfPageWords[] = []
 
@@ -40,6 +83,50 @@ export async function extractPdfWords(buffer: Buffer): Promise<PdfPageWords[]> {
         str: item.str,
         font: item.fontName ?? "",
       })
+    }
+    pages.push(words)
+  }
+  return pages
+}
+
+// MuPDF structured-text JSON (the subset we read). asJSON() emits text blocks of
+// lines; each line carries a font, its baseline origin (x/y), and a bbox.
+interface MupdfLine { text?: string; x?: number; y?: number; bbox?: { x: number; y: number; w: number; h: number }; font?: { name?: string } }
+interface MupdfBlock { type: string; lines?: MupdfLine[] }
+interface MupdfStext { blocks: MupdfBlock[] }
+
+/** Fallback extractor: MuPDF (WASM). Lazily imported so normal files never load
+ *  the ~10 MB engine. Emits the SAME {x,y,w,str,font} shape the detector consumes,
+ *  with y flipped to "higher = top" to match the pdf.js seam. */
+async function extractWordsViaMupdf(buffer: Buffer): Promise<PdfPageWords[]> {
+  const mupdf = await import("mupdf")
+  const doc = mupdf.Document.openDocument(new Uint8Array(buffer), "application/pdf")
+  const pages: PdfPageWords[] = []
+
+  for (let i = 0; i < doc.countPages(); i++) {
+    const page = doc.loadPage(i)
+    const bounds = page.getBounds() // [x0, y0, x1, y1]; structured-text y grows DOWN
+    const height = bounds[3] - bounds[1]
+    // showExtras=true descends the /OC-gated form XObject the default path skips.
+    const stext = page.toDisplayList(true).toStructuredText("preserve-whitespace")
+    const json = JSON.parse(stext.asJSON()) as MupdfStext
+
+    const words: PdfWord[] = []
+    for (const block of json.blocks) {
+      if (block.type !== "text" || !block.lines) continue
+      for (const line of block.lines) {
+        const str = line.text
+        if (!str || !str.trim()) continue
+        const x = line.bbox?.x ?? line.x ?? 0
+        const baseY = line.y ?? line.bbox?.y ?? 0 // MuPDF gives a per-line baseline origin
+        words.push({
+          x: Math.round(x),
+          y: Math.round(height - baseY), // flip to "higher = top"
+          w: Math.round(line.bbox?.w ?? 0),
+          str,
+          font: line.font?.name ?? "",
+        })
+      }
     }
     pages.push(words)
   }
