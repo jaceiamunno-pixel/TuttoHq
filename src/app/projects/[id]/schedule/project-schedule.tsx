@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import ScheduleImportModal from "./schedule-import-modal"
+import ScheduleCalendar from "./schedule-calendar"
 
 // ── Per-project Schedule — the Gantt UI (ADR-011 Phase 3, Slice 3) ───────────
 // A classic two-panel Gantt over the Slice-2 API. The LEFT panel is a phase-grouped
@@ -191,6 +192,7 @@ export default function ProjectSchedule({ projectId, projectName }: { projectId:
   const [actionError, setActionError] = useState<string | null>(null)
 
   const [zoom, setZoom] = useState<Zoom>("week")
+  const [view, setView] = useState<"gantt" | "calendar">("gantt")
   const [taskForm, setTaskForm] = useState<{ mode: "create" | "edit"; task: ScheduleTask | null } | null>(null)
   const [depOpen, setDepOpen] = useState(false)
   const [importOpen, setImportOpen] = useState(false)
@@ -463,13 +465,26 @@ export default function ProjectSchedule({ projectId, projectName }: { projectId:
         <div className="min-w-0">
           <h1 className="text-[20px] sm:text-[22px] font-bold text-[#0F172A] tracking-tight">Schedule</h1>
           <p className="text-[13px] text-[#64748B] mt-0.5">
-            Critical-path Gantt for {projectName}.
+            {view === "calendar" ? "Month-calendar lookahead" : "Critical-path Gantt"} for {projectName}.
             {cpm?.ok && tasks.length > 0 && (
               <> Finish <span className="font-semibold text-[#475569]">{fmtShort(cpm.projectEnd)}</span> · {cpm.projectDurationDays} working day{cpm.projectDurationDays === 1 ? "" : "s"} · {cpm.criticalTaskIds.length} critical</>
             )}
           </p>
         </div>
         <div className="flex items-center gap-2">
+          {/* Gantt ⇄ Calendar view switch — Calendar is a second rendering of the
+              SAME loaded tasks (the PM's month-lookahead format). */}
+          <div className="flex items-center rounded-md border border-[#E2E8F0] overflow-hidden">
+            {(["gantt", "calendar"] as const).map((v) => (
+              <button
+                key={v}
+                onClick={() => setView(v)}
+                className={`h-9 px-3.5 text-[12px] font-semibold transition-colors ${view === v ? "bg-[#7B9BB5] text-white" : "bg-white text-[#64748B] hover:bg-[#F8FAFC]"}`}
+              >
+                {v === "gantt" ? "Gantt" : "Calendar"}
+              </button>
+            ))}
+          </div>
           <button
             onClick={() => setImportOpen(true)}
             className="h-9 px-3.5 rounded-md border border-[#E2E8F0] bg-white text-[13px] font-semibold text-[#0F172A] hover:bg-[#F8FAFC] whitespace-nowrap"
@@ -509,8 +524,21 @@ export default function ProjectSchedule({ projectId, projectName }: { projectId:
         </div>
       )}
 
+      {/* ── Calendar view — month-grid rendering of the SAME loaded tasks ──────── */}
+      {view === "calendar" && (
+        <div className="flex-1 min-h-0 overflow-y-auto px-4 sm:px-6 pb-6">
+          {loadError ? null : (
+            <ScheduleCalendar
+              tasks={tasks}
+              criticalSet={criticalSet}
+              onEditTask={(t) => setTaskForm({ mode: "edit", task: tasksById.get(t.id) ?? null })}
+            />
+          )}
+        </div>
+      )}
+
       {/* ── Desktop Gantt ─────────────────────────────────────────────────────── */}
-      <div className="hidden lg:flex flex-1 min-h-0 px-4 sm:px-6 pb-6">
+      <div className={`${view === "calendar" ? "hidden" : "hidden lg:flex"} flex-1 min-h-0 px-4 sm:px-6 pb-6`}>
         <div className="flex-1 min-h-0 flex flex-col rounded-xl border border-[#E2E8F0] bg-white overflow-hidden">
           {/* Card toolbar: legend + zoom */}
           <div className="flex items-center justify-between gap-3 px-4 py-2.5 border-b border-[#E2E8F0] bg-[#FAFBFC]">
@@ -664,8 +692,8 @@ export default function ProjectSchedule({ projectId, projectName }: { projectId:
         </div>
       </div>
 
-      {/* ── Mobile / narrow — read-oriented list ──────────────────────────────── */}
-      <div className="lg:hidden flex-1 min-h-0 overflow-y-auto px-4 pb-10">
+      {/* ── Mobile / narrow — read-oriented list (Gantt view only) ────────────── */}
+      <div className={`${view === "calendar" ? "hidden" : "lg:hidden"} flex-1 min-h-0 overflow-y-auto px-4 pb-10`}>
         <MobileSchedule
           loading={loading}
           empty={empty}
