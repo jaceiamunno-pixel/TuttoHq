@@ -203,6 +203,51 @@ describe("Asta / PowerProject family", () => {
   })
 })
 
+// ── THP pull-plan activity list (undated → backlog) ──────────────────────────
+
+describe("Pull-plan activity list family", () => {
+  // Mirrors the real Gilbane geometry: CENTERED headers, "Duration Crew Size" MERGED
+  // into one token, the responsibility code LEFT of the name (x≈36) vs the name (x≈184),
+  // values right (DAY@451 / PEOPLE@522), a wrapped name, and a blank-duration/crew row.
+  const header = () => [
+    w(68, 753, "Bid Package"), w(63, 734, "Responsibility"),
+    w(270, 734, "Work Activity"), w(454, 732, "Duration Crew Size"),
+  ]
+
+  it("detects family=pullplan and emits undated backlog rows with crew_size + responsibility→phase", () => {
+    const r = parseScheduleWords(doc(
+      ...header(),
+      // Row A: THP, 1 DAY, 2 PEOPLE, name wraps across two lines
+      w(38, 712, "THP"), w(451, 712, "1 DAY"), w(522, 712, "2 PEOPLE"),
+      w(184, 713, "frame demising wall"), w(184, 693, "rooms 120 and 121"),
+      // Row B: sub responsibility, BLANK duration + crew (intake gap — still valid)
+      w(36, 653, "26A Dinto"), w(184, 653, "Electrical rough"),
+      // Row C: sub responsibility WITH duration + crew
+      w(36, 633, "09A THP"), w(184, 633, "Sheetrock"), w(451, 632, "5 DAY"), w(522, 632, "2 PEOPLE"),
+    ))
+    expect(r.family).toBe("pullplan")
+    expect(r.rows).toHaveLength(3)
+
+    const a = r.rows[0]
+    expect(a).toMatchObject({
+      name: "frame demising wall rooms 120 and 121",
+      phase: "THP", duration_days: 1, crew_size: 2,
+      start_date: null, end_date: null, is_milestone: false,
+    })
+    expect(a.needsReview).toBe(true) // wrapped name → flagged for a glance
+
+    // Blank duration + crew still emits, name only.
+    expect(r.rows[1]).toMatchObject({
+      name: "Electrical rough", phase: "26A Dinto",
+      duration_days: null, crew_size: null, start_date: null, end_date: null,
+    })
+
+    expect(r.rows[2]).toMatchObject({
+      name: "Sheetrock", phase: "09A THP", duration_days: 5, crew_size: 2,
+    })
+  })
+})
+
 // ── Cross-cutting ────────────────────────────────────────────────────────────
 
 describe("robustness across families", () => {
