@@ -22,7 +22,9 @@ import ScheduleCalendar from "./schedule-calendar"
 // arrives on reload).
 
 // ── Types (mirror the API row + overlay shapes) ──────────────────────────────
-type TaskStatus = "not_started" | "in_progress" | "complete"
+// 'backlog' (migration 0023) = an undated task parked in the backlog sidebar; it has
+// no dates and never renders on the dated Gantt/calendar until scheduled.
+type TaskStatus = "not_started" | "in_progress" | "complete" | "backlog"
 type DepType = "FS" | "SS" | "FF" | "SF"
 
 interface ScheduleTask {
@@ -42,6 +44,7 @@ interface ScheduleTask {
   sort_order: number
   wbs_code: string | null
   status: TaskStatus
+  crew_size: number | null // pull-plan crew count; shown in the backlog sidebar
   notes: string | null
   created_at: string
   created_by: string | null
@@ -201,6 +204,7 @@ export default function ProjectSchedule({ projectId, projectName }: { projectId:
   const [taskForm, setTaskForm] = useState<{ mode: "create" | "edit"; task: ScheduleTask | null } | null>(null)
   const [depOpen, setDepOpen] = useState(false)
   const [importOpen, setImportOpen] = useState(false)
+  const [backlogOpen, setBacklogOpen] = useState(false)
 
   const load = useCallback(() => {
     setLoading(true)
@@ -234,7 +238,12 @@ export default function ProjectSchedule({ projectId, projectName }: { projectId:
     ),
     [tasks],
   )
-  const backlogCount = tasks.length - datedTasks.length
+  // The complement — undated tasks that live in the backlog sidebar until scheduled.
+  const backlogTasks = useMemo(
+    () => tasks.filter(t => t.start_date == null || t.end_date == null),
+    [tasks],
+  )
+  const backlogCount = backlogTasks.length
 
   const tasksById = useMemo(() => new Map(tasks.map(t => [t.id, t])), [tasks])
   const { rows, indexByTask } = useMemo(() => buildRows(datedTasks), [datedTasks])
@@ -545,14 +554,20 @@ export default function ProjectSchedule({ projectId, projectName }: { projectId:
           <button onClick={load} className="text-[12px] font-semibold text-red-600 hover:text-red-700">Retry</button>
         </div>
       )}
-      {/* Imported backlog (undated) tasks have no place on a dated axis yet — surface
-          a count so they're visibly accounted for, not silently dropped. The full
-          backlog sidebar is a separate, later task. */}
+      {/* Imported backlog (undated) tasks live off the dated axis — this toggle opens
+          the backlog sidebar where each can be scheduled (assign dates → it joins the
+          Gantt/calendar). Hidden when there are none (a dated-only project). */}
       {backlogCount > 0 && !loading && (
-        <div className="mx-4 sm:mx-6 mb-2 rounded-lg border border-[#E2E8F0] bg-[#F8FAFC] px-3 py-2">
-          <p className="text-[12px] text-[#64748B]">
-            <span className="font-semibold text-[#475569]">{backlogCount}</span> unscheduled task{backlogCount === 1 ? "" : "s"} (no dates) — in the backlog, not shown on the timeline.
-          </p>
+        <div className="mx-4 sm:mx-6 mb-2">
+          <button
+            onClick={() => setBacklogOpen(true)}
+            className="w-full flex items-center justify-between gap-3 rounded-lg border border-[#E2E8F0] bg-[#F8FAFC] px-3 py-2 text-left hover:bg-[#EEF2F6] transition-colors"
+          >
+            <span className="text-[12px] text-[#64748B]">
+              <span className="font-semibold text-[#475569]">{backlogCount}</span> unscheduled task{backlogCount === 1 ? "" : "s"} (no dates) — in the backlog, not on the timeline.
+            </span>
+            <span className="flex-shrink-0 text-[12px] font-semibold text-[#7B9BB5] whitespace-nowrap">View backlog →</span>
+          </button>
         </div>
       )}
 
@@ -749,6 +764,9 @@ export default function ProjectSchedule({ projectId, projectName }: { projectId:
           onClose={() => setTaskForm(null)}
           onSaved={() => { setTaskForm(null); load() }}
           onDelete={async id => { if (await deleteTask(id)) setTaskForm(null) }}
+          // Send a dated task back to the backlog: null the dates + status='backlog'
+          // (the [id] PATCH route allows this exactly when the result is backlog).
+          onMoveToBacklog={async id => { if (await patchTask(id, { status: "backlog", start_date: null, end_date: null })) setTaskForm(null) }}
         />
       )}
 
@@ -768,6 +786,16 @@ export default function ProjectSchedule({ projectId, projectName }: { projectId:
           projectId={projectId}
           onClose={() => setImportOpen(false)}
           onCommitted={() => load()} // refetch so imported tasks appear in the Gantt + calendar
+        />
+      )}
+
+      {backlogOpen && (
+        <BacklogSidebar
+          tasks={backlogTasks}
+          onClose={() => setBacklogOpen(false)}
+          // Schedule a backlog task: assign dates + a dated status. patchTask refetches
+          // on success, so the row drops out of backlogTasks and onto the Gantt/calendar.
+          onSchedule={(id, patch) => patchTask(id, patch)}
         />
       )}
     </div>
@@ -836,6 +864,135 @@ function Bar({ task, rowIndex, xOf, pxPerDay, critical, preview, onPointerDown, 
       <span className="absolute top-0 h-full flex items-center pointer-events-none text-[11px] text-[#475569] whitespace-nowrap" style={{ left: width + 6 }}>
         {task.name}
       </span>
+    </div>
+  )
+}
+
+// ── Backlog sidebar — pull-out list of undated tasks + per-row schedule action ──
+// Undated (status='backlog') tasks imported from a pull plan live here until a PM
+// assigns them dates. Scheduling one PATCHes { start_date, end_date, status } via the
+// parent (which refetches), so the row leaves this list and appears on the Gantt /
+// calendar. Drag-to-place onto the timeline is a nicer UX but fiddly against the
+// existing canvas geometry — shipped as a per-row date-picker first; drag is a follow-up.
+function BacklogSidebar({ tasks, onClose, onSchedule }: {
+  tasks: ScheduleTask[]
+  onClose: () => void
+  onSchedule: (id: string, patch: { start_date: string; end_date: string; status: TaskStatus }) => Promise<boolean>
+}) {
+  const [schedulingId, setSchedulingId] = useState<string | null>(null)
+  const [start, setStart] = useState(localTodayIso())
+  const [end, setEnd] = useState(localTodayIso())
+  const [saving, setSaving] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
+
+  function openForm(t: ScheduleTask) {
+    setErr(null)
+    setSchedulingId(t.id)
+    const today = localTodayIso()
+    setStart(today)
+    setEnd(today)
+  }
+  // Keep end on/after start as the start is picked (a 1-day task stays trivial).
+  function pickStart(v: string) {
+    setStart(v)
+    setEnd(e => (!e || parseISO(e) < parseISO(v) ? v : e))
+  }
+  async function confirm(id: string) {
+    setErr(null)
+    if (!start) { setErr("Pick a start date."); return }
+    if (!end) { setErr("Pick an end date."); return }
+    if (parseISO(end) < parseISO(start)) { setErr("End date must be on or after the start date."); return }
+    setSaving(true)
+    const ok = await onSchedule(id, { start_date: start, end_date: end, status: "not_started" })
+    setSaving(false)
+    if (!ok) { setErr("Couldn't schedule that task — check the dates and try again."); return }
+    setSchedulingId(null) // success → the parent refetch drops this row from the list
+  }
+
+  // Group by phase (responsibility) — first-appearance order; null → "Unassigned".
+  const groups = useMemo(() => {
+    const m = new Map<string, ScheduleTask[]>()
+    for (const t of tasks) {
+      const k = t.phase?.trim() || "Unassigned"
+      if (!m.has(k)) m.set(k, [])
+      m.get(k)!.push(t)
+    }
+    return [...m.entries()]
+  }, [tasks])
+
+  return (
+    <div className="fixed inset-0 z-[60] flex justify-end bg-black/40" onClick={onClose}>
+      <div className="w-full max-w-sm h-full bg-white border-l border-[#E2E8F0] shadow-xl flex flex-col" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-5 py-3.5 border-b border-[#E2E8F0] flex-shrink-0">
+          <div className="min-w-0">
+            <h2 className="text-[15px] font-bold text-[#0F172A]">Backlog</h2>
+            <p className="text-[12px] text-[#64748B] mt-0.5">{tasks.length} unscheduled task{tasks.length === 1 ? "" : "s"} — assign dates to add one to the schedule.</p>
+          </div>
+          <button onClick={onClose} aria-label="Close" className="text-[#94A3B8] hover:text-[#0F172A] transition-colors flex-shrink-0">
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto">
+          {tasks.length === 0 ? (
+            <p className="px-5 py-10 text-center text-[13px] text-[#64748B]">No unscheduled tasks — everything is on the schedule.</p>
+          ) : (
+            groups.map(([phase, list]) => (
+              <div key={phase}>
+                <div className="sticky top-0 z-10 flex items-center gap-2 px-5 py-1.5 bg-[#F4F7FA] border-b border-[#E2E8F0]">
+                  <span className="text-[11px] font-bold uppercase tracking-wide text-[#475569] truncate">{phase}</span>
+                  <span className="text-[11px] text-[#94A3B8]">{list.length}</span>
+                </div>
+                <ul>
+                  {list.map(t => (
+                    <li key={t.id} className="px-5 py-3 border-b border-[#F1F5F9]">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="text-[13px] font-medium text-[#0F172A] truncate" title={t.name}>{t.name}</p>
+                          <p className="text-[11px] text-[#64748B] mt-0.5">
+                            {t.is_milestone ? "Milestone" : "Task"}
+                            {t.crew_size != null && <> · crew {t.crew_size}</>}
+                          </p>
+                        </div>
+                        {schedulingId !== t.id && (
+                          <button
+                            onClick={() => openForm(t)}
+                            className="flex-shrink-0 h-7 px-2.5 rounded-md bg-[#7B9BB5] text-white text-[12px] font-semibold hover:bg-[#6A8AA4]"
+                          >
+                            Schedule
+                          </button>
+                        )}
+                      </div>
+
+                      {schedulingId === t.id && (
+                        <div className="mt-3 rounded-lg border border-[#E2E8F0] bg-[#F8FAFC] p-3 space-y-2.5">
+                          <div className="grid grid-cols-2 gap-2.5">
+                            <label className="block">
+                              <span className="block text-[11px] font-semibold text-[#475569] mb-1">Start</span>
+                              <input type="date" value={start} onChange={e => pickStart(e.target.value)} className="w-full h-8 px-2 rounded-md border border-[#E2E8F0] text-[12px] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40" />
+                            </label>
+                            <label className="block">
+                              <span className="block text-[11px] font-semibold text-[#475569] mb-1">End</span>
+                              <input type="date" value={end} min={start} onChange={e => setEnd(e.target.value)} className="w-full h-8 px-2 rounded-md border border-[#E2E8F0] text-[12px] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40" />
+                            </label>
+                          </div>
+                          {err && <p className="text-[11px] text-red-600">{err}</p>}
+                          <div className="flex items-center justify-end gap-2">
+                            <button onClick={() => { setSchedulingId(null); setErr(null) }} className="h-7 px-2.5 rounded-md border border-[#E2E8F0] bg-white text-[12px] font-semibold text-[#0F172A] hover:bg-[#F8FAFC]">Cancel</button>
+                            <button onClick={() => confirm(t.id)} disabled={saving} className="h-7 px-3 rounded-md bg-[#7B9BB5] text-white text-[12px] font-semibold hover:bg-[#6A8AA4] disabled:opacity-50">
+                              {saving ? "Scheduling…" : "Add to schedule"}
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
     </div>
   )
 }
@@ -950,7 +1107,7 @@ function Field({ label, required, children }: { label: string; required?: boolea
 }
 
 // ── Create / edit task modal ──────────────────────────────────────────────────
-function TaskFormModal({ projectId, mode, task, phases, onClose, onSaved, onDelete }: {
+function TaskFormModal({ projectId, mode, task, phases, onClose, onSaved, onDelete, onMoveToBacklog }: {
   projectId: string
   mode: "create" | "edit"
   task: ScheduleTask | null
@@ -958,6 +1115,7 @@ function TaskFormModal({ projectId, mode, task, phases, onClose, onSaved, onDele
   onClose: () => void
   onSaved: () => void
   onDelete: (id: string) => void
+  onMoveToBacklog: (id: string) => void
 }) {
   const isEdit = mode === "edit" && !!task
   const [name, setName] = useState(task?.name ?? "")
@@ -1066,6 +1224,15 @@ function TaskFormModal({ projectId, mode, task, phases, onClose, onSaved, onDele
             </button>
           ) : <span />}
           <div className="flex items-center gap-2">
+            {isEdit && (
+              <button
+                onClick={() => { if (confirm("Move this task to the backlog? Its dates will be cleared.")) onMoveToBacklog(task!.id) }}
+                className="h-9 px-3 rounded-md border border-[#E2E8F0] bg-white text-[13px] font-semibold text-[#475569] hover:bg-[#F8FAFC]"
+                title="Clear dates and park this task in the backlog"
+              >
+                Move to backlog
+              </button>
+            )}
             <button onClick={onClose} className="h-9 px-4 rounded-md border border-[#E2E8F0] bg-white text-[13px] font-semibold text-[#0F172A] hover:bg-[#F8FAFC]">Cancel</button>
             <button onClick={save} disabled={saving} className="h-9 px-4 rounded-md bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] disabled:opacity-50">
               {saving ? "Saving…" : isEdit ? "Save changes" : "Add task"}

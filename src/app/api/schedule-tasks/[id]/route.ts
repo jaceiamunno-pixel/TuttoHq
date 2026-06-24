@@ -12,21 +12,27 @@ import { deriveDurationDays, scheduleTaskCheckMessage } from "@/lib/schedule/api
 
 const TASK_COLS =
   "id, project_id, name, phase, start_date, end_date, is_milestone, duration_days, " +
-  "percent_complete, actual_start_date, actual_end_date, sort_order, wbs_code, status, notes, created_at, created_by"
+  "percent_complete, actual_start_date, actual_end_date, sort_order, wbs_code, status, crew_size, notes, created_at, created_by"
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
-const STATUSES = ["not_started", "in_progress", "complete"] as const
+// 'backlog' added (matches the POST route + the DB status CHECK as of migration 0023):
+// a backlog row may be dateless, so it relaxes the date-presence rule below.
+const STATUSES = ["not_started", "in_progress", "complete", "backlog"] as const
 
 const strOrNull = (v: unknown): string | null =>
   typeof v === "string" && v.trim() ? v.trim() : null
 
 // PATCH /api/schedule-tasks/[id] — edit from an explicit allow-list:
 // name, phase, start_date, end_date, is_milestone, percent_complete, status,
-// wbs_code, sort_order, notes, actual_start_date, actual_end_date. When any of
-// start_date/end_date/is_milestone change we recompute the cached duration_days
-// from the resulting bar (a pre-fetch supplies the unchanged endpoints) so it can't
-// drift from the dates. The DB CHECKs (date order / pct / status) validate the
-// final row and map to clean 400s.
+// crew_size, wbs_code, sort_order, notes, actual_start_date, actual_end_date.
+// Dates are conditionally optional: a 'backlog' row may be dateless, so the route
+// supports BOTH scheduling a backlog task (set both dates + a dated status) and
+// sending one back to the backlog (status='backlog' + null dates). When the patch
+// touches the bar geometry or the status we (a) enforce the date-presence invariant
+// (both dates OR status='backlog') for a clean 400, and (b) recompute the cached
+// duration_days from the resulting bar — null for a dateless backlog row — so it can't
+// drift from the dates. The DB CHECKs (date order / pct / status / presence) validate
+// the final row and map to clean 400s.
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
@@ -51,11 +57,16 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   if ("wbs_code" in body) patch.wbs_code = strOrNull(body.wbs_code)
   if ("notes" in body) patch.notes = strOrNull(body.notes)
 
+  // start_date/end_date may be CLEARED (null) — but only when the FINAL status is
+  // 'backlog' (enforced after we know the resulting row, below). A PRESENT value must
+  // still be a valid YYYY-MM-DD (a malformed date is a 400, never a silent null),
+  // mirroring the POST route's conditional-date contract. Keep the strict behavior for
+  // dated statuses via the presence check below.
   for (const k of ["start_date", "end_date"] as const) {
     if (k in body) {
       const v = strOrNull(body[k])
-      if (!v || !DATE_RE.test(v)) return NextResponse.json({ error: `${k} must be YYYY-MM-DD` }, { status: 400 })
-      patch[k] = v
+      if (v && !DATE_RE.test(v)) return NextResponse.json({ error: `${k} must be YYYY-MM-DD` }, { status: 400 })
+      patch[k] = v // null = clear; presence validated against the final status below
     }
   }
   // actual_* may be cleared by sending null/"" → strOrNull collapses to null.
@@ -81,7 +92,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   }
   if ("status" in body) {
     if (!STATUSES.includes(body.status as (typeof STATUSES)[number])) {
-      return NextResponse.json({ error: "status must be not_started, in_progress, or complete" }, { status: 400 })
+      return NextResponse.json({ error: "status must be not_started, in_progress, complete, or backlog" }, { status: 400 })
     }
     patch.status = body.status
   }
@@ -90,25 +101,59 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     if (!Number.isInteger(n)) return NextResponse.json({ error: "sort_order must be a whole number" }, { status: 400 })
     patch.sort_order = n
   }
+  // crew_size: optional non-negative whole number; null/"" clears it (mirrors POST).
+  if ("crew_size" in body) {
+    const raw = body.crew_size
+    if (raw === null || raw === "") {
+      patch.crew_size = null
+    } else {
+      const n = Number(raw)
+      if (!Number.isInteger(n) || n < 0) return NextResponse.json({ error: "crew_size must be a whole number ≥ 0" }, { status: 400 })
+      patch.crew_size = n
+    }
+  }
 
   if (Object.keys(patch).length === 0) {
     return NextResponse.json({ error: "No editable fields provided" }, { status: 400 })
   }
 
-  // If the bar geometry changed, recompute the cached duration_days from the FINAL
-  // start/end/is_milestone. A single-endpoint edit needs the unchanged endpoints,
-  // so pre-fetch the current row (RLS-scoped maybeSingle → 404 if not visible).
-  if ("start_date" in patch || "end_date" in patch || "is_milestone" in patch) {
+  // When the patch touches the bar geometry OR the status, validate the resulting row
+  // against the DB's date-presence invariant (both dates present OR status='backlog')
+  // and recompute the cached duration_days from the FINAL bar. A single-field edit
+  // needs the unchanged fields, so pre-fetch the current row (RLS-scoped maybeSingle →
+  // 404 if not visible). We branch on "x in patch" (validated/accepted fields), never
+  // raw "x in body".
+  if (
+    "start_date" in patch || "end_date" in patch ||
+    "is_milestone" in patch || "status" in patch
+  ) {
     const { data: current } = await supabase
       .from("schedule_tasks")
-      .select("start_date, end_date, is_milestone")
+      .select("start_date, end_date, is_milestone, status")
       .eq("id", id)
       .maybeSingle()
     if (!current) return NextResponse.json({ error: "Task not found" }, { status: 404 })
-    const start_date = (patch.start_date as string) ?? current.start_date
-    const end_date = (patch.end_date as string) ?? current.end_date
-    const is_milestone = "is_milestone" in patch ? (patch.is_milestone as boolean) : current.is_milestone
-    patch.duration_days = deriveDurationDays(start_date, end_date, is_milestone)
+
+    const finalStart = ("start_date" in patch ? patch.start_date : current.start_date) as string | null
+    const finalEnd = ("end_date" in patch ? patch.end_date : current.end_date) as string | null
+    const finalMilestone = ("is_milestone" in patch ? patch.is_milestone : current.is_milestone) as boolean
+    const finalStatus = ("status" in patch ? patch.status : current.status) as string
+
+    // Date-presence invariant — mirrors the DB CHECK (both dates OR status='backlog').
+    // Only a backlog row may be dateless; any dated status requires BOTH endpoints.
+    // Caught here for a clean 400 before the round trip; the CHECK is the backstop.
+    if (finalStatus !== "backlog" && (!finalStart || !finalEnd)) {
+      return NextResponse.json(
+        { error: "start_date and end_date are required unless status is backlog" },
+        { status: 400 },
+      )
+    }
+
+    // Cached duration only when both dates exist; a dateless backlog row has no span,
+    // so duration_days is null (deriveDurationDays would deref a null date otherwise).
+    patch.duration_days = finalStart && finalEnd
+      ? deriveDurationDays(finalStart, finalEnd, finalMilestone)
+      : null
   }
 
   // .maybeSingle() doubles as the tenant/existence check: RLS limits the UPDATE to
