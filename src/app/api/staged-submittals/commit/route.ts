@@ -15,12 +15,17 @@ interface StagedRow {
   project_id: string
 }
 
-// POST /api/staged-submittals/commit — commits every selected, not-yet-committed
-// staged row for a project into the live `submittals` log.
+// POST /api/staged-submittals/commit — commits a project's not-yet-committed
+// staged rows into the live `submittals` log, gated by the project's scope.
 //
 // Body: { project_id, mode: "consolidated" | "detailed" }
 //  - detailed:     one submittal per staged row (Mode A).
 //  - consolidated: one submittal per (section, type) group (Mode B).
+//
+// Scope gate: only rows whose section is in_scope per project_scope_sections are
+// committed (joined on spec_number). A project with no scope rows commits all
+// selected rows (legacy "not yet scoped" behavior). Out-of-scope rows are skipped
+// and reported as skippedOutOfScope. See the gate below for the full rationale.
 //
 // Safeguard: a staged row whose source spec_section no longer exists (the spec
 // book was re-parsed mid-review) is skipped gracefully — it does not error the
@@ -48,19 +53,53 @@ export async function POST(req: NextRequest) {
   if (stagedError) return NextResponse.json({ error: stagedError.message }, { status: 500 })
 
   const allStaged = (stagedData ?? []) as StagedRow[]
-  if (allStaged.length === 0) return NextResponse.json({ committed: 0, skippedMissingSection: 0 })
+  if (allStaged.length === 0) {
+    return NextResponse.json({ committed: 0, skippedMissingSection: 0, skippedOutOfScope: 0 })
+  }
+
+  // ── Scope gate — project_scope_sections is the single source of truth ──────
+  // Commit ONLY rows whose section the user actually scoped in. is_selected is an
+  // ephemeral per-row toggle that a re-parse resets all-true, so it cannot decide
+  // scope; it stays in the query above only as a manual per-row deselect. The
+  // durable, company/RLS-scoped record of intent lives in project_scope_sections.
+  //
+  // Join on spec_number — the reparse-stable key. A re-parse deletes & recreates
+  // spec_sections (new row ids) and SET NULLs scope.spec_section_id, so
+  // spec_section_id does NOT survive a reparse; spec_number does. This mirrors the
+  // parse route's own scope filter, which keys on spec_number too.
+  //
+  // LEGACY (DO NOT BREAK): a project with ZERO project_scope_sections rows is
+  // "not yet scoped" — commit ALL selected rows exactly as before. Never silently
+  // commit nothing for an unscoped project.
+  const { data: scopeRows } = await supabase
+    .from("project_scope_sections")
+    .select("spec_number, in_scope")
+    .eq("project_id", projectId)
+  const hasScope = (scopeRows ?? []).length > 0
+  const inScope = new Set(
+    (scopeRows ?? []).filter(r => r.in_scope).map(r => r.spec_number as string),
+  )
+  const scopedStaged = hasScope
+    ? allStaged.filter(s => inScope.has(s.spec_number))
+    : allStaged
+  const skippedOutOfScope = allStaged.length - scopedStaged.length
+  if (scopedStaged.length === 0) {
+    return NextResponse.json({ committed: 0, skippedMissingSection: 0, skippedOutOfScope })
+  }
 
   // Safeguard: drop staged rows whose spec_section was deleted during a re-parse.
-  const sectionIds = [...new Set(allStaged.map(s => s.spec_section_id))]
+  const sectionIds = [...new Set(scopedStaged.map(s => s.spec_section_id))]
   const { data: sections } = await supabase
     .from("spec_sections")
     .select("id, spec_title")
     .in("id", sectionIds)
   const titleById = new Map((sections ?? []).map(s => [s.id as string, s.spec_title as string]))
 
-  const staged = allStaged.filter(s => titleById.has(s.spec_section_id))
-  const skippedMissingSection = allStaged.length - staged.length
-  if (staged.length === 0) return NextResponse.json({ committed: 0, skippedMissingSection })
+  const staged = scopedStaged.filter(s => titleById.has(s.spec_section_id))
+  const skippedMissingSection = scopedStaged.length - staged.length
+  if (staged.length === 0) {
+    return NextResponse.json({ committed: 0, skippedMissingSection, skippedOutOfScope })
+  }
 
   const baseFields = (s: StagedRow) => ({
     csi_division:    divisionNumberOf(s.spec_number),
@@ -138,5 +177,5 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  return NextResponse.json({ committed: inserted.length, skippedMissingSection })
+  return NextResponse.json({ committed: inserted.length, skippedMissingSection, skippedOutOfScope })
 }
