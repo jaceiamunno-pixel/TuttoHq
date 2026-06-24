@@ -30,7 +30,8 @@ interface ProposedRow {
 type EditableRow = ProposedRow & { _key: string }
 
 const FAMILY_LABEL: Record<string, string> = {
-  msp: "MS Project", p6: "Primavera P6", asta: "Asta / PowerProject", unknown: "Unrecognized",
+  msp: "MS Project", p6: "Primavera P6", asta: "Asta / PowerProject",
+  calendar: "Bluebeam month calendar", unknown: "Unrecognized",
 }
 const inputCls = "h-7 px-2 rounded border border-[#E2E8F0] text-[12px] text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40"
 
@@ -180,7 +181,7 @@ export default function ScheduleImportModal({
                 <svg className="w-6 h-6 text-[#7B9BB5]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.9A5 5 0 1115.9 6 4.5 4.5 0 0117 16m-5-4v8m0-8l-3 3m3-3l3 3" /></svg>
               </div>
               <p className="text-[14px] font-semibold text-[#0F172A]">{parsing ? "Reading the schedule…" : "Drop a schedule PDF here, or click to choose"}</p>
-              <p className="text-[12px] text-[#64748B] mt-1 max-w-md">MS Project, Primavera P6, or Asta / PowerProject exports with a real text layer (not a scan). Up to 4 MB.</p>
+              <p className="text-[12px] text-[#64748B] mt-1 max-w-md">MS Project, Primavera P6, or Asta / PowerProject exports — or a hand-built Bluebeam month-calendar lookahead. Needs a real text layer (not a scan). Up to 4 MB.</p>
               <input ref={fileRef} type="file" accept="application/pdf,.pdf" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) parse(f) }} />
             </div>
             {parseError && <p className="mt-3 text-[12px] text-red-600">{parseError}</p>}
