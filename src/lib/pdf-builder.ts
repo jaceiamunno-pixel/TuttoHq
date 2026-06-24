@@ -141,6 +141,18 @@ export interface PDFReviewerStamp {
   reviewText: string
 }
 
+/** One task chip placed in a START-day cell of a PDFBuilder.monthCalendar grid. */
+export interface CalendarChip {
+  /** Task name — the chip's primary label. */
+  name: string
+  /** Pre-formatted duration suffix, e.g. "3 days" or "milestone". */
+  durationLabel: string
+  /** Lead the chip with a diamond marker. */
+  milestone: boolean
+  /** Style the chip red (matches the critical-path styling in the on-screen view). */
+  critical: boolean
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 /** Truncate `text` with an ellipsis so it fits within `maxPx` at `size`. */
 function clip(font: PDFFont, text: string, maxPx: number, size: number): string {
@@ -1075,6 +1087,103 @@ export class PDFBuilder {
         this.page.drawText(line, { x: innerX, y: py, size: pSz, font: this.reg, color: PDF.color.muted })
       }
     }
+  }
+
+  // ── Month calendar grid (schedule export) ─────────────────────────────────────
+  /** Draw a Sun–Sat month grid that fills the content width and the remaining page
+   *  height, placing each chip in its START-day cell as "{name}, {label}". Multiple
+   *  chips stack; whatever doesn't fit collapses to a "+N more" line. Intended to be
+   *  called once per page (pageBreak() between months) and reads best in landscape.
+   *  `chipsByDay` keys are day-of-month numbers (1–31). */
+  monthCalendar(year: number, month0: number, chipsByDay: Map<number, CalendarChip[]>) {
+    const MONTH_NAMES = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"]
+    const DOW_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+    const titleH = 20
+    const dowH = 15
+
+    // Month / year title
+    this.page.drawText(`${MONTH_NAMES[month0]} ${year}`, {
+      x: this.M, y: this.y - 14, size: 13, font: this.bold, color: PDF.color.ink,
+    })
+    this.y -= titleH
+
+    const colW = this.CW / 7
+
+    // Weekday header strip
+    const headTop = this.y
+    this.page.drawRectangle({ x: this.M, y: headTop - dowH, width: this.CW, height: dowH, color: PDF.color.fieldFill })
+    DOW_NAMES.forEach((d, i) => {
+      const t = d.toUpperCase()
+      const tw = this.bold.widthOfTextAtSize(t, 7)
+      this.page.drawText(t, { x: this.M + i * colW + (colW - tw) / 2, y: headTop - dowH + (dowH - 7) / 2 + 0.5, size: 7, font: this.bold, color: PDF.color.ruleStrong })
+    })
+    this.y -= dowH
+
+    // Grid geometry — UTC math so the month boundaries never shift by timezone.
+    const startDow = new Date(Date.UTC(year, month0, 1)).getUTCDay()
+    const daysInMonth = new Date(Date.UTC(year, month0 + 1, 0)).getUTCDate()
+    const weeks = Math.ceil((startDow + daysInMonth) / 7)
+    const gridTop = this.y
+    const cellH = (gridTop - this.bottomLimit) / weeks
+
+    const chipFont = 6.3, chipLineH = 7.2, chipPadX = 3, chipPadY = 1.6, chipGap = 2
+
+    let dayNum = 1 - startDow
+    for (let w = 0; w < weeks; w++) {
+      for (let c = 0; c < 7; c++) {
+        const cx = this.M + c * colW
+        const cellTop = gridTop - w * cellH
+        const cellBot = cellTop - cellH
+        const inMonth = dayNum >= 1 && dayNum <= daysInMonth
+        this.page.drawRectangle({
+          x: cx, y: cellBot, width: colW, height: cellH,
+          color: inMonth ? PDF.color.white : rgb(0.973, 0.980, 0.988),
+          borderColor: PDF.color.rule, borderWidth: 0.5,
+        })
+        if (inMonth) {
+          this.page.drawText(String(dayNum), { x: cx + 4, y: cellTop - 10, size: 7.5, font: this.bold, color: PDF.color.label })
+          const chips = chipsByDay.get(dayNum) ?? []
+          const innerW = colW - chipPadX * 2
+          let cy = cellTop - 14   // top of the first chip
+          let drawn = 0
+          for (const chip of chips) {
+            const markerW = chip.milestone ? 7 : 0
+            const label = `${chip.name}, ${chip.durationLabel}`
+            const allLines = this.wrapTextWith(this.reg, label, chipFont, innerW - markerW - 4)
+            const lines = allLines.slice(0, 2)
+            if (allLines.length > 2 && lines.length === 2) {
+              lines[1] = clip(this.reg, lines[1] + "…", innerW - markerW - 4, chipFont)
+            }
+            const chipH = lines.length * chipLineH + chipPadY * 2
+            // Reserve room for a trailing "+N more" line when chips remain.
+            const reserve = drawn < chips.length - 1 ? 9 : 2
+            if (cy - chipH < cellBot + reserve) break
+            const chipY = cy - chipH
+            const fill = chip.critical ? rgb(0.996, 0.929, 0.929) : rgb(0.933, 0.949, 0.965)
+            const txt = chip.critical ? rgb(0.70, 0.12, 0.12) : PDF.color.ink
+            this.page.drawRectangle({ x: cx + chipPadX, y: chipY, width: innerW, height: chipH, color: fill })
+            let textX = cx + chipPadX + 3
+            if (chip.milestone) {
+              // Small filled diamond (drawSvgPath: y grows downward; path is centered).
+              this.page.drawSvgPath("M 0 -2.2 L 2.2 0 L 0 2.2 L -2.2 0 Z", { x: textX + 1.5, y: chipY + chipH / 2, color: txt, borderWidth: 0 })
+              textX += markerW
+            }
+            let ly = chipY + chipH - chipPadY - chipFont
+            for (const line of lines) {
+              this.page.drawText(line, { x: textX, y: ly, size: chipFont, font: this.reg, color: txt })
+              ly -= chipLineH
+            }
+            cy -= chipH + chipGap
+            drawn++
+          }
+          if (drawn < chips.length) {
+            this.page.drawText(`+${chips.length - drawn} more`, { x: cx + chipPadX + 1, y: cellBot + 3, size: 6, font: this.reg, color: PDF.color.muted })
+          }
+        }
+        dayNum++
+      }
+    }
+    this.y = this.bottomLimit
   }
 
   // ── Save ────────────────────────────────────────────────────────────────────

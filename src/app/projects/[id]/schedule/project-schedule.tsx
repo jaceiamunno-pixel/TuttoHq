@@ -531,6 +531,8 @@ export default function ProjectSchedule({ projectId, projectName }: { projectId:
             <ScheduleCalendar
               tasks={tasks}
               criticalSet={criticalSet}
+              projectId={projectId}
+              projectName={projectName}
               onEditTask={(t) => setTaskForm({ mode: "edit", task: tasksById.get(t.id) ?? null })}
             />
           )}
