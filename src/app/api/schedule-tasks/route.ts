@@ -18,14 +18,14 @@ import {
 
 const TASK_COLS =
   "id, project_id, name, phase, start_date, end_date, is_milestone, duration_days, " +
-  "percent_complete, actual_start_date, actual_end_date, sort_order, wbs_code, status, notes, created_at, created_by"
+  "percent_complete, actual_start_date, actual_end_date, sort_order, wbs_code, status, crew_size, notes, created_at, created_by"
 
 const DEP_COLS =
   "id, project_id, predecessor_id, successor_id, dep_type, lag_days, created_at, created_by"
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-const STATUSES = ["not_started", "in_progress", "complete"] as const
+const STATUSES = ["not_started", "in_progress", "complete", "backlog"] as const
 
 const strOrNull = (v: unknown): string | null =>
   typeof v === "string" && v.trim() ? v.trim() : null
@@ -90,6 +90,7 @@ interface CreateInput {
   is_milestone?: unknown
   percent_complete?: unknown
   status?: unknown
+  crew_size?: unknown
   wbs_code?: unknown
   sort_order?: unknown
   notes?: unknown
@@ -100,9 +101,12 @@ interface CreateInput {
 // Validate + build the INSERT row. company_id and created_by are intentionally
 // omitted — both ride their DB defaults (get_my_company_id() / auth.uid()) and can
 // NEVER be set by the client. duration_days is DERIVED from the dates here (never
-// taken from the body) so the cached column can't disagree with the engine. The
-// date_order / pct-range / status-enum rules are also DB CHECKs; validating here
-// just yields friendlier 400s before the round trip.
+// taken from the body) so the cached column can't disagree with the engine — but only
+// when both dates are present; a dateless backlog row gets duration_days=null. Dates
+// are REQUIRED for a scheduled task and OPTIONAL for a 'backlog' one (migration 0023:
+// start/end nullable; a DB CHECK enforces both-present OR status='backlog'). The
+// date_order / pct-range / status-enum rules are also DB CHECKs; validating here just
+// yields friendlier 400s before the round trip.
 function buildInsertRow(input: CreateInput): { row: Record<string, unknown> } | { error: string } {
   const project_id = strOrNull(input.project_id)
   if (!project_id || !UUID_RE.test(project_id)) return { error: "project_id (uuid) is required" }
@@ -110,10 +114,27 @@ function buildInsertRow(input: CreateInput): { row: Record<string, unknown> } | 
   const name = strOrNull(input.name)
   if (!name) return { error: "name is required" }
 
+  // status drives whether dates are required, so validate it first.
+  let status: string = "not_started"
+  if (input.status !== undefined && input.status !== null && input.status !== "") {
+    if (!STATUSES.includes(input.status as (typeof STATUSES)[number])) {
+      return { error: "status must be not_started, in_progress, complete, or backlog" }
+    }
+    status = input.status as string
+  }
+
+  // Dates: REQUIRED for a scheduled task; OPTIONAL for a backlog row. A backlog row may
+  // carry no dates (both null), but a PRESENT date must still be a valid YYYY-MM-DD — a
+  // malformed date is a 400, never a silent null. Non-backlog keeps the strict contract.
   const start_date = strOrNull(input.start_date)
-  if (!start_date || !DATE_RE.test(start_date)) return { error: "start_date (YYYY-MM-DD) is required" }
   const end_date = strOrNull(input.end_date)
-  if (!end_date || !DATE_RE.test(end_date)) return { error: "end_date (YYYY-MM-DD) is required" }
+  if (status === "backlog") {
+    if (start_date && !DATE_RE.test(start_date)) return { error: "start_date must be YYYY-MM-DD" }
+    if (end_date && !DATE_RE.test(end_date)) return { error: "end_date must be YYYY-MM-DD" }
+  } else {
+    if (!start_date || !DATE_RE.test(start_date)) return { error: "start_date (YYYY-MM-DD) is required" }
+    if (!end_date || !DATE_RE.test(end_date)) return { error: "end_date (YYYY-MM-DD) is required" }
+  }
 
   let is_milestone = false
   if (input.is_milestone !== undefined && input.is_milestone !== null) {
@@ -128,14 +149,6 @@ function buildInsertRow(input: CreateInput): { row: Record<string, unknown> } | 
     percent_complete = n
   }
 
-  let status: string = "not_started"
-  if (input.status !== undefined && input.status !== null && input.status !== "") {
-    if (!STATUSES.includes(input.status as (typeof STATUSES)[number])) {
-      return { error: "status must be not_started, in_progress, or complete" }
-    }
-    status = input.status as string
-  }
-
   let sort_order = 0
   if (input.sort_order !== undefined && input.sort_order !== null && input.sort_order !== "") {
     const n = Number(input.sort_order)
@@ -148,6 +161,14 @@ function buildInsertRow(input: CreateInput): { row: Record<string, unknown> } | 
     if (v && !DATE_RE.test(v)) return { error: `${k} must be YYYY-MM-DD` }
   }
 
+  // crew_size: optional non-negative whole number; null when absent.
+  let crew_size: number | null = null
+  if (input.crew_size !== undefined && input.crew_size !== null && input.crew_size !== "") {
+    const n = Number(input.crew_size)
+    if (!Number.isInteger(n) || n < 0) return { error: "crew_size must be a whole number ≥ 0" }
+    crew_size = n
+  }
+
   const row: Record<string, unknown> = {
     project_id,
     name,
@@ -155,9 +176,11 @@ function buildInsertRow(input: CreateInput): { row: Record<string, unknown> } | 
     start_date,
     end_date,
     is_milestone,
-    duration_days: deriveDurationDays(start_date, end_date, is_milestone),
+    // duration only when both dates are present; a dateless backlog row has no span.
+    duration_days: start_date && end_date ? deriveDurationDays(start_date, end_date, is_milestone) : null,
     percent_complete,
     status,
+    crew_size,
     wbs_code: strOrNull(input.wbs_code),
     sort_order,
     notes: strOrNull(input.notes),
@@ -167,10 +190,11 @@ function buildInsertRow(input: CreateInput): { row: Record<string, unknown> } | 
   return { row }
 }
 
-// POST /api/schedule-tasks — create one task. Required: project_id, name,
-// start_date, end_date. The project_id must reference an RLS-visible project, so a
-// task can't be attached to another tenant's project even though the INSERT policy
-// only checks company_id. DB CHECKs (date order / pct / status) map to clean 400s.
+// POST /api/schedule-tasks — create one task. Required: project_id, name; plus
+// start_date + end_date UNLESS status='backlog' (a backlog row may be dateless).
+// The project_id must reference an RLS-visible project, so a task can't be attached to
+// another tenant's project even though the INSERT policy only checks company_id. DB
+// CHECKs (date order / dates-present-or-backlog / pct / status) map to clean 400s.
 export async function POST(req: NextRequest) {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()

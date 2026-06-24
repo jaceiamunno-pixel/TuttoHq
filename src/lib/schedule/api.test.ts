@@ -204,6 +204,48 @@ describe('dangling edges from a soft-deleted task (regression — PR #45 pre-mer
   });
 });
 
+describe('backlog (null-dated) rows — overlay tolerance (migration 0023, Step 2a)', () => {
+  // A backlog task carries null start/end. It must NOT enter the CPM engine (which
+  // would deref a null date and THROW → GET 500) and must ride through to the response
+  // untouched — no overlay merged, no day-0 collapse, no NaN.
+  const backlogRow = (id: string): ScheduleTaskRow => ({
+    id,
+    start_date: null,
+    end_date: null,
+    is_milestone: false,
+    name: id,
+  });
+
+  it('keeps the overlay for dated rows and passes a null-dated backlog row through untouched', () => {
+    const out = assembleSchedule([taskRow('A', MON, FRI), backlogRow('BL')], []);
+    expect(out.cpm.ok).toBe(true);
+    if (!out.cpm.ok) return;
+    const a = out.tasks.find((t) => t.id === 'A')!;
+    expect(a.earlyStart).toBe(0); // dated row still computed normally
+    const bl = out.tasks.find((t) => t.id === 'BL')!;
+    expect(bl.start_date).toBeNull(); // NOT collapsed onto a date
+    expect('earlyStart' in bl).toBe(false); // no overlay merged
+    expect('totalFloat' in bl).toBe(false);
+  });
+
+  it('does not throw / NaN when the set is ONLY backlog rows', () => {
+    const out = assembleSchedule([backlogRow('BL1'), backlogRow('BL2')], []);
+    expect(out.cpm.ok).toBe(true);
+    if (!out.cpm.ok) return;
+    expect(out.cpm.projectDurationDays).toBe(0);
+    expect(out.tasks).toHaveLength(2);
+    expect('earlyStart' in out.tasks[0]).toBe(false);
+  });
+
+  it('drops a dependency edge that touches a backlog row (not schedulable)', () => {
+    // A is dated; BL is backlog; edge BL→A must be dropped so A computes from day 0.
+    const out = assembleSchedule([taskRow('A', MON, FRI), backlogRow('BL')], [depRow('e1', 'BL', 'A')]);
+    expect(out.cpm.ok).toBe(true);
+    if (!out.cpm.ok) return;
+    expect(out.tasks.find((t) => t.id === 'A')!.earlyStart).toBe(0);
+  });
+});
+
 describe('CHECK-violation → friendly message mappers', () => {
   it('maps the schedule_tasks CHECKs (23514)', () => {
     expect(scheduleTaskCheckMessage({ code: '23514', message: 'violates schedule_task_date_order' })).toMatch(/on or after/);

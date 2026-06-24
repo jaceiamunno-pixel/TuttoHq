@@ -20,11 +20,18 @@ import {
 // the rest of the row intact so it rides through to the response untouched.
 export interface ScheduleTaskRow {
   id: string
-  start_date: string
-  end_date: string
+  // Nullable since migration 0023: a 'backlog' task may carry no dates. A DATED row
+  // (both non-null) is the only kind the CPM engine schedules; a null-dated backlog
+  // row rides through to the response WITHOUT an overlay (see computeScheduleCpm).
+  start_date: string | null
+  end_date: string | null
   is_milestone: boolean
   [key: string]: unknown
 }
+
+// A schedulable row — both bar dates present. The CPM engine only ever sees these;
+// backlog (null-dated) rows are filtered out before the engine in computeScheduleCpm.
+type DatedTaskRow = ScheduleTaskRow & { start_date: string; end_date: string }
 
 export interface ScheduleDependencyRow {
   id: string
@@ -69,7 +76,7 @@ export function deriveDurationDays(
 
 // Day 0 of the schedule = the earliest task start_date in the set (ISO strings sort
 // chronologically). Returns null for an empty set (no schedule to compute).
-function earliestStart(taskRows: ScheduleTaskRow[]): string | null {
+function earliestStart(taskRows: DatedTaskRow[]): string | null {
   let min: string | null = null
   for (const t of taskRows) {
     if (min === null || t.start_date < min) min = t.start_date
@@ -85,7 +92,16 @@ export function computeScheduleCpm(
   depRows: Array<ScheduleDependencyRow | ProposedEdge>,
 ): CpmResult {
   const calendar = createWorkingCalendar()
-  const tasks: Task[] = taskRows.map((t) => ({
+  // Backlog (null-dated) rows aren't schedulable — they have no dates to place on the
+  // timeline. They're excluded from the engine entirely (exactly like a soft-deleted
+  // row): no duration is derived (deriveDurationDays would deref a null date and throw),
+  // and any edge touching one is dropped below by the liveIds filter. They still ride
+  // through to the GET response unchanged — assembleSchedule leaves a row with no
+  // overlay as-is, so a backlog bar never collapses onto project day-0 or NaNs.
+  const datedRows = taskRows.filter(
+    (t): t is DatedTaskRow => t.start_date != null && t.end_date != null,
+  )
+  const tasks: Task[] = datedRows.map((t) => ({
     id: t.id,
     durationDays: deriveDurationDays(t.start_date, t.end_date, t.is_milestone, calendar),
     isMilestone: t.is_milestone,
@@ -100,7 +116,7 @@ export function computeScheduleCpm(
   // GET. A soft-deleted task is not part of the live schedule graph, so dropping its
   // edges yields the correct live subgraph for BOTH the overlay and the acyclicity
   // check — a cycle can only matter among live, schedulable tasks.
-  const liveIds = new Set(taskRows.map((t) => t.id))
+  const liveIds = new Set(datedRows.map((t) => t.id))
   const dependencies: Dependency[] = depRows
     .filter((d) => liveIds.has(d.predecessor_id) && liveIds.has(d.successor_id))
     .map((d) => ({
@@ -111,7 +127,7 @@ export function computeScheduleCpm(
     }))
   // projectStartIso must be a valid ISO date even for an empty set; the engine
   // returns an empty (but ok:true) result regardless of the anchor when tasks=[].
-  const projectStartIso = earliestStart(taskRows) ?? "2000-01-01"
+  const projectStartIso = earliestStart(datedRows) ?? "2000-01-01"
   return computeCpm(tasks, dependencies, projectStartIso, { calendar })
 }
 
@@ -209,7 +225,7 @@ export function scheduleTaskCheckMessage(error: { code?: string; message?: strin
   const m = error.message ?? ""
   if (m.includes("schedule_task_date_order")) return "End date must be on or after the start date."
   if (m.includes("schedule_task_pct")) return "Percent complete must be between 0 and 100."
-  if (m.includes("schedule_task_status")) return "Status must be not_started, in_progress, or complete."
+  if (m.includes("schedule_task_status")) return "Status must be not_started, in_progress, complete, or backlog."
   return "Task failed a database validation check."
 }
 
