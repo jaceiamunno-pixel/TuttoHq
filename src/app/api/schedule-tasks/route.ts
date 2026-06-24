@@ -17,7 +17,7 @@ import {
 // routes — never a bare deleted_at UPDATE.
 
 const TASK_COLS =
-  "id, project_id, name, phase, start_date, end_date, is_milestone, duration_days, " +
+  "id, project_id, name, phase, start_date, end_date, is_milestone, duration_days, voided_dates, " +
   "percent_complete, actual_start_date, actual_end_date, sort_order, wbs_code, status, crew_size, notes, created_at, created_by"
 
 const DEP_COLS =
