@@ -38,7 +38,7 @@ export type PdfPageWords = PdfWord[]
 
 // ── Outputs ──────────────────────────────────────────────────────────────────
 
-export type ScheduleFamily = "msp" | "p6" | "asta" | "calendar" | "unknown"
+export type ScheduleFamily = "msp" | "p6" | "asta" | "calendar" | "pullplan" | "unknown"
 
 /** A committable task proposed to the review UI. Group/summary rows are NOT
  *  emitted as tasks — they only contribute their name to descendants' `phase`. */
@@ -47,6 +47,7 @@ export interface ProposedTaskRow {
   start_date: string | null // YYYY-MM-DD
   end_date: string | null // YYYY-MM-DD
   duration_days: number | null // informational; the write route RE-derives working-day duration
+  crew_size: number | null // pull-plan "N PEOPLE"; null for dated families
   is_milestone: boolean
   phase: string | null // hierarchy path, e.g. "Buildings D › Foundations"
   wbs_code: string | null // source Activity ID / ID
@@ -83,10 +84,12 @@ type ColKey =
   | "pct"
   | "resources"
   | "predecessors"
+  | "bidpkg" // pull-plan "Bid Package Responsibility" (responsible party/trade)
+  | "crew" // pull-plan "Crew Size"
 
 const HEADER_LABELS: Record<ColKey, string[]> = {
   id: ["activity id", "id"],
-  name: ["task name", "activity name"],
+  name: ["task name", "activity name", "work activity"], // "work activity" = pull-plan
   duration: ["duration", "orig"], // P6 "Orig" = Orig Dur
   _actDur: ["act"],
   _remDur: ["rem"],
@@ -95,6 +98,8 @@ const HEADER_LABELS: Record<ColKey, string[]> = {
   pct: ["% complete"],
   resources: ["resources"],
   predecessors: ["predecessors"],
+  bidpkg: ["bid package responsibility", "responsibility", "bid package"],
+  crew: ["crew size", "crew"],
 }
 
 const norm = (s: string) => s.trim().toLowerCase().replace(/\s+/g, " ")
@@ -120,18 +125,39 @@ function detectHeader(words: PdfWord[]): { anchors: Anchors; headerY: number } |
       }
     }
     if (anchors.name === undefined) continue
-    // A real header has the name column plus at least a start/finish/duration.
-    const score =
+    // Dated families (MSP/P6/Asta): name column + at least a start/finish/duration.
+    const datedScore =
       (anchors.start !== undefined ? 1 : 0) +
       (anchors.finish !== undefined ? 1 : 0) +
       (anchors.duration !== undefined ? 1 : 0)
-    if (score === 0) continue
+    // Pull-plan ALTERNATIVE qualifying path: name (Work Activity) + a duration/crew or
+    // responsibility column and NO start/finish. THP centers its headers and MERGES
+    // "Duration Crew Size" into ONE token, so the duration/crew anchors don't exact-
+    // match — recover them by substring, but ONLY when no start/finish is present so
+    // the dated path is byte-identical (the actual values are read from the BODY, not
+    // these header x's). This never loosens the dated lane.
+    if (anchors.start === undefined && anchors.finish === undefined) {
+      for (const w of near) {
+        const n = norm(w.str)
+        if (anchors.crew === undefined && n.includes("crew")) anchors.crew = w.x
+        if (anchors.duration === undefined && n.includes("duration")) anchors.duration = w.x
+        if (anchors.bidpkg === undefined && (n.includes("responsibility") || n.includes("bid package"))) anchors.bidpkg = w.x
+      }
+    }
+    const isPullPlan =
+      anchors.start === undefined && anchors.finish === undefined &&
+      anchors.duration !== undefined && (anchors.crew !== undefined || anchors.bidpkg !== undefined)
+    if (datedScore === 0 && !isPullPlan) continue
+    const score = datedScore > 0 ? datedScore : 1
     if (!best || score > best.score) best = { score, y, anchors: anchors as Anchors }
   }
   return best ? { anchors: best.anchors, headerY: best.y } : null
 }
 
 function inferFamily(anchors: Anchors, words: PdfWord[]): ScheduleFamily {
+  // Pull-plan: a crew/responsibility column with NO dates (the Work Activity list).
+  if ((anchors.crew !== undefined || anchors.bidpkg !== undefined) &&
+      anchors.start === undefined && anchors.finish === undefined) return "pullplan"
   if (anchors.pct !== undefined || anchors.resources !== undefined) return "asta"
   if (anchors._actDur !== undefined && anchors._remDur !== undefined) return "p6"
   const hasActivityHeader = words.some((w) => {
@@ -468,6 +494,7 @@ function finalizeRow(row: RawRow, phase: string | null, family: ScheduleFamily):
     start_date,
     end_date,
     duration_days: days,
+    crew_size: null, // dated families never carry a crew size
     is_milestone: isMilestone,
     phase,
     wbs_code: row.id.trim() || null,
@@ -481,6 +508,176 @@ function finalizeRow(row: RawRow, phase: string | null, family: ScheduleFamily):
   }
 }
 
+// ── Pull-plan (THP "Work Activity" list) → undated BACKLOG rows ───────────────
+// A different THP layout: Bid Package Responsibility | Work Activity | Duration |
+// Crew Size, with NO dates. Centered headers, a MERGED "Duration Crew Size" token,
+// the responsibility code sitting LEFT of the name, names that wrap across lines, and
+// cells that float up to ~20px off their row — so the generic anchor-bucketing can't
+// read it. This dedicated path derives the four columns from the BODY (by content +
+// x) and groups name lines onto one-responsibility-per-activity anchors. Every row is
+// emitted as a BACKLOG task: null dates, duration_days/crew_size informational,
+// responsibility → phase. Wrapped-name rows are flagged needsReview — a continuation
+// can occasionally attach to the wrong neighbor when the responsibility floats to the
+// far edge of its multi-line name (the one geometric ambiguity this format can't
+// resolve), so the modal nudges the user to eyeball those.
+
+const PP_DUR_RE = /\b(\d+)\s*days?\b/i
+const PP_CREW_RE = /(\d+)\s*people\b/i
+
+function finalizePullPlanRow(
+  name: string,
+  responsibility: string | null,
+  duration_days: number | null,
+  crew_size: number | null,
+  wrapped: boolean,
+): ProposedTaskRow {
+  const reviewReasons: string[] = []
+  if (wrapped) reviewReasons.push("Activity name wrapped across lines — confirm it didn't merge with a neighbor")
+  return {
+    name: name.trim(),
+    start_date: null,
+    end_date: null,
+    duration_days,
+    crew_size,
+    is_milestone: false,
+    phase: responsibility, // responsible party/trade → phase (groups naturally by trade)
+    wbs_code: null,
+    predecessors_raw: null,
+    percent_complete: null,
+    resources: null,
+    actual_start_date: null,
+    actual_end_date: null,
+    needsReview: reviewReasons.length > 0,
+    reviewReasons,
+  }
+}
+
+// 1-D min-cost contiguous partition of name y's into k groups (group g → anchor g,
+// both in document order). The global fit places a wrapped name's lines with the
+// right activity far more often than greedy nearest-anchor, which snaps a
+// continuation to whichever anchor is a pixel closer. Requires m ≥ k.
+function segmentNamesToAnchors(nameYs: number[], anchorYs: number[]): number[][] {
+  const m = nameYs.length
+  const k = anchorYs.length
+  const INF = Number.POSITIVE_INFINITY
+  const cost = (i: number, j: number, r: number) => {
+    let c = 0
+    for (let t = i; t < j; t++) c += Math.abs(nameYs[t] - anchorYs[r])
+    return c
+  }
+  const dp: number[][] = Array.from({ length: m + 1 }, () => new Array(k + 1).fill(INF))
+  const back: number[][] = Array.from({ length: m + 1 }, () => new Array(k + 1).fill(-1))
+  dp[0][0] = 0
+  for (let g = 1; g <= k; g++) {
+    for (let i = g; i <= m; i++) {
+      for (let s = g - 1; s < i; s++) {
+        if (dp[s][g - 1] === INF) continue
+        const c = dp[s][g - 1] + cost(s, i, g - 1)
+        if (c < dp[i][g]) { dp[i][g] = c; back[i][g] = s }
+      }
+    }
+  }
+  const groups: number[][] = Array.from({ length: k }, () => [])
+  let i = m
+  for (let g = k; g >= 1; g--) {
+    const s = back[i][g] < 0 ? g - 1 : back[i][g]
+    for (let t = s; t < i; t++) groups[g - 1].push(t)
+    i = s
+  }
+  return groups
+}
+
+// Assign each value (duration / crew) to its nearest responsibility anchor, UNIQUELY.
+// A cell can float ~20px off its row, so plain nearest double-books a neighbor;
+// uniqueness pins the floater to the only anchor still free.
+function assignUniqueByY(items: { y: number; v: number }[], anchorYs: number[]): (number | null)[] {
+  const out: (number | null)[] = new Array(anchorYs.length).fill(null)
+  const pairs: { a: number; r: number; d: number }[] = []
+  for (let a = 0; a < items.length; a++)
+    for (let r = 0; r < anchorYs.length; r++)
+      pairs.push({ a, r, d: Math.abs(items[a].y - anchorYs[r]) })
+  pairs.sort((p, q) => p.d - q.d)
+  const usedA = new Array(items.length).fill(false)
+  const usedR = new Array(anchorYs.length).fill(false)
+  for (const p of pairs) {
+    if (usedA[p.a] || usedR[p.r]) continue
+    usedA[p.a] = true; usedR[p.r] = true; out[p.r] = items[p.a].v
+  }
+  return out
+}
+
+const nearestByY = <T extends { y: number }>(arr: T[], y: number): T | null => {
+  let best: T | null = null, bd = Infinity
+  for (const a of arr) { const d = Math.abs(a.y - y); if (d < bd) { bd = d; best = a } }
+  return best
+}
+
+/** Parse ONE pull-plan page into proposed BACKLOG rows. `headerY` is the detected
+ *  header band; everything above it (title + header labels) is excluded. */
+function rowsForPagePullPlan(words: PdfWord[], headerY: number): ProposedTaskRow[] {
+  const body = words.filter((w) => w.y < headerY - 1)
+  if (body.length === 0) return []
+
+  // Right zone (Duration + Crew Size) = where the "N DAY(S)" / "N PEOPLE" tokens sit.
+  const rightTokens = body.filter((w) => PP_DUR_RE.test(w.str) || PP_CREW_RE.test(w.str))
+  const rightZoneX = rightTokens.length ? Math.min(...rightTokens.map((w) => w.x)) - 12 : Number.POSITIVE_INFINITY
+
+  // Name column = the dominant x among non-right-zone tokens (bucketed to 10px); the
+  // responsibility code sits well to its LEFT, so split the two at nameX − 30.
+  const counts = new Map<number, number>()
+  for (const w of body) {
+    if (w.x >= rightZoneX) continue
+    const b = Math.round(w.x / 10) * 10
+    counts.set(b, (counts.get(b) ?? 0) + 1)
+  }
+  const nameX = [...counts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? 0
+  const respMaxX = nameX - 30
+
+  const resp: { y: number; s: string }[] = []
+  const names: { y: number; x: number; s: string }[] = []
+  const durs: { y: number; v: number }[] = []
+  const crews: { y: number; v: number }[] = []
+  for (const w of body) {
+    if (w.x >= rightZoneX) {
+      const dm = w.str.match(PP_DUR_RE)
+      const cm = w.str.match(PP_CREW_RE)
+      if (dm) durs.push({ y: w.y, v: Number(dm[1]) })
+      if (cm) crews.push({ y: w.y, v: Number(cm[1]) })
+      // Non-numeric right-zone text (e.g. "(SIZE DEPENDANT)") is a note — dropped.
+    } else if (w.x <= respMaxX) {
+      const s = w.str.trim()
+      if (s) resp.push({ y: w.y, s })
+    } else {
+      names.push({ y: w.y, x: w.x, s: w.str })
+    }
+  }
+  resp.sort((a, b) => b.y - a.y)
+  names.sort((a, b) => b.y - a.y)
+  if (names.length === 0) return []
+
+  const respYs = resp.map((r) => r.y)
+
+  // Degenerate: no responsibility column read, or fewer name lines than anchors —
+  // emit each name line as its own activity, tagging the nearest responsibility.
+  if (resp.length === 0 || names.length < resp.length) {
+    return names
+      .map((n) => finalizePullPlanRow(n.s, nearestByY(resp, n.y)?.s ?? null, null, null, false))
+      .filter((row) => row.name)
+  }
+
+  const groups = segmentNamesToAnchors(names.map((n) => n.y), respYs)
+  const durBy = assignUniqueByY(durs, respYs)
+  const crewBy = assignUniqueByY(crews, respYs)
+
+  return resp
+    .map((r, i) => {
+      const lines = (groups[i] ?? []).map((idx) => names[idx]).sort((a, b) => b.y - a.y || a.x - b.x)
+      const name = lines.map((n) => n.s).join(" ").replace(/\s+/g, " ").trim()
+      return finalizePullPlanRow(name, r.s || null, durBy[i], crewBy[i], lines.length > 1)
+    })
+    .filter((row) => row.name)
+}
+
 // ── Entry point ──────────────────────────────────────────────────────────────
 
 /** Parse the per-page word lists into proposed rows. Headers are re-detected per
@@ -490,6 +687,7 @@ export function parseScheduleWords(pages: PdfPageWords[]): ParseResult {
   const warnings: string[] = []
   let family: ScheduleFamily = "unknown"
   const rawRows: RawRow[] = []
+  const pullPlanRows: ProposedTaskRow[] = []
 
   for (let pageIdx = 0; pageIdx < pages.length; pageIdx++) {
     // Dedupe overprinted glyphs (P6 prints summary bands twice).
@@ -512,9 +710,22 @@ export function parseScheduleWords(pages: PdfPageWords[]): ParseResult {
     const { anchors, headerY } = header
     if (family === "unknown") family = inferFamily(anchors, words)
 
+    // Pull-plan is its own layout (centered/merged headers, no dates, wrapped names);
+    // the generic dated extractor + hierarchy/continuation passes don't apply.
+    if (family === "pullplan") {
+      pullPlanRows.push(...rowsForPagePullPlan(words, headerY))
+      continue
+    }
+
     const footerTop = detectFooterTop(words, headerY)
     const ganttLeftX = detectGanttLeftX(words, anchors, headerY)
     rawRows.push(...rowsForPage(words, anchors, headerY, ganttLeftX, footerTop))
+  }
+
+  if (family === "pullplan") {
+    if (pullPlanRows.length === 0)
+      warnings.push("A pull-plan header was found but no activities resolved — check the column mapping.")
+    return { family, pageCount: pages.length, rows: pullPlanRows, warnings }
   }
 
   // Merge wrapped-name continuation lines — an MSP-only concern: MS Project spills

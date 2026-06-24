@@ -16,6 +16,7 @@ interface ProposedRow {
   start_date: string | null
   end_date: string | null
   duration_days: number | null
+  crew_size: number | null
   is_milestone: boolean
   phase: string | null
   wbs_code: string | null
@@ -31,7 +32,7 @@ type EditableRow = ProposedRow & { _key: string }
 
 const FAMILY_LABEL: Record<string, string> = {
   msp: "MS Project", p6: "Primavera P6", asta: "Asta / PowerProject",
-  calendar: "Bluebeam month calendar", unknown: "Unrecognized",
+  calendar: "Bluebeam month calendar", pullplan: "Pull-plan activity list", unknown: "Unrecognized",
 }
 const inputCls = "h-7 px-2 rounded border border-[#E2E8F0] text-[12px] text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40"
 
@@ -117,6 +118,11 @@ export default function ScheduleImportModal({
     const errs = new Map<string, string>()
     const keepSelected = new Set<string>()
     let ok = 0, fail = 0
+    // Pull-plan rows are UNDATED activities → commit as backlog tasks (status=backlog
+    // lets the write route accept null dates) carrying their crew size. Dated families
+    // (msp/p6/asta/calendar) commit UNCHANGED — no status, so the route defaults them
+    // to not_started with both dates required.
+    const isPullPlan = meta?.family === "pullplan"
     for (let i = 0; i < toCommit.length; i++) {
       setProgress({ done: i, total: toCommit.length })
       const r = toCommit[i]
@@ -129,6 +135,7 @@ export default function ScheduleImportModal({
         phase: r.phase?.trim() || null,
         wbs_code: r.wbs_code?.trim() || null,
         percent_complete: r.percent_complete ?? undefined,
+        ...(isPullPlan ? { status: "backlog", crew_size: r.crew_size ?? undefined } : {}),
       }
       try {
         const res = await fetch("/api/schedule-tasks", {

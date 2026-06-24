@@ -276,6 +276,7 @@ function parsePage(words: PdfWord[], bars: PdfBar[], warnings: string[], pageNo:
         start_date,
         end_date,
         duration_days: days,
+        crew_size: null, // calendar tasks carry no crew size
         is_milestone: false,
         phase: null,
         wbs_code: null,
