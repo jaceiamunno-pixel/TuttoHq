@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
-import { getCtx, isResponse, badRequest, takeoffExists } from "../../_helpers"
+import { getCtx, isResponse, badRequest, takeoffExists, childBelongsToTakeoff } from "../../_helpers"
 
 // Editable tag list (matrix rows). Each tag: code, description, color, category.
 // spec_number / spec_section_id / unit_cost / vendor_id / vendor_person_id are
@@ -21,6 +21,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const sortOrder = Number.isFinite(body.sort_order) ? Number(body.sort_order) : 0
   if (!code) return badRequest("code is required")
   if (!color) return badRequest("color is required")
+  if (categoryId && !(await childBelongsToTakeoff(supabase, takeoffId, { categoryId }))) return badRequest("category does not belong to this takeoff")
 
   const { data, error } = await supabase
     .from("takeoff_tags")
@@ -49,6 +50,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   if ("category_id" in body) patch.category_id = typeof body.category_id === "string" && body.category_id ? body.category_id : null
   if (Number.isFinite(body.sort_order)) patch.sort_order = Number(body.sort_order)
   if (Object.keys(patch).length === 0) return badRequest("nothing to update")
+  if (patch.category_id && !(await childBelongsToTakeoff(supabase, takeoffId, { categoryId: patch.category_id as string }))) return badRequest("category does not belong to this takeoff")
 
   const { data, error } = await supabase
     .from("takeoff_tags").update(patch)

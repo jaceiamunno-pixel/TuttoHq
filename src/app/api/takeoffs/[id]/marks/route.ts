@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
-import { getCtx, isResponse, badRequest } from "../../_helpers"
+import { getCtx, isResponse, badRequest, childBelongsToTakeoff } from "../../_helpers"
 
 // Count marks — one row per dot dropped on a sheet. POST insert, DELETE remove.
 // x,y are normalized [0,1] to the sheet page; source_ref identifies the open sheet
@@ -21,6 +21,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   if (!tagId) return badRequest("tag_id is required")
   if (!roomId) return badRequest("room_id is required")
   if (!Number.isFinite(x) || !Number.isFinite(y)) return badRequest("x and y are required")
+  if (!(await childBelongsToTakeoff(supabase, takeoffId, { tagId, roomId }))) {
+    return NextResponse.json({ error: "tag or room does not belong to this takeoff" }, { status: 400 })
+  }
 
   const { data, error } = await supabase
     .from("takeoff_marks")

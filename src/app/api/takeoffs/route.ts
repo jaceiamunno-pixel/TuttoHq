@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
-import { getCtx, isResponse, badRequest } from "./_helpers"
+import { getCtx, isResponse, badRequest, ownsProject } from "./_helpers"
 
 // GET /api/takeoffs?project_id=…  → list takeoffs for a project (RLS scopes tenant).
 export async function GET(req: NextRequest) {
@@ -32,6 +32,7 @@ export async function POST(req: NextRequest) {
   const name = typeof body.name === "string" ? body.name.trim() : ""
   if (!projectId) return badRequest("project_id is required")
   if (!name) return badRequest("name is required")
+  if (!(await ownsProject(supabase, projectId))) return NextResponse.json({ error: "Project not found" }, { status: 404 })
 
   const { data: takeoff, error } = await supabase
     .from("takeoffs")
