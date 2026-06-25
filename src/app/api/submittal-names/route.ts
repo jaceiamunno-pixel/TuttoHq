@@ -5,9 +5,9 @@ export async function GET() {
   const supabase = await createClient()
 
   const [matls, mfrs, dims] = await Promise.all([
-    supabase.from("submittals").select("material_name").eq("status", "active").not("material_name", "is", null),
-    supabase.from("submittals").select("manufacturer").eq("status", "active").not("manufacturer", "is", null),
-    supabase.from("submittals").select("dimensions").eq("status", "active").not("dimensions", "is", null),
+    supabase.from("submittals").select("material_name").eq("status", "active").is("deleted_at", null).not("material_name", "is", null),
+    supabase.from("submittals").select("manufacturer").eq("status", "active").is("deleted_at", null).not("manufacturer", "is", null),
+    supabase.from("submittals").select("dimensions").eq("status", "active").is("deleted_at", null).not("dimensions", "is", null),
   ])
 
   function unique(rows: Record<string, string | null>[], key: string): string[] {
