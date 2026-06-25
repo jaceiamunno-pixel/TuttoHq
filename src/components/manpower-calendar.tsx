@@ -154,6 +154,13 @@ export default function ManpowerCalendar({ projectId }: { projectId?: string }) 
   // holds rows soft-deleted during this visit and offers Restore; reload clears it).
   const [recentlyDeleted, setRecentlyDeleted] = useState<Assignment[]>([])
 
+  // Per-project PLANNED crew demand for the visible month (ADR-014 overlay): a
+  // YYYY-MM-DD → demand map derived from dated/crewed schedule_tasks by the
+  // crew-demand route. Company-wide has no single project to project demand from, so
+  // it stays empty there. Best-effort: a failed fetch leaves it empty and never blocks
+  // the grid — this is a soft overlay, not part of the booking path.
+  const [demand, setDemand] = useState<Record<string, number>>({})
+
   const [dayDetail, setDayDetail] = useState<string | null>(null) // open day's YYYY-MM-DD
   const [formOpen, setFormOpen] = useState(false)
   const [editing, setEditing] = useState<Assignment | null>(null)
@@ -195,6 +202,19 @@ export default function ManpowerCalendar({ projectId }: { projectId?: string }) 
       .catch(() => {})
   }, [companyWide])
 
+  // Planned crew-demand overlay — per-project only, same window the assignments use.
+  // Re-fetches on project + month change (the [from,to] deps). The demand math lives
+  // entirely in the route (its single consumer); we just render plan vs booked here.
+  useEffect(() => {
+    if (!projectId) { setDemand({}); return }
+    const ctrl = new AbortController()
+    fetch(`/api/schedule-tasks/crew-demand?project_id=${projectId}&from=${from}&to=${to}`, { signal: ctrl.signal })
+      .then(r => (r.ok ? r.json() : { demand: {} }))
+      .then(d => setDemand(d.demand ?? {}))
+      .catch(() => {}) // overlay is best-effort; never surface its failure on the grid
+    return () => ctrl.abort()
+  }, [projectId, from, to])
+
   const projectName = useCallback(
     (id: string) => projects.find(p => p.id === id)?.name ?? "Project",
     [projects],
@@ -213,6 +233,18 @@ export default function ManpowerCalendar({ projectId }: { projectId?: string }) 
       const arr = map.get(a.work_date) ?? []
       arr.push(a)
       map.set(a.work_date, arr)
+    }
+    return map
+  }, [assignments])
+
+  // BOOKED head-count per day for the demand-vs-booked gap (per-project view). A worker
+  // row counts 1; a vendor crew counts COALESCE(crew_size,1). The per-project read is
+  // already pinned to this project, so summing the loaded rows is this project's booked.
+  const bookedByDate = useMemo(() => {
+    const map = new Map<string, number>()
+    for (const a of assignments) {
+      const n = a.assignee_type === "vendor" ? (a.crew_size ?? 1) : 1
+      map.set(a.work_date, (map.get(a.work_date) ?? 0) + n)
     }
     return map
   }, [assignments])
@@ -338,6 +370,9 @@ export default function ManpowerCalendar({ projectId }: { projectId?: string }) 
             const rows = byDate.get(cell.key) ?? []
             const shown = rows.slice(0, VISIBLE_CHIPS)
             const extra = rows.length - shown.length
+            // Planned demand vs booked for the soft staffing-gap overlay (per-project only).
+            const demandN = companyWide ? 0 : (demand[cell.key] ?? 0)
+            const bookedN = companyWide ? 0 : (bookedByDate.get(cell.key) ?? 0)
             return (
               <button
                 key={cell.key}
@@ -345,12 +380,13 @@ export default function ManpowerCalendar({ projectId }: { projectId?: string }) 
                 onClick={() => setDayDetail(cell.key)}
                 className={`text-left flex flex-col gap-1 min-w-0 min-h-[84px] sm:min-h-[116px] p-1.5 sm:p-2 transition-colors hover:bg-[#F4F8FB] ${cell.isToday ? "bg-[#F5F9FC]" : "bg-white"}`}
               >
-                <span className="flex items-center">
+                <span className="flex items-center justify-between gap-1 min-w-0">
                   {cell.isToday ? (
-                    <span className="grid place-items-center w-6 h-6 rounded-full bg-[#7B9BB5] text-white text-[12px] font-bold">{cell.day}</span>
+                    <span className="grid place-items-center w-6 h-6 rounded-full bg-[#7B9BB5] text-white text-[12px] font-bold flex-shrink-0">{cell.day}</span>
                   ) : (
-                    <span className="text-[12px] font-semibold text-[#475569] px-1">{cell.day}</span>
+                    <span className="text-[12px] font-semibold text-[#475569] px-1 flex-shrink-0">{cell.day}</span>
                   )}
+                  {!loading && <DemandIndicator demand={demandN} booked={bookedN} />}
                 </span>
                 <span className="flex flex-col gap-0.5 min-w-0">
                   {loading ? (
@@ -409,6 +445,8 @@ export default function ManpowerCalendar({ projectId }: { projectId?: string }) 
           companyWide={companyWide}
           projectName={projectName}
           isConflicted={isConflicted}
+          demand={companyWide ? 0 : (demand[dayDetail] ?? 0)}
+          booked={companyWide ? 0 : (bookedByDate.get(dayDetail) ?? 0)}
           onClose={() => setDayDetail(null)}
           onAdd={() => openCreate(dayDetail)}
           onEdit={openEdit}
@@ -463,17 +501,20 @@ function Chip({ a, companyWide, projectName, conflict }: {
 }
 
 // ── Day detail modal ─────────────────────────────────────────────────────────
-function DayDetailModal({ date, rows, companyWide, projectName, isConflicted, onClose, onAdd, onEdit, onRemove }: {
+function DayDetailModal({ date, rows, companyWide, projectName, isConflicted, demand, booked, onClose, onAdd, onEdit, onRemove }: {
   date: string
   rows: Assignment[]
   companyWide: boolean
   projectName: (id: string) => string
   isConflicted: (id: string) => boolean
+  demand: number
+  booked: number
   onClose: () => void
   onAdd: () => void
   onEdit: (a: Assignment) => void
   onRemove: (a: Assignment) => void
 }) {
+  const gap = demand - booked
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40" onClick={onClose}>
       <div className="w-full max-w-md bg-white rounded-xl border border-[#E2E8F0] shadow-xl max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
@@ -483,6 +524,30 @@ function DayDetailModal({ date, rows, companyWide, projectName, isConflicted, on
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
           </button>
         </div>
+
+        {/* Staffing summary — planned crew (schedule) vs booked (manpower) for this day,
+            with the soft gap badge. Understaffed offers a Revise shortcut into the same
+            add-assignment flow; nothing is blocked or auto-created. Per-project only
+            (companyWide has no planned demand, so demand is 0 and this is hidden). */}
+        {demand > 0 && (
+          <div className="px-5 py-2.5 border-b border-[#E2E8F0] bg-[#FAFBFC] flex items-center justify-between gap-3 flex-wrap">
+            <div className="flex items-center gap-2 min-w-0 flex-wrap">
+              <span className="text-[12px] text-[#475569]">
+                Planned crew <span className="font-semibold text-[#0F172A]">{demand}</span>
+                {" · "}Booked <span className="font-semibold text-[#0F172A]">{booked}</span>
+              </span>
+              <GapBadge gap={gap} />
+            </div>
+            {gap > 0 && (
+              <button
+                onClick={onAdd}
+                className="h-7 px-2.5 rounded-md border border-amber-300 bg-white text-[12px] font-semibold text-amber-700 hover:bg-amber-50 whitespace-nowrap"
+              >
+                Revise
+              </button>
+            )}
+          </div>
+        )}
 
         <div className="flex-1 overflow-y-auto">
           {rows.length === 0 ? (
@@ -543,6 +608,46 @@ function StatusBadge({ status }: { status: Status }) {
   return (
     <span className={`text-[10px] font-bold uppercase tracking-wide rounded px-1.5 py-0.5 border ${planned ? "text-slate-600 bg-slate-100 border-slate-200" : "text-emerald-700 bg-emerald-100 border-emerald-200"}`}>
       {planned ? "Planned" : "Actual"}
+    </span>
+  )
+}
+
+// ── Staffing-gap overlay (ADR-014) ───────────────────────────────────────────
+// gap = planned demand − booked. UNDERSTAFFED (gap > 0, booked below plan) is the
+// actionable amber case; OVER-PLAN (gap < 0) is informational grey. This is a SOFT
+// signal — it never blocks a booking, never auto-creates a row, never edits a task.
+function GapBadge({ gap, compact = false }: { gap: number; compact?: boolean }) {
+  if (gap === 0) return null
+  const under = gap > 0
+  const n = Math.abs(gap)
+  const label = compact ? (under ? `−${n}` : `+${n}`) : (under ? `Understaffed −${n}` : `Over plan +${n}`)
+  return (
+    <span
+      title={under ? `Booked is ${n} below the planned crew for this day` : `Booked is ${n} above the planned crew for this day`}
+      className={`rounded font-bold uppercase tracking-wide leading-none whitespace-nowrap border ${compact ? "px-1 py-0.5 text-[9px] sm:text-[10px]" : "px-1.5 py-0.5 text-[10px]"} ${
+        under ? "bg-amber-100 text-amber-700 border-amber-200" : "bg-slate-100 text-slate-500 border-slate-200"
+      }`}
+    >
+      {label}
+    </span>
+  )
+}
+
+// In-cell plan-vs-booked underlay: a subtle "plan: N" label plus the compact gap chip.
+// Non-interactive (the day cell is itself the button → day detail, where the actionable
+// Revise lives). Renders nothing on days with no planned demand, so unscheduled days stay
+// quiet and the overlay only speaks where the schedule actually projects crew.
+function DemandIndicator({ demand, booked }: { demand: number; booked: number }) {
+  if (demand <= 0) return null
+  return (
+    <span className="flex items-center gap-1 min-w-0">
+      <span
+        className="text-[9px] sm:text-[10px] font-medium text-[#94A3B8] leading-none whitespace-nowrap"
+        title={`Planned crew demand ${demand} · booked ${booked}`}
+      >
+        plan: {demand}
+      </span>
+      <GapBadge gap={demand - booked} compact />
     </span>
   )
 }
