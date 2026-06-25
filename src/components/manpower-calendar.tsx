@@ -154,11 +154,10 @@ export default function ManpowerCalendar({ projectId }: { projectId?: string }) 
   // holds rows soft-deleted during this visit and offers Restore; reload clears it).
   const [recentlyDeleted, setRecentlyDeleted] = useState<Assignment[]>([])
 
-  // Per-project PLANNED crew demand for the visible month (ADR-014 overlay): a
-  // YYYY-MM-DD → demand map derived from dated/crewed schedule_tasks by the
-  // crew-demand route. Company-wide has no single project to project demand from, so
-  // it stays empty there. Best-effort: a failed fetch leaves it empty and never blocks
-  // the grid — this is a soft overlay, not part of the booking path.
+  // PLANNED crew demand for the visible month (ADR-014 overlay): a YYYY-MM-DD → demand
+  // map from the crew-demand route. Per-project → that project's demand; company-wide →
+  // demand summed across ALL the caller's projects (Phase 2). Best-effort: a failed fetch
+  // leaves it empty and never blocks the grid — this is a soft overlay, not the booking path.
   const [demand, setDemand] = useState<Record<string, number>>({})
 
   const [dayDetail, setDayDetail] = useState<string | null>(null) // open day's YYYY-MM-DD
@@ -202,13 +201,14 @@ export default function ManpowerCalendar({ projectId }: { projectId?: string }) 
       .catch(() => {})
   }, [companyWide])
 
-  // Planned crew-demand overlay — per-project only, same window the assignments use.
-  // Re-fetches on project + month change (the [from,to] deps). The demand math lives
-  // entirely in the route (its single consumer); we just render plan vs booked here.
+  // Planned crew-demand overlay — same window the assignments use, in BOTH modes.
+  // Per-project → that project's demand (?project_id); company-wide → demand summed across
+  // all the caller's projects (no project_id, Phase 2). Re-fetches on project + month
+  // change. The demand math lives entirely in the route; we just render plan vs booked.
   useEffect(() => {
-    if (!projectId) { setDemand({}); return }
     const ctrl = new AbortController()
-    fetch(`/api/schedule-tasks/crew-demand?project_id=${projectId}&from=${from}&to=${to}`, { signal: ctrl.signal })
+    const scope = projectId ? `project_id=${projectId}&` : ""
+    fetch(`/api/schedule-tasks/crew-demand?${scope}from=${from}&to=${to}`, { signal: ctrl.signal })
       .then(r => (r.ok ? r.json() : { demand: {} }))
       .then(d => setDemand(d.demand ?? {}))
       .catch(() => {}) // overlay is best-effort; never surface its failure on the grid
@@ -370,9 +370,10 @@ export default function ManpowerCalendar({ projectId }: { projectId?: string }) 
             const rows = byDate.get(cell.key) ?? []
             const shown = rows.slice(0, VISIBLE_CHIPS)
             const extra = rows.length - shown.length
-            // Planned demand vs booked for the soft staffing-gap overlay (per-project only).
-            const demandN = companyWide ? 0 : (demand[cell.key] ?? 0)
-            const bookedN = companyWide ? 0 : (bookedByDate.get(cell.key) ?? 0)
+            // Planned demand vs booked for the soft staffing-gap overlay. In company-wide
+            // mode both are company totals (demand summed across projects; booked = all rows).
+            const demandN = demand[cell.key] ?? 0
+            const bookedN = bookedByDate.get(cell.key) ?? 0
             return (
               <button
                 key={cell.key}
@@ -445,8 +446,8 @@ export default function ManpowerCalendar({ projectId }: { projectId?: string }) 
           companyWide={companyWide}
           projectName={projectName}
           isConflicted={isConflicted}
-          demand={companyWide ? 0 : (demand[dayDetail] ?? 0)}
-          booked={companyWide ? 0 : (bookedByDate.get(dayDetail) ?? 0)}
+          demand={demand[dayDetail] ?? 0}
+          booked={bookedByDate.get(dayDetail) ?? 0}
           onClose={() => setDayDetail(null)}
           onAdd={() => openCreate(dayDetail)}
           onEdit={openEdit}
@@ -527,8 +528,10 @@ function DayDetailModal({ date, rows, companyWide, projectName, isConflicted, de
 
         {/* Staffing summary — planned crew (schedule) vs booked (manpower) for this day,
             with the soft gap badge. Understaffed offers a Revise shortcut into the same
-            add-assignment flow; nothing is blocked or auto-created. Per-project only
-            (companyWide has no planned demand, so demand is 0 and this is hidden). */}
+            add-assignment flow; nothing is blocked or auto-created. Shown in BOTH modes:
+            per-project these are that project's totals, company-wide they're summed across
+            all projects (the assignment list below names each row's project). Hidden when
+            there's no planned demand for the day. */}
         {demand > 0 && (
           <div className="px-5 py-2.5 border-b border-[#E2E8F0] bg-[#FAFBFC] flex items-center justify-between gap-3 flex-wrap">
             <div className="flex items-center gap-2 min-w-0 flex-wrap">

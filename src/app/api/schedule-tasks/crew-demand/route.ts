@@ -1,17 +1,19 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 
-// ── Schedule → Manpower crew-demand overlay (ADR-014, Phase 1) ───────────────
+// ── Schedule → Manpower crew-demand overlay (ADR-014, Phases 1 + 2) ──────────
 // READ-ONLY derivation. A dated, crewed schedule_tasks bar projects a PLANNED
-// crew-demand number onto the per-project manpower view for every calendar day it
-// covers. We never auto-create assignment rows and never mutate a task — the view
-// shows planned demand (from the schedule) next to booked (from manpower_assignments)
-// and a SOFT staffing-gap badge when they differ. This is the SINGLE place the demand
-// math lives, so the manpower view is its only consumer.
+// crew-demand number onto the manpower view for every calendar day it covers. We
+// never auto-create assignment rows and never mutate a task — the view shows planned
+// demand (from the schedule) next to booked (from manpower_assignments) and a SOFT
+// staffing-gap badge when they differ. This is the SINGLE place the demand math lives,
+// so the manpower view (both surfaces) is its only consumer.
 //
 // Standard cookie server client; RLS company-scopes the read (schedule_tasks.company_id
-// = get_my_company_id()). project_id is a REQUIRED additional filter, never the security
-// boundary — one project's demand never leaks onto another's manpower view.
+// = get_my_company_id()). project_id is an OPTIONAL additional filter, never the security
+// boundary: PRESENT → one project's demand (the per-project tab, Phase 1); ABSENT → demand
+// summed across ALL the caller's projects for the company-wide "everyone everywhere" view
+// (Phase 2). Dropping the filter widens to the company RLS scope, never beyond it.
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -47,10 +49,11 @@ interface CrewedTaskRow {
   voided_dates: string[] | null
 }
 
-// GET /api/schedule-tasks/crew-demand?project_id=<uuid>&from=&to=
+// GET /api/schedule-tasks/crew-demand?from=&to=[&project_id=<uuid>]
 //   → { demand: { "YYYY-MM-DD": <int>, … } }  (only days with demand > 0 appear)
 //
-// Per-day PLANNED crew demand over [from,to] for one project. A dated, non-milestone,
+// Per-day PLANNED crew demand over [from,to] for one project (project_id present) or
+// summed across all the caller's projects (project_id absent). A dated, non-milestone,
 // crewed, live task contributes crew_size to EVERY calendar day in [start_date,end_date]
 // it covers within the window, EXCEPT days listed in that task's voided_dates. Demand is
 // over CALENDAR days (NOT the CPM working-day calendar) — a weekend inside a span still
@@ -68,8 +71,11 @@ export async function GET(req: NextRequest) {
   const fromRaw = sp.get("from")?.trim() || null
   const toRaw = sp.get("to")?.trim() || null
 
-  if (!projectId || !UUID_RE.test(projectId)) {
-    return NextResponse.json({ error: "project_id (uuid) is required" }, { status: 400 })
+  // project_id is OPTIONAL: present → validate + filter to that one project (Phase 1);
+  // absent → no project filter, so the read spans the caller's whole company (Phase 2).
+  // A PRESENT-but-malformed id is still a 400 (never silently treated as company-wide).
+  if (projectId && !UUID_RE.test(projectId)) {
+    return NextResponse.json({ error: "Invalid project_id" }, { status: 400 })
   }
   if (fromRaw && !DATE_RE.test(fromRaw)) return NextResponse.json({ error: "Invalid from date" }, { status: 400 })
   if (toRaw && !DATE_RE.test(toRaw)) return NextResponse.json({ error: "Invalid to date" }, { status: 400 })
@@ -88,12 +94,13 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: `Window too large (max ${MAX_WINDOW_DAYS} days)` }, { status: 400 })
   }
 
-  // One query: live, dated, non-milestone, crewed tasks for this project that OVERLAP the
-  // window (start_date <= to AND end_date >= from). RLS adds the company scope.
-  const { data, error } = await supabase
+  // One query: live, dated, non-milestone, crewed tasks that OVERLAP the window
+  // (start_date <= to AND end_date >= from). RLS adds the company scope; the project_id
+  // .eq is applied ONLY when one was given — absent, the read spans every project the
+  // caller can see, and the per-day expansion below sums their crew across projects.
+  let query = supabase
     .from("schedule_tasks")
     .select("start_date, end_date, crew_size, voided_dates")
-    .eq("project_id", projectId)
     .is("deleted_at", null)
     .eq("is_milestone", false)
     .not("crew_size", "is", null)
@@ -101,6 +108,10 @@ export async function GET(req: NextRequest) {
     .not("end_date", "is", null)
     .lte("start_date", to)
     .gte("end_date", from)
+
+  if (projectId) query = query.eq("project_id", projectId)
+
+  const { data, error } = await query
 
   if (error) {
     console.error("Failed to load schedule crew demand:", error)
