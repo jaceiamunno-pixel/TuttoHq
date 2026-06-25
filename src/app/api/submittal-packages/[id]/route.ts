@@ -43,6 +43,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
     .select("*")
     .eq("received_via_package_id", id)
     .eq("status", "active")
+    .is("deleted_at", null)
     .order("received_at", { ascending: false })
   const needsReview = (inboundRows ?? []).filter((s: { id: string }) => !itemIds.has(s.id))
 

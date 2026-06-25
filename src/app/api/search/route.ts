@@ -81,7 +81,7 @@ export async function GET(req: NextRequest) {
   // 1. Case-insensitive filename match on original query
   queryFns.push(async () => {
     const { data } = await supabase.from("submittals").select(SELECT)
-      .eq("status", "active").ilike("file_name", `%${q}%`)
+      .eq("status", "active").is("deleted_at", null).ilike("file_name", `%${q}%`)
       .order("created_at", { ascending: false }).limit(30)
     return data ?? []
   })
@@ -96,7 +96,7 @@ export async function GET(req: NextRequest) {
       const t = term
       queryFns.push(async () => {
         const { data } = await supabase.from("submittals").select(SELECT)
-          .eq("status", "active").ilike("file_name", `%${t}%`)
+          .eq("status", "active").is("deleted_at", null).ilike("file_name", `%${t}%`)
           .order("created_at", { ascending: false }).limit(20)
         return data ?? []
       })
@@ -107,7 +107,7 @@ export async function GET(req: NextRequest) {
   if (ai.sections.length > 0) {
     queryFns.push(async () => {
       const { data } = await supabase.from("submittals").select(SELECT)
-        .eq("status", "active").in("csi_section", ai.sections)
+        .eq("status", "active").is("deleted_at", null).in("csi_section", ai.sections)
         .order("created_at", { ascending: false }).limit(30)
       return data ?? []
     })

@@ -40,6 +40,7 @@ export async function GET(req: NextRequest) {
     .eq("project_id", projectId)
     .eq("source", "spec_ingestion")
     .neq("status", "deleted")
+    .is("deleted_at", null)
     .is("storage_path", null)
     .order("csi_section", { ascending: true })
     .order("submittal_seq", { ascending: true })
