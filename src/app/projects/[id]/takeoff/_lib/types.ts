@@ -53,9 +53,11 @@ export interface TakeoffBundle {
   marks: TakeoffMark[]
 }
 
-// A drawing sheet the user counts on — sourced from the project Drawing Log
-// (/api/drawings). `id` is the stable source_ref stored on every mark; `file_url`
-// is the (ephemeral, signed) URL handed to the viewer.
+// A drawing sheet the user counts on — sourced from the Drawings section's
+// drawing_sheets table via GET /api/drawings/sheets (NOT the legacy drawing_log).
+// `id` is drawing_sheets.id: stable across revisions, stored as each mark's
+// source_ref; `file_url` is the (ephemeral, signed) current-revision PDF the
+// viewer renders.
 export interface CountSheet {
   id: string
   sheet_number: string | null

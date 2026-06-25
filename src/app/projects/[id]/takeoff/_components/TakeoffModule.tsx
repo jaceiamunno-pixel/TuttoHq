@@ -254,7 +254,7 @@ export default function TakeoffModule({ projectId, projectName }: { projectId: s
             disabled={sheets.length === 0}
             className="border border-[#E2E8F0] rounded px-2 py-1 text-[12px] focus:outline-none focus:border-[#5A7A94] max-w-[280px]"
           >
-            {sheets.length === 0 && <option value="">No sheets in Drawing Log</option>}
+            {sheets.length === 0 && <option value="">No sheets in Drawings</option>}
             {sheets.map(s => (
               <option key={s.id} value={s.id}>{[s.sheet_number, s.sheet_title].filter(Boolean).join(" — ") || "Untitled sheet"}</option>
             ))}
@@ -286,7 +286,7 @@ export default function TakeoffModule({ projectId, projectName }: { projectId: s
             <div className="h-full flex items-center justify-center text-center px-6">
               <p className="text-[13px] text-[#94A3B8] max-w-xs">
                 {sheets.length === 0
-                  ? "No drawing sheets in the Drawing Log yet. Upload sheets under Drawings, then count them here."
+                  ? "No drawing sheets yet. Upload sheets under Drawings, then count them here."
                   : "Select a sheet to start counting."}
               </p>
             </div>

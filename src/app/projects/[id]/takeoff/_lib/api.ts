@@ -12,17 +12,23 @@ async function jsonOrThrow(res: Response) {
   return body
 }
 
-// ── Drawing sheets (the sheet picker reuses the Drawing Log read route) ───────
+// ── Drawing sheets — reuse the Drawings section's own source ──────────────────
+// The sheet picker reads the SAME data the Drawings/markup viewer uses: the
+// drawing_sheets table (ADR-005) via GET /api/drawings/sheets — NOT the legacy
+// drawing_log (/api/drawings), which is empty for current projects. That route
+// returns each sheet already joined to its current revision's signed PDF URL
+// (drawing_revisions.storage_path, "submittals" bucket, 1h) and filters
+// deleted_at IS NULL server-side. We keep only renderable sheets (file_url set).
 export async function listSheets(projectId: string): Promise<CountSheet[]> {
-  const body = await jsonOrThrow(await fetch(`/api/drawings?project_id=${encodeURIComponent(projectId)}`))
-  type Row = { id: string; is_current?: boolean; sheet_number?: string | null; drawing_number?: string | null; sheet_title?: string | null; file_url: string | null }
-  return ((body.drawings ?? []) as Row[])
-    .filter(d => d.is_current !== false && d.file_url)
-    .map(d => ({
-      id: d.id,
-      sheet_number: d.sheet_number ?? d.drawing_number ?? null,
-      sheet_title: d.sheet_title ?? null,
-      file_url: d.file_url,
+  const body = await jsonOrThrow(await fetch(`/api/drawings/sheets?project_id=${encodeURIComponent(projectId)}`))
+  type Row = { id: string; sheet_number?: string | null; title?: string | null; file_url: string | null }
+  return ((body.sheets ?? []) as Row[])
+    .filter(s => !!s.file_url)
+    .map(s => ({
+      id: s.id,                       // drawing_sheets.id — stable across revisions; stored as source_ref
+      sheet_number: s.sheet_number ?? null,
+      sheet_title: s.title ?? null,   // the route exposes the sheet title as `title`
+      file_url: s.file_url,
     }))
 }
 
