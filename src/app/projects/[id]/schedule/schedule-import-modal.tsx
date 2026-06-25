@@ -2,12 +2,19 @@
 
 // ── Schedule-import: upload → parse → select-scope → commit (ADR-012) ─────────
 // The select-scope step IS the feature. A GC/CM schedule PDF lists EVERY task on
-// the job; THP performs only a subset. We parse the table (POST /api/schedule-
+// the job; THP performs only a subset. We parse the file (POST /api/schedule-
 // import/parse — read-only, stores nothing), show the proposed rows grouped by the
 // detected hierarchy with a keyword filter, let the user CHECK their scope and
 // inline-fix any parse error, then commit ONLY the checked rows one-by-one through
 // the existing POST /api/schedule-tasks write path. Nothing is auto-classified and
 // nothing commits without an explicit check.
+//
+// Two file kinds share this one flow: a schedule PDF (MS Project / P6 / Asta export
+// or a Bluebeam month-calendar) and a THP pull-plan ACTIVITY-LIST .xlsx intake form.
+// Pull-plan rows (PDF or xlsx) are UNDATED → committed as backlog tasks carrying
+// crew_size + the parsed nominal duration; for multi-block xlsx forms the block name
+// rides each row's phase ("<block> › <trade>"), so filtering/selecting by project
+// block works in the grouped list.
 
 import { useCallback, useMemo, useRef, useState } from "react"
 
@@ -118,10 +125,12 @@ export default function ScheduleImportModal({
     const errs = new Map<string, string>()
     const keepSelected = new Set<string>()
     let ok = 0, fail = 0
-    // Pull-plan rows are UNDATED activities → commit as backlog tasks (status=backlog
-    // lets the write route accept null dates) carrying their crew size. Dated families
-    // (msp/p6/asta/calendar) commit UNCHANGED — no status, so the route defaults them
-    // to not_started with both dates required.
+    // Pull-plan rows (PDF or xlsx) are UNDATED activities → commit as backlog tasks
+    // (status=backlog lets the write route accept null dates) carrying crew_size AND
+    // the parsed nominal duration_days, so a dropped task auto-spans on the planning
+    // board. The route accepts a client duration_days ONLY for dateless backlog rows;
+    // dated families (msp/p6/asta/calendar) commit UNCHANGED — no status (→ not_started,
+    // both dates required) and no duration_days (the route derives it from the dates).
     const isPullPlan = meta?.family === "pullplan"
     for (let i = 0; i < toCommit.length; i++) {
       setProgress({ done: i, total: toCommit.length })
@@ -135,7 +144,7 @@ export default function ScheduleImportModal({
         phase: r.phase?.trim() || null,
         wbs_code: r.wbs_code?.trim() || null,
         percent_complete: r.percent_complete ?? undefined,
-        ...(isPullPlan ? { status: "backlog", crew_size: r.crew_size ?? undefined } : {}),
+        ...(isPullPlan ? { status: "backlog", crew_size: r.crew_size ?? undefined, duration_days: r.duration_days ?? undefined } : {}),
       }
       try {
         const res = await fetch("/api/schedule-tasks", {
@@ -163,7 +172,7 @@ export default function ScheduleImportModal({
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-3.5 border-b border-[#E2E8F0]">
           <div>
-            <h2 className="text-[15px] font-bold text-[#0F172A]">Import schedule PDF</h2>
+            <h2 className="text-[15px] font-bold text-[#0F172A]">Import schedule</h2>
             {meta && (
               <p className="text-[12px] text-[#64748B] mt-0.5">
                 {FAMILY_LABEL[meta.family] ?? meta.family} · {rows.length} task{rows.length === 1 ? "" : "s"} found across {meta.pageCount} page{meta.pageCount === 1 ? "" : "s"}
@@ -187,9 +196,9 @@ export default function ScheduleImportModal({
               <div className="w-12 h-12 rounded-full bg-[#EEF2F6] grid place-items-center mb-3">
                 <svg className="w-6 h-6 text-[#7B9BB5]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.9A5 5 0 1115.9 6 4.5 4.5 0 0117 16m-5-4v8m0-8l-3 3m3-3l3 3" /></svg>
               </div>
-              <p className="text-[14px] font-semibold text-[#0F172A]">{parsing ? "Reading the schedule…" : "Drop a schedule PDF here, or click to choose"}</p>
-              <p className="text-[12px] text-[#64748B] mt-1 max-w-md">MS Project, Primavera P6, or Asta / PowerProject exports — or a hand-built Bluebeam month-calendar lookahead. Needs a real text layer (not a scan). Up to 4 MB.</p>
-              <input ref={fileRef} type="file" accept="application/pdf,.pdf" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) parse(f) }} />
+              <p className="text-[14px] font-semibold text-[#0F172A]">{parsing ? "Reading the schedule…" : "Drop a schedule PDF or .xlsx here, or click to choose"}</p>
+              <p className="text-[12px] text-[#64748B] mt-1 max-w-md">A schedule PDF (MS Project, Primavera P6, Asta / PowerProject, or a Bluebeam month-calendar) — or a THP pull-plan activity-list .xlsx intake form. PDFs need a real text layer (not a scan). Up to 4 MB.</p>
+              <input ref={fileRef} type="file" accept="application/pdf,.pdf,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,.xlsx" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) parse(f) }} />
             </div>
             {parseError && <p className="mt-3 text-[12px] text-red-600">{parseError}</p>}
           </div>

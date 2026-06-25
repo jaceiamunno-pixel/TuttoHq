@@ -23,6 +23,8 @@
 //   • Low-confidence rows (unparseable date/duration) are flagged needsReview —
 //     never silently dropped or guessed.
 
+import { PP_DUR_RE, PP_CREW_RE, finalizePullPlanRow } from "./pullplan-fields"
+
 // ── Inputs ───────────────────────────────────────────────────────────────────
 
 /** One positioned token from the PDF text layer (a getTextContent item, mapped
@@ -520,37 +522,9 @@ function finalizeRow(row: RawRow, phase: string | null, family: ScheduleFamily):
 // can occasionally attach to the wrong neighbor when the responsibility floats to the
 // far edge of its multi-line name (the one geometric ambiguity this format can't
 // resolve), so the modal nudges the user to eyeball those.
-
-const PP_DUR_RE = /\b(\d+)\s*days?\b/i
-const PP_CREW_RE = /(\d+)\s*people\b/i
-
-function finalizePullPlanRow(
-  name: string,
-  responsibility: string | null,
-  duration_days: number | null,
-  crew_size: number | null,
-  wrapped: boolean,
-): ProposedTaskRow {
-  const reviewReasons: string[] = []
-  if (wrapped) reviewReasons.push("Activity name wrapped across lines — confirm it didn't merge with a neighbor")
-  return {
-    name: name.trim(),
-    start_date: null,
-    end_date: null,
-    duration_days,
-    crew_size,
-    is_milestone: false,
-    phase: responsibility, // responsible party/trade → phase (groups naturally by trade)
-    wbs_code: null,
-    predecessors_raw: null,
-    percent_complete: null,
-    resources: null,
-    actual_start_date: null,
-    actual_end_date: null,
-    needsReview: reviewReasons.length > 0,
-    reviewReasons,
-  }
-}
+//
+// The four field helpers (PP_DUR_RE / PP_CREW_RE / finalizePullPlanRow) live in
+// pullplan-fields.ts so the XLSX pull-plan parser shares them verbatim.
 
 // 1-D min-cost contiguous partition of name y's into k groups (group g → anchor g,
 // both in document order). The global fit places a wrapped name's lines with the

@@ -91,6 +91,7 @@ interface CreateInput {
   percent_complete?: unknown
   status?: unknown
   crew_size?: unknown
+  duration_days?: unknown
   wbs_code?: unknown
   sort_order?: unknown
   notes?: unknown
@@ -100,13 +101,16 @@ interface CreateInput {
 
 // Validate + build the INSERT row. company_id and created_by are intentionally
 // omitted — both ride their DB defaults (get_my_company_id() / auth.uid()) and can
-// NEVER be set by the client. duration_days is DERIVED from the dates here (never
-// taken from the body) so the cached column can't disagree with the engine — but only
-// when both dates are present; a dateless backlog row gets duration_days=null. Dates
-// are REQUIRED for a scheduled task and OPTIONAL for a 'backlog' one (migration 0023:
-// start/end nullable; a DB CHECK enforces both-present OR status='backlog'). The
-// date_order / pct-range / status-enum rules are also DB CHECKs; validating here just
-// yields friendlier 400s before the round trip.
+// NEVER be set by the client. duration_days follows a DERIVE-NEVER-TRUST rule: when
+// BOTH dates are present it is computed from them here (a client value is ignored) so
+// the cached column can't disagree with the engine. The ONE exception is a DATELESS
+// backlog row (status='backlog', both dates null): it may carry a client-supplied
+// NOMINAL duration_days (pull-plan/xlsx imports) so a dropped task auto-spans on the
+// planning board — validated as a positive whole number or null. Dates are REQUIRED
+// for a scheduled task and OPTIONAL for a 'backlog' one (migration 0023: start/end
+// nullable; a DB CHECK enforces both-present OR status='backlog'). The date_order /
+// pct-range / status-enum rules are also DB CHECKs; validating here just yields
+// friendlier 400s before the round trip.
 function buildInsertRow(input: CreateInput): { row: Record<string, unknown> } | { error: string } {
   const project_id = strOrNull(input.project_id)
   if (!project_id || !UUID_RE.test(project_id)) return { error: "project_id (uuid) is required" }
@@ -169,6 +173,22 @@ function buildInsertRow(input: CreateInput): { row: Record<string, unknown> } | 
     crew_size = n
   }
 
+  // duration_days — DERIVE-NEVER-TRUST. Both dates present ⇒ derive from them (any
+  // client value is IGNORED, so a dated row's cached duration can never disagree with
+  // the CPM engine). DATELESS backlog row ⇒ accept an optional client NOMINAL duration
+  // (pull-plan/xlsx imports) so a dropped task auto-spans on the planning board. Any
+  // other shape (e.g. a backlog row with one date) ⇒ null.
+  let duration_days: number | null = null
+  if (start_date && end_date) {
+    duration_days = deriveDurationDays(start_date, end_date, is_milestone)
+  } else if (status === "backlog" && !start_date && !end_date) {
+    if (input.duration_days !== undefined && input.duration_days !== null && input.duration_days !== "") {
+      const n = Number(input.duration_days)
+      if (!Number.isInteger(n) || n <= 0) return { error: "duration_days must be a positive whole number" }
+      duration_days = n
+    }
+  }
+
   const row: Record<string, unknown> = {
     project_id,
     name,
@@ -176,8 +196,7 @@ function buildInsertRow(input: CreateInput): { row: Record<string, unknown> } | 
     start_date,
     end_date,
     is_milestone,
-    // duration only when both dates are present; a dateless backlog row has no span.
-    duration_days: start_date && end_date ? deriveDurationDays(start_date, end_date, is_milestone) : null,
+    duration_days,
     percent_complete,
     status,
     crew_size,
