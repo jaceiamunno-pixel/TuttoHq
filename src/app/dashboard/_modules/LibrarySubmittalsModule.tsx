@@ -350,6 +350,7 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
   const [pendingStaged, setPendingStaged]             = useState<StagedSubmittal[]>([])
   const [pendingSections, setPendingSections]         = useState<SpecSectionRow[]>([])
   const [pendingDocuments, setPendingDocuments]       = useState<PendingDoc[]>([])
+  const [pendingHiddenCount, setPendingHiddenCount]   = useState(0)
   const [pendingLoading, setPendingLoading]           = useState(false)
   const [specMode, setSpecMode]                       = useState<"consolidated" | "detailed">("consolidated")
   const [pendingCommitting, setPendingCommitting]     = useState(false)
@@ -974,7 +975,7 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
 
   // ── Pending Review (staged submittals) ───────────────────────────────────────
   function loadPending(pid = globalProjectId) {
-    if (!pid) { setPendingStaged([]); setPendingSections([]); setPendingDocuments([]); return }
+    if (!pid) { setPendingStaged([]); setPendingSections([]); setPendingDocuments([]); setPendingHiddenCount(0); return }
     setPendingLoading(true)
     fetch(`/api/staged-submittals?project_id=${encodeURIComponent(pid)}`)
       .then(r => r.json())
@@ -982,8 +983,9 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
         setPendingStaged(d.staged ?? [])
         setPendingSections(d.sections ?? [])
         setPendingDocuments(d.documents ?? [])
+        setPendingHiddenCount(d.hiddenCount ?? 0)
       })
-      .catch(() => { setPendingStaged([]); setPendingSections([]); setPendingDocuments([]) })
+      .catch(() => { setPendingStaged([]); setPendingSections([]); setPendingDocuments([]); setPendingHiddenCount(0) })
       .finally(() => setPendingLoading(false))
   }
 
@@ -1859,7 +1861,15 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                 <div className="flex flex-col min-h-full">
                   {/* Pending Review header */}
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 px-4 py-3 border-b border-[#E2E8F0] flex-shrink-0">
-                    <p className="text-[13px] font-semibold text-[#0F172A]">Pending Review <span className="text-[#64748B] font-normal ml-1">({staged.length} staged)</span></p>
+                    <div className="flex flex-col gap-0.5">
+                      <p className="text-[13px] font-semibold text-[#0F172A]">Pending Review <span className="text-[#64748B] font-normal ml-1">({staged.length} staged)</span></p>
+                      {pendingHiddenCount > 0 && (
+                        <p className="text-[11px] text-[#94A3B8]">
+                          {pendingHiddenCount} submittal{pendingHiddenCount === 1 ? "" : "s"} hidden — out of project scope.{" "}
+                          <a href="/settings?tab=projects" className="text-[#7B9BB5] font-medium hover:underline">Edit scope</a>
+                        </p>
+                      )}
+                    </div>
                     <div className="flex items-center gap-2 flex-wrap">
                       <div className="flex rounded-md border border-[#E2E8F0] overflow-hidden">
                         {(["consolidated", "detailed"] as const).map(m => (
