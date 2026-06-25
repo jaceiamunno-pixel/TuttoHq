@@ -5,6 +5,8 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "build:native": "next build native",
+    "cap:sync": "cap sync ios",
     "start": "next start",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -13,6 +15,10 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.95.1",
+    "@capacitor/camera": "^8.2.0",
+    "@capacitor/core": "^8.4.1",
+    "@capacitor/ios": "^8.4.1",
+    "@capacitor/preferences": "^8.0.1",
     "@pdf-lib/fontkit": "^1.1.1",
     "@supabase/ssr": "^0.10.3",
     "@supabase/supabase-js": "^2.105.4",
@@ -37,6 +43,7 @@
     "unpdf": "^1.6.2"
   },
   "devDependencies": {
+    "@capacitor/cli": "^8.4.1",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",
