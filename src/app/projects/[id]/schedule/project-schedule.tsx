@@ -1135,6 +1135,7 @@ function TaskFormModal({ projectId, mode, task, phases, onClose, onSaved, onDele
   const [isMilestone, setIsMilestone] = useState(task?.is_milestone ?? false)
   const [pct, setPct] = useState(task ? String(task.percent_complete) : "0")
   const [status, setStatus] = useState<TaskStatus>(task?.status ?? "not_started")
+  const [crewSize, setCrewSize] = useState(task?.crew_size != null ? String(task.crew_size) : "")
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState<string | null>(null)
 
@@ -1150,6 +1151,13 @@ function TaskFormModal({ projectId, mode, task, phases, onClose, onSaved, onDele
     if (parseISO(effectiveEnd) < parseISO(startDate)) { setErr("End date must be on or after the start date."); return }
     const nPct = Number(pct)
     if (!Number.isInteger(nPct) || nPct < 0 || nPct > 100) { setErr("Percent complete must be 0–100."); return }
+    const trimmedCrew = crewSize.trim()
+    let crewVal: number | null = null
+    if (trimmedCrew !== "") {
+      const nCrew = Number(trimmedCrew)
+      if (!Number.isInteger(nCrew) || nCrew < 0) { setErr("Crew size must be a whole number ≥ 0."); return }
+      crewVal = nCrew
+    }
 
     setSaving(true)
     const payload = {
@@ -1160,6 +1168,7 @@ function TaskFormModal({ projectId, mode, task, phases, onClose, onSaved, onDele
       is_milestone: isMilestone,
       percent_complete: nPct,
       status,
+      crew_size: crewVal,
     }
     const res = isEdit
       ? await fetch(`/api/schedule-tasks/${task!.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) })
@@ -1220,6 +1229,11 @@ function TaskFormModal({ projectId, mode, task, phases, onClose, onSaved, onDele
               </select>
             </Field>
           </div>
+
+          <Field label="Crew size">
+            <input type="number" min={0} value={crewSize} onChange={e => setCrewSize(e.target.value)}
+                   className={inputCls} placeholder="e.g. 4 (optional)" />
+          </Field>
 
           {err && <p className="text-[12px] text-red-600">{err}</p>}
         </div>
