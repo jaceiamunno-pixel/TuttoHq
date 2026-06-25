@@ -3,6 +3,9 @@ node_modules/
 .env.local
 *.pem
 
+# Capacitor native shell — static export build output (native/.next covered above)
+native/out/
+
 .vercel
 
 # TypeScript incremental build cache
