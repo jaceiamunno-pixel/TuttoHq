@@ -1,5 +1,6 @@
 "use client"
 
+import { apiFetch } from "@/lib/api-client"
 import { useState, useEffect, useRef } from "react"
 import type { RFI, Project, TeamMember } from "../_shared/types"
 import { fmtDateOnly } from "../_shared/format"
@@ -53,7 +54,7 @@ export default function RfisModule({ globalProjectId, appProjects, teamMembers }
   function loadRfis(pid = globalProjectId) {
     setRfisLoading(true)
     const qs = pid ? `?project_id=${encodeURIComponent(pid)}` : ""
-    fetch(`/api/rfis${qs}`)
+    apiFetch(`/api/rfis${qs}`)
       .then(r => r.json())
       .then(d => setRfis(d.rfis ?? []))
       .catch(() => setRfis([]))
@@ -83,7 +84,7 @@ export default function RfisModule({ globalProjectId, appProjects, teamMembers }
         fields.file_path = path
         fields.file_name = rfiFile.name
       }
-      const res = await fetch("/api/rfis", {
+      const res = await apiFetch("/api/rfis", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(fields),
@@ -101,7 +102,7 @@ export default function RfisModule({ globalProjectId, appProjects, teamMembers }
 
   async function deleteRfi(rfiId: string) {
     if (!confirm("Delete this RFI? This cannot be undone.")) return
-    await fetch(`/api/rfis/${rfiId}`, { method: "DELETE" })
+    await apiFetch(`/api/rfis/${rfiId}`, { method: "DELETE" })
     setViewRfi(null)
     loadRfis()
   }
@@ -109,7 +110,7 @@ export default function RfisModule({ globalProjectId, appProjects, teamMembers }
   async function generateRfiPdf(rfiId: string) {
     setRfiGeneratingPdf(true)
     try {
-      const res  = await fetch(`/api/rfis/${rfiId}/pdf`, { method: "POST" })
+      const res  = await apiFetch(`/api/rfis/${rfiId}/pdf`, { method: "POST" })
       const data = await res.json()
       if (res.ok && data.url) {
         window.open(data.url, "_blank")
@@ -122,7 +123,7 @@ export default function RfisModule({ globalProjectId, appProjects, teamMembers }
     if (!viewRfi) return
     setRfiRespondSaving(true)
     try {
-      const res = await fetch(`/api/rfis/${viewRfi.id}`, {
+      const res = await apiFetch(`/api/rfis/${viewRfi.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ response: rfiResponse, status: rfiResponseStatus }),

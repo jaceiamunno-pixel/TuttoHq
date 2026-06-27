@@ -1,5 +1,6 @@
 "use client"
 
+import { apiFetch } from "@/lib/api-client"
 import { useState, useRef, useCallback } from "react"
 import { PDFDocument } from "pdf-lib"
 import { getDocumentProxy } from "unpdf"
@@ -208,7 +209,7 @@ export default function DrawingImportModal({ projectId, onClose }: {
       // flagging is deferred until after every tier has run.
       setProgress("Reading sheet titles…")
       try {
-        const res = await fetch("/api/drawings/detect-titles", {
+        const res = await apiFetch("/api/drawings/detect-titles", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ rows: titleReq }),
@@ -249,7 +250,7 @@ export default function DrawingImportModal({ projectId, onClose }: {
           if (!crops.right && !crops.bottom) { counters.tier2Failures++; return }
           try {
             counters.ocrCalls++
-            const res = await fetch("/api/drawings/ocr-titleblock", {
+            const res = await apiFetch("/api/drawings/ocr-titleblock", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ client_row_id: r.id, right: crops.right, bottom: crops.bottom }),
@@ -305,7 +306,7 @@ export default function DrawingImportModal({ projectId, onClose }: {
           if (!img) continue
           counters.ocrCalls++
           counters.ocrBytes += img.bytes
-          const res = await fetch("/api/drawings/ocr-index", {
+          const res = await apiFetch("/api/drawings/ocr-index", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ image: img.image }),
@@ -369,7 +370,7 @@ export default function DrawingImportModal({ projectId, onClose }: {
     setError(null)
     setPhase("committing")
     try {
-      const res = await fetch("/api/drawings/commit", {
+      const res = await apiFetch("/api/drawings/commit", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -424,7 +425,7 @@ export default function DrawingImportModal({ projectId, onClose }: {
     // Purge staged scratch files if any were uploaded.
     if (batchId && (phase === "review" || phase === "idle")) {
       try {
-        await fetch("/api/drawings/discard-staging", {
+        await apiFetch("/api/drawings/discard-staging", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ batch_id: batchId }),

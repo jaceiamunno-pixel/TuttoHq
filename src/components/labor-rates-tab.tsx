@@ -1,5 +1,6 @@
 "use client"
 
+import { apiFetch } from "@/lib/api-client"
 import { useEffect, useState } from "react"
 
 // Company labor rate book (Settings → Labor Rates). Reads are open to any
@@ -37,7 +38,7 @@ export default function LaborRatesTab({ canEdit }: { canEdit: boolean }) {
   }
 
   useEffect(() => {
-    fetch("/api/labor-rates")
+    apiFetch("/api/labor-rates")
       .then(r => r.json())
       .then((d: { rates?: Rate[] }) => {
         const rates = d.rates ?? []
@@ -87,8 +88,8 @@ export default function LaborRatesTab({ canEdit }: { canEdit: boolean }) {
         active: row.active,
       }
       const res = row._draft
-        ? await fetch("/api/labor-rates", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) })
-        : await fetch(`/api/labor-rates/${row.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) })
+        ? await apiFetch("/api/labor-rates", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) })
+        : await apiFetch(`/api/labor-rates/${row.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) })
       const d = await res.json().catch(() => ({}))
       if (!res.ok) { flash(d.error ?? "Save failed", false); return }
       const rate: Rate = d.rate
@@ -105,7 +106,7 @@ export default function LaborRatesTab({ canEdit }: { canEdit: boolean }) {
     if (!window.confirm(`Delete rate "${row.role_name}"?`)) return
     setBusyId(row.id)
     try {
-      const res = await fetch(`/api/labor-rates/${row.id}`, { method: "DELETE" })
+      const res = await apiFetch(`/api/labor-rates/${row.id}`, { method: "DELETE" })
       if (!res.ok) { const d = await res.json().catch(() => ({})); flash(d.error ?? "Delete failed", false); return }
       setRows(prev => prev.filter(r => r.id !== row.id))
       setSaved(prev => { const next = { ...prev }; delete next[row.id]; return next })

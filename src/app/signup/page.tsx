@@ -1,5 +1,6 @@
 "use client"
 
+import { apiFetch } from "@/lib/api-client"
 import { useState } from "react"
 import { useRouter } from "next/navigation"
 import Link from "next/link"
@@ -24,7 +25,7 @@ export default function SignupPage() {
     setError(null)
 
     try {
-      const res = await fetch("/api/signup", {
+      const res = await apiFetch("/api/signup", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ fullName, companyName, email, password }),

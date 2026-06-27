@@ -1,5 +1,6 @@
 "use client"
 
+import { apiFetch } from "@/lib/api-client"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import ScheduleImportModal from "./schedule-import-modal"
 import ScheduleCalendar from "./schedule-calendar"
@@ -214,7 +215,7 @@ export default function ProjectSchedule({ projectId, projectName }: { projectId:
   const load = useCallback(() => {
     setLoading(true)
     setLoadError(null)
-    fetch(`/api/schedule-tasks?project_id=${projectId}`)
+    apiFetch(`/api/schedule-tasks?project_id=${projectId}`)
       .then(async r => {
         if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.error ?? "Failed to load schedule")
         return r.json()
@@ -284,7 +285,7 @@ export default function ProjectSchedule({ projectId, projectName }: { projectId:
   // ── Mutations — all refetch on success; errors surface in a dismissible banner ─
   async function patchTask(id: string, patch: Record<string, unknown>): Promise<boolean> {
     setActionError(null)
-    const res = await fetch(`/api/schedule-tasks/${id}`, {
+    const res = await apiFetch(`/api/schedule-tasks/${id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(patch),
@@ -300,7 +301,7 @@ export default function ProjectSchedule({ projectId, projectName }: { projectId:
 
   async function deleteTask(id: string): Promise<boolean> {
     setActionError(null)
-    const res = await fetch(`/api/schedule-tasks/${id}`, { method: "DELETE" })
+    const res = await apiFetch(`/api/schedule-tasks/${id}`, { method: "DELETE" })
     if (!res.ok) {
       const d = await res.json().catch(() => ({}))
       setActionError(d?.error ?? "Failed to delete task")
@@ -312,7 +313,7 @@ export default function ProjectSchedule({ projectId, projectName }: { projectId:
 
   async function deleteDep(id: string): Promise<boolean> {
     setActionError(null)
-    const res = await fetch(`/api/schedule-dependencies/${id}`, { method: "DELETE" })
+    const res = await apiFetch(`/api/schedule-dependencies/${id}`, { method: "DELETE" })
     if (!res.ok) {
       const d = await res.json().catch(() => ({}))
       setActionError(d?.error ?? "Failed to delete dependency")
@@ -1171,8 +1172,8 @@ function TaskFormModal({ projectId, mode, task, phases, onClose, onSaved, onDele
       crew_size: crewVal,
     }
     const res = isEdit
-      ? await fetch(`/api/schedule-tasks/${task!.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) })
-      : await fetch(`/api/schedule-tasks`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ project_id: projectId, ...payload }) })
+      ? await apiFetch(`/api/schedule-tasks/${task!.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) })
+      : await apiFetch(`/api/schedule-tasks`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ project_id: projectId, ...payload }) })
     const d = await res.json().catch(() => ({}))
     setSaving(false)
     if (!res.ok) { setErr(d?.error ?? "Save failed"); return }
@@ -1312,7 +1313,7 @@ function DependencyModal({ projectId, tasks, deps, onClose, onChanged, onDelete 
     if (!Number.isInteger(nLag)) { setErr("Lag must be a whole number of working days (negative = lead)."); return }
 
     setSaving(true)
-    const res = await fetch(`/api/schedule-dependencies`, {
+    const res = await apiFetch(`/api/schedule-dependencies`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       // The live route reads snake_case dep_type / lag_days (the camelCase names in

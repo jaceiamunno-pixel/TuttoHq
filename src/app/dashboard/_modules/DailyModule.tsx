@@ -1,5 +1,6 @@
 "use client"
 
+import { apiFetch } from "@/lib/api-client"
 import { useState, useEffect, useMemo, useRef } from "react"
 import type { DailyReport, Project, TeamMember } from "../_shared/types"
 import { fmtDateOnly } from "../_shared/format"
@@ -114,7 +115,7 @@ export default function DailyModule({ globalProjectId, appProjects, teamMembers 
   function loadDaily(pid = globalProjectId) {
     setDailyLoading(true)
     const qs = pid ? `?project_id=${encodeURIComponent(pid)}` : ""
-    fetch(`/api/daily-reports${qs}`)
+    apiFetch(`/api/daily-reports${qs}`)
       .then(r => r.json())
       .then(d => setDailyReports(d.reports ?? []))
       .catch(() => setDailyReports([]))
@@ -267,7 +268,7 @@ export default function DailyModule({ globalProjectId, appProjects, teamMembers 
       // If the View modal is open, refresh its photo lists too.
       const id = viewDailyRef.current?.id
       if (id) {
-        fetch(`/api/photos?entity_type=daily_report&entity_id=${id}`)
+        apiFetch(`/api/photos?entity_type=daily_report&entity_id=${id}`)
           .then(r => r.ok ? r.json() : [])
           .then(setDailyPhotos)
           .catch(() => {})
@@ -331,7 +332,7 @@ export default function DailyModule({ globalProjectId, appProjects, teamMembers 
 
   async function deleteDaily(reportId: string) {
     if (!confirm("Delete this daily report? This cannot be undone.")) return
-    await fetch(`/api/daily-reports/${reportId}`, { method: "DELETE" })
+    await apiFetch(`/api/daily-reports/${reportId}`, { method: "DELETE" })
     setViewDaily(null)
     loadDaily()
   }
@@ -339,7 +340,7 @@ export default function DailyModule({ globalProjectId, appProjects, teamMembers 
   async function generateDailyPdf(reportId: string) {
     setDailyGeneratingPdf(true)
     try {
-      const res = await fetch(`/api/daily-reports/${reportId}/pdf`, { method: "POST" })
+      const res = await apiFetch(`/api/daily-reports/${reportId}/pdf`, { method: "POST" })
       const data = await res.json()
       if (res.ok && data.url) { window.open(data.url, "_blank"); loadDaily() }
     } finally { setDailyGeneratingPdf(false) }
@@ -347,7 +348,7 @@ export default function DailyModule({ globalProjectId, appProjects, teamMembers 
 
   async function loadDailyPhotos(id: string) {
     setDailyPhotosLoading(true)
-    const res = await fetch(`/api/photos?entity_type=daily_report&entity_id=${id}`)
+    const res = await apiFetch(`/api/photos?entity_type=daily_report&entity_id=${id}`)
     if (res.ok) setDailyPhotos(await res.json())
     setDailyPhotosLoading(false)
   }
@@ -384,7 +385,7 @@ export default function DailyModule({ globalProjectId, appProjects, teamMembers 
   }
 
   async function deleteDailyPhoto(photoId: string) {
-    await fetch(`/api/photos?id=${photoId}`, { method: "DELETE" })
+    await apiFetch(`/api/photos?id=${photoId}`, { method: "DELETE" })
     if (viewDaily) await loadDailyPhotos(viewDaily.id)
   }
 
@@ -520,7 +521,7 @@ export default function DailyModule({ globalProjectId, appProjects, teamMembers 
 
       // ─── Optimistic POST. Pending row stays on any failure. ────────────
       try {
-        const res = await fetch("/api/daily-reports", {
+        const res = await apiFetch("/api/daily-reports", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ ...fields, client_id: clientReportId }),
@@ -575,7 +576,7 @@ export default function DailyModule({ globalProjectId, appProjects, teamMembers 
     if (!viewDaily) return
     setDailyEditSaving(true)
     try {
-      const res = await fetch(`/api/daily-reports/${viewDaily.id}`, {
+      const res = await apiFetch(`/api/daily-reports/${viewDaily.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ report_date: dailyDate, project_id: dailyProjectId || null, prepared_by: dailyPreparedBy || null, weather_conditions: dailyWeather || null, temperature: dailyTemp || null, manpower_count: dailyManpower ? parseInt(dailyManpower) : null, work_performed: dailyWorkPerformed || null, equipment: dailyEquipment || null, materials_delivered: dailyMaterials || null, visitors: dailyVisitors || null, issues_delays: dailyIssues || null, safety_notes: dailySafety || null }),

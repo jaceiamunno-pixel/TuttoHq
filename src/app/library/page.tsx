@@ -1,5 +1,6 @@
 "use client"
 
+import { apiFetch } from "@/lib/api-client"
 import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import AppChrome from "@/components/app-chrome"
@@ -20,8 +21,8 @@ export default function LibraryPage() {
 
   useEffect(() => {
     createClient().auth.getUser().then(({ data }) => setUserEmail(data.user?.email ?? null))
-    fetch("/api/projects").then(r => r.json()).then(d => setAppProjects(d.projects ?? [])).catch(() => {})
-    fetch("/api/team").then(r => r.json()).then(d => setTeamMembers(d.members ?? [])).catch(() => {})
+    apiFetch("/api/projects").then(r => r.json()).then(d => setAppProjects(d.projects ?? [])).catch(() => {})
+    apiFetch("/api/team").then(r => r.json()).then(d => setTeamMembers(d.members ?? [])).catch(() => {})
   }, [])
 
   function onNavigate(m: "library" | "submittals") {

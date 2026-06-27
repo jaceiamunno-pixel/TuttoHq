@@ -1,5 +1,6 @@
 "use client"
 
+import { apiFetch } from "@/lib/api-client"
 import { useEffect, useState } from "react"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
@@ -31,7 +32,7 @@ export default function AppChrome({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     createClient().auth.getUser().then(({ data }) => setUserEmail(data.user?.email ?? null))
-    fetch("/api/settings").then(r => r.json()).then(d => { if (d.logo_url) setLogoUrl(d.logo_url); if (d.display_name) setDisplayName(d.display_name) }).catch(() => {})
+    apiFetch("/api/settings").then(r => r.json()).then(d => { if (d.logo_url) setLogoUrl(d.logo_url); if (d.display_name) setDisplayName(d.display_name) }).catch(() => {})
   }, [])
 
   async function signOut() {

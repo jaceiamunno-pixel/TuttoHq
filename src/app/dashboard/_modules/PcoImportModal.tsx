@@ -1,5 +1,6 @@
 "use client"
 
+import { apiFetch } from "@/lib/api-client"
 import { useMemo, useRef, useState } from "react"
 import type { Project } from "../_shared/types"
 import { computePcoTotals } from "../_shared/pco-math"
@@ -192,7 +193,7 @@ export default function PcoImportModal({ project, onClose, onImported }: {
     try {
       // Collision pre-flight: existing CO numbers in this project (covers manual
       // + builder rows; the server re-checks authoritatively on commit).
-      const existing = await fetch(`/api/change-orders?project_id=${encodeURIComponent(project.id)}`)
+      const existing = await apiFetch(`/api/change-orders?project_id=${encodeURIComponent(project.id)}`)
         .then(r => r.json()).then(d => new Set((d.changeOrders ?? []).map((c: { co_number: string }) => numericKey(c.co_number)).filter(Boolean) as string[]))
         .catch(() => new Set<string>())
       setCollisionKeys(existing)
@@ -280,7 +281,7 @@ export default function PcoImportModal({ project, onClose, onImported }: {
 
   async function preview(card: Card, doc: "cover" | "backup") {
     try {
-      const res = await fetch(`/api/change-orders/pco/preview-pdf?doc=${doc}`, {
+      const res = await apiFetch(`/api/change-orders/pco/preview-pdf?doc=${doc}`, {
         method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payloadFor(card)),
       })
       if (!res.ok) { patchError(card.id, "Preview failed"); return }
@@ -295,7 +296,7 @@ export default function PcoImportModal({ project, onClose, onImported }: {
   async function commit(toCommit: Card[]) {
     if (toCommit.length === 0) return
     const payloads = toCommit.map(payloadFor)
-    const res = await fetch("/api/change-orders/pco/import", {
+    const res = await apiFetch("/api/change-orders/pco/import", {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ pcos: payloads }),
     })
     const result = (await res.json().catch(() => null)) as CommitResult | null

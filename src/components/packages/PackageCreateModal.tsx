@@ -1,5 +1,6 @@
 "use client"
 
+import { apiFetch } from "@/lib/api-client"
 import { useState, useMemo } from "react"
 import type { SubmittalRecord, VendorRow, SubmittalPackage } from "@/app/dashboard/_shared/types"
 
@@ -72,7 +73,7 @@ export default function PackageCreateModal({
   /** Create the draft package if it does not exist yet; returns it. */
   async function ensureDraft(): Promise<SubmittalPackage | null> {
     if (pkg) return pkg
-    const res = await fetch("/api/submittal-packages", {
+    const res = await apiFetch("/api/submittal-packages", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -109,7 +110,7 @@ export default function PackageCreateModal({
     try {
       const created = await ensureDraft()
       if (!created) return
-      const res = await fetch(`/api/submittal-packages/${created.id}/pdf`, { method: "POST" })
+      const res = await apiFetch(`/api/submittal-packages/${created.id}/pdf`, { method: "POST" })
       const d = await res.json().catch(() => ({}))
       if (!res.ok) { setError(d.error ?? "Failed to generate the package PDF"); return }
       setPdfUrl(d.url ?? null)
@@ -122,7 +123,7 @@ export default function PackageCreateModal({
     setError(null)
     setBusy(true)
     try {
-      const res = await fetch(`/api/submittal-packages/${pkg.id}/dispatch`, { method: "POST" })
+      const res = await apiFetch(`/api/submittal-packages/${pkg.id}/dispatch`, { method: "POST" })
       const d = await res.json().catch(() => ({}))
       if (!res.ok) { setError(d.error ?? "Failed to dispatch the package"); return }
       onDone()

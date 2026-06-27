@@ -1,5 +1,6 @@
 "use client"
 
+import { apiFetch } from "@/lib/api-client"
 import { useEffect, useMemo, useState } from "react"
 import ManpowerCalendar from "@/components/manpower-calendar"
 
@@ -72,7 +73,7 @@ export default function WorkersRoster() {
   function load() {
     setLoading(true)
     setLoadError(null)
-    fetch("/api/workers")
+    apiFetch("/api/workers")
       .then(async r => {
         if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.error ?? "Failed to load")
         return r.json()
@@ -98,7 +99,7 @@ export default function WorkersRoster() {
     // Optimistic flip, rolled back on failure.
     const next = !w.active
     setWorkers(ws => ws.map(x => (x.id === w.id ? { ...x, active: next } : x)))
-    const res = await fetch(`/api/workers/${w.id}`, {
+    const res = await apiFetch(`/api/workers/${w.id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ active: next }),
@@ -112,7 +113,7 @@ export default function WorkersRoster() {
 
   async function deleteWorker(w: Worker) {
     if (!confirm(`Remove ${w.full_name} from the roster? They move to "Recently deleted" and can be restored this session.`)) return
-    const res = await fetch(`/api/workers/${w.id}`, { method: "DELETE" })
+    const res = await apiFetch(`/api/workers/${w.id}`, { method: "DELETE" })
     if (res.ok) {
       setWorkers(ws => ws.filter(x => x.id !== w.id))
       setRecentlyDeleted(rd => [w, ...rd.filter(x => x.id !== w.id)])
@@ -123,7 +124,7 @@ export default function WorkersRoster() {
   }
 
   async function restoreWorker(w: Worker) {
-    const res = await fetch(`/api/workers/${w.id}/restore`, { method: "POST" })
+    const res = await apiFetch(`/api/workers/${w.id}/restore`, { method: "POST" })
     if (res.ok) {
       setRecentlyDeleted(rd => rd.filter(x => x.id !== w.id))
       load()
@@ -332,8 +333,8 @@ function WorkerFormModal({ worker, onClose, onSaved }: {
       notes: form.notes.trim() || null,
     }
     const res = isEdit
-      ? await fetch(`/api/workers/${worker!.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) })
-      : await fetch(`/api/workers`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) })
+      ? await apiFetch(`/api/workers/${worker!.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) })
+      : await apiFetch(`/api/workers`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) })
     const d = await res.json().catch(() => ({}))
     setSaving(false)
     if (!res.ok) { setErr(d?.error ?? "Save failed"); return }
@@ -389,7 +390,7 @@ function BulkAddModal({ onClose, onSaved }: {
     if (parsed.length === 0) return
     setSaving(true)
     setErr(null)
-    const res = await fetch(`/api/workers`, {
+    const res = await apiFetch(`/api/workers`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ workers: parsed }),

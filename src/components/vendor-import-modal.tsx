@@ -1,5 +1,6 @@
 "use client"
 
+import { apiFetch } from "@/lib/api-client"
 import { useMemo, useRef, useState } from "react"
 import Papa from "papaparse"
 
@@ -179,7 +180,7 @@ export default function VendorImportModal({
   async function commit() {
     setImporting(true)
     try {
-      const res = await fetch("/api/vendors/import", {
+      const res = await apiFetch("/api/vendors/import", {
         method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ rows: preview.mapped }),
       })
       const data = await res.json()

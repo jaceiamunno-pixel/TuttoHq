@@ -1,5 +1,6 @@
 "use client"
 
+import { apiFetch } from "@/lib/api-client"
 import { useEffect, useRef, useState } from "react"
 
 // User's own signature image (Settings → Profile). Rendered on the PCO cover
@@ -25,12 +26,12 @@ export default function ProfileSignature() {
   }
 
   useEffect(() => {
-    fetch("/api/profile/signature")
+    apiFetch("/api/profile/signature")
       .then(r => r.json())
       .then((d: { signature_url?: string | null }) => setSignatureUrl(d.signature_url ?? null))
       .catch(() => {})
       .finally(() => setLoading(false))
-    fetch("/api/profile")
+    apiFetch("/api/profile")
       .then(r => r.json())
       .then((d: { full_name?: string | null }) => {
         setSavedName(d.full_name ?? null)
@@ -44,7 +45,7 @@ export default function ProfileSignature() {
     if (!next) { flash("Name cannot be empty", false); return }
     setSavingName(true)
     try {
-      const res = await fetch("/api/profile", {
+      const res = await apiFetch("/api/profile", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ full_name: next }),
@@ -66,7 +67,7 @@ export default function ProfileSignature() {
     try {
       const form = new FormData()
       form.append("file", file)
-      const res = await fetch("/api/profile/signature", { method: "POST", body: form })
+      const res = await apiFetch("/api/profile/signature", { method: "POST", body: form })
       const d = await res.json().catch(() => ({}))
       if (!res.ok) { flash(d.error ?? "Upload failed", false); return }
       // Cache-bust so the <img> reloads even though the storage key is stable.
@@ -82,7 +83,7 @@ export default function ProfileSignature() {
     if (!window.confirm("Remove your signature?")) return
     setBusy(true)
     try {
-      const res = await fetch("/api/profile/signature", { method: "DELETE" })
+      const res = await apiFetch("/api/profile/signature", { method: "DELETE" })
       if (!res.ok) { const d = await res.json().catch(() => ({})); flash(d.error ?? "Remove failed", false); return }
       setSignatureUrl(null)
       flash("Signature removed")

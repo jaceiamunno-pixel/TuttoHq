@@ -1,5 +1,6 @@
 "use client"
 
+import { apiFetch } from "@/lib/api-client"
 import { useState, useEffect, useCallback } from "react"
 import type { SubmittalPackage, SubmittalPackageDetail, SubmittalRecord } from "@/app/dashboard/_shared/types"
 import ReminderSettingsPanel from "@/components/reminders/ReminderSettingsPanel"
@@ -41,7 +42,7 @@ export default function PackagesView({ projectId }: { projectId: string }) {
   const loadPackages = useCallback(() => {
     if (!projectId) { setPackages([]); setLoading(false); return }
     setLoading(true)
-    fetch(`/api/submittal-packages?project_id=${encodeURIComponent(projectId)}`)
+    apiFetch(`/api/submittal-packages?project_id=${encodeURIComponent(projectId)}`)
       .then(r => r.json())
       .then(d => setPackages(d.packages ?? []))
       .catch(() => setPackages([]))
@@ -133,7 +134,7 @@ function PackageDetail({ packageId, onBack, onChanged }: {
 
   const load = useCallback(() => {
     setLoading(true)
-    fetch(`/api/submittal-packages/${packageId}`)
+    apiFetch(`/api/submittal-packages/${packageId}`)
       .then(r => r.json())
       .then(d => setPkg(d.package ?? null))
       .catch(() => setPkg(null))
@@ -145,7 +146,7 @@ function PackageDetail({ packageId, onBack, onChanged }: {
   async function previewPdf() {
     setBusy("pdf"); setError(null)
     try {
-      const res = await fetch(`/api/submittal-packages/${packageId}/pdf`, { method: "POST" })
+      const res = await apiFetch(`/api/submittal-packages/${packageId}/pdf`, { method: "POST" })
       const d = await res.json().catch(() => ({}))
       if (!res.ok || !d.url) { setError(d.error ?? "Could not generate the PDF"); return }
       window.open(d.url, "_blank")
@@ -155,7 +156,7 @@ function PackageDetail({ packageId, onBack, onChanged }: {
   async function dispatch() {
     setBusy("dispatch"); setError(null)
     try {
-      const res = await fetch(`/api/submittal-packages/${packageId}/dispatch`, { method: "POST" })
+      const res = await apiFetch(`/api/submittal-packages/${packageId}/dispatch`, { method: "POST" })
       const d = await res.json().catch(() => ({}))
       if (!res.ok) { setError(d.error ?? "Dispatch failed"); return }
       load(); onChanged()
@@ -166,7 +167,7 @@ function PackageDetail({ packageId, onBack, onChanged }: {
     if (!window.confirm("Delete this package? This cannot be undone.")) return
     setBusy("delete"); setError(null)
     try {
-      const res = await fetch(`/api/submittal-packages/${packageId}`, { method: "DELETE" })
+      const res = await apiFetch(`/api/submittal-packages/${packageId}`, { method: "DELETE" })
       if (res.ok) { onChanged(); onBack() }
       else setError("Delete failed")
     } finally { setBusy(null) }

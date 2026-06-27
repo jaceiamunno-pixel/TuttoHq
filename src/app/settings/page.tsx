@@ -1,5 +1,6 @@
 ﻿"use client"
 
+import { apiFetch } from "@/lib/api-client"
 import { useState, useEffect, useRef, Fragment } from "react"
 import Link from "next/link"
 import Papa from "papaparse"
@@ -519,7 +520,7 @@ export default function SettingsPage() {
   const projectCsvInputRef  = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
-    fetch("/api/settings")
+    apiFetch("/api/settings")
       .then(r => r.json())
       .then(d => {
         setLogoUrl(d.logo_url); setHasCoverPage(d.has_cover_page)
@@ -529,7 +530,7 @@ export default function SettingsPage() {
       })
       .finally(() => setLoadingCompany(false))
 
-    fetch("/api/settings/reminders")
+    apiFetch("/api/settings/reminders")
       .then(r => r.json())
       .then((d: { reminder_cadence_days: number[]; reminder_max_count: number; reminder_default_attach_pdf: boolean }) => {
         setSavedCadence(d.reminder_cadence_days)
@@ -593,7 +594,7 @@ export default function SettingsPage() {
   async function loadAccounts() {
     setAccountsLoading(true)
     try {
-      const res = await fetch("/api/team/members")
+      const res = await apiFetch("/api/team/members")
       if (!res.ok) {
         // Members will see a 403 here; the page will just render empty
         // sections. Phase 5 will add proper UI gating once members exist.
@@ -616,7 +617,7 @@ export default function SettingsPage() {
     setInviting(true)
     setInviteError(null)
     try {
-      const res = await fetch("/api/invites", {
+      const res = await apiFetch("/api/invites", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email: inviteEmail, role: inviteRole }),
@@ -637,7 +638,7 @@ export default function SettingsPage() {
 
   async function handleRevokeInvite(id: string) {
     if (!confirm("Revoke this invite?")) return
-    const res = await fetch(`/api/invites/${id}`, { method: "DELETE" })
+    const res = await apiFetch(`/api/invites/${id}`, { method: "DELETE" })
     if (res.ok) await loadAccounts()
   }
 
@@ -654,7 +655,7 @@ export default function SettingsPage() {
     setRoleChangingUserId(m.user_id)
     setMemberActionError(null)
     try {
-      const res = await fetch(`/api/team/members/${m.user_id}`, {
+      const res = await apiFetch(`/api/team/members/${m.user_id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ role: newRole }),
@@ -675,7 +676,7 @@ export default function SettingsPage() {
     setRemovingUserId(m.user_id)
     setMemberActionError(null)
     try {
-      const res = await fetch(`/api/team/members/${m.user_id}`, { method: "DELETE" })
+      const res = await apiFetch(`/api/team/members/${m.user_id}`, { method: "DELETE" })
       const data = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(data.error ?? "Failed to remove member")
       if (m.is_self) {
@@ -696,7 +697,7 @@ export default function SettingsPage() {
 
   function loadTeam() {
     setTeamLoading(true)
-    fetch("/api/team")
+    apiFetch("/api/team")
       .then(r => r.json())
       .then(d => { setTeamMembers(d.members ?? []); setTeamLoaded(true) })
       .catch(() => {})
@@ -705,7 +706,7 @@ export default function SettingsPage() {
 
   function loadProjects() {
     setProjectsLoading(true)
-    fetch("/api/projects")
+    apiFetch("/api/projects")
       .then(r => r.json())
       .then(d => { setProjects(d.projects ?? []); setProjectsLoaded(true) })
       .catch(() => {})
@@ -714,7 +715,7 @@ export default function SettingsPage() {
   }
 
   function loadScopeStatus() {
-    fetch("/api/projects/scope-status")
+    apiFetch("/api/projects/scope-status")
       .then(r => r.json())
       .then(d => setScopedProjectIds(new Set<string>(d.scoped ?? [])))
       .catch(() => {})
@@ -728,7 +729,7 @@ export default function SettingsPage() {
   async function saveDisplayName() {
     setSavingDisplayName(true)
     try {
-      const res = await fetch("/api/settings", {
+      const res = await apiFetch("/api/settings", {
         method: "PATCH", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ display_name: displayName }),
       })
@@ -744,7 +745,7 @@ export default function SettingsPage() {
   async function saveLogoScale(): Promise<boolean> {
     setSavingLogoScale(true)
     try {
-      const res = await fetch("/api/settings", {
+      const res = await apiFetch("/api/settings", {
         method: "PATCH", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ logo_scale_pct: logoScalePct }),
       })
@@ -765,7 +766,7 @@ export default function SettingsPage() {
         const ok = await saveLogoScale()
         if (!ok) return
       }
-      const res = await fetch("/api/generate-cover", {
+      const res = await apiFetch("/api/generate-cover", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           projectName: "Sample Project",
@@ -803,7 +804,7 @@ export default function SettingsPage() {
 
   function loadGmailConnection() {
     setGmailLoading(true)
-    fetch("/api/gmail/connection")
+    apiFetch("/api/gmail/connection")
       .then(r => r.json())
       .then(d => { setGmailConn(d); setGmailLoaded(true) })
       .catch(() => {})
@@ -814,7 +815,7 @@ export default function SettingsPage() {
     if (!window.confirm("Disconnect your Gmail account? TuttoHQ will stop receiving email notifications.")) return
     setDisconnecting(true)
     try {
-      const res = await fetch("/api/gmail/connection", { method: "DELETE" })
+      const res = await apiFetch("/api/gmail/connection", { method: "DELETE" })
       if (!res.ok) throw new Error("Delete failed")
       setGmailConn({ connected: false })
       flashGmail("Gmail account disconnected.")
@@ -829,7 +830,7 @@ export default function SettingsPage() {
   async function renewWatch() {
     setRenewingWatch(true)
     try {
-      const res = await fetch("/api/gmail/watch", { method: "POST" })
+      const res = await apiFetch("/api/gmail/watch", { method: "POST" })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error ?? "Failed")
       setGmailConn(prev => prev ? { ...prev, watch_expiry: data.watch_expiry } : prev)
@@ -844,7 +845,7 @@ export default function SettingsPage() {
 
   async function uploadAsset(type: "logo" | "cover_page", file: File) {
     const { path } = await presignAndUpload("company-assets", type === "logo" ? "logos" : "covers", file)
-    const res  = await fetch("/api/settings", {
+    const res  = await apiFetch("/api/settings", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ type, file_path: path, file_name: file.name }),
@@ -907,7 +908,7 @@ export default function SettingsPage() {
         reminder_max_count:          maxInput.trim() === "" ? NaN : Number(maxInput),
         reminder_default_attach_pdf: attachInput,
       }
-      const res = await fetch("/api/settings/reminders", {
+      const res = await apiFetch("/api/settings/reminders", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
@@ -987,7 +988,7 @@ export default function SettingsPage() {
 
   async function deleteMember(m: TeamMember) {
     if (!window.confirm(`Delete ${m.name}?`)) return
-    const res = await fetch(`/api/team/${m.id}`, { method: "DELETE" })
+    const res = await apiFetch(`/api/team/${m.id}`, { method: "DELETE" })
     if (res.ok) {
       setTeamMembers(prev => prev.filter(x => x.id !== m.id))
       flashTeam("Member deleted")
@@ -1015,9 +1016,9 @@ export default function SettingsPage() {
     if (!supplLoaded) loadSuppliers()
     if (!cmsLoaded) loadCms()
     Promise.all([
-      fetch(`/api/projects/${p.id}/subcontractors`).then(r => r.json()),
-      fetch(`/api/projects/${p.id}/suppliers`).then(r => r.json()),
-      fetch(`/api/projects/${p.id}/cms`).then(r => r.json()),
+      apiFetch(`/api/projects/${p.id}/subcontractors`).then(r => r.json()),
+      apiFetch(`/api/projects/${p.id}/suppliers`).then(r => r.json()),
+      apiFetch(`/api/projects/${p.id}/cms`).then(r => r.json()),
     ]).then(([subs, supps, pcms]) => {
       setProjectSubIds((subs ?? []).map((s: { id: string }) => s.id))
       setProjectSupIds((supps ?? []).map((s: { id: string }) => s.id))
@@ -1072,7 +1073,7 @@ export default function SettingsPage() {
   // Returns false when the project has no saved scope rows.
   async function loadSavedScope(projectId: string): Promise<boolean> {
     try {
-      const r = await fetch(`/api/projects/${projectId}/scope`)
+      const r = await apiFetch(`/api/projects/${projectId}/scope`)
       if (!r.ok) return false
       const d = await r.json()
       const rows: { spec_number: string; spec_title: string; division_code: string; in_scope: boolean }[] = d.scope ?? []
@@ -1098,7 +1099,7 @@ export default function SettingsPage() {
       // Re-parsing the project's spec books applies any new scope; harmless when
       // they're already parsed (the parse route no-ops on parsed volumes).
       try {
-        const sb = await fetch(`/api/spec-books?project_id=${encodeURIComponent(projectId)}`)
+        const sb = await apiFetch(`/api/spec-books?project_id=${encodeURIComponent(projectId)}`)
         if (sb.ok) {
           const sbData = await sb.json()
           setScopeExistingDocIds((sbData.documents ?? []).map((doc: { id: string }) => doc.id))
@@ -1124,7 +1125,7 @@ export default function SettingsPage() {
   // wizard on the upload step) when there is no readable book to reuse.
   async function loadScopeFromExistingBooks(projectId: string): Promise<boolean> {
     try {
-      const r = await fetch(`/api/spec-books?project_id=${encodeURIComponent(projectId)}`)
+      const r = await apiFetch(`/api/spec-books?project_id=${encodeURIComponent(projectId)}`)
       if (!r.ok) return false
       const d = await r.json()
       const docs: { id: string }[] = d.documents ?? []
@@ -1137,13 +1138,13 @@ export default function SettingsPage() {
       // contents — keeping genuine pre-parse scoping working.
       const results = await Promise.all(docs.map(async doc => {
         try {
-          const sb = await fetch(`/api/spec-books/${doc.id}`)
+          const sb = await apiFetch(`/api/spec-books/${doc.id}`)
           if (sb.ok) {
             const sbData = await sb.json()
             const parsed: { spec_number: string; spec_title: string }[] = sbData.sections ?? []
             if (parsed.length > 0) return tocFromSpecSections(parsed)
           }
-          const tocRes = await fetch(`/api/spec-books/${doc.id}/toc`, { method: "POST" })
+          const tocRes = await apiFetch(`/api/spec-books/${doc.id}/toc`, { method: "POST" })
           if (!tocRes.ok) return null
           const tocData = await tocRes.json()
           return { sections: tocData.sections ?? [], divisions: tocData.divisions ?? [] } as Toc
@@ -1189,7 +1190,7 @@ export default function SettingsPage() {
     let docId: string | null = null
     try {
       // 1. Reserve a project_documents row + a Supabase signed upload URL.
-      const presignRes = await fetch("/api/spec-books/presigned-url", {
+      const presignRes = await apiFetch("/api/spec-books/presigned-url", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1208,7 +1209,7 @@ export default function SettingsPage() {
       )
 
       // 3. Confirm the upload landed and record the real byte size.
-      const finalizeRes = await fetch("/api/spec-books/finalize", {
+      const finalizeRes = await apiFetch("/api/spec-books/finalize", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ document_id: docId }),
@@ -1219,7 +1220,7 @@ export default function SettingsPage() {
       setSpecBookDocId(docId)
 
       // 4. Read the table of contents to drive the scope picker.
-      const tocRes = await fetch(`/api/spec-books/${docId}/toc`, { method: "POST" })
+      const tocRes = await apiFetch(`/api/spec-books/${docId}/toc`, { method: "POST" })
       if (tocRes.status === 422) {
         throw new Error("This PDF has no readable text (likely a scan). Skip scope for now and upload a digital copy later.")
       }
@@ -1236,7 +1237,7 @@ export default function SettingsPage() {
       // Drop the reserved row if anything after row creation failed (failed
       // upload, or an unreadable PDF), so no stuck "pending" spec book lingers.
       if (docId) {
-        fetch(`/api/spec-books/${docId}`, { method: "DELETE" }).catch(() => {})
+        apiFetch(`/api/spec-books/${docId}`, { method: "DELETE" }).catch(() => {})
         setSpecBookDocId(null)
       }
       setScopeUploadProgress(0)
@@ -1299,7 +1300,7 @@ export default function SettingsPage() {
         division_code: s.divisionCode,
         in_scope:      scopeDivisions.has(s.divisionCode) && scopeSections.has(s.specNumber),
       }))
-      const res = await fetch(`/api/projects/${wizardProjectId}/scope`, {
+      const res = await apiFetch(`/api/projects/${wizardProjectId}/scope`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ sections: payload }),
@@ -1315,7 +1316,7 @@ export default function SettingsPage() {
         ? scopeExistingDocIds
         : specBookDocId ? [specBookDocId] : []
       for (const id of parseIds) {
-        fetch(`/api/spec-books/${id}/parse`, { method: "POST" }).catch(() => {})
+        apiFetch(`/api/spec-books/${id}/parse`, { method: "POST" }).catch(() => {})
       }
       flashProject(parseIds.length > 0
         ? "Project scope saved — spec book is parsing in the background"
@@ -1338,7 +1339,7 @@ export default function SettingsPage() {
     setScopeClearing(true)
     setTocError(null)
     try {
-      const res = await fetch(`/api/projects/${wizardProjectId}/scope`, { method: "DELETE" })
+      const res = await apiFetch(`/api/projects/${wizardProjectId}/scope`, { method: "DELETE" })
       if (!res.ok) {
         const d = await res.json().catch(() => ({}))
         throw new Error(d.error ?? "Failed to clear scope")
@@ -1375,9 +1376,9 @@ export default function SettingsPage() {
       if (!res.ok) throw new Error(data.error ?? "Save failed")
       const projectId = data.project.id
       await Promise.all([
-        fetch(`/api/projects/${projectId}/subcontractors`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ids: projectSubIds }) }),
-        fetch(`/api/projects/${projectId}/suppliers`,      { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ids: projectSupIds }) }),
-        fetch(`/api/projects/${projectId}/cms`,            { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ids: projectCmIds }) }),
+        apiFetch(`/api/projects/${projectId}/subcontractors`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ids: projectSubIds }) }),
+        apiFetch(`/api/projects/${projectId}/suppliers`,      { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ids: projectSupIds }) }),
+        apiFetch(`/api/projects/${projectId}/cms`,            { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ids: projectCmIds }) }),
       ])
       if (editingProject) {
         setProjects(prev => prev.map(p => p.id === editingProject.id ? data.project : p))
@@ -1405,7 +1406,7 @@ export default function SettingsPage() {
 
   async function deleteProject(p: Project) {
     if (!window.confirm(`Delete project "${p.name}"?`)) return
-    const res = await fetch(`/api/projects/${p.id}`, { method: "DELETE" })
+    const res = await apiFetch(`/api/projects/${p.id}`, { method: "DELETE" })
     if (res.ok) {
       setProjects(prev => prev.filter(x => x.id !== p.id))
       flashProject("Project deleted")
@@ -1455,7 +1456,7 @@ export default function SettingsPage() {
     if (!valid.length) return
     setTeamImporting(true)
     try {
-      const res  = await fetch("/api/team/batch", {
+      const res  = await apiFetch("/api/team/batch", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ members: valid }),
@@ -1507,7 +1508,7 @@ export default function SettingsPage() {
     if (!valid.length) return
     setProjectImporting(true)
     try {
-      const res  = await fetch("/api/projects/batch", {
+      const res  = await apiFetch("/api/projects/batch", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ projects: valid }),
@@ -1534,7 +1535,7 @@ export default function SettingsPage() {
 
   function loadCms() {
     setCmsLoading(true)
-    fetch("/api/construction-managers").then(r => r.json()).then(d => { setCms(d ?? []); setCmsLoaded(true) }).catch(() => {}).finally(() => setCmsLoading(false))
+    apiFetch("/api/construction-managers").then(r => r.json()).then(d => { setCms(d ?? []); setCmsLoaded(true) }).catch(() => {}).finally(() => setCmsLoading(false))
   }
   function flashCm(text: string, ok = true) { setCmMessage({ text, ok }); setTimeout(() => setCmMessage(null), 3000) }
   function openAddCm() { setEditingCm(null); setCmForm({ company_name: "", contact_name: "", phone: "", email: "", address: "", notes: "" }); setShowCmForm(true) }
@@ -1559,14 +1560,14 @@ export default function SettingsPage() {
 
   async function deleteCm(c: ConstructionManager) {
     if (!window.confirm(`Delete ${c.company_name}?`)) return
-    const res = await fetch(`/api/construction-managers/${c.id}`, { method: "DELETE" })
+    const res = await apiFetch(`/api/construction-managers/${c.id}`, { method: "DELETE" })
     if (res.ok) { setCms(prev => prev.filter(x => x.id !== c.id)); flashCm("Deleted") }
     else flashCm("Delete failed", false)
   }
 
   async function quickAddCm() {
     if (!quickAddName.trim()) return
-    const res = await fetch("/api/construction-managers", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ company_name: quickAddName.trim(), contact_name: quickAddField.trim() || null }) })
+    const res = await apiFetch("/api/construction-managers", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ company_name: quickAddName.trim(), contact_name: quickAddField.trim() || null }) })
     const data = await res.json()
     if (res.ok) {
       setCms(prev => [...prev, data])
@@ -1582,13 +1583,13 @@ export default function SettingsPage() {
   // via the role-scoped /api/projects/[id]/{subcontractors,suppliers} routes.
   function loadSubs() {
     setSubsLoading(true)
-    fetch("/api/vendors?all=1").then(r => r.json())
+    apiFetch("/api/vendors?all=1").then(r => r.json())
       .then(d => { setSubcontractors((d.vendors ?? []).filter((v: { is_subcontractor?: boolean }) => v.is_subcontractor)); setSubsLoaded(true) })
       .catch(() => {}).finally(() => setSubsLoading(false))
   }
   function loadSuppliers() {
     setSupplLoading(true)
-    fetch("/api/vendors?all=1").then(r => r.json())
+    apiFetch("/api/vendors?all=1").then(r => r.json())
       .then(d => { setSuppliers((d.vendors ?? []).filter((v: { is_supplier?: boolean }) => v.is_supplier)); setSupplLoaded(true) })
       .catch(() => {}).finally(() => setSupplLoading(false))
   }
@@ -1599,7 +1600,7 @@ export default function SettingsPage() {
 
   async function quickAddSub() {
     if (!quickAddName.trim()) return
-    const res = await fetch("/api/vendors", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ company_name: quickAddName.trim(), trade: quickAddField.trim() || null, is_subcontractor: true }) })
+    const res = await apiFetch("/api/vendors", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ company_name: quickAddName.trim(), trade: quickAddField.trim() || null, is_subcontractor: true }) })
     const data = await res.json()
     if (res.ok && data.vendor) {
       setSubcontractors(prev => [...prev, data.vendor])
@@ -1611,7 +1612,7 @@ export default function SettingsPage() {
 
   async function quickAddSuppl() {
     if (!quickAddName.trim()) return
-    const res = await fetch("/api/vendors", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ company_name: quickAddName.trim(), specialty: quickAddField.trim() || null, is_supplier: true }) })
+    const res = await apiFetch("/api/vendors", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ company_name: quickAddName.trim(), specialty: quickAddField.trim() || null, is_supplier: true }) })
     const data = await res.json()
     if (res.ok && data.vendor) {
       setSuppliers(prev => [...prev, data.vendor])

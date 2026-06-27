@@ -16,6 +16,7 @@
 // rides each row's phase ("<block> › <trade>"), so filtering/selecting by project
 // block works in the grouped list.
 
+import { apiFetch } from "@/lib/api-client"
 import { useCallback, useMemo, useRef, useState } from "react"
 
 interface ProposedRow {
@@ -73,7 +74,7 @@ export default function ScheduleImportModal({
     const fd = new FormData()
     fd.append("file", file)
     try {
-      const res = await fetch("/api/schedule-import/parse", { method: "POST", body: fd })
+      const res = await apiFetch("/api/schedule-import/parse", { method: "POST", body: fd })
       const d = await res.json().catch(() => ({}))
       if (!res.ok) { setParseError(d?.error ?? "Couldn't read that PDF."); setParsing(false); return }
       const er: EditableRow[] = (d.rows ?? []).map((r: ProposedRow, i: number) => ({ ...r, _key: `r${i}` }))
@@ -147,7 +148,7 @@ export default function ScheduleImportModal({
         ...(isPullPlan ? { status: "backlog", crew_size: r.crew_size ?? undefined, duration_days: r.duration_days ?? undefined } : {}),
       }
       try {
-        const res = await fetch("/api/schedule-tasks", {
+        const res = await apiFetch("/api/schedule-tasks", {
           method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
         })
         if (res.ok) { ok++ }

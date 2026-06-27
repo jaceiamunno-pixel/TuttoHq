@@ -1,5 +1,6 @@
 "use client"
 
+import { apiFetch } from "@/lib/api-client"
 import { useEffect, useMemo, useState } from "react"
 import Link from "next/link"
 import AppChrome from "@/components/app-chrome"
@@ -24,7 +25,7 @@ export default function DashboardLanding() {
   useEffect(() => {
     createClient().auth.getUser().then(({ data }) => setUserEmail(data.user?.email ?? null))
     // RLS-scoped server-side — only this company's projects come back.
-    fetch("/api/projects")
+    apiFetch("/api/projects")
       .then(r => r.json())
       .then(d => setProjects(d.projects ?? []))
       .catch(() => {})

@@ -1,5 +1,6 @@
 "use client"
 
+import { apiFetch } from "@/lib/api-client"
 import { useState, useEffect, useRef } from "react"
 import type { CloseoutItem, SubmittalRecord, RFI, ChangeOrder, DrawingRecord, PunchItem, TeamMember, ProjectVendorRow, Project } from "../_shared/types"
 import { PlusIcon, SpinnerIcon, XIcon, CheckIcon } from "../_shared/icons"
@@ -89,7 +90,7 @@ export default function CloseoutModule({ globalProjectId, appProjects, teamMembe
       return
     }
     setCloseoutLoading(true)
-    fetch(`/api/closeout?project_id=${encodeURIComponent(globalProjectId)}`)
+    apiFetch(`/api/closeout?project_id=${encodeURIComponent(globalProjectId)}`)
       .then(r => r.json())
       .then(d => {
         const items: CloseoutItem[] = d.items ?? []
@@ -122,11 +123,11 @@ export default function CloseoutModule({ globalProjectId, appProjects, teamMembe
       exitSelectMode(); setView("items")
       return
     }
-    fetch(`/api/projects/${globalProjectId}/subcontractors`)
+    apiFetch(`/api/projects/${globalProjectId}/subcontractors`)
       .then(r => r.ok ? r.json() : [])
       .then(d => setSubs(Array.isArray(d) ? d : []))
       .catch(() => {})
-    fetch(`/api/projects/${globalProjectId}/suppliers`)
+    apiFetch(`/api/projects/${globalProjectId}/suppliers`)
       .then(r => r.ok ? r.json() : [])
       .then(d => setSuppliers(Array.isArray(d) ? d : []))
       .catch(() => {})
@@ -134,12 +135,12 @@ export default function CloseoutModule({ globalProjectId, appProjects, teamMembe
   }, [globalProjectId])
 
   async function updateCloseoutItem(id: string, updates: Record<string, unknown>) {
-    await fetch(`/api/closeout/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(updates) })
+    await apiFetch(`/api/closeout/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(updates) })
     loadCloseout()
   }
 
   async function deleteCloseoutItem(id: string) {
-    await fetch(`/api/closeout/${id}`, { method: "DELETE" })
+    await apiFetch(`/api/closeout/${id}`, { method: "DELETE" })
     loadCloseout()
   }
 
@@ -163,7 +164,7 @@ export default function CloseoutModule({ globalProjectId, appProjects, teamMembe
     const maxOrder = closeoutItems.filter(i => i.category === newFolderType).reduce((m, i) => Math.max(m, i.sort_order), 0)
     let idx = maxOrder + 1
     for (const item of folderItems) {
-      await fetch("/api/closeout", {
+      await apiFetch("/api/closeout", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ project_id: globalProjectId, category: newFolderType, item_type: item.item_type, title: item.title, folder_name: newFolderName.trim(), sort_order: idx++, status: "incomplete" }),
       })
@@ -175,7 +176,7 @@ export default function CloseoutModule({ globalProjectId, appProjects, teamMembe
   async function addCloseoutItem() {
     if (!newCloseoutTitle.trim() || !globalProjectId) return
     const maxOrder = closeoutItems.filter(i => i.category === newCloseoutCategory && (!newCloseoutFolder || i.folder_name === newCloseoutFolder)).reduce((m, i) => Math.max(m, i.sort_order), 0)
-    await fetch("/api/closeout", {
+    await apiFetch("/api/closeout", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -201,7 +202,7 @@ export default function CloseoutModule({ globalProjectId, appProjects, teamMembe
     setCloseoutUploadingId(itemId)
     try {
       const { path } = await presignAndUpload("submittals", `closeout/${itemId}`, file)
-      await fetch(`/api/closeout/${itemId}`, {
+      await apiFetch(`/api/closeout/${itemId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ file_url: path, file_name: file.name }),
@@ -244,7 +245,7 @@ export default function CloseoutModule({ globalProjectId, appProjects, teamMembe
                 disabled={closeoutResetting}
                 onClick={async () => {
                   setCloseoutResetting(true)
-                  await fetch("/api/closeout/reset", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ project_id: globalProjectId }) })
+                  await apiFetch("/api/closeout/reset", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ project_id: globalProjectId }) })
                   setCloseoutResetConfirm(false)
                   setCloseoutResetting(false)
                   loadCloseout()
@@ -281,7 +282,7 @@ export default function CloseoutModule({ globalProjectId, appProjects, teamMembe
                 disabled={closeoutGenerating}
                 onClick={async () => {
                   setCloseoutGenerating(true)
-                  const res = await fetch("/api/closeout/pdf", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ project_id: globalProjectId }) })
+                  const res = await apiFetch("/api/closeout/pdf", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ project_id: globalProjectId }) })
                   const d = await res.json()
                   if (d.url) window.open(d.url, "_blank")
                   setCloseoutGenerating(false)
@@ -415,7 +416,7 @@ export default function CloseoutModule({ globalProjectId, appProjects, teamMembe
                       disabled={closeoutIniting}
                       onClick={async () => {
                         setCloseoutIniting(true)
-                        await fetch("/api/closeout/init", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ project_id: globalProjectId }) })
+                        await apiFetch("/api/closeout/init", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ project_id: globalProjectId }) })
                         loadCloseout()
                         setCloseoutIniting(false)
                       }}
@@ -943,7 +944,7 @@ export default function CloseoutModule({ globalProjectId, appProjects, teamMembe
                         <p className="text-[15px] font-bold text-emerald-400">Project is ready for closeout</p>
                         <p className="text-[13px] text-[#64748B] mt-1">All checklist items complete and no flagged items.</p>
                         <button disabled={closeoutGenerating}
-                          onClick={async () => { setCloseoutGenerating(true); const res = await fetch("/api/closeout/pdf", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ project_id: globalProjectId }) }); const d = await res.json(); if (d.url) window.open(d.url, "_blank"); setCloseoutGenerating(false) }}
+                          onClick={async () => { setCloseoutGenerating(true); const res = await apiFetch("/api/closeout/pdf", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ project_id: globalProjectId }) }); const d = await res.json(); if (d.url) window.open(d.url, "_blank"); setCloseoutGenerating(false) }}
                           className="mt-4 h-9 px-5 rounded-lg bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors inline-flex items-center gap-2 disabled:opacity-50">
                           {closeoutGenerating ? <><SpinnerIcon className="h-3.5 w-3.5" /> Generating…</> : "Generate Final Closeout Package"}
                         </button>

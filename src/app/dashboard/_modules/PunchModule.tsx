@@ -1,5 +1,6 @@
 "use client"
 
+import { apiFetch } from "@/lib/api-client"
 import { useState, useEffect, useRef } from "react"
 import type { PunchItem, Project } from "../_shared/types"
 import { fmtDateOnly } from "../_shared/format"
@@ -49,7 +50,7 @@ export default function PunchModule({ globalProjectId, appProjects }: {
   function loadPunch(pid = globalProjectId) {
     setPunchLoading(true)
     const qs = pid ? `?project_id=${encodeURIComponent(pid)}` : ""
-    fetch(`/api/punch${qs}`)
+    apiFetch(`/api/punch${qs}`)
       .then(r => r.json())
       .then(d => setPunchItems(d.items ?? []))
       .catch(() => setPunchItems([]))
@@ -79,7 +80,7 @@ export default function PunchModule({ globalProjectId, appProjects }: {
         fields.file_path = path
         fields.file_name = punchFile.name
       }
-      const res = await fetch("/api/punch", {
+      const res = await apiFetch("/api/punch", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(fields),
@@ -96,7 +97,7 @@ export default function PunchModule({ globalProjectId, appProjects }: {
     if (!viewPunch) return
     setPunchEditSaving(true)
     try {
-      const res = await fetch(`/api/punch/${viewPunch.id}`, {
+      const res = await apiFetch(`/api/punch/${viewPunch.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status: punchEditStatus, notes: punchEditNotes }),
@@ -107,7 +108,7 @@ export default function PunchModule({ globalProjectId, appProjects }: {
 
   async function deletePunchItem(itemId: string) {
     if (!confirm("Delete this punch item? This cannot be undone.")) return
-    await fetch(`/api/punch/${itemId}`, { method: "DELETE" })
+    await apiFetch(`/api/punch/${itemId}`, { method: "DELETE" })
     setViewPunch(null)
     loadPunch()
   }
@@ -115,7 +116,7 @@ export default function PunchModule({ globalProjectId, appProjects }: {
   async function generatePunchPdf(itemId: string) {
     setPunchGeneratingPdf(true)
     try {
-      const res = await fetch(`/api/punch/${itemId}/pdf`, { method: "POST" })
+      const res = await apiFetch(`/api/punch/${itemId}/pdf`, { method: "POST" })
       const data = await res.json()
       if (res.ok && data.url) { window.open(data.url, "_blank"); loadPunch() }
     } finally { setPunchGeneratingPdf(false) }
@@ -123,7 +124,7 @@ export default function PunchModule({ globalProjectId, appProjects }: {
 
   async function loadPunchPhotos(id: string) {
     setPunchPhotosLoading(true)
-    const res = await fetch(`/api/photos?entity_type=punch_item&entity_id=${id}`)
+    const res = await apiFetch(`/api/photos?entity_type=punch_item&entity_id=${id}`)
     if (res.ok) setPunchPhotos(await res.json())
     setPunchPhotosLoading(false)
   }
@@ -133,7 +134,7 @@ export default function PunchModule({ globalProjectId, appProjects }: {
     setPunchPhotoUploading(true)
     try {
       const { path } = await presignAndUpload("photos", `punch_item/${viewPunch.id}`, file)
-      const res = await fetch("/api/photos", {
+      const res = await apiFetch("/api/photos", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ entity_type: "punch_item", entity_id: viewPunch.id, file_path: path, file_name: file.name }),
@@ -145,7 +146,7 @@ export default function PunchModule({ globalProjectId, appProjects }: {
   }
 
   async function deletePunchPhoto(photoId: string) {
-    await fetch(`/api/photos?id=${photoId}`, { method: "DELETE" })
+    await apiFetch(`/api/photos?id=${photoId}`, { method: "DELETE" })
     if (viewPunch) await loadPunchPhotos(viewPunch.id)
   }
 

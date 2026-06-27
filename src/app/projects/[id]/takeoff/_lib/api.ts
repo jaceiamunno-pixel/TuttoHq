@@ -1,3 +1,4 @@
+import { apiFetch } from "@/lib/api-client"
 import type {
   Takeoff, TakeoffBundle, TakeoffCategory, TakeoffRoom, TakeoffTag, TakeoffMark, CountSheet,
 } from "./types"
@@ -20,7 +21,7 @@ async function jsonOrThrow(res: Response) {
 // (drawing_revisions.storage_path, "submittals" bucket, 1h) and filters
 // deleted_at IS NULL server-side. We keep only renderable sheets (file_url set).
 export async function listSheets(projectId: string): Promise<CountSheet[]> {
-  const body = await jsonOrThrow(await fetch(`/api/drawings/sheets?project_id=${encodeURIComponent(projectId)}`))
+  const body = await jsonOrThrow(await apiFetch(`/api/drawings/sheets?project_id=${encodeURIComponent(projectId)}`))
   type Row = { id: string; sheet_number?: string | null; title?: string | null; file_url: string | null }
   return ((body.sheets ?? []) as Row[])
     .filter(s => !!s.file_url)
@@ -34,12 +35,12 @@ export async function listSheets(projectId: string): Promise<CountSheet[]> {
 
 // ── Takeoffs ──────────────────────────────────────────────────────────────────
 export async function listTakeoffs(projectId: string): Promise<Takeoff[]> {
-  const body = await jsonOrThrow(await fetch(`/api/takeoffs?project_id=${encodeURIComponent(projectId)}`))
+  const body = await jsonOrThrow(await apiFetch(`/api/takeoffs?project_id=${encodeURIComponent(projectId)}`))
   return body.takeoffs ?? []
 }
 
 export async function createTakeoff(projectId: string, name: string): Promise<Takeoff> {
-  const body = await jsonOrThrow(await fetch(`/api/takeoffs`, {
+  const body = await jsonOrThrow(await apiFetch(`/api/takeoffs`, {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ project_id: projectId, name }),
   }))
@@ -47,78 +48,78 @@ export async function createTakeoff(projectId: string, name: string): Promise<Ta
 }
 
 export async function getBundle(takeoffId: string): Promise<TakeoffBundle> {
-  return jsonOrThrow(await fetch(`/api/takeoffs/${takeoffId}`))
+  return jsonOrThrow(await apiFetch(`/api/takeoffs/${takeoffId}`))
 }
 
 export async function deleteTakeoff(takeoffId: string): Promise<void> {
-  await jsonOrThrow(await fetch(`/api/takeoffs/${takeoffId}`, { method: "DELETE" }))
+  await jsonOrThrow(await apiFetch(`/api/takeoffs/${takeoffId}`, { method: "DELETE" }))
 }
 
 // ── Categories ─────────────────────────────────────────────────────────────────
 export async function createCategory(takeoffId: string, name: string, sortOrder: number): Promise<TakeoffCategory> {
-  const body = await jsonOrThrow(await fetch(`/api/takeoffs/${takeoffId}/categories`, {
+  const body = await jsonOrThrow(await apiFetch(`/api/takeoffs/${takeoffId}/categories`, {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ name, sort_order: sortOrder }),
   }))
   return body.category
 }
 export async function updateCategory(takeoffId: string, categoryId: string, patch: { name?: string; sort_order?: number }): Promise<TakeoffCategory> {
-  const body = await jsonOrThrow(await fetch(`/api/takeoffs/${takeoffId}/categories`, {
+  const body = await jsonOrThrow(await apiFetch(`/api/takeoffs/${takeoffId}/categories`, {
     method: "PATCH", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ category_id: categoryId, ...patch }),
   }))
   return body.category
 }
 export async function deleteCategory(takeoffId: string, categoryId: string): Promise<void> {
-  await jsonOrThrow(await fetch(`/api/takeoffs/${takeoffId}/categories?category_id=${encodeURIComponent(categoryId)}`, { method: "DELETE" }))
+  await jsonOrThrow(await apiFetch(`/api/takeoffs/${takeoffId}/categories?category_id=${encodeURIComponent(categoryId)}`, { method: "DELETE" }))
 }
 
 // ── Rooms ───────────────────────────────────────────────────────────────────────
 export async function createRoom(takeoffId: string, name: string, sortOrder: number): Promise<TakeoffRoom> {
-  const body = await jsonOrThrow(await fetch(`/api/takeoffs/${takeoffId}/rooms`, {
+  const body = await jsonOrThrow(await apiFetch(`/api/takeoffs/${takeoffId}/rooms`, {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ name, sort_order: sortOrder }),
   }))
   return body.room
 }
 export async function updateRoom(takeoffId: string, roomId: string, patch: { name?: string; sort_order?: number }): Promise<TakeoffRoom> {
-  const body = await jsonOrThrow(await fetch(`/api/takeoffs/${takeoffId}/rooms`, {
+  const body = await jsonOrThrow(await apiFetch(`/api/takeoffs/${takeoffId}/rooms`, {
     method: "PATCH", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ room_id: roomId, ...patch }),
   }))
   return body.room
 }
 export async function deleteRoom(takeoffId: string, roomId: string): Promise<void> {
-  await jsonOrThrow(await fetch(`/api/takeoffs/${takeoffId}/rooms?room_id=${encodeURIComponent(roomId)}`, { method: "DELETE" }))
+  await jsonOrThrow(await apiFetch(`/api/takeoffs/${takeoffId}/rooms?room_id=${encodeURIComponent(roomId)}`, { method: "DELETE" }))
 }
 
 // ── Tags ─────────────────────────────────────────────────────────────────────────
 export async function createTag(takeoffId: string, input: { code: string; description: string | null; color: string; category_id: string | null; sort_order: number }): Promise<TakeoffTag> {
-  const body = await jsonOrThrow(await fetch(`/api/takeoffs/${takeoffId}/tags`, {
+  const body = await jsonOrThrow(await apiFetch(`/api/takeoffs/${takeoffId}/tags`, {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input),
   }))
   return body.tag
 }
 export async function updateTag(takeoffId: string, tagId: string, patch: { code?: string; description?: string | null; color?: string; category_id?: string | null; sort_order?: number }): Promise<TakeoffTag> {
-  const body = await jsonOrThrow(await fetch(`/api/takeoffs/${takeoffId}/tags`, {
+  const body = await jsonOrThrow(await apiFetch(`/api/takeoffs/${takeoffId}/tags`, {
     method: "PATCH", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ tag_id: tagId, ...patch }),
   }))
   return body.tag
 }
 export async function deleteTag(takeoffId: string, tagId: string): Promise<void> {
-  await jsonOrThrow(await fetch(`/api/takeoffs/${takeoffId}/tags?tag_id=${encodeURIComponent(tagId)}`, { method: "DELETE" }))
+  await jsonOrThrow(await apiFetch(`/api/takeoffs/${takeoffId}/tags?tag_id=${encodeURIComponent(tagId)}`, { method: "DELETE" }))
 }
 
 // ── Marks ─────────────────────────────────────────────────────────────────────────
 export async function createMark(takeoffId: string, input: { tag_id: string; room_id: string; source_ref: string | null; page: number; x: number; y: number }): Promise<TakeoffMark> {
-  const body = await jsonOrThrow(await fetch(`/api/takeoffs/${takeoffId}/marks`, {
+  const body = await jsonOrThrow(await apiFetch(`/api/takeoffs/${takeoffId}/marks`, {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input),
   }))
   return body.mark
 }
 export async function deleteMark(takeoffId: string, markId: string): Promise<void> {
-  await jsonOrThrow(await fetch(`/api/takeoffs/${takeoffId}/marks?mark_id=${encodeURIComponent(markId)}`, { method: "DELETE" }))
+  await jsonOrThrow(await apiFetch(`/api/takeoffs/${takeoffId}/marks?mark_id=${encodeURIComponent(markId)}`, { method: "DELETE" }))
 }

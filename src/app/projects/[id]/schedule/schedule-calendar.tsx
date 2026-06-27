@@ -1,5 +1,6 @@
 "use client"
 
+import { apiFetch } from "@/lib/api-client"
 import { useCallback, useMemo, useRef, useState } from "react"
 
 // ── Schedule month-calendar view (ADR-011 / ADR-012) ─────────────────────────
@@ -248,7 +249,7 @@ export default function ScheduleCalendar({
     setExporting(true)
     setExportError(null)
     try {
-      const res = await fetch("/api/schedule-export/calendar", {
+      const res = await apiFetch("/api/schedule-export/calendar", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ project_id: projectId, task_ids: ids }),

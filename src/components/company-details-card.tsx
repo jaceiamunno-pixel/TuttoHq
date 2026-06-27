@@ -1,5 +1,6 @@
 "use client"
 
+import { apiFetch } from "@/lib/api-client"
 import { useEffect, useState } from "react"
 
 // Company cover-header fields + default OH&P percent (Settings → Company).
@@ -26,7 +27,7 @@ export default function CompanyDetailsCard({ canEdit }: { canEdit: boolean }) {
   const [message, setMessage] = useState<{ text: string; ok: boolean } | null>(null)
 
   useEffect(() => {
-    fetch("/api/settings")
+    apiFetch("/api/settings")
       .then(r => r.json())
       .then((d: { address_line1?: string | null; address_line2?: string | null; phone?: string | null; default_oh_p_percent?: number | null }) => {
         const next: CompanyFields = {
@@ -69,7 +70,7 @@ export default function CompanyDetailsCard({ canEdit }: { canEdit: boolean }) {
         phone: form.phone.trim() || null,
         default_oh_p_percent: form.ohp_percent.trim() === "" ? null : Number(form.ohp_percent) / 100,
       }
-      const res = await fetch("/api/settings", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
+      const res = await apiFetch("/api/settings", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
       const d = await res.json().catch(() => ({}))
       if (!res.ok) { setMessage({ text: d.error ?? "Could not save", ok: false }); return }
       setSaved(form)

@@ -1,5 +1,6 @@
 "use client"
 
+import { apiFetch } from "@/lib/api-client"
 import { useState, useEffect } from "react"
 import { uploadFileToSignedUrl } from "@/lib/storage-upload"
 import type { SpecBookDoc } from "@/app/dashboard/_shared/types"
@@ -35,7 +36,7 @@ export default function ProjectSpecBooks({ projectId, projectName, onCountChange
 
   function load() {
     setLoading(true)
-    fetch(`/api/spec-books?project_id=${encodeURIComponent(projectId)}`)
+    apiFetch(`/api/spec-books?project_id=${encodeURIComponent(projectId)}`)
       .then(r => r.json())
       .then(d => {
         const list: SpecBookDoc[] = d.documents ?? []
@@ -61,7 +62,7 @@ export default function ProjectSpecBooks({ projectId, projectName, onCountChange
     let documentId: string | null = null
     try {
       // 1. Reserve a project_documents row + a Supabase signed upload URL.
-      const presignRes = await fetch("/api/spec-books/presigned-url", {
+      const presignRes = await apiFetch("/api/spec-books/presigned-url", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ project_id: projectId, file_name: file.name, file_size: file.size }),
@@ -74,7 +75,7 @@ export default function ProjectSpecBooks({ projectId, projectName, onCountChange
       await uploadFileToSignedUrl(presign.signed_url, file, p => setUploadProgress(p.percent))
 
       // 3. Confirm it landed and record the real byte size.
-      const finalizeRes = await fetch("/api/spec-books/finalize", {
+      const finalizeRes = await apiFetch("/api/spec-books/finalize", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ document_id: documentId }),
@@ -90,7 +91,7 @@ export default function ProjectSpecBooks({ projectId, projectName, onCountChange
     } catch (err) {
       // Drop the reserved row so the list doesn't show a spec book that's
       // permanently stuck at "pending" with no file behind it.
-      if (documentId) fetch(`/api/spec-books/${documentId}`, { method: "DELETE" }).catch(() => {})
+      if (documentId) apiFetch(`/api/spec-books/${documentId}`, { method: "DELETE" }).catch(() => {})
       setUploadProgress(0)
       setError(err instanceof Error ? err.message : "Upload failed")
     } finally {
@@ -107,7 +108,7 @@ export default function ProjectSpecBooks({ projectId, projectName, onCountChange
         await new Promise(r => setTimeout(r, 2000))
         if (!polling) break
         try {
-          const r = await fetch(`/api/spec-books/${docId}`)
+          const r = await apiFetch(`/api/spec-books/${docId}`)
           if (r.ok) {
             const d = await r.json()
             setParseProgress(d.document?.parse_progress ?? 0)
@@ -117,7 +118,7 @@ export default function ProjectSpecBooks({ projectId, projectName, onCountChange
     }
     poll()
     try {
-      await fetch(`/api/spec-books/${docId}/parse`, { method: "POST" })
+      await apiFetch(`/api/spec-books/${docId}/parse`, { method: "POST" })
     } catch { /* error surfaced via doc.parse_status */ }
     polling = false
     setParsingId(null)
@@ -131,7 +132,7 @@ export default function ProjectSpecBooks({ projectId, projectName, onCountChange
     setPendingDelete(doc)
     setDeleteCounts(null)
     try {
-      const r = await fetch(`/api/spec-books/${doc.id}`)
+      const r = await apiFetch(`/api/spec-books/${doc.id}`)
       const d = await r.json()
       const sections: unknown[] = d.sections ?? []
       const staged: { committed_at: string | null; committed_submittal_id: string | null }[] = d.staged ?? []
@@ -150,7 +151,7 @@ export default function ProjectSpecBooks({ projectId, projectName, onCountChange
     if (!pendingDelete) return
     setDeleting(true)
     try {
-      await fetch(`/api/spec-books/${pendingDelete.id}`, { method: "DELETE" })
+      await apiFetch(`/api/spec-books/${pendingDelete.id}`, { method: "DELETE" })
       setPendingDelete(null)
       setDeleteCounts(null)
       load()
@@ -235,7 +236,7 @@ export default function ProjectSpecBooks({ projectId, projectName, onCountChange
                       <div className="flex items-center gap-1">
                         <button
                           onClick={async () => {
-                            const r = await fetch(`/api/spec-books/${doc.id}/file`)
+                            const r = await apiFetch(`/api/spec-books/${doc.id}/file`)
                             const d = await r.json()
                             if (d.url) window.open(d.url, "_blank")
                           }}

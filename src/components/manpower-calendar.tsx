@@ -1,5 +1,6 @@
 "use client"
 
+import { apiFetch } from "@/lib/api-client"
 import { useCallback, useEffect, useMemo, useState } from "react"
 
 // ── Manpower month calendar (Phase 4) ───────────────────────────────────────
@@ -171,7 +172,7 @@ export default function ManpowerCalendar({ projectId }: { projectId?: string }) 
     setLoading(true)
     setLoadError(null)
     const scope = projectId ? `project_id=${projectId}&` : ""
-    fetch(`/api/manpower-assignments?${scope}from=${from}&to=${to}`)
+    apiFetch(`/api/manpower-assignments?${scope}from=${from}&to=${to}`)
       .then(async r => {
         if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.error ?? "Failed to load")
         return r.json()
@@ -185,7 +186,7 @@ export default function ManpowerCalendar({ projectId }: { projectId?: string }) 
 
   // Company roster for the picker (loaded once; all workers, RLS company-scoped).
   useEffect(() => {
-    fetch("/api/workers")
+    apiFetch("/api/workers")
       .then(r => r.json())
       .then(d => setWorkers(d.workers ?? []))
       .catch(() => {})
@@ -195,7 +196,7 @@ export default function ManpowerCalendar({ projectId }: { projectId?: string }) 
   // create-form project picker (per-project mode already knows its project).
   useEffect(() => {
     if (!companyWide) return
-    fetch("/api/projects")
+    apiFetch("/api/projects")
       .then(r => r.json())
       .then(d => setProjects((d.projects ?? []).map((p: { id: string; name: string }) => ({ id: p.id, name: p.name }))))
       .catch(() => {})
@@ -208,7 +209,7 @@ export default function ManpowerCalendar({ projectId }: { projectId?: string }) 
   useEffect(() => {
     const ctrl = new AbortController()
     const scope = projectId ? `project_id=${projectId}&` : ""
-    fetch(`/api/schedule-tasks/crew-demand?${scope}from=${from}&to=${to}`, { signal: ctrl.signal })
+    apiFetch(`/api/schedule-tasks/crew-demand?${scope}from=${from}&to=${to}`, { signal: ctrl.signal })
       .then(r => (r.ok ? r.json() : { demand: {} }))
       .then(d => setDemand(d.demand ?? {}))
       .catch(() => {}) // overlay is best-effort; never surface its failure on the grid
@@ -289,7 +290,7 @@ export default function ManpowerCalendar({ projectId }: { projectId?: string }) 
 
   async function remove(a: Assignment) {
     if (!confirm(`Remove this ${a.assignee_type === "worker" ? "worker" : "crew"} assignment? It can be restored this session.`)) return
-    const res = await fetch(`/api/manpower-assignments/${a.id}`, { method: "DELETE" })
+    const res = await apiFetch(`/api/manpower-assignments/${a.id}`, { method: "DELETE" })
     if (res.ok) {
       setAssignments(rows => rows.filter(r => r.id !== a.id))
       setRecentlyDeleted(rd => [a, ...rd.filter(r => r.id !== a.id)])
@@ -300,7 +301,7 @@ export default function ManpowerCalendar({ projectId }: { projectId?: string }) 
   }
 
   async function restore(a: Assignment) {
-    const res = await fetch(`/api/manpower-assignments/${a.id}/restore`, { method: "POST" })
+    const res = await apiFetch(`/api/manpower-assignments/${a.id}/restore`, { method: "POST" })
     if (res.ok) {
       setRecentlyDeleted(rd => rd.filter(r => r.id !== a.id))
       load()
@@ -741,8 +742,8 @@ function AssignmentFormModal({ projectId, projects, projectName, workers, assign
     // PATCH never carries project_id (the API can't move an assignment between
     // projects); create sends the pinned / picked project.
     const res = isEdit
-      ? await fetch(`/api/manpower-assignments/${assignment!.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(base) })
-      : await fetch(`/api/manpower-assignments`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ project_id: effectiveProjectId, ...base }) })
+      ? await apiFetch(`/api/manpower-assignments/${assignment!.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(base) })
+      : await apiFetch(`/api/manpower-assignments`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ project_id: effectiveProjectId, ...base }) })
     const d = await res.json().catch(() => ({}))
     setSaving(false)
     if (!res.ok) { setErr(d?.error ?? "Save failed"); return }

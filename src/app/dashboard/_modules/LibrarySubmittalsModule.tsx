@@ -1,5 +1,6 @@
 "use client"
 
+import { apiFetch } from "@/lib/api-client"
 import { useState, useEffect, useMemo, useRef } from "react"
 import SubmittalCoversheet from "@/components/submittals/SubmittalCoversheet"
 import type {
@@ -358,7 +359,7 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
   // Load division tree
   function loadTree() {
     setTreeLoading(true)
-    fetch("/api/folders")
+    apiFetch("/api/folders")
       .then(r => r.json())
       .then(d => {
         if (d.error) throw new Error(d.error)
@@ -373,7 +374,7 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
   // Load the user's saved review-stamp name once, to decide whether the cover
   // modal must capture it inline.
   useEffect(() => {
-    fetch("/api/profile")
+    apiFetch("/api/profile")
       .then(r => r.json())
       .then((d: { full_name?: string | null }) => setMyFullName(d.full_name ?? null))
       .catch(() => setMyFullName(null))
@@ -387,7 +388,7 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
     setLibSearching(true)
     libSearchTimer.current = setTimeout(async () => {
       try {
-        const res = await fetch(`/api/library-search?q=${encodeURIComponent(q)}`)
+        const res = await apiFetch(`/api/library-search?q=${encodeURIComponent(q)}`)
         const data = await res.json()
         setLibResults(res.ok ? (data.files ?? []) : [])
       } catch { setLibResults([]) }
@@ -407,7 +408,7 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
 
   useEffect(() => {
     if (showUpload || showBatch) {
-      fetch("/api/submittal-names")
+      apiFetch("/api/submittal-names")
         .then(r => r.json())
         .then(d => setNameOpts(d))
         .catch(err => console.error("[library] failed to load submittal names", err))
@@ -511,9 +512,9 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
   async function loadCoverContacts(projectId: string) {
     if (!projectId) { setCoverProjectSubs([]); setCoverProjectSuppliers([]); setCoverProjectCms([]); return }
     const [subsRes, supplRes, cmsRes] = await Promise.all([
-      fetch(`/api/projects/${projectId}/subcontractors`),
-      fetch(`/api/projects/${projectId}/suppliers`),
-      fetch(`/api/projects/${projectId}/cms`),
+      apiFetch(`/api/projects/${projectId}/subcontractors`),
+      apiFetch(`/api/projects/${projectId}/suppliers`),
+      apiFetch(`/api/projects/${projectId}/cms`),
     ])
     setCoverProjectSubs(subsRes.ok ? await subsRes.json() : [])
     setCoverProjectSuppliers(supplRes.ok ? await supplRes.json() : [])
@@ -580,7 +581,7 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
       if (!name) { alert("Please enter your name for the review stamp."); return }
       setSavingStampName(true)
       try {
-        const pRes = await fetch("/api/profile", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ full_name: name }) })
+        const pRes = await apiFetch("/api/profile", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ full_name: name }) })
         const pJson = await pRes.json().catch(() => ({}))
         if (!pRes.ok) { alert(pJson.error ?? "Could not save your name."); return }
         setMyFullName(pJson.full_name ?? name)
@@ -591,7 +592,7 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
 
     setGeneratingCover(true)
     try {
-      const res = await fetch("/api/generate-cover", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ submittalId: openFileCtx.file.id, projectId: modalProjectId || null, existingId: coverEditId || null, ...coverForm }) })
+      const res = await apiFetch("/api/generate-cover", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ submittalId: openFileCtx.file.id, projectId: modalProjectId || null, existingId: coverEditId || null, ...coverForm }) })
       if (!res.ok) {
         const errJson = await res.json().catch(() => ({}))
         throw new Error(errJson.error ?? `Server error ${res.status}`)
@@ -630,7 +631,7 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
     if (sectionFiles[code] !== undefined || loadingSections.has(code)) return
     setLoadingSections(prev => new Set([...prev, code]))
     try {
-      const res  = await fetch(`/api/files?code=${encodeURIComponent(code)}`)
+      const res  = await apiFetch(`/api/files?code=${encodeURIComponent(code)}`)
       const data = await res.json()
       setSectionFiles(prev => ({ ...prev, [code]: data.files ?? [] }))
     } catch (err) {
@@ -659,7 +660,7 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
 
   function refetchSection(code: string) {
     setLoadingSections(prev => new Set([...prev, code]))
-    fetch(`/api/files?code=${encodeURIComponent(code)}`)
+    apiFetch(`/api/files?code=${encodeURIComponent(code)}`)
       .then(r => r.json())
       .then(d => setSectionFiles(prev => ({ ...prev, [code]: d.files ?? [] })))
       .catch(() => setSectionFiles(prev => ({ ...prev, [code]: [] })))
@@ -674,7 +675,7 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
     if (!libDeleteTarget) return
     setLibDeleting(true)
     try {
-      const res = await fetch(`/api/submittals/${libDeleteTarget.file.id}/library-delete`, { method: "POST" })
+      const res = await apiFetch(`/api/submittals/${libDeleteTarget.file.id}/library-delete`, { method: "POST" })
       if (!res.ok) {
         const d = await res.json().catch(() => ({}))
         throw new Error(d.error ?? "Delete failed")
@@ -702,7 +703,7 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
     }
     setLogLoading(true)
     const seq = ++logReqSeq.current
-    fetch(`/api/submittals?project_id=${encodeURIComponent(pid)}`)
+    apiFetch(`/api/submittals?project_id=${encodeURIComponent(pid)}`)
       .then(r => r.json())
       .then(d => { if (seq === logReqSeq.current) setLogSubmittals(d.submittals ?? []) })
       .catch(() => { if (seq === logReqSeq.current) setLogSubmittals([]) })
@@ -710,14 +711,14 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
     // Parallel: pull revision counts for the project. Cheap (single
     // groupBy server-side, ~31 rows today). Used to show the revision
     // badge on rows with >= 2 attachments.
-    fetch(`/api/projects/${encodeURIComponent(pid)}/attachment-counts`)
+    apiFetch(`/api/projects/${encodeURIComponent(pid)}/attachment-counts`)
       .then(r => r.json())
       .then(d => { if (seq === logReqSeq.current) setAttachmentCounts(d.counts ?? {}) })
       .catch(() => { if (seq === logReqSeq.current) setAttachmentCounts({}) })
     // Parallel: pull the set of spec_section_ids where the parser used a
     // MasterFormat fallback. Rows pointing at one of these get a
     // "title needs review" badge.
-    fetch(`/api/projects/${encodeURIComponent(pid)}/sections-needing-review`)
+    apiFetch(`/api/projects/${encodeURIComponent(pid)}/sections-needing-review`)
       .then(r => r.json())
       .then(d => { if (seq === logReqSeq.current) setTitleReviewSet(new Set(d.spec_section_ids ?? [])) })
       .catch(() => { if (seq === logReqSeq.current) setTitleReviewSet(new Set()) })
@@ -731,7 +732,7 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
     setRevHistoryError(null)
     setRevHistoryLoading(true)
     try {
-      const res = await fetch(`/api/submittals/${encodeURIComponent(s.id)}/attachments`)
+      const res = await apiFetch(`/api/submittals/${encodeURIComponent(s.id)}/attachments`)
       const data = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(data?.error ?? `Failed (HTTP ${res.status})`)
       setRevHistoryItems(Array.isArray(data?.attachments) ? data.attachments : [])
@@ -754,9 +755,9 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
   // Vendors for the inline picker — the whole company-scoped vendors master plus
   // their people, loaded client-side (mirrors the directory's load-all pattern).
   function loadVendors() {
-    fetch("/api/vendors?all=1").then(r => r.json())
+    apiFetch("/api/vendors?all=1").then(r => r.json())
       .then(d => setVendors(Array.isArray(d.vendors) ? d.vendors : [])).catch(() => {})
-    fetch("/api/vendor-people").then(r => r.json())
+    apiFetch("/api/vendor-people").then(r => r.json())
       .then(d => setVendorPeople(Array.isArray(d.people) ? d.people : [])).catch(() => {})
   }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -778,7 +779,7 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
   // the is_subcontractor/is_supplier flag on the new vendor so it also surfaces
   // correctly in the Directory and project-assignment pickers.
   async function createVendor(name: string, field: string, kind: "sub" | "sup"): Promise<VendorRow | null> {
-    const r = await fetch("/api/vendors", {
+    const r = await apiFetch("/api/vendors", {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         company_name: name,
@@ -794,7 +795,7 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
   }
   type NewPerson = { name: string; email: string; phone: string; role: string }
   async function createVendorPerson(vendorId: string, d: NewPerson): Promise<VendorPersonRow | null> {
-    const r = await fetch("/api/vendor-people", {
+    const r = await apiFetch("/api/vendor-people", {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ vendor_id: vendorId, ...d }),
     }).catch(() => null)
@@ -853,7 +854,7 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
       const body = pendingPatches.current.get(id) ?? {}
       pendingPatches.current.delete(id)
       saveTimers.current.delete(id)
-      fetch(`/api/submittals/${id}`, {
+      apiFetch(`/api/submittals/${id}`, {
         method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
       }).catch(() => { /* optimistic — reconciles on next load */ })
     }, 500))
@@ -933,7 +934,7 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
     setResetScope(scope)
     setResetCount(null)
     try {
-      const r = await fetch(`/api/submittals/reset?project_id=${encodeURIComponent(activeProjectId)}&scope=${scope}`)
+      const r = await apiFetch(`/api/submittals/reset?project_id=${encodeURIComponent(activeProjectId)}&scope=${scope}`)
       const d = await r.json()
       setResetCount(r.ok ? (d.count ?? 0) : 0)
     } catch (err) {
@@ -946,7 +947,7 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
     if (!activeProjectId || !resetScope) return
     setResetting(true)
     try {
-      const r = await fetch("/api/submittals/reset", {
+      const r = await apiFetch("/api/submittals/reset", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ project_id: activeProjectId, scope: resetScope }),
       })
@@ -964,7 +965,7 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
   async function openSource(s: SubmittalRecord) {
     setSourceLoadingId(s.id)
     try {
-      const r = await fetch(`/api/submittals/${s.id}/source`)
+      const r = await apiFetch(`/api/submittals/${s.id}/source`)
       const d = await r.json()
       if (!r.ok) throw new Error(d.error ?? "No source available")
       setSourceModal(d)
@@ -977,7 +978,7 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
   function loadPending(pid = globalProjectId) {
     if (!pid) { setPendingStaged([]); setPendingSections([]); setPendingDocuments([]); setPendingHiddenCount(0); return }
     setPendingLoading(true)
-    fetch(`/api/staged-submittals?project_id=${encodeURIComponent(pid)}`)
+    apiFetch(`/api/staged-submittals?project_id=${encodeURIComponent(pid)}`)
       .then(r => r.json())
       .then(d => {
         setPendingStaged(d.staged ?? [])
@@ -1000,7 +1001,7 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
   function patchStaged(ids: string[], updates: Partial<StagedSubmittal>) {
     updateStagedLocal(ids, updates)
     for (const id of ids) {
-      fetch(`/api/staged-submittals/${id}`, {
+      apiFetch(`/api/staged-submittals/${id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(updates),
@@ -1012,7 +1013,7 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
     if (!globalProjectId) return
     setPendingCommitting(true)
     try {
-      const res = await fetch("/api/staged-submittals/commit", {
+      const res = await apiFetch("/api/staged-submittals/commit", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ project_id: globalProjectId, mode: specMode }),
@@ -1070,7 +1071,7 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
     setDetailTitleSaving(true)
     setDetailTitleError(null)
     try {
-      const res = await fetch(`/api/submittals/${detailSubmittal.id}`, {
+      const res = await apiFetch(`/api/submittals/${detailSubmittal.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ file_name: next }),
@@ -1094,7 +1095,7 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
 
   async function deleteSubmittal(s: SubmittalRecord) {
     if (!window.confirm(`Delete "${s.file_name}"? This cannot be undone.`)) return
-    const res = await fetch(`/api/submittals/${s.id}`, { method: "DELETE" })
+    const res = await apiFetch(`/api/submittals/${s.id}`, { method: "DELETE" })
     if (res.ok) {
       // Optimistically remove from all local caches
       setLogSubmittals(prev => prev.filter(x => x.id !== s.id))
@@ -1122,7 +1123,7 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
       section_name:  (sec?.name ?? editSecName) || null,
     }
     try {
-      const res = await fetch(`/api/submittals/${editSubmittal.id}`, {
+      const res = await apiFetch(`/api/submittals/${editSubmittal.id}`, {
         method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(updates),
       })
       if (res.ok) { setEditSubmittal(null); loadSubmittals(); loadTree() }
@@ -1134,7 +1135,7 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
     setTransmittalLoading(true)
     setTransmittalPdfUrl(null)
     try {
-      const res = await fetch(`/api/transmittal/${sub.id}`, { method: "POST" })
+      const res = await apiFetch(`/api/transmittal/${sub.id}`, { method: "POST" })
       if (!res.ok) { alert("Failed to generate transmittal PDF. Please try again."); return }
       const { url } = await res.json()
       setTransmittalPdfUrl(url)
@@ -1216,7 +1217,7 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
 
   async function markTransmitted() {
     if (!transmittalSub) return
-    await fetch(`/api/submittals/${transmittalSub.id}`, {
+    await apiFetch(`/api/submittals/${transmittalSub.id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -1266,7 +1267,7 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
         try {
           const sha = await hashFileInBrowser(item.file)
           updateBatchItem(item.id, { fileSha256: sha })
-          const dRes = await fetch("/api/check-duplicate", {
+          const dRes = await apiFetch("/api/check-duplicate", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ sha256: sha, project_id: null }),   // Library shelf scope (project-independent)
@@ -1281,7 +1282,7 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
         // /api/classify here and /api/upload in uploadBatch.
         const { path } = await presignAndUpload("submittals", "uploads", item.file)
         updateBatchItem(item.id, { storagePath: path })
-        const res  = await fetch("/api/classify", {
+        const res  = await apiFetch("/api/classify", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ storage_path: path, file_name: item.file.name }),
@@ -1328,7 +1329,7 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
         return
       }
       try {
-        const res = await fetch("/api/upload", {
+        const res = await apiFetch("/api/upload", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -1394,7 +1395,7 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
     if (uploadFileSha256)             payload.file_sha256   = uploadFileSha256
 
     try {
-      const res  = await fetch("/api/upload", {
+      const res  = await apiFetch("/api/upload", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -2969,7 +2970,7 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                       try {
                         const sha = await hashFileInBrowser(f)
                         setUploadFileSha256(sha)
-                        const res = await fetch("/api/check-duplicate", {
+                        const res = await apiFetch("/api/check-duplicate", {
                           method: "POST",
                           headers: { "Content-Type": "application/json" },
                           body: JSON.stringify({ sha256: sha, project_id: null }),   // Library shelf scope (project-independent)
@@ -2993,7 +2994,7 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                       return
                     }
                     try {
-                      const res = await fetch("/api/classify", {
+                      const res = await apiFetch("/api/classify", {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
                         body: JSON.stringify({ storage_path: path, file_name: f.name }),

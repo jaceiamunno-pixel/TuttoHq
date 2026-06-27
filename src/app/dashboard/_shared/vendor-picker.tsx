@@ -1,5 +1,6 @@
 "use client"
 
+import { apiFetch } from "@/lib/api-client"
 import { useState, useEffect, useRef } from "react"
 import type { Vendor } from "./types"
 import { SpinnerIcon } from "./icons"
@@ -40,7 +41,7 @@ export function VendorPicker({ vendor, onChange, role, placeholder }: {
       const params = new URLSearchParams()
       if (q.trim()) params.set("q", q.trim())
       if (role) params.set("role", role)
-      fetch(`/api/vendors?${params.toString()}`)
+      apiFetch(`/api/vendors?${params.toString()}`)
         .then(r => r.json())
         .then(d => setRows(d.vendors ?? []))
         .catch(() => setRows([]))

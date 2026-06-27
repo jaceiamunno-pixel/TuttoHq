@@ -1,5 +1,6 @@
 "use client"
 
+import { apiFetch } from "@/lib/api-client"
 import { useState, useEffect, useMemo } from "react"
 import type { Project, SupplierContract, PurchaseOrder, Vendor } from "../_shared/types"
 import { PlusIcon, SpinnerIcon, XIcon } from "../_shared/icons"
@@ -114,8 +115,8 @@ export default function CommitmentsView({ globalProjectId }: {
     if (!pid) { setContracts([]); setPos([]); return }
     setLoading(true)
     Promise.all([
-      fetch(`/api/supplier-contracts?project_id=${encodeURIComponent(pid)}`).then(r => r.json()).then(d => d.supplier_contracts ?? []).catch(() => []),
-      fetch(`/api/purchase-orders?project_id=${encodeURIComponent(pid)}`).then(r => r.json()).then(d => d.purchase_orders ?? []).catch(() => []),
+      apiFetch(`/api/supplier-contracts?project_id=${encodeURIComponent(pid)}`).then(r => r.json()).then(d => d.supplier_contracts ?? []).catch(() => []),
+      apiFetch(`/api/purchase-orders?project_id=${encodeURIComponent(pid)}`).then(r => r.json()).then(d => d.purchase_orders ?? []).catch(() => []),
     ])
       .then(([c, p]) => { setContracts(c); setPos(p) })
       .finally(() => setLoading(false))
@@ -187,7 +188,7 @@ export default function CommitmentsView({ globalProjectId }: {
 
   async function deleteContract(id: string) {
     if (!confirm("Delete this supplier contract? Any POs released against it become standalone POs (they are not deleted). This cannot be undone.")) return
-    const res = await fetch(`/api/supplier-contracts/${id}`, { method: "DELETE" })
+    const res = await apiFetch(`/api/supplier-contracts/${id}`, { method: "DELETE" })
     if (res.ok) { if (editingId === id) closeForm(); loadData() }
   }
 

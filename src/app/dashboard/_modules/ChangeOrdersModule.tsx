@@ -1,5 +1,6 @@
 "use client"
 
+import { apiFetch } from "@/lib/api-client"
 import { useState, useEffect, useRef } from "react"
 import type { ChangeOrder, Project } from "../_shared/types"
 import { useNavRegion, useFocusTrap } from "@/components/keyboard-nav"
@@ -114,7 +115,7 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
   function loadChangeOrders(pid = globalProjectId) {
     setCoLoading(true)
     const qs = pid ? `?project_id=${encodeURIComponent(pid)}` : ""
-    fetch(`/api/change-orders${qs}`)
+    apiFetch(`/api/change-orders${qs}`)
       .then(r => r.json())
       // Sort ascending by PCO # NUMERICALLY (leading-zero agnostic): the embedded
       // digits are compared as integers, so "9" < "10" < "042" regardless of
@@ -156,7 +157,7 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
         fields.file_path = path
         fields.file_name = coFile.name
       }
-      const res = await fetch("/api/change-orders", {
+      const res = await apiFetch("/api/change-orders", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(fields),
@@ -174,7 +175,7 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
 
   async function deleteCo(coId: string) {
     if (!confirm("Delete this change order? This cannot be undone.")) return
-    await fetch(`/api/change-orders/${coId}`, { method: "DELETE" })
+    await apiFetch(`/api/change-orders/${coId}`, { method: "DELETE" })
     setViewCo(null)
     loadChangeOrders()
   }
@@ -182,7 +183,7 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
   async function generateCoPdf(coId: string) {
     setCoGeneratingPdf(true)
     try {
-      const res  = await fetch(`/api/change-orders/${coId}/pdf`, { method: "POST" })
+      const res  = await apiFetch(`/api/change-orders/${coId}/pdf`, { method: "POST" })
       const data = await res.json()
       if (res.ok && data.url) {
         window.open(data.url, "_blank")
@@ -196,7 +197,7 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
   async function openPcoPdf(coId: string, which: "cover" | "backup") {
     setPcoPdfBusyId(coId)
     try {
-      const res = await fetch(`/api/change-orders/pco/${coId}/pdf`, { method: "POST" })
+      const res = await apiFetch(`/api/change-orders/pco/${coId}/pdf`, { method: "POST" })
       const d = await res.json().catch(() => ({}))
       const url = which === "cover" ? d.cover_url : d.backup_url
       if (res.ok && url) { window.open(url, "_blank"); loadChangeOrders() }
@@ -222,7 +223,7 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
     setPcoNumberSaving(true)
     setPcoNumberError(null)
     try {
-      const res = await fetch(`/api/change-orders/${viewCo.id}`, {
+      const res = await apiFetch(`/api/change-orders/${viewCo.id}`, {
         method: "PATCH", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ co_number: v }),
       })
@@ -256,7 +257,7 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
       if (!viewCo.has_pco_detail) {
         body.pricing_sum = coRespAmount.trim() === "" ? null : parseFloat(coRespAmount)
       }
-      const res = await fetch(`/api/change-orders/${viewCo.id}`, {
+      const res = await apiFetch(`/api/change-orders/${viewCo.id}`, {
         method: "PATCH", headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       })
@@ -273,7 +274,7 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
     const v = raw.trim()
     setCoBaseSaving(true)
     try {
-      await fetch(`/api/projects/${globalProjectId}`, {
+      await apiFetch(`/api/projects/${globalProjectId}`, {
         method: "PATCH", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ base_contract_value: v === "" ? null : v }),
       })

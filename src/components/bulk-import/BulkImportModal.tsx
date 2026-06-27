@@ -1,5 +1,6 @@
 "use client"
 
+import { apiFetch } from "@/lib/api-client"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { presignAndUpload } from "@/lib/storage-upload"
 import { SUBMITTAL_TYPES, type SubmittalType, type BulkImportAnalysis } from "@/lib/bulk-import-detect"
@@ -233,7 +234,7 @@ export default function BulkImportModal({
     setLogRowsLoading(true)
     setLogRowsError(null)
     try {
-      const res = await fetch(`/api/bulk-import/log-rows?project_id=${encodeURIComponent(projectId)}&limit=500`)
+      const res = await apiFetch(`/api/bulk-import/log-rows?project_id=${encodeURIComponent(projectId)}&limit=500`)
       const data = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(data?.error ?? `Failed (HTTP ${res.status})`)
       setLogRows(Array.isArray(data?.rows) ? data.rows : [])
@@ -286,7 +287,7 @@ export default function BulkImportModal({
     const description = fresh?.description ?? row.analysis?.coverFields?.specSectionTitle ?? null
     updateRow(id, { status: "matching" })
     try {
-      const res = await fetch("/api/bulk-import/match", {
+      const res = await apiFetch("/api/bulk-import/match", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -342,7 +343,7 @@ export default function BulkImportModal({
       )
       updateRow(id, { storagePath: path, status: "analyzing", uploadPercent: 100 })
 
-      const res = await fetch("/api/bulk-import/analyze", {
+      const res = await apiFetch("/api/bulk-import/analyze", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ storage_path: path, file_name: row.file.name }),
@@ -395,7 +396,7 @@ export default function BulkImportModal({
       if (fileSha256) {
         void (async () => {
           try {
-            const dRes = await fetch("/api/check-duplicate", {
+            const dRes = await apiFetch("/api/check-duplicate", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ sha256: fileSha256, project_id: projectId }),
@@ -532,7 +533,7 @@ export default function BulkImportModal({
           file_sha256: r.fileSha256 ?? null,
         })),
       }
-      const res = await fetch("/api/bulk-import/commit", {
+      const res = await apiFetch("/api/bulk-import/commit", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),

@@ -1,5 +1,6 @@
 "use client"
 
+import { apiFetch } from "@/lib/api-client"
 import { useState } from "react"
 import { useRouter } from "next/navigation"
 import { createClient } from "@/lib/supabase/client"
@@ -52,7 +53,7 @@ export default function AcceptForm({
   async function saveFullName(name: string): Promise<boolean> {
     for (let attempt = 0; attempt < 4; attempt++) {
       try {
-        const res = await fetch("/api/profile", {
+        const res = await apiFetch("/api/profile", {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ full_name: name }),
@@ -85,7 +86,7 @@ export default function AcceptForm({
       return
     }
 
-    const res = await fetch("/api/invites/accept", {
+    const res = await apiFetch("/api/invites/accept", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ token }),

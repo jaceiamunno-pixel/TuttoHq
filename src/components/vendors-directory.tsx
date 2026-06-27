@@ -1,5 +1,6 @@
 "use client"
 
+import { apiFetch } from "@/lib/api-client"
 import { useState, useEffect, useCallback } from "react"
 import VendorImportModal from "./vendor-import-modal"
 
@@ -99,7 +100,7 @@ export default function VendorsDirectory({ switcher }: { switcher: React.ReactNo
 
   const load = useCallback(() => {
     setLoading(true)
-    fetch("/api/vendors?all=1")
+    apiFetch("/api/vendors?all=1")
       .then(r => r.json())
       .then(d => setVendors(Array.isArray(d.vendors) ? d.vendors : []))
       .catch(() => {})
@@ -172,7 +173,7 @@ export default function VendorsDirectory({ switcher }: { switcher: React.ReactNo
 
   async function deleteVendor(v: VendorFull) {
     if (!window.confirm(`Delete ${v.company_name}? This also removes its people.`)) return
-    const res = await fetch(`/api/vendors/${v.id}`, { method: "DELETE" })
+    const res = await apiFetch(`/api/vendors/${v.id}`, { method: "DELETE" })
     if (res.ok) { setVendors(prev => prev.filter(x => x.id !== v.id)); flash("Deleted") }
     else flash("Delete failed", false)
   }
@@ -356,7 +357,7 @@ function VendorPeoplePanel({ vendorId }: { vendorId: string }) {
 
   useEffect(() => {
     setLoading(true)
-    fetch(`/api/vendor-people?vendor_id=${encodeURIComponent(vendorId)}`)
+    apiFetch(`/api/vendor-people?vendor_id=${encodeURIComponent(vendorId)}`)
       .then(r => r.json())
       .then(d => setPeople(Array.isArray(d.people) ? d.people : []))
       .catch(() => {})
@@ -375,13 +376,13 @@ function VendorPeoplePanel({ vendorId }: { vendorId: string }) {
     setBusy(true)
     try {
       if (editingId) {
-        const res = await fetch(`/api/vendor-people/${editingId}`, {
+        const res = await apiFetch(`/api/vendor-people/${editingId}`, {
           method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(draft),
         })
         const data = await res.json()
         if (res.ok) setPeople(prev => prev.map(p => p.id === editingId ? data.person : p))
       } else {
-        const res = await fetch("/api/vendor-people", {
+        const res = await apiFetch("/api/vendor-people", {
           method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ vendor_id: vendorId, ...draft }),
         })
         const data = await res.json()
@@ -395,7 +396,7 @@ function VendorPeoplePanel({ vendorId }: { vendorId: string }) {
 
   async function remove(p: VendorPerson) {
     if (!window.confirm(`Remove ${p.name || "this person"}?`)) return
-    const res = await fetch(`/api/vendor-people/${p.id}`, { method: "DELETE" })
+    const res = await apiFetch(`/api/vendor-people/${p.id}`, { method: "DELETE" })
     if (res.ok) setPeople(prev => prev.filter(x => x.id !== p.id))
   }
 

@@ -1,5 +1,6 @@
 "use client"
 
+import { apiFetch } from "@/lib/api-client"
 import { useEffect, useMemo, useState } from "react"
 import type { Project } from "../_shared/types"
 import { computePcoTotals, laborLineTotal, materialLineTotal } from "../_shared/pco-math"
@@ -85,10 +86,10 @@ export default function PcoBuilder({ project, pcoId, onClose, onSaved }: {
     let cancelled = false
     async function init() {
       const [settings, sig, authName, ratesRes] = await Promise.all([
-        fetch("/api/settings").then(r => r.json()).catch(() => ({})),
-        fetch("/api/profile/signature").then(r => r.json()).catch(() => ({})),
+        apiFetch("/api/settings").then(r => r.json()).catch(() => ({})),
+        apiFetch("/api/profile/signature").then(r => r.json()).catch(() => ({})),
         getAuthName(),
-        fetch("/api/labor-rates").then(r => r.json()).catch(() => ({ rates: [] })),
+        apiFetch("/api/labor-rates").then(r => r.json()).catch(() => ({ rates: [] })),
       ])
       if (cancelled) return
       setCompany({ logoUrl: settings.logo_url ?? null, address1: settings.address_line1 ?? "", address2: settings.address_line2 ?? "", phone: settings.phone ?? "" })
@@ -97,7 +98,7 @@ export default function PcoBuilder({ project, pcoId, onClose, onSaved }: {
       setRateBook(allRates)
 
       if (pcoId) {
-        const d = await fetch(`/api/change-orders/pco/${pcoId}`).then(r => r.json()).catch(() => null)
+        const d = await apiFetch(`/api/change-orders/pco/${pcoId}`).then(r => r.json()).catch(() => null)
         if (cancelled || !d?.changeOrder) { setLoading(false); return }
         const co = d.changeOrder
         setLabor((d.labor ?? []).map((r: LoadedItem) => ({ id: rid("l"), description: r.description ?? "", qty_reg: r.qty_reg, rate_reg: r.rate_reg, qty_ot: r.qty_ot, rate_ot: r.rate_ot, qty_dt: r.qty_dt, rate_dt: r.rate_dt })))
@@ -113,7 +114,7 @@ export default function PcoBuilder({ project, pcoId, onClose, onSaved }: {
         if (co.date) setDate(co.date)
         setPcoDisplay(co.co_number ?? "—")
       } else {
-        const numRes = await fetch(`/api/change-orders/next-number?project_id=${encodeURIComponent(project.id)}`).then(r => r.json()).catch(() => ({ display: "001" }))
+        const numRes = await apiFetch(`/api/change-orders/next-number?project_id=${encodeURIComponent(project.id)}`).then(r => r.json()).catch(() => ({ display: "001" }))
         if (cancelled) return
         const active: ActiveRate[] = allRates.filter(r => r.active)
         setLabor(active.length
@@ -181,14 +182,14 @@ export default function PcoBuilder({ project, pcoId, onClose, onSaved }: {
         subs: subs.map(({ id: _id, ...r }) => r),
       }
       const res = pcoId
-        ? await fetch(`/api/change-orders/pco/${pcoId}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) })
-        : await fetch("/api/change-orders/pco", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) })
+        ? await apiFetch(`/api/change-orders/pco/${pcoId}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) })
+        : await apiFetch("/api/change-orders/pco", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) })
       const d = await res.json().catch(() => ({}))
       if (!res.ok) { setSaveError(d.error ?? "Save failed"); return }
       // Regenerate the two PDFs (overwrite fixed paths). Non-fatal: the save
       // already succeeded, so a PDF hiccup must not block closing.
       const savedId = pcoId ?? d.id
-      if (savedId) { try { await fetch(`/api/change-orders/pco/${savedId}/pdf`, { method: "POST" }) } catch { /* non-fatal */ } }
+      if (savedId) { try { await apiFetch(`/api/change-orders/pco/${savedId}/pdf`, { method: "POST" }) } catch { /* non-fatal */ } }
       onSaved()
       onClose()
     } finally { setSaving(false) }
@@ -199,7 +200,7 @@ export default function PcoBuilder({ project, pcoId, onClose, onSaved }: {
     if (!pcoId) return
     setPdfBusy(which)
     try {
-      const res = await fetch(`/api/change-orders/pco/${pcoId}/pdf`, { method: "POST" })
+      const res = await apiFetch(`/api/change-orders/pco/${pcoId}/pdf`, { method: "POST" })
       const d = await res.json().catch(() => ({}))
       const url = which === "cover" ? d.cover_url : d.backup_url
       if (res.ok && url) window.open(url, "_blank")

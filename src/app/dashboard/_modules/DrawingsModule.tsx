@@ -1,5 +1,6 @@
 "use client"
 
+import { apiFetch } from "@/lib/api-client"
 import { useState, useEffect, useRef, Fragment } from "react"
 import { hashFileInBrowser } from "@/lib/file-hash"
 import { detectRevision, deriveDiscipline } from "@/lib/drawing-detect"
@@ -137,7 +138,7 @@ export default function DrawingsModule({ globalProjectId, appProjects }: {
   function loadDrawings(pid = globalProjectId) {
     setDrawingsLoading(true)
     const qs = pid ? `?project_id=${encodeURIComponent(pid)}` : ""
-    fetch(`/api/drawings${qs}`)
+    apiFetch(`/api/drawings${qs}`)
       .then(r => r.json())
       .then(d => setDrawings(d.drawings ?? []))
       .catch(() => setDrawings([]))
@@ -149,7 +150,7 @@ export default function DrawingsModule({ globalProjectId, appProjects }: {
   function loadImportedSheets(pid = globalProjectId) {
     if (!pid) { setImportedSheets([]); return }
     setImportedLoading(true)
-    fetch(`/api/drawings/sheets?project_id=${encodeURIComponent(pid)}`)
+    apiFetch(`/api/drawings/sheets?project_id=${encodeURIComponent(pid)}`)
       .then(r => r.json())
       .then(d => setImportedSheets(d.sheets ?? []))
       .catch(() => setImportedSheets([]))
@@ -182,7 +183,7 @@ export default function DrawingsModule({ globalProjectId, appProjects }: {
     // stays in "Needs info" and the row is still editable for partial fill.
     setSavingSheet(true)
     try {
-      const res = await fetch(`/api/drawings/sheets/${id}`, {
+      const res = await apiFetch(`/api/drawings/sheets/${id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(sheetDraft),
@@ -195,7 +196,7 @@ export default function DrawingsModule({ globalProjectId, appProjects }: {
   function loadDeletedSheets(pid = globalProjectId) {
     if (!pid) { setDeletedSheets([]); return }
     setDeletedLoading(true)
-    fetch(`/api/drawings/sheets?project_id=${encodeURIComponent(pid)}&deleted=true`)
+    apiFetch(`/api/drawings/sheets?project_id=${encodeURIComponent(pid)}&deleted=true`)
       .then(r => r.json())
       .then(d => setDeletedSheets(d.sheets ?? []))
       .catch(() => setDeletedSheets([]))
@@ -204,7 +205,7 @@ export default function DrawingsModule({ globalProjectId, appProjects }: {
 
   async function softDeleteSheet(s: ImportedSheet) {
     if (!confirm(`Delete sheet ${s.sheet_number ?? ""}? It moves to Recently deleted and is permanently removed after 5 days.`)) return
-    const res = await fetch(`/api/drawings/sheets/${s.id}`, { method: "DELETE" })
+    const res = await apiFetch(`/api/drawings/sheets/${s.id}`, { method: "DELETE" })
     // Always refresh the deleted list (not just when the bin is open) so the
     // "recently deleted" toggle + count update immediately — otherwise the sheet
     // vanishes with no visible way to restore it until a full page reload.
@@ -212,7 +213,7 @@ export default function DrawingsModule({ globalProjectId, appProjects }: {
     else { const d = await res.json().catch(() => ({})); alert(d?.error ?? "Delete failed") }
   }
   async function restoreSheet(s: ImportedSheet) {
-    const res = await fetch(`/api/drawings/sheets/${s.id}/restore`, { method: "POST" })
+    const res = await apiFetch(`/api/drawings/sheets/${s.id}/restore`, { method: "POST" })
     if (res.ok) { loadDeletedSheets(); loadImportedSheets() }
     else { const d = await res.json().catch(() => ({})); alert(d?.error ?? "Restore failed") }
   }
@@ -241,7 +242,7 @@ export default function DrawingsModule({ globalProjectId, appProjects }: {
       const sha = await hashFileInBrowser(file)
       const { path } = await presignAndUpload("submittals", `drawing-staging/${crypto.randomUUID()}`, file)
       const label = detectRevision("", file.name).label   // filename-derived (e.g. "ADD 2"), else "Rev 0"
-      const res = await fetch(`/api/drawings/sheets/${sheetId}/revisions`, {
+      const res = await apiFetch(`/api/drawings/sheets/${sheetId}/revisions`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ staging_path: path, file_size: file.size, file_sha256: sha, revision_label: label }),
@@ -254,7 +255,7 @@ export default function DrawingsModule({ globalProjectId, appProjects }: {
   }
   function loadRevisions(sheetId: string) {
     setRevHistoryLoading(true)
-    fetch(`/api/drawings/sheets/${sheetId}/revisions`)
+    apiFetch(`/api/drawings/sheets/${sheetId}/revisions`)
       .then(r => r.json())
       .then(d => setRevHistory(d.revisions ?? []))
       .catch(() => setRevHistory([]))
@@ -275,7 +276,7 @@ export default function DrawingsModule({ globalProjectId, appProjects }: {
   // instead. We refresh the sheet list too because current/file may have moved.
   function loadDeletedRevisions(sheetId: string) {
     setDeletedRevsLoading(true)
-    fetch(`/api/drawings/sheets/${sheetId}/revisions?deleted=true`)
+    apiFetch(`/api/drawings/sheets/${sheetId}/revisions?deleted=true`)
       .then(r => r.json())
       .then(d => setDeletedRevs(d.revisions ?? []))
       .catch(() => setDeletedRevs([]))
@@ -285,7 +286,7 @@ export default function DrawingsModule({ globalProjectId, appProjects }: {
     if (!confirm(`Delete revision ${rev.revision_label ?? ""}? It moves to the revision recycle-bin and can be restored.`)) return
     setDeletingRevId(rev.id)
     try {
-      const res = await fetch(`/api/drawings/sheets/${sheetId}/revisions/${rev.id}`, { method: "DELETE" })
+      const res = await apiFetch(`/api/drawings/sheets/${sheetId}/revisions/${rev.id}`, { method: "DELETE" })
       if (res.ok) {
         loadRevisions(sheetId); loadImportedSheets()
         if (showDeletedRevs) loadDeletedRevisions(sheetId)
@@ -295,7 +296,7 @@ export default function DrawingsModule({ globalProjectId, appProjects }: {
     } finally { setDeletingRevId(null) }
   }
   async function restoreRevision(sheetId: string, revId: string) {
-    const res = await fetch(`/api/drawings/sheets/${sheetId}/revisions/${revId}/restore`, { method: "POST" })
+    const res = await apiFetch(`/api/drawings/sheets/${sheetId}/revisions/${revId}/restore`, { method: "POST" })
     if (res.ok) { loadDeletedRevisions(sheetId); loadRevisions(sheetId); loadImportedSheets() }
     else { const d = await res.json().catch(() => ({})); alert(d?.error ?? "Restore failed") }
   }
@@ -347,7 +348,7 @@ export default function DrawingsModule({ globalProjectId, appProjects }: {
   // The route never flips current_revision_id. On success refresh the sheet list +
   // open rev history, drop back to the clean view, and toast the returned label.
   async function handleSaveMarkups(sheetId: string, doc: MarkupDoc, mode: "new" | "edit", markupRevisionId: string | null): Promise<void> {
-    const res = await fetch(`/api/drawings/sheets/${sheetId}/markup-revisions`, {
+    const res = await apiFetch(`/api/drawings/sheets/${sheetId}/markup-revisions`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(
@@ -393,7 +394,7 @@ export default function DrawingsModule({ globalProjectId, appProjects }: {
         fields.file_path = path
         fields.file_name = dwgFile.name
       }
-      const res = await fetch("/api/drawings", {
+      const res = await apiFetch("/api/drawings", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(fields),
@@ -408,14 +409,14 @@ export default function DrawingsModule({ globalProjectId, appProjects }: {
 
   async function deleteDrawing(drawingId: string) {
     if (!confirm("Delete this drawing and all its revisions? This cannot be undone.")) return
-    await fetch(`/api/drawings/${drawingId}`, { method: "DELETE" })
+    await apiFetch(`/api/drawings/${drawingId}`, { method: "DELETE" })
     loadDrawings()
   }
 
   async function generateDrawingPdf(drawingId: string) {
     setDrawingGeneratingPdf(true)
     try {
-      const res = await fetch(`/api/drawings/${drawingId}/pdf`, { method: "POST" })
+      const res = await apiFetch(`/api/drawings/${drawingId}/pdf`, { method: "POST" })
       const data = await res.json()
       if (res.ok && data.url) { window.open(data.url, "_blank"); loadDrawings() }
     } finally { setDrawingGeneratingPdf(false) }

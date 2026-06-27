@@ -1,5 +1,6 @@
 "use client"
 
+import { apiFetch } from "@/lib/api-client"
 import { createContext, useContext, useEffect, useRef, useState } from "react"
 import Link from "next/link"
 import { useRouter, useSelectedLayoutSegment } from "next/navigation"
@@ -204,9 +205,9 @@ export default function ProjectChrome({ project, children }: { project: ShellPro
   // made (all RLS-scoped server-side). Unchanged call paths.
   useEffect(() => {
     createClient().auth.getUser().then(({ data }) => setUserEmail(data.user?.email ?? null))
-    fetch("/api/settings").then(r => r.json()).then(d => { if (d.logo_url) setLogoUrl(d.logo_url); if (d.display_name) setDisplayName(d.display_name) }).catch(() => {})
-    fetch("/api/projects").then(r => r.json()).then(d => setAppProjects(d.projects ?? [])).catch(() => {})
-    fetch("/api/team").then(r => r.json()).then(d => setTeamMembers(d.members ?? [])).catch(() => {})
+    apiFetch("/api/settings").then(r => r.json()).then(d => { if (d.logo_url) setLogoUrl(d.logo_url); if (d.display_name) setDisplayName(d.display_name) }).catch(() => {})
+    apiFetch("/api/projects").then(r => r.json()).then(d => setAppProjects(d.projects ?? [])).catch(() => {})
+    apiFetch("/api/team").then(r => r.json()).then(d => setTeamMembers(d.members ?? [])).catch(() => {})
   }, [])
 
   function navigateModule(m: string) {

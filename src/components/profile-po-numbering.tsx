@@ -1,5 +1,6 @@
 "use client"
 
+import { apiFetch } from "@/lib/api-client"
 import { useEffect, useState } from "react"
 
 // User's own PO numbering (Settings → Account). Each user sets their OWN prefix
@@ -32,7 +33,7 @@ export default function ProfilePoNumbering() {
   }
 
   useEffect(() => {
-    fetch("/api/profile/po-numbering")
+    apiFetch("/api/profile/po-numbering")
       .then(r => r.json())
       .then((d: { po_prefix?: string | null; po_next_seq?: number | null }) => {
         setSavedPrefix(d.po_prefix ?? null)
@@ -69,7 +70,7 @@ export default function ProfilePoNumbering() {
     if (parsedStart == null) { flash("Enter a starting number (a whole number greater than 0).", false); return }
     setSaving(true)
     try {
-      const res = await fetch("/api/profile/po-numbering", {
+      const res = await apiFetch("/api/profile/po-numbering", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ po_prefix: trimmedPrefix || null, po_next_seq: parsedStart }),

@@ -1,5 +1,6 @@
 "use client"
 
+import { apiFetch } from "@/lib/api-client"
 import { useState, useEffect, useCallback, useRef } from "react"
 import type { Project, PurchaseOrder, PoLineItem, Vendor, CommitmentInvoice, PoBalance, SupplierContract } from "../_shared/types"
 import { PlusIcon, SpinnerIcon, XIcon } from "../_shared/icons"
@@ -97,7 +98,7 @@ export default function PurchaseOrdersModule({ appProjects, globalProjectId }: {
   function loadPOs(pid = globalProjectId) {
     if (!pid) { setPos([]); return }
     setLoading(true)
-    fetch(`/api/purchase-orders?project_id=${encodeURIComponent(pid)}`)
+    apiFetch(`/api/purchase-orders?project_id=${encodeURIComponent(pid)}`)
       .then(r => r.json())
       .then(d => setPos(d.purchase_orders ?? []))
       .catch(() => setPos([]))
@@ -115,7 +116,7 @@ export default function PurchaseOrdersModule({ appProjects, globalProjectId }: {
     if (!showForm || !projectId || !vendor) { setReleaseContracts([]); return }
     let cancelled = false
     const params = new URLSearchParams({ project_id: projectId, vendor_id: vendor.id })
-    fetch(`/api/supplier-contracts?${params.toString()}`)
+    apiFetch(`/api/supplier-contracts?${params.toString()}`)
       .then(r => r.json())
       .then(d => {
         if (cancelled) return
@@ -168,8 +169,8 @@ export default function PurchaseOrdersModule({ appProjects, globalProjectId }: {
     // Load line items + the linked vendor in parallel.
     try {
       const [poRes, vRes] = await Promise.all([
-        fetch(`/api/purchase-orders/${po.id}`).then(r => r.json()),
-        po.vendor_id ? fetch(`/api/vendors?q=`).then(r => r.json()) : Promise.resolve({ vendors: [] }),
+        apiFetch(`/api/purchase-orders/${po.id}`).then(r => r.json()),
+        po.vendor_id ? apiFetch(`/api/vendors?q=`).then(r => r.json()) : Promise.resolve({ vendors: [] }),
       ])
       const li: PoLineItem[] = poRes.line_items ?? []
       setLines(li.length
@@ -190,7 +191,7 @@ export default function PurchaseOrdersModule({ appProjects, globalProjectId }: {
   // form fields or line items so unsaved edits aren't clobbered.
   async function refreshDetail(id: string) {
     try {
-      const d = await fetch(`/api/purchase-orders/${id}`).then(r => r.json())
+      const d = await apiFetch(`/api/purchase-orders/${id}`).then(r => r.json())
       setBalance(d.balance ?? null)
       setInvoices(d.invoices ?? [])
     } catch { /* keep current */ }
@@ -260,7 +261,7 @@ export default function PurchaseOrdersModule({ appProjects, globalProjectId }: {
   async function generatePdf(id: string) {
     setPdfBusy(true)
     try {
-      const res = await fetch(`/api/purchase-orders/${id}/pdf`, { method: "POST" })
+      const res = await apiFetch(`/api/purchase-orders/${id}/pdf`, { method: "POST" })
       const d = await res.json()
       if (res.ok && d.url) window.open(d.url, "_blank", "noopener,noreferrer")
       else setFormError(d.error ?? "Could not generate the PDF.")
@@ -276,7 +277,7 @@ export default function PurchaseOrdersModule({ appProjects, globalProjectId }: {
 
   async function deletePO(id: string) {
     if (!confirm("Delete this purchase order? This cannot be undone.")) return
-    const res = await fetch(`/api/purchase-orders/${id}`, { method: "DELETE" })
+    const res = await apiFetch(`/api/purchase-orders/${id}`, { method: "DELETE" })
     if (res.ok) {
       if (editingId === id) { setShowForm(false); resetForm() }
       loadPOs()
@@ -296,7 +297,7 @@ export default function PurchaseOrdersModule({ appProjects, globalProjectId }: {
     setSaving(true)
     setFormError(null)
     try {
-      const res = await fetch(`/api/purchase-orders/${editingId}`, {
+      const res = await apiFetch(`/api/purchase-orders/${editingId}`, {
         method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: next }),
       })
       const d = await res.json()
@@ -343,7 +344,7 @@ export default function PurchaseOrdersModule({ appProjects, globalProjectId }: {
   async function deleteInvoice(invId: string) {
     if (!editingId) return
     if (!confirm("Delete this invoice?")) return
-    const res = await fetch(`/api/purchase-orders/${editingId}/invoices/${invId}`, { method: "DELETE" })
+    const res = await apiFetch(`/api/purchase-orders/${editingId}/invoices/${invId}`, { method: "DELETE" })
     if (res.ok) await refreshDetail(editingId)
   }
 
