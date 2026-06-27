@@ -2,6 +2,12 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>NSCameraUsageDescription</key>
+	<string>TuttoHQ uses the camera to capture jobsite photos for daily reports and documentation.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>TuttoHQ accesses your photo library to attach jobsite and project photos to daily reports and submittals.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>TuttoHQ saves captured jobsite photos to your photo library.</string>
     <key>CAPACITOR_DEBUG</key>
 	<string>$(CAPACITOR_DEBUG)</string>
 	<key>CFBundleDevelopmentRegion</key>
