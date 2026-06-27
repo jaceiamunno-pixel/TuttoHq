@@ -25,8 +25,14 @@ workflows:
         script: |
           cd ios/App
           pod install
-      - name: Set up provisioning (automatic via ASC key)
-        script: xcode-project use-profiles
+      - name: Fetch signing files (auto-create cert + profile via ASC key)
+        script: |
+          app-store-connect fetch-signing-files "com.tuttohq.app" \
+            --type IOS_APP_STORE \
+            --create
+          keychain initialize
+          keychain add-certificates
+          xcode-project use-profiles
       - name: Increment build number
         script: |
           cd ios/App
