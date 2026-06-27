@@ -25,22 +25,33 @@ workflows:
         script: |
           cd ios/App
           pod install
-      - name: Set up signing (diagnostic)
+      - name: Set up signing (diagnostic to failure reason)
         script: |
-          set -x
-          echo "===== LIST BUNDLE IDS VISIBLE TO KEY ====="
-          app-store-connect bundle-ids list || true
-          echo "===== LIST EXISTING DISTRIBUTION CERTS ====="
-          app-store-connect certificates list --type IOS_DISTRIBUTION || true
-          echo "===== LIST EXISTING PROFILES ====="
-          app-store-connect profiles list || true
-          echo "===== ATTEMPT CERT CREATE ====="
-          keychain initialize
-          app-store-connect certificates create --type IOS_DISTRIBUTION --save || echo "CERT CREATE FAILED ^^^"
-          echo "===== ATTEMPT FETCH SIGNING FILES ====="
-          app-store-connect fetch-signing-files "com.tuttohq.app" --type IOS_APP_STORE --create || echo "FETCH SIGNING FAILED ^^^"
-          keychain add-certificates
-          xcode-project use-profiles
+          OUT=/tmp/signing_diag.txt
+          {
+            echo "===== BUNDLE IDS VISIBLE TO KEY ====="
+            app-store-connect bundle-ids list 2>&1 || echo "(bundle-ids list errored)"
+            echo ""
+            echo "===== DISTRIBUTION CERTS ====="
+            app-store-connect certificates list --type IOS_DISTRIBUTION 2>&1 || echo "(certs list errored)"
+            echo ""
+            echo "===== PROFILES ====="
+            app-store-connect profiles list 2>&1 || echo "(profiles list errored)"
+            echo ""
+            echo "===== CERT CREATE ATTEMPT ====="
+            keychain initialize 2>&1
+            app-store-connect certificates create --type IOS_DISTRIBUTION --save 2>&1 || echo "(cert create errored)"
+            echo ""
+            echo "===== FETCH SIGNING FILES ATTEMPT ====="
+            app-store-connect fetch-signing-files "com.tuttohq.app" --type IOS_APP_STORE --create 2>&1 || echo "(fetch signing errored)"
+          } > "$OUT" 2>&1
+          echo "==================== DIAGNOSTIC OUTPUT ===================="
+          cat "$OUT"
+          echo "=========================================================="
+          # Force the build to fail HERE with the diagnostic as the reason,
+          # so the output surfaces in the build's failure panel.
+          echo "DIAGNOSTIC COMPLETE - failing intentionally to surface output above"
+          exit 1
       - name: Increment build number
         script: |
           cd ios/App
