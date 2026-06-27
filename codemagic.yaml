@@ -64,7 +64,9 @@ workflows:
         script: |
           xcode-project build-ipa \
             --project "ios/App/App.xcodeproj" \
-            --scheme "App"
+            --scheme "App" \
+            --archive-xcargs "CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM=9936AWV8JW" \
+            --archive-flags "-destination 'generic/platform=iOS'"
     artifacts:
       - build/ios/ipa/*.ipa
       - /tmp/xcodebuild_logs/*.log
