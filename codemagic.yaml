@@ -6,6 +6,9 @@ workflows:
     integrations:
       app_store_connect: TuttoHQ ASC Key
     environment:
+      ios_signing:
+        distribution_type: app_store
+        bundle_identifier: com.tuttohq.app
       vars:
         APP_STORE_APPLE_ID: 6785057230
       node: 22
@@ -18,18 +21,6 @@ workflows:
         script: npm run build:native
       - name: Capacitor sync
         script: npm run cap:sync
-      - name: Set up signing
-        script: |
-          keychain initialize
-          app-store-connect certificates create \
-            --type IOS_DISTRIBUTION \
-            --save \
-            || echo "Distribution certificate already exists, continuing"
-          app-store-connect fetch-signing-files "com.tuttohq.app" \
-            --type IOS_APP_STORE \
-            --create
-          keychain add-certificates
-          xcode-project use-profiles
       - name: Increment build number
         script: |
           cd ios/App
