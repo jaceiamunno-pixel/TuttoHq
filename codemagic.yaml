@@ -8,7 +8,7 @@ workflows:
     environment:
       vars:
         APP_STORE_APPLE_ID: 6785057230
-      node: 20
+      node: 22
       xcode: latest
       cocoapods: default
     scripts:
