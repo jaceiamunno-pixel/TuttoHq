@@ -1,0 +1,49 @@
+workflows:
+  ios-capacitor-testflight:
+    name: TuttoHQ iOS (Capacitor → TestFlight)
+    instance_type: mac_mini_m2
+    max_build_duration: 60
+    integrations:
+      app_store_connect: TuttoHQ ASC Key
+    environment:
+      ios_signing:
+        distribution_type: app_store
+        bundle_identifier: com.tuttohq.app
+      vars:
+        APP_STORE_APPLE_ID: 6785057230
+      node: 20
+      xcode: latest
+      cocoapods: default
+    scripts:
+      - name: Install npm dependencies
+        script: npm ci
+      - name: Build native static export
+        script: npm run build:native
+      - name: Capacitor sync
+        script: npm run cap:sync
+      - name: Install CocoaPods dependencies
+        script: |
+          cd ios/App
+          pod install
+      - name: Set up provisioning (automatic via ASC key)
+        script: xcode-project use-profiles
+      - name: Increment build number
+        script: |
+          cd ios/App
+          LATEST=$(app-store-connect get-latest-testflight-build-number "$APP_STORE_APPLE_ID" 2>/dev/null || echo 0)
+          NEXT=$(( ${LATEST:-0} + 1 ))
+          agvtool new-version -all "$NEXT"
+      - name: Build & archive .ipa
+        script: |
+          xcode-project build-ipa \
+            --workspace "ios/App/App.xcworkspace" \
+            --scheme "App"
+    artifacts:
+      - build/ios/ipa/*.ipa
+      - /tmp/xcodebuild_logs/*.log
+    publishing:
+      app_store_connect:
+        auth: integration
+        submit_to_testflight: true
+        beta_groups:
+          - THP Internal
