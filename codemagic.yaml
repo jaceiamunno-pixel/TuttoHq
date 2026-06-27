@@ -51,6 +51,8 @@ workflows:
           SCHEME
           echo "Scheme written. Listing:"
           xcodebuild -list -project App.xcodeproj || true
+      - name: Apply profiles to project (writes export_options.plist)
+        script: xcode-project use-profiles
       - name: Build & archive .ipa
         script: |
           xcode-project build-ipa \
