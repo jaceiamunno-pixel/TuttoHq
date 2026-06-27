@@ -18,10 +18,6 @@ workflows:
         script: npm run build:native
       - name: Capacitor sync
         script: npm run cap:sync
-      - name: Install CocoaPods dependencies
-        script: |
-          cd ios/App
-          pod install
       - name: Set up signing
         script: |
           keychain initialize
@@ -40,6 +36,30 @@ workflows:
           LATEST=$(app-store-connect get-latest-testflight-build-number "$APP_STORE_APPLE_ID" 2>/dev/null || echo 0)
           NEXT=$(( ${LATEST:-0} + 1 ))
           agvtool new-version -all "$NEXT"
+      - name: Ensure shared App scheme exists
+        script: |
+          cd ios/App
+          # Generate shared schemes for all targets if none exist
+          xcodebuild -list -workspace App.xcworkspace 2>/dev/null || true
+          # Use xcode-project to create a shared scheme for the App target
+          SCHEME_DIR="App.xcodeproj/xcshareddata/xcschemes"
+          mkdir -p "$SCHEME_DIR"
+          cat > "$SCHEME_DIR/App.xcscheme" <<'SCHEME'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <Scheme LastUpgradeVersion="1500" version="1.7">
+             <BuildAction parallelizeBuildables="YES" buildImplicitDependencies="YES">
+                <BuildActionEntries>
+                   <BuildActionEntry buildForTesting="YES" buildForRunning="YES" buildForProfiling="YES" buildForArchiving="YES" buildForAnalyzing="YES">
+                      <BuildableReference BuildableIdentifier="primary" BlueprintIdentifier="504EC3031FED79650016851F" BuildableName="App.app" BlueprintName="App" ReferencedContainer="container:App.xcodeproj"></BuildableReference>
+                   </BuildActionEntry>
+                </BuildActionEntries>
+             </BuildAction>
+             <ArchiveAction buildConfiguration="Release" revealArchiveInOrganizer="YES"></ArchiveAction>
+             <LaunchAction buildConfiguration="Release"></LaunchAction>
+          </Scheme>
+          SCHEME
+          echo "Scheme written. Listing:"
+          xcodebuild -list -project App.xcodeproj || true
       - name: Build & archive .ipa
         script: |
           xcode-project build-ipa \
