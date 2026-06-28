@@ -696,7 +696,7 @@ function AssignmentFormModal({ projectId, projects, projectName, workers, assign
   useEffect(() => {
     const ctrl = new AbortController()
     const url = `/api/vendors?role=subcontractor${subQuery.trim() ? `&q=${encodeURIComponent(subQuery.trim())}` : ""}`
-    fetch(url, { signal: ctrl.signal })
+    apiFetch(url, { signal: ctrl.signal })
       .then(r => r.json())
       .then(d => setSubs((d.vendors ?? []).map((v: { id: string; company_name: string }) => ({ id: v.id, company_name: v.company_name }))))
       .catch(() => {})

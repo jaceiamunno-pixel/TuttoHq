@@ -963,7 +963,7 @@ export default function SettingsPage() {
     try {
       const url    = editingMember ? `/api/team/${editingMember.id}` : "/api/team"
       const method = editingMember ? "PATCH" : "POST"
-      const res    = await fetch(url, {
+      const res    = await apiFetch(url, {
         method,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name: memberForm.name.trim(), title: memberForm.title.trim() || null, email: memberForm.email.trim() || null }),
@@ -1361,7 +1361,7 @@ export default function SettingsPage() {
     try {
       const url    = editingProject ? `/api/projects/${editingProject.id}` : "/api/projects"
       const method = editingProject ? "PATCH" : "POST"
-      const res    = await fetch(url, {
+      const res    = await apiFetch(url, {
         method,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1549,7 +1549,7 @@ export default function SettingsPage() {
     try {
       const url = editingCm ? `/api/construction-managers/${editingCm.id}` : "/api/construction-managers"
       const method = editingCm ? "PATCH" : "POST"
-      const res = await fetch(url, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(cmForm) })
+      const res = await apiFetch(url, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(cmForm) })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error ?? "Save failed")
       if (editingCm) { setCms(prev => prev.map(c => c.id === editingCm.id ? data : c)); flashCm("CM updated") }

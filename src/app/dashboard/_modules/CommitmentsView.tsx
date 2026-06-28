@@ -178,7 +178,7 @@ export default function CommitmentsView({ globalProjectId }: {
         notes,
       }
       const url = editingId ? `/api/supplier-contracts/${editingId}` : "/api/supplier-contracts"
-      const res = await fetch(url, { method: editingId ? "PATCH" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) })
+      const res = await apiFetch(url, { method: editingId ? "PATCH" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) })
       const d = await res.json()
       if (!res.ok) { setFormError(d.error ?? "Save failed."); return }
       closeForm()

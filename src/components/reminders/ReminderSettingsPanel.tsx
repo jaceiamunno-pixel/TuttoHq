@@ -1,5 +1,6 @@
 "use client"
 
+import { apiFetch } from "@/lib/api-client"
 import { useEffect, useMemo, useState } from "react"
 import type { PackageReminderSettings, SubmittalPackage, CloseoutPackage } from "@/app/dashboard/_shared/types"
 import {
@@ -124,7 +125,7 @@ export default function ReminderSettingsPanel({ pkg, reminderSettings, saveEndpo
     if (!builtPatch || !dirty) return
     setSaving(true); setError(null); setSuccess(false)
     try {
-      const res = await fetch(saveEndpoint, {
+      const res = await apiFetch(saveEndpoint, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(builtPatch),

@@ -233,7 +233,7 @@ export default function PurchaseOrdersModule({ appProjects, globalProjectId }: {
     try {
       const url = editingId ? `/api/purchase-orders/${editingId}` : "/api/purchase-orders"
       const method = editingId ? "PATCH" : "POST"
-      const res = await fetch(url, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(buildPayload()) })
+      const res = await apiFetch(url, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(buildPayload()) })
       const d = await res.json()
       if (!res.ok) {
         // 409 = duplicate PO number; surface it inline by the field and keep the
@@ -334,7 +334,7 @@ export default function PurchaseOrdersModule({ appProjects, globalProjectId }: {
       const url = invEditingId
         ? `/api/purchase-orders/${editingId}/invoices/${invEditingId}`
         : `/api/purchase-orders/${editingId}/invoices`
-      const res = await fetch(url, { method: invEditingId ? "PATCH" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) })
+      const res = await apiFetch(url, { method: invEditingId ? "PATCH" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) })
       const d = await res.json()
       if (!res.ok) { setInvError(d.error ?? "Could not save the invoice."); return }
       resetInvForm()

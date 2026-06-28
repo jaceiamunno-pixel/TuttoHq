@@ -149,7 +149,7 @@ export default function VendorsDirectory({ switcher }: { switcher: React.ReactNo
     try {
       const url = editing ? `/api/vendors/${editing.id}` : "/api/vendors"
       const method = editing ? "PATCH" : "POST"
-      const res = await fetch(url, {
+      const res = await apiFetch(url, {
         method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(form),
       })
       const data = await res.json()
