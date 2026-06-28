@@ -37,6 +37,13 @@ let client: SupabaseClient | null = null
  */
 export function getNativeSupabaseClient(): SupabaseClient {
   if (client) return client
+  // DIAGNOSTIC: fail loudly with the actual env state if the static-export
+  // bundle didn't receive the public env vars. supabase-js otherwise throws a
+  // cryptic "the string did not match the expected pattern" while parsing an
+  // empty URL; this surfaces whether the vars made it into the native bundle.
+  if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
+    throw new Error("native supabase env missing: url=" + JSON.stringify(process.env.NEXT_PUBLIC_SUPABASE_URL) + " anonKeyPresent=" + !!process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY)
+  }
   client = createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,

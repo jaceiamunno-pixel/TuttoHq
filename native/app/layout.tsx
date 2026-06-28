@@ -1,4 +1,5 @@
 import type { ReactNode } from "react"
+import DiagErrorOverlay from "./_diag-error-overlay"
 
 export const metadata = {
   title: "TuttoHQ",
@@ -17,6 +18,8 @@ export default function RootLayout({ children }: { children: ReactNode }) {
           color: "#0F172A",
         }}
       >
+        {/* TEMPORARY native-debug error surface — remove after diagnosing. */}
+        <DiagErrorOverlay />
         {children}
       </body>
     </html>

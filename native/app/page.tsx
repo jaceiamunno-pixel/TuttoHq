@@ -51,31 +51,41 @@ export default function NativeShell() {
   }, [])
 
   useEffect(() => {
-    const supabase = getNativeSupabaseClient()
+    // DIAGNOSTIC: wrap the whole mount so a throw (e.g. native supabase client
+    // construction under capacitor://localhost) surfaces on-screen as "MOUNT: …"
+    // with a full stack instead of a blank/stuck shell. setReady(true) on catch
+    // so the error <p> actually renders (otherwise it stays on "Loading…").
+    let sub: { subscription: { unsubscribe: () => void } } | undefined
+    try {
+      const supabase = getNativeSupabaseClient()
 
-    // Wire the wrapper's bearer source to the live session.
-    setAccessTokenProvider(async () => {
-      const { data } = await supabase.auth.getSession()
-      return data.session?.access_token ?? null
-    })
+      // Wire the wrapper's bearer source to the live session.
+      setAccessTokenProvider(async () => {
+        const { data } = await supabase.auth.getSession()
+        return data.session?.access_token ?? null
+      })
 
-    supabase.auth.getSession().then(({ data }) => {
-      const hasSession = !!data.session
-      setSignedIn(hasSession)
+      supabase.auth.getSession().then(({ data }) => {
+        const hasSession = !!data.session
+        setSignedIn(hasSession)
+        setReady(true)
+        if (hasSession) void loadProjects()
+      })
+
+      sub = supabase.auth.onAuthStateChange((_event, session) => {
+        setSignedIn(!!session)
+        if (session) void loadProjects()
+        else {
+          setProjects([])
+          setActiveProjectId(null)
+        }
+      }).data
+    } catch (e) {
+      setError("MOUNT: " + (e instanceof Error ? e.message + "\n" + e.stack : String(e)))
       setReady(true)
-      if (hasSession) void loadProjects()
-    })
+    }
 
-    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSignedIn(!!session)
-      if (session) void loadProjects()
-      else {
-        setProjects([])
-        setActiveProjectId(null)
-      }
-    })
-
-    return () => sub.subscription.unsubscribe()
+    return () => sub?.subscription.unsubscribe()
   }, [loadProjects])
 
   async function handleSignIn(e: React.FormEvent) {
@@ -222,7 +232,15 @@ const linkBtn: CSSProperties = {
   fontWeight: 600,
   cursor: "pointer",
 }
-const errStyle: CSSProperties = { fontSize: 12, color: "#DC2626", margin: 0 }
+const errStyle: CSSProperties = {
+  fontSize: 11,
+  color: "#DC2626",
+  margin: 0,
+  whiteSpace: "pre-wrap",
+  fontFamily: "monospace",
+  maxHeight: "50vh",
+  overflow: "auto",
+}
 const headerRow: CSSProperties = {
   display: "flex",
   justifyContent: "space-between",
