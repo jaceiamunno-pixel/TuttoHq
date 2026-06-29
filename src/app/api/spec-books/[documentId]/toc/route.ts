@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import { parseTableOfContents } from "@/lib/spec-parser"
+import { enforceAiLimit } from "@/lib/ratelimit"
 
 // TOC parse is text-extraction + regex only (no AI) — fast, but give a big PDF
 // some headroom.
@@ -14,6 +15,10 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ do
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+
+  // TIER 2 cost guard (company-keyed, FAIL CLOSED) — see src/lib/ratelimit.ts.
+  const limited = await enforceAiLimit(supabase)
+  if (limited) return limited
 
   const { documentId } = await params
 

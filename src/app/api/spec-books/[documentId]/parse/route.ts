@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server"
 import Anthropic from "@anthropic-ai/sdk"
 import { parseSpecBook } from "@/lib/spec-parser"
 import { classifySubmittals, mapWithConcurrency } from "@/lib/spec-classifier"
+import { enforceAiLimit } from "@/lib/ratelimit"
 
 // Section split + 60-odd Haiku calls can take 30-60s — raise the function ceiling.
 export const maxDuration = 300
@@ -18,6 +19,11 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ do
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+
+  // TIER 2 cost guard (company-keyed, FAIL CLOSED) — see src/lib/ratelimit.ts.
+  const limited = await enforceAiLimit(supabase)
+  if (limited) return limited
+
   if (!process.env.ANTHROPIC_API_KEY) {
     return NextResponse.json({ error: "ANTHROPIC_API_KEY not set" }, { status: 500 })
   }

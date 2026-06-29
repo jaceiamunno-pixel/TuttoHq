@@ -23,6 +23,8 @@
     "@supabase/ssr": "^0.10.3",
     "@supabase/supabase-js": "^2.105.4",
     "@types/papaparse": "^5.5.2",
+    "@upstash/ratelimit": "^2.0.8",
+    "@upstash/redis": "^1.38.0",
     "exceljs": "^4.4.0",
     "framer-motion": "^12.38.0",
     "gray-matter": "^4.0.3",
