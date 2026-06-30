@@ -5,6 +5,7 @@ import { analyzePdf } from "@/lib/bulk-import-detect"
 import { analyzeCoverSplit } from "@/lib/pdf-strip"
 import { extractRawFormFields, recoverCoversheetFields, extractApprovalStampDate } from "@/lib/bulk-import-form"
 import { hashBufferInNode } from "@/lib/file-hash-node"
+import { enforceAiLimit } from "@/lib/ratelimit"
 
 // Bulk Import — Stage 1 analyze. Read-only by design: this route NEVER
 // writes to the submittals table, NEVER mutates the staged PDF, and never
@@ -27,6 +28,10 @@ export async function POST(req: NextRequest) {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+
+  // TIER 2 cost guard (company-keyed, FAIL CLOSED) — see src/lib/ratelimit.ts.
+  const limited = await enforceAiLimit(supabase)
+  if (limited) return limited
 
   const body = await req.json().catch(() => null)
   const storagePath: string = typeof body?.storage_path === "string" ? body.storage_path.trim() : ""

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 import Anthropic from "@anthropic-ai/sdk"
 import { createClient } from "@/lib/supabase/server"
 import { isPlausibleSheetNumber, normalizeSheetNumber, looksLikeRevision } from "@/lib/drawing-detect"
+import { enforceAiLimit } from "@/lib/ratelimit"
 
 // POST /api/drawings/ocr-titleblock — Drawing Log splitter Tier-2 OCR fallback.
 //
@@ -36,6 +37,10 @@ export async function POST(req: NextRequest) {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+
+  // TIER 2 cost guard (company-keyed, FAIL CLOSED) — see src/lib/ratelimit.ts.
+  const limited = await enforceAiLimit(supabase)
+  if (limited) return limited
 
   if (!process.env.ANTHROPIC_API_KEY) {
     return NextResponse.json({ error: "AI not configured" }, { status: 500 })

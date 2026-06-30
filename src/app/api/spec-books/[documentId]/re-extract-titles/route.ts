@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import { parseSpecBook } from "@/lib/spec-parser"
+import { enforceAiLimit } from "@/lib/ratelimit"
 
 // POST /api/spec-books/[documentId]/re-extract-titles?dryRun=true
 //
@@ -44,6 +45,10 @@ export async function POST(
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+
+  // TIER 2 cost guard (company-keyed, FAIL CLOSED) — see src/lib/ratelimit.ts.
+  const limited = await enforceAiLimit(supabase)
+  if (limited) return limited
 
   // Verify the document is accessible to the caller (RLS filters).
   const { data: doc, error: dErr } = await supabase

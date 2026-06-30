@@ -4,6 +4,7 @@ import { extractPdfWords, extractPdfBars } from "@/lib/schedule/pdf-words"
 import { parseScheduleWords } from "@/lib/schedule/import-parse"
 import { looksLikeCalendar, parseCalendarPages } from "@/lib/schedule/calendar-parse"
 import { parsePullPlanXlsx } from "@/lib/schedule/xlsx-parse"
+import { enforceAiLimit } from "@/lib/ratelimit"
 
 // ── POST /api/schedule-import/parse (ADR-012 + calendar + xlsx follow-ups) ────
 // Takes an uploaded schedule file (multipart `file`) and returns proposed task rows
@@ -35,6 +36,10 @@ export async function POST(req: NextRequest) {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+
+  // TIER 2 cost guard (company-keyed, FAIL CLOSED) — see src/lib/ratelimit.ts.
+  const limited = await enforceAiLimit(supabase)
+  if (limited) return limited
 
   let form: FormData
   try {

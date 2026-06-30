@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import Anthropic from "@anthropic-ai/sdk"
 import { isProjectTransmittalCopy } from "@/lib/storage-paths"
+import { enforceAiLimit } from "@/lib/ratelimit"
 
 export const maxDuration = 60
 
@@ -68,6 +69,11 @@ export async function GET(req: NextRequest) {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+
+  // TIER 2 cost guard (company-keyed, FAIL CLOSED). This is a GET, but it calls
+  // Claude Haiku, so it is intentionally in the expensive set — see ratelimit.ts.
+  const limited = await enforceAiLimit(supabase)
+  if (limited) return limited
 
   const q = req.nextUrl.searchParams.get("q")?.trim()
   if (!q) return NextResponse.json({ files: [] })
