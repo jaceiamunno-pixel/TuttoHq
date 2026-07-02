@@ -11,6 +11,7 @@ import { DrawingStatusBadge } from "../_shared/badges"
 import { inputCls, labelCls } from "../_shared/ui"
 import { presignAndUpload } from "@/lib/storage-upload"
 import { useNavRegion } from "@/components/keyboard-nav"
+import { SkeletonGrid } from "@/components/skeleton"
 import type { MarkupDoc } from "@/lib/drawing-markup"
 import dynamic from "next/dynamic"
 
@@ -764,8 +765,8 @@ export default function DrawingsModule({ globalProjectId, appProjects }: {
             const currentDrawings = drawings.filter(d => d.is_current)
             const allSuperseded   = drawings.filter(d => !d.is_current)
             return drawingsLoading ? (
-              <div className="flex items-center justify-center h-40 gap-2 text-[13px] text-[#64748B]">
-                <SpinnerIcon className="h-4 w-4" /> Loading…
+              <div className="px-4 py-4">
+                <SkeletonGrid count={10} cols="grid-cols-2 sm:grid-cols-3 lg:grid-cols-5" gap="gap-4" media={180} lines={2} />
               </div>
             ) : currentDrawings.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-full py-24 text-center">

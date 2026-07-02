@@ -10,6 +10,7 @@ import { computeCoTotals } from "../_shared/co-math"
 import { exportChangeOrderLogToExcel } from "../_shared/excel-export"
 import PcoBuilder from "./PcoBuilder"
 import PcoImportModal from "./PcoImportModal"
+import { SkeletonTable } from "@/components/skeleton"
 
 // Change Orders module — extracted verbatim from dashboard/page.tsx (Step 6 of the split).
 // State, handlers, action bar, content, and both modals are unchanged; the load
@@ -444,9 +445,7 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
       <div className="flex-1 overflow-y-auto min-h-0">
           {(
             coLoading ? (
-              <div className="flex items-center justify-center h-40 gap-2 text-[13px] text-[#64748B]">
-                <SpinnerIcon className="h-4 w-4" /> Loading…
-              </div>
+              <div className="mx-4 my-4"><SkeletonTable rows={8} cols={7} /></div>
             ) : (
               <div className="flex flex-col min-h-full">
                 {changeOrders.length === 0 ? (

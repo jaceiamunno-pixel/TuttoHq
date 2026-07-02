@@ -6,6 +6,7 @@ import { PlusIcon, SpinnerIcon, XIcon } from "../_shared/icons"
 import { inputCls, labelCls } from "../_shared/ui"
 import { VendorPicker } from "../_shared/vendor-picker"
 import { useNavRegion, useFocusTrap } from "@/components/keyboard-nav"
+import { SkeletonTable } from "@/components/skeleton"
 
 // Purchase Orders module — replaces the old Commitments nav entry. The list is
 // scoped to the ACTIVE project (the project in the route); the form still lets
@@ -377,9 +378,7 @@ export default function PurchaseOrdersModule({ appProjects, globalProjectId }: {
       {/* Content */}
       <div className="flex-1 overflow-y-auto min-h-0">
         {loading ? (
-          <div className="flex items-center justify-center h-40 gap-2 text-[13px] text-[#64748B]">
-            <SpinnerIcon className="h-4 w-4" /> Loading…
-          </div>
+          <div className="mx-4 my-4"><SkeletonTable rows={8} cols={6} /></div>
         ) : pos.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full py-24 text-center">
             <div className="w-14 h-14 rounded-2xl bg-[#7B9BB5]/10 border border-[#7B9BB5]/20 flex items-center justify-center mb-4">

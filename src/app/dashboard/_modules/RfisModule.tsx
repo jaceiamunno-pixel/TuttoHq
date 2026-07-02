@@ -8,6 +8,7 @@ import { RfiStatusBadge } from "../_shared/badges"
 import { inputCls, labelCls } from "../_shared/ui"
 import { presignAndUpload } from "@/lib/storage-upload"
 import { useNavRegion, useFocusTrap } from "@/components/keyboard-nav"
+import { SkeletonTable } from "@/components/skeleton"
 
 // RFI Log module — extracted verbatim from dashboard/page.tsx (Step 5 of the split).
 // State, handlers, action bar, content, and both modals are unchanged; the load
@@ -145,9 +146,7 @@ export default function RfisModule({ globalProjectId, appProjects, teamMembers }
       <div className="flex-1 overflow-y-auto min-h-0">
           {(
             rfisLoading ? (
-              <div className="flex items-center justify-center h-40 gap-2 text-[13px] text-[#64748B]">
-                <SpinnerIcon className="h-4 w-4" /> Loading…
-              </div>
+              <div className="mx-4 my-4"><SkeletonTable rows={8} cols={7} /></div>
             ) : rfis.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-full py-24 text-center">
                 <div className="w-14 h-14 rounded-2xl bg-[#7B9BB5]/10 border border-[#7B9BB5]/20 flex items-center justify-center mb-4">
