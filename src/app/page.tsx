@@ -7,7 +7,7 @@ import {
   CheckCircle2, XCircle, ChevronDown, ArrowRight,
   Folder, Mail, Bot, FileText, HelpCircle, DollarSign,
   CheckSquare, ClipboardList, LayoutGrid, Users, Building2,
-  Package, Zap, Star, Lock, CreditCard, BookOpen, Layers,
+  Package, Zap, Star, Lock, BookOpen, Layers,
   Receipt, Upload,
 } from "lucide-react"
 
@@ -88,10 +88,10 @@ function Navbar() {
             Sign In
           </Link>
           <Link
-            href="/signup"
+            href="/demo"
             className="text-[13px] font-bold text-white px-4 py-2 rounded-lg bg-[#7B9BB5] hover:bg-[#6A8AA4] transition-colors shadow-lg shadow-[#7B9BB5]/30"
           >
-            Start Free Trial
+            See the live demo
           </Link>
         </div>
       </nav>
@@ -370,8 +370,8 @@ const COMPARISON_ROWS: {
   { feature: "Training Required", tutto: "None", legacy: "Extensive" },
   {
     feature: "Pricing",
-    tutto: "Simple flat pricing, no per-user fees",
-    legacy: "Per-seat enterprise licensing",
+    tutto: "Talk to us",
+    legacy: "Heavyweight enterprise licensing",
   },
   { feature: "Built For", tutto: "General contractors", legacy: "Enterprise IT departments" },
   { feature: "Contract Required", tutto: "No", legacy: "Yes" },
@@ -382,14 +382,14 @@ const LEGACY_NEGATIVES = [
   "4–6 weeks",
   "Extensive",
   "Yes",
-  "Per-seat enterprise licensing",
+  "Heavyweight enterprise licensing",
   "Enterprise IT departments",
 ]
 
 const FAQS = [
   {
     q: "We already use a big enterprise platform. Is it worth switching?",
-    a: "If you're paying enterprise per-seat pricing and still managing some documents in email, yes. TuttoHQ takes under 10 minutes to set up. You can run both in parallel during your trial and decide.",
+    a: "If you're paying for a heavyweight enterprise platform and still managing some documents in email, yes. TuttoHQ takes minutes to set up. Start with the live demo, then run it alongside your current tools and decide.",
   },
   {
     q: "What if my team is not tech savvy?",
@@ -400,8 +400,8 @@ const FAQS = [
     a: "No. Start fresh with new projects going forward — or move a live project over with bulk import of approved submittals and CSV import for projects and team. You can add historical data at any time.",
   },
   {
-    q: "What happens after the free trial?",
-    a: "You continue on a simple flat plan — unlimited users, unlimited projects, no per-seat fees. If you decide it is not for you, cancel before the trial ends and you pay nothing. No calls required.",
+    q: "How do I get started?",
+    a: "Start with the live demo to see how it works on a real project, then reach out and we'll get your company set up.",
   },
   {
     q: "Is my data secure?",
@@ -470,7 +470,7 @@ const SCHEMA = {
       "@type": "SoftwareApplication",
       name: "TuttoHQ",
       description:
-        "TuttoHQ is construction document management software for general contractors. It reads and classifies submittals with AI by CSI MasterFormat division, ingests project spec books into a structured submittal log, manages a drawing log with an in-app viewer and markup, and tracks RFIs, change orders, purchase orders, punch lists, and daily reports — with one-click branded PDFs. Unlimited users, no per-seat fees, and no contracts.",
+        "TuttoHQ is construction document management software for general contractors. It reads and classifies submittals with AI by CSI MasterFormat division, ingests project spec books into a structured submittal log, manages a drawing log with an in-app viewer and markup, and tracks RFIs, change orders, purchase orders, punch lists, and daily reports — with one-click branded PDFs.",
       applicationCategory: "BusinessApplication",
       operatingSystem: "Web",
       url: "https://tuttohq.com",
@@ -524,7 +524,7 @@ export default function LandingPage() {
                 className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-[#7B9BB5]/10 border border-[#7B9BB5]/25 text-[13px] text-[#7B9BB5] font-semibold mb-8"
               >
                 <Zap className="w-3.5 h-3.5" />
-                AI-Powered Construction Document Management
+                Built by a general contractor
               </motion.div>
 
               {/* H1 */}
@@ -534,12 +534,11 @@ export default function LandingPage() {
                 transition={{ duration: 0.65, delay: 0.1, ease: [0.22, 1, 0.36, 1] }}
                 className="text-4xl sm:text-5xl lg:text-[64px] font-extrabold tracking-tight leading-[1.07] text-[#f0f4ff] mb-6"
               >
-                General Contractors Lose{" "}
+                Run your whole project in{" "}
                 <span className="text-transparent bg-clip-text bg-gradient-to-r from-[#7B9BB5] to-[#7B9BB5]">
-                  6 Hours Per Week
-                </span>{" "}
-                Managing Submittals in Email.{" "}
-                <span className="text-[#e8edf5]">TuttoHQ Gets That Time Back.</span>
+                  one place
+                </span>
+                .
               </motion.h1>
 
               {/* Subheadline */}
@@ -549,13 +548,9 @@ export default function LandingPage() {
                 transition={{ duration: 0.65, delay: 0.2, ease: [0.22, 1, 0.36, 1] }}
                 className="text-[17px] sm:text-[19px] text-[#8b9ab5] leading-relaxed mb-10 max-w-3xl mx-auto"
               >
-                TuttoHQ reads every submittal with AI, files it by CSI division, and keeps your spec
-                logs, drawings, RFIs, change orders, and POs in one place. The{" "}
-                <strong className="text-[#e8edf5]">
-                  affordable alternative to heavyweight enterprise platforms
-                </strong>{" "}
-                — built for GCs, not enterprise IT, and set up in{" "}
-                <strong className="text-[#e8edf5]">under 10 minutes</strong>.
+                Submittals, spec books, drawings, RFIs, change orders, POs, and daily reports —{" "}
+                <strong className="text-[#e8edf5]">every document your job runs on</strong>, in one
+                place. <strong className="text-[#e8edf5]">Built by a GC</strong>, not enterprise IT.
               </motion.p>
 
               {/* CTAs */}
@@ -566,16 +561,16 @@ export default function LandingPage() {
                 className="flex flex-col sm:flex-row gap-4 justify-center items-center mb-10"
               >
                 <Link
-                  href="/signup"
+                  href="/demo"
                   className="w-full sm:w-auto px-8 py-4 rounded-xl bg-[#7B9BB5] hover:bg-[#6A8AA4] text-white text-[15px] font-bold transition-all duration-200 shadow-xl shadow-[#7B9BB5]/25 hover:shadow-[#7B9BB5]/40 hover:scale-[1.02]"
                 >
-                  Start Your Free 14-Day Trial — No Credit Card Required
+                  See the live demo
                 </Link>
                 <a
                   href="#features"
                   className="flex items-center gap-2 text-[15px] text-[#8b9ab5] hover:text-[#e8edf5] transition-colors group"
                 >
-                  See It In Action{" "}
+                  See what&apos;s inside{" "}
                   <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
                 </a>
               </motion.div>
@@ -588,10 +583,10 @@ export default function LandingPage() {
                 className="flex flex-wrap justify-center gap-x-6 gap-y-2"
               >
                 {[
-                  "14-day free trial",
-                  "No credit card required",
-                  "Cancel anytime",
-                  "Set up in under 10 minutes",
+                  "See it live — no signup",
+                  "Built by a GC",
+                  "Every module in one place",
+                  "Set up in minutes",
                 ].map((t) => (
                   <div key={t} className="flex items-center gap-1.5 text-[13px] text-emerald-500">
                     <CheckCircle2 className="w-3.5 h-3.5 flex-shrink-0" />
@@ -883,7 +878,7 @@ export default function LandingPage() {
           <div className="max-w-xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
             <FadeUp>
               <h2 className="text-3xl sm:text-4xl lg:text-5xl font-extrabold text-[#f0f4ff] tracking-tight mb-4">
-                Simple, Flat Pricing. Unlimited Users. No Per-Seat Fees.
+                See it, then let&apos;s talk pricing.
               </h2>
             </FadeUp>
 
@@ -899,22 +894,13 @@ export default function LandingPage() {
                     The affordable, full-featured platform
                   </div>
 
-                  <p className="text-[20px] sm:text-[24px] font-extrabold text-[#f0f4ff] leading-snug mb-3">
-                    Pricing scales with your business — not your headcount.
-                  </p>
-                  <p className="text-[15px] text-[#8b9ab5] mb-10">
-                    No per-user fees, no feature tiers, no contracts, no surprises. Tell us about
-                    your team and we will give you a straight number.
+                  <p className="text-[16px] text-[#8b9ab5] leading-relaxed mb-10">
+                    Take a look at the live demo, then reach out — we&apos;ll talk through what fits
+                    your team.
                   </p>
 
                   <div className="grid sm:grid-cols-2 gap-3 mb-10 text-left">
                     {[
-                      "Unlimited team members",
-                      "Unlimited projects",
-                      "Unlimited submittals",
-                      "Free 14-day trial",
-                      "No credit card required",
-                      "Cancel anytime — no contracts",
                       "AI submittal classification",
                       "Spec book ingestion",
                       "Drawing log with markup",
@@ -930,10 +916,10 @@ export default function LandingPage() {
                   </div>
 
                   <Link
-                    href="/signup"
+                    href="/demo"
                     className="block w-full py-4 rounded-xl bg-[#7B9BB5] hover:bg-[#6A8AA4] text-white text-[16px] font-bold transition-all duration-200 shadow-xl shadow-[#7B9BB5]/25 hover:shadow-[#7B9BB5]/40 hover:scale-[1.01]"
                   >
-                    Start Your Free 14-Day Trial
+                    See the live demo
                   </Link>
                   <a
                     href="mailto:hello@tuttohq.com?subject=TuttoHQ%20pricing"
@@ -942,9 +928,6 @@ export default function LandingPage() {
                     <Mail className="w-4 h-4" />
                     Talk to us about pricing
                   </a>
-                  <p className="text-[12px] text-[#3d506a] mt-4">
-                    No credit card required · Cancel anytime
-                  </p>
                 </div>
               </div>
             </FadeUp>
@@ -989,22 +972,22 @@ export default function LandingPage() {
                 Every Week You Wait Is Another Week Of Submittal Chaos
               </h2>
               <p className="text-[17px] text-[#8b9ab5] mb-10 leading-relaxed">
-                Your competitors are already automating this. Start your free 14-day trial today.
-                No credit card. No commitment. No risk.
+                Your competitors are already automating this. See the whole platform live — no
+                signup, nothing to install.
               </p>
               <Link
-                href="/signup"
+                href="/demo"
                 className="inline-block px-10 py-5 rounded-xl bg-[#7B9BB5] hover:bg-[#6A8AA4] text-white text-[17px] font-bold transition-all duration-200 shadow-2xl shadow-[#7B9BB5]/25 hover:shadow-[#7B9BB5]/40 hover:scale-[1.02] mb-12"
               >
-                Start Free Trial — Takes Under 10 Minutes
+                See the live demo
               </Link>
 
               <div className="flex flex-wrap justify-center gap-x-8 gap-y-4">
                 {[
                   { icon: Lock, text: "Your data is encrypted and private" },
-                  { icon: CreditCard, text: "No credit card required to start" },
-                  { icon: XCircle, text: "Cancel anytime, no questions asked" },
-                  { icon: Zap, text: "Set up in under 10 minutes" },
+                  { icon: CheckCircle2, text: "No signup to look around" },
+                  { icon: Building2, text: "Built by a GC, for GCs" },
+                  { icon: Zap, text: "Set up in minutes" },
                 ].map(({ icon: Icon, text }) => (
                   <div key={text} className="flex items-center gap-2 text-[13px] text-[#4f617a]">
                     <Icon className="w-4 h-4" />

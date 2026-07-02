@@ -151,6 +151,29 @@ export async function checkWriteLimit(userKey: string): Promise<Tier1Verdict> {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export async function enforceAiLimit(supabase: SupabaseClient): Promise<NextResponse | null> {
+  // DEMO COST GATE — checked FIRST, before company_id resolution and before any
+  // Upstash call. The public read-only demo tenant (role='demo') must never
+  // INVOKE the expensive Claude / PDF-parse / OCR surface, even though
+  // migrations 0026/0027 already block the resulting writes at the DB. Placing
+  // this at the top of the single Tier-2 chokepoint covers the whole expensive
+  // surface from one place and cannot drift out of sync with the rate-limited
+  // set. Wrapped in try/catch — a failed is_demo_user() lookup must NOT 403 a
+  // real paying user, so on throw we fall through to the existing limiter
+  // (worst case: a demo user who slips an rpc error still hits the DB
+  // write-block + definer guards, so there is no data-integrity hole — only the
+  // cost protection degrades, and only during an rpc error).
+  try {
+    const { data: isDemo } = await supabase.rpc("is_demo_user")
+    if (isDemo === true) {
+      return NextResponse.json(
+        { error: "This action isn't available on the demo account." },
+        { status: 403 },
+      )
+    }
+  } catch {
+    // is_demo_user() lookup failed — treat as NOT demo and fall through.
+  }
+
   // Tier-2 key = company_id. Resolve it through the caller's authed client so
   // RLS / auth.uid() picks the tenant exactly as the route does.
   let companyId: string | null = null
