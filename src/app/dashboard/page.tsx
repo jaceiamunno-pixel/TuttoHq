@@ -6,6 +6,7 @@ import AppChrome from "@/components/app-chrome"
 import { createClient } from "@/lib/supabase/client"
 import { useNavRegion } from "@/components/keyboard-nav"
 import { useProjectFavorites, sortByFavorite } from "./_shared/use-project-favorites"
+import { SkeletonGrid } from "@/components/skeleton"
 import type { Project } from "./_shared/types"
 
 // ── Landing dashboard (ADR-006 Phase 2) ─────────────────────────────────────
@@ -65,7 +66,7 @@ export default function DashboardLanding() {
           </div>
 
           {loading ? (
-            <p className="text-[13px] text-[#64748B]">Loading…</p>
+            <SkeletonGrid count={6} lines={2} />
           ) : projects.length === 0 ? (
             <div className="bg-white rounded-xl border border-[#E2E8F0] px-6 py-12 text-center">
               <p className="text-[14px] font-semibold text-[#0F172A]">No projects yet</p>

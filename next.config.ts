@@ -1,6 +1,12 @@
 import type { NextConfig } from "next"
 
 const config: NextConfig = {
+  // Tree-shake the icon/motion barrels: only the components actually imported
+  // ship to the client instead of the whole package. Pure build-time transform.
+  experimental: {
+    optimizePackageImports: ["lucide-react", "framer-motion"],
+  },
+
   // sharp ships a native binary, and mupdf loads a sibling .wasm via
   // import.meta.url — keep both external so server bundles load them from
   // node_modules at runtime instead of webpack rewriting the asset path.

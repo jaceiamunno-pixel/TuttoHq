@@ -23,6 +23,7 @@ import PackagesView from "@/components/packages/PackagesView"
 import OverflowMenu, { type OverflowEntry } from "@/components/overflow-menu"
 import BulkImportModal from "@/components/bulk-import/BulkImportModal"
 import { useNavRegion, useFocusTrap } from "@/components/keyboard-nav"
+import { SkeletonTable } from "@/components/skeleton"
 
 // Status options for the inline Status dropdown in the submittal log.
 // "Sent to Sub" is the outbound-dispatch milestone (Session I).
@@ -1968,9 +1969,7 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
               <SpinnerIcon className="h-4 w-4" /> Searching…
             </div>
           ) : logLoading ? (
-            <div className="flex items-center justify-center h-40 gap-2 text-[13px] text-[#64748B]">
-              <SpinnerIcon className="h-4 w-4" /> Loading…
-            </div>
+            <div className="px-4 py-4"><SkeletonTable rows={8} cols={7} /></div>
           ) : displaySubmittals.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-full py-24 text-center">
               <div className="w-14 h-14 rounded-2xl bg-[#7B9BB5]/10 border border-[#7B9BB5]/20 flex items-center justify-center mb-4">
