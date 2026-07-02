@@ -32,7 +32,9 @@ const WRITE_METHODS = new Set(["POST", "PATCH", "PUT", "DELETE"])
 function isAuthSurface(path: string): boolean {
   // The login form talks straight to Supabase GoTrue (not through our API), so
   // the rate-limitable auth surface is our signup route + the OAuth routes.
-  return path.startsWith("/api/auth/") || path === "/api/signup"
+  // /api/demo creates an auth user on every unauthenticated POST, so it gets the
+  // same IP-keyed Tier-1 throttle to blunt bot-driven demo-account spam.
+  return path.startsWith("/api/auth/") || path === "/api/signup" || path === "/api/demo"
 }
 
 function clientIp(request: NextRequest): string {
@@ -148,11 +150,12 @@ export async function middleware(request: NextRequest) {
   // page; /api/invites/accept is the route that finalizes the link. Both
   // are token-gated, not session-gated — see accept_invite_link in
   // migrations.sql for the security model.
-  const PUBLIC_PATHS = ["/", "/signup", "/login", "/articles", "/sitemap.xml", "/robots.txt"]
+  const PUBLIC_PATHS = ["/", "/signup", "/login", "/demo", "/articles", "/sitemap.xml", "/robots.txt"]
   const isPublic =
     PUBLIC_PATHS.includes(path) ||
     path.startsWith("/api/auth") ||
     path === "/api/signup" ||
+    path === "/api/demo" ||
     path.startsWith("/invite/") ||
     path === "/api/invites/accept" ||
     path.startsWith("/articles/")
