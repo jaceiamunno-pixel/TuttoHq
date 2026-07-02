@@ -21,6 +21,24 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
   }
 
+  // DEMO COST GATE. /api/upload is the one compute-only PDF-parse surface that
+  // sits OUTSIDE the enforceAiLimit() chokepoint, so the read-only demo tenant
+  // (role='demo') is blocked here directly. Uses the authed client already built
+  // above. Fail-open in try/catch — a failed is_demo_user() lookup must never
+  // 403 a real paying user (worst case the DB write-block / definer guards still
+  // hold, so there's no data-integrity hole, only degraded cost protection).
+  try {
+    const { data: isDemo } = await supabase.rpc("is_demo_user")
+    if (isDemo === true) {
+      return NextResponse.json(
+        { error: "This action isn't available on the demo account." },
+        { status: 403 },
+      )
+    }
+  } catch {
+    // is_demo_user() lookup failed — treat as NOT demo and fall through.
+  }
+
   const body = await req.json().catch(() => null)
   if (!body) return NextResponse.json({ error: "Invalid request body" }, { status: 400 })
 
