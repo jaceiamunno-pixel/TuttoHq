@@ -33,6 +33,7 @@ export async function POST() {
   })
 
   if (authError || !authData?.user) {
+    console.error("demo: createUser failed:", authError)
     return NextResponse.json({ error: "Could not start demo" }, { status: 500 })
   }
 
@@ -53,6 +54,7 @@ export async function POST() {
   if (profileError) {
     // Roll back the auth user (cascades the profile) so a failed provision
     // never leaves an orphaned account. Mirrors the signup route's cleanup.
+    console.error("demo: user_profiles insert failed:", profileError)
     await admin.auth.admin.deleteUser(userId)
     return NextResponse.json({ error: "Could not start demo" }, { status: 500 })
   }
@@ -66,6 +68,7 @@ export async function POST() {
 
   if (signInError) {
     // Session never established — roll back so we don't strand a demo account.
+    console.error("demo: signInWithPassword failed:", signInError)
     await admin.auth.admin.deleteUser(userId)
     return NextResponse.json({ error: "Could not start demo" }, { status: 500 })
   }
