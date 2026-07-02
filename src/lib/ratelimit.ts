@@ -43,7 +43,7 @@ export const AUTH_LIMIT: LimitConfig = { tokens: 30, window: "60 s" }
 export const WRITE_LIMIT: LimitConfig = { tokens: 240, window: "60 s" }
 
 /** Tier 2 — expensive Claude / PDF-parse routes, keyed by company_id. */
-export const AI_PARSE_LIMIT: LimitConfig = { tokens: 60, window: "60 s" }
+export const AI_PARSE_LIMIT: LimitConfig = { tokens: 150, window: "60 s" }
 
 // ── Redis + limiter singletons (reused across warm invocations) ──────────────
 //
