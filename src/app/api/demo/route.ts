@@ -19,10 +19,11 @@ export async function POST() {
   const admin = createAdminClient()
 
   // Random, unguessable throwaway credentials. The password is used once, here,
-  // and is never returned to the client. Two UUIDs + a fixed complexity token
-  // clear any GoTrue password policy that may be enabled.
+  // and is never returned to the client. Complexity token + two UUIDs, capped at
+  // 72 chars: bcrypt rejects longer passwords and GoTrue's admin createUser
+  // surfaces that as a 500 unexpected_failure (verified: 72 works, 73 fails).
   const email = `demo+${crypto.randomUUID()}@tuttohq.com`
-  const password = `${crypto.randomUUID()}${crypto.randomUUID()}Aa1!`
+  const password = `Aa1!${crypto.randomUUID()}${crypto.randomUUID()}`.slice(0, 72)
 
   // Create the auth user with email pre-confirmed so sign-in works immediately.
   const { data: authData, error: authError } = await admin.auth.admin.createUser({
