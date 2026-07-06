@@ -27,14 +27,20 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
 
   // RLS-gated lookup: only returns the row if it belongs to the user's company.
   const { data: dwg, error: selErr } = await supabase
-    .from("drawing_log").select("id, drawing_number").eq("id", id).maybeSingle()
+    .from("drawing_log").select("id, drawing_number, project_id").eq("id", id).maybeSingle()
   if (selErr) return NextResponse.json({ error: "Database error" }, { status: 500 })
   if (!dwg) return NextResponse.json({ error: "Not found" }, { status: 404 })
 
   // Bulk delete by drawing_number is bounded to this company by the RLS DELETE
   // policy on drawing_log — the user client cannot reach other companies' rows.
+  // It must ALSO be bounded to this drawing's project: sheet numbers repeat across
+  // projects, so an unbounded delete would wipe same-numbered drawings company-wide.
+  // project_id is nullable (shelf drawings) and PostgREST .eq() never matches NULL,
+  // so use .is("project_id", null) for the shelf case.
   if (dwg.drawing_number) {
-    await supabase.from("drawing_log").delete().eq("drawing_number", dwg.drawing_number)
+    let del = supabase.from("drawing_log").delete().eq("drawing_number", dwg.drawing_number)
+    del = dwg.project_id == null ? del.is("project_id", null) : del.eq("project_id", dwg.project_id)
+    await del
   } else {
     await supabase.from("drawing_log").delete().eq("id", id)
   }

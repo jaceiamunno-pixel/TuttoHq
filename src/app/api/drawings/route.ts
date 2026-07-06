@@ -47,13 +47,24 @@ export async function POST(req: NextRequest) {
   const file_path = typeof fields.file_path === "string" ? fields.file_path.trim() || null : null
   const file_name = typeof fields.file_name === "string" ? fields.file_name.trim() || null : null
 
-  // Supersede any existing current revision for this drawing number
-  await supabase
+  // Supersede any existing current revision for this drawing number — bounded to
+  // THIS project so a new revision doesn't flip is_current on same-numbered sheets
+  // in other projects. project_id is nullable (shelf drawings); PostgREST .eq()
+  // never matches NULL, so use .is("project_id", null) for that case.
+  const supProjectId = project_id || null
+  let supersede = supabase
     .from("drawing_log")
     .update({ is_current: false, superseded_at: new Date().toISOString() })
     .eq("drawing_number", drawing_number.trim())
     .eq("is_current", true)
     .eq("uploaded_by", user.id)
+  supersede = supProjectId == null
+    ? supersede.is("project_id", null)
+    : supersede.eq("project_id", supProjectId)
+  const { error: supErr } = await supersede
+  // Best-effort: don't abort the insert on a supersede failure, but surface it
+  // instead of silently discarding (a failed supersede leaves two current rows).
+  if (supErr) console.error("drawing_log supersede failed", supErr)
 
   const { error } = await supabase.from("drawing_log").insert({
     drawing_number: drawing_number.trim(),
