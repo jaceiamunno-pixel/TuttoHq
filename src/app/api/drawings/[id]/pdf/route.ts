@@ -14,9 +14,16 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
   const { data: dwg, error } = await supabase.from("drawing_log").select("*").eq("id", id).single()
   if (error || !dwg) return NextResponse.json({ error: "Drawing not found" }, { status: 404 })
 
-  const { data: history } = await supabase.from("drawing_log")
+  // Revision history bounded to THIS drawing's project so same-numbered sheets from
+  // other projects don't merge in. project_id is nullable (shelf drawings) and
+  // PostgREST .eq() never matches NULL, so use .is("project_id", null) for that case.
+  let historyQ = supabase.from("drawing_log")
     .select("*").eq("drawing_number", dwg.drawing_number)
     .order("created_at", { ascending: false })
+  historyQ = dwg.project_id == null
+    ? historyQ.is("project_id", null)
+    : historyQ.eq("project_id", dwg.project_id)
+  const { data: history } = await historyQ
 
   let project: Record<string, string | null> = {}
   if (dwg.project_id) {
