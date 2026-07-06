@@ -15,6 +15,7 @@ import { SearchIcon, XIcon, PlusIcon, CheckIcon, SpinnerIcon, LayersIcon } from 
 import { StatusBadge } from "../_shared/badges"
 import { Combobox, inputCls, labelCls } from "../_shared/ui"
 import { presignAndUpload } from "@/lib/storage-upload"
+import { isProjectTransmittalCopy } from "@/lib/storage-paths"
 import { truncateForDisplay } from "@/lib/title-normalize"
 import { hashFileInBrowser } from "@/lib/file-hash"
 import { exportSubmittalLogToExcel } from "../_shared/excel-export"
@@ -334,6 +335,22 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
   const [coverProjectCms, setCoverProjectCms]             = useState<CoverContact[]>([])
   const [coverSelectedId, setCoverSelectedId]             = useState<string>("")
   const [showCoverPreview, setShowCoverPreview]           = useState(false)
+  // Batch cover-sheet queue — after a batch upload, "Add cover sheets" walks
+  // every uploaded PDF through the standard cover form one at a time. The
+  // project is picked ONCE on the first step and applies to the whole queue.
+  // null = no queue (single-file cover flows unchanged).
+  const [coverQueue, setCoverQueue]           = useState<OpenFileCtx[] | null>(null)
+  const [coverQueueIndex, setCoverQueueIndex] = useState(0)
+  // Guards the async generate path: closeFileModal() bumps this, so a
+  // /api/generate-cover response that resolves AFTER the user closed the modal
+  // (X / backdrop / Cancel) can't advance a dead queue or reopen the form
+  // from its stale closure. The download itself still completes.
+  const coverFlowSeq = useRef(0)
+  // Log rows whose stored file is ALREADY a generated transmittal
+  // (project-submittals/ copy) hide the attach-to choice: "original" there
+  // would merge the new cover onto the previous one and overwrite the row
+  // with a double-covered file. Those rows keep the stripped-copy source.
+  const [coverSourceLocked, setCoverSourceLocked] = useState(false)
   // Reviewer-stamp name. The generated coversheet stamps the user's
   // user_profiles.full_name as "Reviewed By". If it's not set yet, the cover
   // modal captures it inline (one-time) and saves via PATCH /api/profile before
@@ -465,7 +482,13 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
     setCoverForm(null)
   }
 
-  function closeFileModal() { setOpenFileCtx(null); setModalProjectId(""); setCoverForm(null); setCoverEditId(null) }
+  function closeFileModal() { coverFlowSeq.current++; setOpenFileCtx(null); setModalProjectId(""); setCoverForm(null); setCoverEditId(null); setCoverQueue(null); setCoverQueueIndex(0); setCoverSourceLocked(false) }
+
+  // Strip a real file extension off a display name. Deliberately NOT a
+  // generic /\.[^.]+$/ — Library display titles are normalized names that
+  // routinely end in decimals ('… — 0.625"'), which a bare last-dot strip
+  // would truncate onto the generated cover.
+  function stripFileExt(name: string) { return name.replace(/\.(pdf|docx?|xlsx?|dwg|rvt)$/i, "") }
 
   function openEditCoverSheet(s: SubmittalRecord) {
     const proj = appProjects.find(p => p.id === s.project_id)
@@ -478,12 +501,20 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
     })
     setModalProjectId(s.project_id ?? "")
     setCoverEditId(s.id)
+    // Rows already carrying a generated transmittal lose the attach-to choice
+    // entirely (see coverSourceLocked); other log rows just default safe.
+    setCoverSourceLocked(isProjectTransmittalCopy(s.storage_path))
     setCoverForm({
+      // Log rows default to the stripped Library copy: a previous cover
+      // generation may have REPLACED storage_path with a merged transmittal,
+      // so "original" here can stack the new cover on the old one. The radio
+      // in the form lets the user flip to the full stored file deliberately.
+      contentSource: "stripped",
       projectName: proj?.name ?? "", projectNumber: proj?.number ?? "",
       projectLocation: proj?.location ?? "", gcName: proj?.gc_name ?? "",
       architect: proj?.architect ?? "", specSectionNo: s.csi_section ?? "",
       specSectionTitle: s.section_name ?? "",
-      description: s.file_name.replace(/\.[^.]+$/, ""),
+      description: stripFileExt(s.file_name),
       dateSubmitted: today, submittalNo: s.submittal_number ?? "1",
       revisionNo: s.revision_number ?? "00", dueDate: s.due_date ?? "",
       isCritical: s.is_critical ?? false, partyRequired: s.party_required ?? false,
@@ -521,15 +552,66 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
     setCoverProjectCms(cmsRes.ok ? await cmsRes.json() : [])
   }
 
-  function initCoverForm() {
-    if (!openFileCtx) return
+  // ctxArg — the batch cover queue advances by passing the NEXT item's ctx
+  // directly (setOpenFileCtx hasn't flushed yet inside the same handler).
+  // Plain clicks omit it and use the openFileCtx state as before.
+  function initCoverForm(ctxArg?: OpenFileCtx) {
+    const ctx = ctxArg ?? openFileCtx
+    if (!ctx) return
     const proj = appProjects.find(p => p.id === modalProjectId)
     const today = new Date().toLocaleDateString("en-US", { month: "2-digit", day: "2-digit", year: "numeric" })
     const myName = teamMembers.find(m => m.email === userEmail)?.name ?? userEmail ?? ""
     setCoverSelectedId("")
-    setCoverForm({ projectName: proj?.name ?? "", projectNumber: proj?.number ?? "", projectLocation: proj?.location ?? "", gcName: proj?.gc_name ?? "", architect: proj?.architect ?? "", specSectionNo: openFileCtx.secCode, specSectionTitle: openFileCtx.secName, description: openFileCtx.file.file_name.replace(/\.[^.]+$/, ""), dateSubmitted: today, submittalNo: "1", revisionNo: "00", dueDate: "", isCritical: false, partyRequired: false, copyTo: "", reviewedBy: "", certifiedBy: "", notes: "", sendToType: "", sendToCompany: "", sendToContact: "", sendToEmail: "", sendToPhone: "", sendToAddress: "", transmittedBy: myName, transmittedByCompany: proj?.gc_name ?? "" })
+    setCoverSourceLocked(false)
+    setCoverForm({ contentSource: "original", projectName: proj?.name ?? "", projectNumber: proj?.number ?? "", projectLocation: proj?.location ?? "", gcName: proj?.gc_name ?? "", architect: proj?.architect ?? "", specSectionNo: ctx.secCode, specSectionTitle: ctx.secName, description: stripFileExt(ctx.file.file_name), dateSubmitted: today, submittalNo: "1", revisionNo: "00", dueDate: "", isCritical: false, partyRequired: false, copyTo: "", reviewedBy: "", certifiedBy: "", notes: "", sendToType: "", sendToCompany: "", sendToContact: "", sendToEmail: "", sendToPhone: "", sendToAddress: "", transmittedBy: myName, transmittedByCompany: proj?.gc_name ?? "" })
     setFileModalStep("form")
     if (modalProjectId) loadCoverContacts(modalProjectId)
+  }
+
+  // ── Batch cover-sheet queue ────────────────────────────────────────────────
+  // Built from the batch modal's "done" phase: every successfully uploaded PDF
+  // (we have its new submittals row id) becomes a queue entry. Eligibility is
+  // keyed on the mime the row was STORED with (from the /api/upload response),
+  // because that's the exact gate /api/generate-cover merges on — a filename
+  // check would admit rows the server then silently returns cover-only for.
+  function isCoverableBatchItem(it: BatchItem): boolean {
+    return it.status === "done" && !!it.submittalId && it.uploadedMime === "application/pdf"
+  }
+  function startBatchCoverQueue() {
+    const entries: OpenFileCtx[] = batchItems
+      .filter(isCoverableBatchItem)
+      .map(it => ({
+        file: {
+          id: it.submittalId!,
+          file_name: it.uploadedName || it.customName || it.file.name,
+          file_url: "",
+          mime_type: "application/pdf",
+          file_size: it.file.size,
+          created_at: new Date().toISOString(),
+        },
+        divNum: it.divNum, divName: it.divName, secCode: it.secCode, secName: it.secName,
+      }))
+    if (entries.length === 0) return
+    closeBatch()
+    setCoverQueue(entries)
+    setCoverQueueIndex(0)
+    setCoverEditId(null)
+    setCoverForm(null)
+    setOpenFileCtx(entries[0])
+    setModalProjectId(globalProjectId || "")
+    setFileModalStep("project")
+  }
+
+  // Advance to the next queued document (re-initializing the form for it).
+  // Returns false when there is no queue / no next item — the caller closes
+  // the modal as usual.
+  function advanceCoverQueue(): boolean {
+    if (!coverQueue || coverQueueIndex + 1 >= coverQueue.length) return false
+    const next = coverQueue[coverQueueIndex + 1]
+    setCoverQueueIndex(coverQueueIndex + 1)
+    setOpenFileCtx(next)
+    initCoverForm(next)
+    return true
   }
 
   function openTransmittal(s: SubmittalRecord) {
@@ -541,15 +623,19 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
     const pid = s.project_id ?? ""
     setModalProjectId(pid)
     setCoverEditId(s.id)
+    setCoverSourceLocked(isProjectTransmittalCopy(s.storage_path))
     const proj = appProjects.find(p => p.id === pid)
     const today = new Date().toLocaleDateString("en-US", { month: "2-digit", day: "2-digit", year: "numeric" })
     const myName = teamMembers.find(m => m.email === userEmail)?.name ?? userEmail ?? ""
     setCoverForm({
+      // Same rationale as openEditCoverSheet: log-row storage_path may already
+      // be a merged transmittal, so default to the clean stripped copy.
+      contentSource: "stripped",
       projectName: proj?.name ?? "", projectNumber: proj?.number ?? "",
       projectLocation: proj?.location ?? "", gcName: proj?.gc_name ?? "",
       architect: proj?.architect ?? "", specSectionNo: s.csi_section ?? "",
       specSectionTitle: s.section_name ?? "",
-      description: s.file_name.replace(/\.[^.]+$/, ""),
+      description: stripFileExt(s.file_name),
       dateSubmitted: today, submittalNo: s.submittal_number ?? "1",
       revisionNo: s.revision_number ?? "00", dueDate: s.due_date ?? "",
       isCritical: s.is_critical ?? false, partyRequired: s.party_required ?? false,
@@ -591,6 +677,7 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
     }
 
     setGeneratingCover(true)
+    const flowSeq = coverFlowSeq.current
     try {
       const res = await fetch("/api/generate-cover", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ submittalId: openFileCtx.file.id, projectId: modalProjectId || null, existingId: coverEditId || null, ...coverForm }) })
       if (!res.ok) {
@@ -601,14 +688,22 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
       const url = URL.createObjectURL(blob)
       const a = document.createElement("a")
       a.href = url
-      a.download = openFileCtx.file.file_name.replace(/\.[^.]+$/, "") + "_transmittal.pdf"
+      a.download = stripFileExt(openFileCtx.file.file_name) + "_transmittal.pdf"
       document.body.appendChild(a)
       a.click()
       document.body.removeChild(a)
       URL.revokeObjectURL(url)
+      // The user closed the modal (X / backdrop / Cancel) while the PDF was
+      // generating — this closure's queue/index are stale. Keep the download,
+      // touch nothing else.
+      if (coverFlowSeq.current !== flowSeq) return
       const pid = modalProjectId
-      closeFileModal()
-      if (pid) loadSubmittals(pid)
+      // Queue mode: move straight to the next uploaded document's form instead
+      // of closing. The log refresh waits for the final item.
+      if (!advanceCoverQueue()) {
+        closeFileModal()
+        if (pid) loadSubmittals(pid)
+      }
     } catch (err) {
       alert("Failed to generate transmittal: " + (err instanceof Error ? err.message : "Unknown error"))
     } finally { setGeneratingCover(false) }
@@ -1349,7 +1444,13 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
             file_sha256:   item.fileSha256 || null,
           }),
         })
-        updateBatchItem(item.id, { status: res.ok ? "done" : "upload-error", errorMsg: res.ok ? undefined : "Upload failed" })
+        // Keep the new row's id + normalized display title + stored mime —
+        // they let the post-upload "Add cover sheets" queue target each
+        // document directly and gate eligibility on the DB's own mime value.
+        const data = await res.json().catch(() => ({}))
+        updateBatchItem(item.id, res.ok
+          ? { status: "done", submittalId: data.record?.id, uploadedName: data.record?.file_name, uploadedMime: data.record?.mime_type ?? null }
+          : { status: "upload-error", errorMsg: "Upload failed" })
       } catch (err) {
         console.error(`[library] upload failed for ${item.file.name}`, err)
         updateBatchItem(item.id, { status: "upload-error", errorMsg: "Network error" })
@@ -1422,6 +1523,22 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
       // log views. Attaching a Library file to a project (with a cover sheet)
       // is a separate, explicit per-row action, never an upload side effect.
       loadSubmittals()
+
+      // Offer a cover sheet for the just-uploaded PDF right away — same modal
+      // flow the row's Cover button opens, so the user doesn't have to hunt
+      // the new row down. Declining is one click (Cancel / click-outside).
+      const rec = data.record
+      if (rec?.id && rec.mime_type === "application/pdf") {
+        handleFileOpen(
+          {
+            id: rec.id, file_name: rec.file_name, file_url: "",
+            mime_type: rec.mime_type, file_size: rec.file_size ?? null,
+            created_at: rec.created_at ?? new Date().toISOString(),
+          },
+          rec.csi_division ?? uploadDiv, rec.division_name ?? uploadDivName,
+          rec.csi_section ?? uploadSec, rec.section_name ?? uploadSecName,
+        )
+      }
     } catch (err) {
       setUploadError(err instanceof Error ? err.message : "Upload failed")
     } finally {
@@ -2550,19 +2667,25 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
       {openFileCtx && fileModalStep === "project" && (
         <div
           className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center"
-          onClick={e => { if (e.target === e.currentTarget) closeFileModal() }}
+          onClick={e => { if (e.target === e.currentTarget && !coverQueue) closeFileModal() }}
         >
           <div className="bg-white rounded-xl border border-[#E2E8F0] shadow-2xl w-full sm:w-[460px] mx-4 sm:mx-0 p-6">
             <div className="flex items-center justify-between mb-1">
-              <h2 className="text-[15px] font-bold text-[#0F172A]">Open Submittal</h2>
+              <h2 className="text-[15px] font-bold text-[#0F172A]">{coverQueue ? "Add Cover Sheets" : "Open Submittal"}</h2>
               <button onClick={closeFileModal} className="text-[#64748B] hover:text-[#64748B] transition-colors">
                 <XIcon className="h-4 w-4" />
               </button>
             </div>
-            <p className="text-[12px] text-[#64748B] mb-4 truncate">{openFileCtx.file.file_name}</p>
+            <p className="text-[12px] text-[#64748B] mb-4 truncate">
+              {coverQueue
+                ? `${coverQueue.length} uploaded document${coverQueue.length !== 1 ? "s" : ""} — you'll get a prefilled cover form for each`
+                : openFileCtx.file.file_name}
+            </p>
 
             <div className="mb-4">
-              <label className="block text-[12px] font-medium text-[#64748B] mb-1">Which project is this for?</label>
+              <label className="block text-[12px] font-medium text-[#64748B] mb-1">
+                {coverQueue ? "Which project are these for? (printed on every cover — applies to all)" : "Which project is this for?"}
+              </label>
               <select
                 value={modalProjectId}
                 onChange={e => setModalProjectId(e.target.value)}
@@ -2585,14 +2708,16 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                 Cancel
               </button>
               <div className="flex gap-2">
+                {!coverQueue && (
+                  <button
+                    onClick={openFileDirectly}
+                    className="h-8 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#64748B] hover:bg-[#0F172A]/[0.04] transition-colors"
+                  >
+                    Skip &amp; Open
+                  </button>
+                )}
                 <button
-                  onClick={openFileDirectly}
-                  className="h-8 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#64748B] hover:bg-[#0F172A]/[0.04] transition-colors"
-                >
-                  Skip &amp; Open
-                </button>
-                <button
-                  onClick={() => setFileModalStep("coversheet")}
+                  onClick={() => coverQueue ? initCoverForm() : setFileModalStep("coversheet")}
                   className="h-8 px-4 rounded-md bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors"
                 >
                   Continue →
@@ -2606,7 +2731,7 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
       {openFileCtx && fileModalStep === "coversheet" && (
         <div
           className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center"
-          onClick={e => { if (e.target === e.currentTarget) closeFileModal() }}
+          onClick={e => { if (e.target === e.currentTarget && !coverQueue) closeFileModal() }}
         >
           <div className="bg-white rounded-xl border border-[#E2E8F0] shadow-2xl w-full sm:w-[460px] mx-4 sm:mx-0 p-6">
             <div className="flex items-center justify-between mb-1">
@@ -2623,7 +2748,7 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
             </p>
             <div className="flex flex-col gap-2">
               <button
-                onClick={initCoverForm}
+                onClick={() => initCoverForm()}
                 className="h-9 px-4 rounded-md bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors"
               >
                 Yes, add cover sheet
@@ -2648,11 +2773,18 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
       {openFileCtx && fileModalStep === "form" && coverForm && (
         <div
           className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center"
-          onClick={e => { if (e.target === e.currentTarget) closeFileModal() }}
+          onClick={e => { if (e.target === e.currentTarget && !coverQueue) closeFileModal() }}
         >
           <div className="bg-white rounded-xl border border-[#E2E8F0] shadow-2xl w-full sm:w-[680px] mx-4 sm:mx-0">
             <div className="flex items-center justify-between px-6 pt-5 pb-4 border-b border-[#E2E8F0]">
-              <h2 className="text-[15px] font-bold text-[#0F172A]">Submittal Transmittal</h2>
+              <div className="min-w-0">
+                <h2 className="text-[15px] font-bold text-[#0F172A]">Submittal Transmittal</h2>
+                {coverQueue && (
+                  <p className="text-[11px] text-[#64748B] truncate">
+                    Document {coverQueueIndex + 1} of {coverQueue.length} — {openFileCtx.file.file_name}
+                  </p>
+                )}
+              </div>
               <button onClick={closeFileModal} className="text-[#64748B] hover:text-[#64748B] transition-colors">
                 <XIcon className="h-4 w-4" />
               </button>
@@ -2660,6 +2792,43 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
 
             <form onSubmit={handleGenerateCover}>
               <div className="px-6 py-4 space-y-3 overflow-y-auto max-h-[75vh]">
+
+                {/* Which stored copy the cover is merged onto. Only PDFs get a
+                    merge at all, so the choice is hidden for other types —
+                    and for log rows whose stored file is already a generated
+                    transmittal (coverSourceLocked), where "original" would
+                    stack the new cover on the previous one. */}
+                {openFileCtx.file.mime_type === "application/pdf" && !coverSourceLocked && (
+                  <div className="rounded-lg border border-[#E2E8F0] bg-[#F8F9FA] px-3 py-2.5">
+                    <label className={labelCls}>Attach cover to</label>
+                    <div className="flex flex-col gap-1.5">
+                      <label className="flex items-start gap-2 cursor-pointer">
+                        <input
+                          type="radio" name="coverContentSource"
+                          checked={coverForm.contentSource === "original"}
+                          onChange={() => setCoverForm(prev => ({ ...prev!, contentSource: "original" }))}
+                          className="mt-0.5 accent-[#7B9BB5]"
+                        />
+                        <span className="text-[12px] text-[#0F172A]">
+                          Original (w/ stamp)
+                          <span className="text-[#64748B]"> — the full stored document, nothing removed</span>
+                        </span>
+                      </label>
+                      <label className="flex items-start gap-2 cursor-pointer">
+                        <input
+                          type="radio" name="coverContentSource"
+                          checked={coverForm.contentSource === "stripped"}
+                          onChange={() => setCoverForm(prev => ({ ...prev!, contentSource: "stripped" }))}
+                          className="mt-0.5 accent-[#7B9BB5]"
+                        />
+                        <span className="text-[12px] text-[#0F172A]">
+                          Library copy
+                          <span className="text-[#64748B]"> — detected front matter (old coversheet / stamp pages) removed; uses the original when nothing was stripped (stripping can take a minute right after upload)</span>
+                        </span>
+                      </label>
+                    </div>
+                  </div>
+                )}
 
                 <div className="flex flex-col sm:flex-row gap-3">
                   <div className="flex-[2]">
@@ -2910,8 +3079,18 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                   onClick={closeFileModal}
                   className="h-8 px-4 rounded-md border border-[#E2E8F0] text-[13px] text-[#64748B] hover:bg-[#0F172A]/[0.04] transition-colors"
                 >
-                  Cancel
+                  {coverQueue ? "Cancel all" : "Cancel"}
                 </button>
+                {coverQueue && (
+                  <button
+                    type="button"
+                    disabled={generatingCover || savingStampName}
+                    onClick={() => { if (!advanceCoverQueue()) closeFileModal() }}
+                    className="h-8 px-4 rounded-md border border-[#E2E8F0] text-[13px] text-[#64748B] hover:bg-[#0F172A]/[0.04] transition-colors disabled:opacity-50"
+                  >
+                    Skip this document
+                  </button>
+                )}
                 <button
                   type="submit"
                   disabled={generatingCover || savingStampName}
@@ -3660,12 +3839,18 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                   {batchPhase === "done" && (() => {
                     const done = batchItems.filter(it => it.status === "done").length
                     const errs = batchItems.filter(it => it.status === "upload-error").length
+                    const coverable = batchItems.filter(isCoverableBatchItem).length
                     return (
                       <div className="mt-3 rounded-lg border border-[#E2E8F0] bg-[#F4F5F7] px-4 py-3 text-center">
                         <p className="text-[13px] font-semibold text-[#0F172A]">
                           {done} file{done !== 1 ? "s" : ""} uploaded successfully
                           {errs > 0 && <span className="text-red-400"> · {errs} failed</span>}
                         </p>
+                        {coverable > 0 && (
+                          <p className="text-[12px] text-[#64748B] mt-1">
+                            Want transmittal cover sheets? &ldquo;Add cover sheets&rdquo; walks you through a prefilled form for each uploaded PDF.
+                          </p>
+                        )}
                       </div>
                     )
                   })()}
@@ -3710,6 +3895,17 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                     <SpinnerIcon className="h-3.5 w-3.5" /> Uploading…
                   </div>
                 )}
+                {batchPhase === "done" && (() => {
+                  const coverable = batchItems.filter(isCoverableBatchItem).length
+                  return coverable > 0 ? (
+                    <button
+                      onClick={startBatchCoverQueue}
+                      className="h-8 px-5 rounded-md bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors"
+                    >
+                      Add cover sheets ({coverable})
+                    </button>
+                  ) : null
+                })()}
               </div>
             </div>
           </div>
