@@ -524,7 +524,7 @@ export default function LandingPage() {
                 className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-[#7B9BB5]/10 border border-[#7B9BB5]/25 text-[13px] text-[#7B9BB5] font-semibold mb-8"
               >
                 <Zap className="w-3.5 h-3.5" />
-                Built by a general contractor
+                Built with a working commercial GC
               </motion.div>
 
               {/* H1 */}
@@ -550,7 +550,7 @@ export default function LandingPage() {
               >
                 Submittals, spec books, drawings, RFIs, change orders, POs, and daily reports —{" "}
                 <strong className="text-[#e8edf5]">every document your job runs on</strong>, in one
-                place. <strong className="text-[#e8edf5]">Built by a GC</strong>, not enterprise IT.
+                place. <strong className="text-[#e8edf5]">Built with a working commercial GC</strong>, not enterprise IT.
               </motion.p>
 
               {/* CTAs */}
@@ -584,7 +584,7 @@ export default function LandingPage() {
               >
                 {[
                   "See it live — no signup",
-                  "Built by a GC",
+                  "Built with a working GC",
                   "Every module in one place",
                   "Set up in minutes",
                 ].map((t) => (
@@ -986,7 +986,7 @@ export default function LandingPage() {
                 {[
                   { icon: Lock, text: "Your data is encrypted and private" },
                   { icon: CheckCircle2, text: "No signup to look around" },
-                  { icon: Building2, text: "Built by a GC, for GCs" },
+                  { icon: Building2, text: "Built with a working GC, for GCs" },
                   { icon: Zap, text: "Set up in minutes" },
                 ].map(({ icon: Icon, text }) => (
                   <div key={text} className="flex items-center gap-2 text-[13px] text-[#4f617a]">
