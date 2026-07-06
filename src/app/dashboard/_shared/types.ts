@@ -105,7 +105,13 @@ export interface BatchItemDupeMatch {
     project_id: string | null; project_name: string | null; count: number;
   }>
 }
-export interface BatchItem { id: string; file: File; status: BatchStatus; divNum: string; divName: string; secCode: string; secName: string; nameMatl: string; nameMfr: string; nameDims: string; customName: string; expanded: boolean; errorMsg?: string; storagePath?: string; fileSha256?: string; dupeMatch?: BatchItemDupeMatch }
+// submittalId / uploadedName / uploadedMime — set once /api/upload succeeds
+// (the new submittals row id, its normalized display title, and the mime the
+// row was stored with). They feed the post-batch "Add cover sheets" queue so
+// each uploaded doc can get a cover without hunting its Library row down;
+// uploadedMime is the queue's eligibility gate — it must match the DB value
+// /api/generate-cover checks, NOT the filename extension.
+export interface BatchItem { id: string; file: File; status: BatchStatus; divNum: string; divName: string; secCode: string; secName: string; nameMatl: string; nameMfr: string; nameDims: string; customName: string; expanded: boolean; errorMsg?: string; storagePath?: string; fileSha256?: string; dupeMatch?: BatchItemDupeMatch; submittalId?: string; uploadedName?: string; uploadedMime?: string | null }
 
 export interface Project { id: string; name: string; number: string | null; location: string | null; gc_name: string | null; architect: string | null; short_id?: string | null; base_contract_value?: number | null }
 export interface TeamMember { id: string; name: string; title: string | null; email: string | null }
@@ -429,5 +435,11 @@ export interface CloseoutPackageDetail extends CloseoutPackage {
 }
 export type FileModalStep = "project" | "coversheet" | "form"
 export interface OpenFileCtx { file: SubmittalFile; divNum: string; divName: string; secCode: string; secName: string }
-export interface CoverFormData { projectName: string; projectNumber: string; projectLocation: string; gcName: string; architect: string; specSectionNo: string; specSectionTitle: string; description: string; dateSubmitted: string; submittalNo: string; revisionNo: string; dueDate: string; isCritical: boolean; partyRequired: boolean; copyTo: string; reviewedBy: string; certifiedBy: string; notes: string; sendToType: "cm" | "subcontractor" | "supplier" | ""; sendToCompany: string; sendToContact: string; sendToEmail: string; sendToPhone: string; sendToAddress: string; transmittedBy: string; transmittedByCompany: string }
+// contentSource — which stored copy of the document the generated cover is
+// merged onto: "original" = storage_path (the full file exactly as uploaded,
+// incl. any existing coversheet/stamp pages); "stripped" = the strip-at-upload
+// Library copy when one exists (server falls back to the original when none was
+// stripped). The form defaults to "original".
+export type CoverContentSource = "original" | "stripped"
+export interface CoverFormData { contentSource: CoverContentSource; projectName: string; projectNumber: string; projectLocation: string; gcName: string; architect: string; specSectionNo: string; specSectionTitle: string; description: string; dateSubmitted: string; submittalNo: string; revisionNo: string; dueDate: string; isCritical: boolean; partyRequired: boolean; copyTo: string; reviewedBy: string; certifiedBy: string; notes: string; sendToType: "cm" | "subcontractor" | "supplier" | ""; sendToCompany: string; sendToContact: string; sendToEmail: string; sendToPhone: string; sendToAddress: string; transmittedBy: string; transmittedByCompany: string }
 export interface CoverContact { id: string; company_name: string; contact_name: string | null; email: string | null; phone: string | null; address?: string | null }

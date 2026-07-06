@@ -17,6 +17,7 @@ export async function POST(req: NextRequest) {
     submittalId,
     projectId,
     existingId,
+    contentSource,
     projectName,
     projectNumber,
     projectLocation,
@@ -125,15 +126,20 @@ export async function POST(req: NextRequest) {
         .eq("id", submittalId)
         .maybeSingle()
 
-      // Build the transmittal on the STRIPPED copy (clean product, old
-      // coversheet removed) when one exists; fall back to the original when
-      // nothing was stripped (raw datasheet — already clean product; or a
-      // deferred image-cover — original is the only content available).
-      // This keeps the merged output [new TuttoHQ cover] → [clean product]
-      // instead of stacking the new cover on top of the old coversheet.
-      const contentPath = submittalRow?.stripped_storage_path || submittalRow?.storage_path
+      // Which stored copy the cover is merged onto is the CALLER's choice:
+      //   contentSource "original" → storage_path, the record-of-truth file
+      //     exactly as uploaded ("Original (w/ stamp)" — incl. any existing
+      //     coversheet/stamp pages).
+      //   contentSource "stripped" (or absent — legacy callers) → the
+      //     strip-at-upload Library copy when one exists, falling back to the
+      //     original when nothing was stripped (raw datasheet, or a deferred
+      //     image-cover). This keeps that output [new cover] → [clean product]
+      //     instead of stacking the new cover on the old coversheet.
+      const contentPath = contentSource === "original"
+        ? submittalRow?.storage_path
+        : (submittalRow?.stripped_storage_path || submittalRow?.storage_path)
 
-      if (contentPath && submittalRow.mime_type === "application/pdf") {
+      if (contentPath && submittalRow?.mime_type === "application/pdf") {
         const { data: submittalBlob } = await supabase.storage
           .from("submittals")
           .download(contentPath)
