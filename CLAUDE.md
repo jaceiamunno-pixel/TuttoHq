@@ -11,7 +11,7 @@ A separate Obsidian vault contains all product strategy, feature specs, customer
 **Read the vault when:**
 - Starting any feature work → read `00 - Meta\CLAUDE.md` first for product context
 - Working on a specific feature → read `01 - Features\[feature name].md`
-- Making architectural decisions → check `04 - Decisions\` for existing ADRs
+- Making architectural decisions → **only ADR-001 and ADR-002 live in the vault** (`04 - Decisions\`, locked). **ADR-003 onward live in Notion** (TuttoHQ Vault → ADRs, DRAFT/design-first: ADR-003 through ADR-014+). Check Notion for anything numbered 003+.
 - A customer is mentioned → check `03 - Customers\[customer].md`
 - Looking for product roadmap or priorities → read `00 - Meta\Roadmap.md`
 
@@ -27,6 +27,34 @@ npx tsc --noEmit  # Type-check without building
 
 There are no tests. TypeScript is the primary correctness check — always run `npx tsc --noEmit` before committing.
 
+## Worktrees
+
+**One task = one worktree.** Never run parallel tasks in the main checkout — concurrent sessions in the same tree cause mixed-commit sweeps (unrelated changes landing in the wrong commit).
+
+- Create with the **`/worktree <slug>`** skill — it does the full careful bootstrap: fetch, confirm `origin/master` is green (Vercel commit status), `git worktree add ../ttq-<slug>`, **junction** `node_modules` from the main checkout (Windows junction, not symlink), **copy `.env.local`**, assign a free dev port, and run a `tsc` smoke check.
+- `node_modules` is junctioned, so **never `npm install` inside a worktree** — install once in the main checkout and every worktree sees it.
+- `.env.local` is git-ignored and per-checkout; a fresh worktree has none until copied. **Missing `.env.local` is the #1 repeated failure — the dev server 500s on every request.**
+- **Never commit from the main checkout while other worktree sessions are active.** Commit from the task's own worktree. The SessionStart hook (`.claude/hooks/session-status.ps1`) warns when you're sitting in the main checkout with other worktrees present, and when a merge/rebase is mid-flight.
+- Worktrees live at `../ttq-<slug>` (siblings of the repo). Remove finished ones with `git worktree remove <path>`.
+
+## Windows shell rules
+
+Dev environment is **Windows + PowerShell 5.1** (Windows PowerShell, *not* PS7). Two shells are available — the **PowerShell tool** (PS 5.1) and the **Bash tool** (Git Bash / POSIX sh). Pick per task:
+
+- **Use the Bash tool for:** git commits with multi-line messages (heredoc), `tsc`/build output filtering, and anything with pipes. PS 5.1 wraps a native command's stderr in ErrorRecords and flips `$?` to `$false` even on exit 0 when you redirect/pipe it — so piping native tools through PowerShell is error-prone.
+- **Use the PowerShell tool for:** Windows-only operations — junctions (`New-Item -ItemType Junction`), `.env.local` copies, and process/port management.
+- **PS 5.1 has no** `&&` / `||`, ternary (`?:`), or null-coalescing (`??`). Chain with `;` then `if ($?) { ... }`.
+- **`pkill` / `kill` do NOT stop Windows processes.** To kill a dev server on a port: `Get-NetTCPConnection -LocalPort <port> | Select-Object -Expand OwningProcess | Stop-Process -Force`.
+
+## Migration lifecycle
+
+SQL migrations live in `sql/migrations.sql`. **The Supabase MCP is READ-ONLY — it cannot run DDL/DML.** To apply a migration:
+
+1. Write the SQL (idempotent where possible) into `sql/migrations.sql`.
+2. **Hand Jace the SQL to run in the Supabase SQL Editor** — you cannot run it yourself.
+3. After Jace runs it, **verify via introspection** — read-only MCP queries against `information_schema` / `pg_policies` — that the table/column/policy actually landed.
+4. Every new table needs explicit SELECT/INSERT/UPDATE/**DELETE** policies (see RLS pattern below).
+
 ## Stack
 
 - **Next.js 15** App Router, TypeScript, Tailwind CSS v4
@@ -37,22 +65,21 @@ There are no tests. TypeScript is the primary correctness check — always run `
 
 ## Architecture
 
-### Dashboard shell + modules
-`src/app/dashboard/page.tsx` is a thin (~290-line) `"use client"` **shell**. It owns the horizontal top module nav, the slim left sidebar (project selector, Settings, sign-out), shared state (`activeModule`, `globalProjectId`, auth, projects, team), and renders the active module. On mobile the top nav collapses to a hamburger dropdown; the project selector stays visible.
+### Project-first IA (ADR-006)
+The app is **project-first**, routed under `/projects/[id]/...` — *not* a single dashboard "module shell." (The old top-nav-with-`activeModule`-state shell described in earlier versions of this file was replaced by the ADR-006 router migration.) Key surfaces:
 
-Module code lives in `src/app/dashboard/_modules/` — one self-contained component each: `LibrarySubmittalsModule` (handles both the cross-project Library and the project-scoped Submittal Log), `RfisModule`, `ChangeOrdersModule`, `PunchModule`, `DailyModule`, `DrawingsModule`, `CommitmentsModule`, `CloseoutModule`. Shared code (types, CSI data, formatters, UI primitives, badges, icons) lives in `src/app/dashboard/_shared/`.
+- **`/` (`src/app/page.tsx`)** — marketing landing page (Framer Motion, Lucide icons). Not the app.
+- **`/dashboard` (`src/app/dashboard/page.tsx`)** — the **project landing grid**: a searchable, favoritable list of the company's projects wrapped in `<AppChrome>`. Pick a project → its work modules open in the project shell. This file is intentionally thin (a grid + picker), no longer a module host.
+- **`/projects/[id]/<module>`** — the **project shell**. `src/app/projects/[id]/project-chrome` (`useProjectShell()`) owns per-project chrome, nav, and shared state (`projectId`, `appProjects`, `teamMembers`, `userEmail`, view toggles). Each module is a real route page under `src/app/projects/[id]/`: `submittals`, `rfis`, `change-orders`, `punch`, `daily`, `drawings`, `commitments`, `closeout`, `purchase-orders`, `manpower`, `schedule`, `takeoff`. Bare `/projects/[id]` redirects to `…/submittals`.
+- **`/library` (`src/app/library/page.tsx`)** — the cross-project **Library** (the only cross-project work surface).
 
-Modules receive `globalProjectId` as a prop. **Library is the only cross-project module**; every other module requires a project to be selected — the shell renders `<SelectProjectEmptyState>` (from `_shared/ui.tsx`) when none is.
-
-`src/app/page.tsx` is a **marketing landing page** (Framer Motion, Lucide icons) — not the app.
-
-Modules toggled by `activeModule` state: `library | submittals | rfis | changeorders | punch | daily | drawings | commitments | closeout`
+**Module components are shared, not duplicated.** The route pages above are thin wrappers that render module components which still physically live in **`src/app/dashboard/_modules/*`** — e.g. `projects/[id]/submittals/page.tsx` renders `LibrarySubmittalsModule` (the same component backs both `/library` and the per-project Submittal Log). Treat `src/app/dashboard/_modules/` as the module *library*, imported cross-tree — not as a live "/dashboard" shell. Shared code (types, CSI data, formatters, UI primitives, badges, icons) lives in `src/app/dashboard/_shared/` and `src/app/projects/[id]/_shared/`.
 
 ### Spec books
 Spec book management is **per-project setup**, not a dashboard module. It lives in **Settings → Projects** as an inline expandable panel on each project row (`src/components/project-spec-books.tsx`): list uploaded volumes, "Upload another volume" (presigned-URL flow — projects routinely carry 2–4 volumes), re-parse, delete. Parsed submittals land in the dashboard's Submittals → Pending Review. Projects without `project_scope_sections` rows show an amber "Scope not set" badge with a one-click scope wizard.
 
 ### API routes (`src/app/api/`)
-All data mutations go through Next.js API routes that use the **server-side Supabase client** (`@/lib/supabase/server`) so auth cookies are read server-side. The client (`@/lib/supabase/client`) is only used in `dashboard/page.tsx` for auth state.
+All data mutations go through Next.js API routes that use the **server-side Supabase client** (`@/lib/supabase/server`) so auth cookies are read server-side. The browser client (`@/lib/supabase/client`) is used only in client components for auth state (never in API routes).
 
 Key route groups:
 | Route | Purpose |
@@ -78,7 +105,7 @@ All PDF routes follow the same pattern: fetch record + project + company logo �
 
 ### Supabase client usage
 - `src/lib/supabase/server.ts` — use in all API routes (reads auth cookies)
-- `src/lib/supabase/client.ts` — use only in `dashboard/page.tsx` (browser-side, for `getUser()`)
+- `src/lib/supabase/client.ts` — browser-side only, for client components that read auth state (e.g. `dashboard/page.tsx`, `projects/[id]/project-chrome`). Never used in API routes.
 - `/api/gmail-intake` uses `createClient(url, SERVICE_ROLE_KEY)` directly to bypass RLS (Google calls this endpoint, no user session)
 
 ### RLS pattern

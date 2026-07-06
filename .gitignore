@@ -17,5 +17,8 @@ scripts/
 # Local PDF render artifacts (screenshot tooling)
 scripts/out/
 
-# Local Claude Code state
-.claude/
+# Local Claude Code state — ignore everything except the shared, committed DX tooling
+.claude/*
+!.claude/skills/
+!.claude/hooks/
+!.claude/settings.json
