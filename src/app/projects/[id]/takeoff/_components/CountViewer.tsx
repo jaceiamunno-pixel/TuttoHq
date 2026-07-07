@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useRef } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import dynamic from "next/dynamic"
 
 // Reuse the existing read-only pdf.js sheet viewer BY IMPORT (no fork, no shared-
@@ -14,6 +14,12 @@ import dynamic from "next/dynamic"
 // layer. The dots layer is pointer-events:none, so the viewer keeps full pan
 // (drag) + wheel-zoom; we detect a "count click" as a near-zero-movement pointer
 // press that bubbles up to our wrapper.
+//
+// Multi-page: `page` (0-indexed) is forwarded to the viewer as pageNumber = page+1
+// (marks are already filtered to this page by the caller). Erase mode: while
+// `erasing`, a full-surface overlay intercepts input — a click removes the dot
+// under it, a drag marquee removes every dot inside the box — so the viewer never
+// pans during an erase gesture.
 const FlattenedMarkupView = dynamic(() => import("@/components/drawings/FlattenedMarkupView"), { ssr: false })
 
 // Stable empty-markups reference — a fresh [] each render would re-trigger the
@@ -32,16 +38,23 @@ export interface ViewerMark {
 }
 
 export default function CountViewer({
-  baseUrl, sheetKey, title, marks, canPlace, onPlace, onDelete,
+  baseUrl, sheetKey, title, page, marks, canPlace, erasing,
+  onPlace, onDelete, onDeleteMany, onPagesLoaded,
 }: {
   baseUrl: string
-  /** Stable sheet ref (drawing_log id) — remounts the viewer + filters dots. */
+  /** Stable sheet ref (drawing_sheets id) — remounts the viewer + filters dots. */
   sheetKey: string
   title?: string | null
+  /** 0-indexed page currently shown (forwarded to the viewer as pageNumber+1). */
+  page: number
   marks: ViewerMark[]
   canPlace: boolean
+  /** When true, input erases (click/marquee) instead of placing/panning. */
+  erasing: boolean
   onPlace: (x: number, y: number) => void
   onDelete: (markId: string) => void
+  onDeleteMany: (markIds: string[]) => void
+  onPagesLoaded: (numPages: number) => void
 }) {
   const wrapRef = useRef<HTMLDivElement>(null)
   const clipRef = useRef<HTMLDivElement>(null)
@@ -49,6 +62,10 @@ export default function CountViewer({
   const downRef = useRef<{ x: number; y: number; id: number } | null>(null)
   const marksRef = useRef<ViewerMark[]>(marks)
   marksRef.current = marks
+
+  // Erase-mode marquee (client-coord down point + wrapper-relative box to draw).
+  const eraseDownRef = useRef<{ x: number; y: number; id: number } | null>(null)
+  const [marquee, setMarquee] = useState<{ left: number; top: number; width: number; height: number } | null>(null)
 
   const canvasOf = useCallback(() => wrapRef.current?.querySelector("canvas") ?? null, [])
 
@@ -85,6 +102,10 @@ export default function CountViewer({
     return () => cancelAnimationFrame(raf)
   }, [canvasOf, sheetKey])
 
+  // Bail out of a marquee if erase mode is toggled off mid-drag.
+  useEffect(() => { if (!erasing) { eraseDownRef.current = null; setMarquee(null) } }, [erasing])
+
+  // ── Place / click-delete (only when NOT erasing — the overlay owns input then) ─
   const onPointerDown = (e: React.PointerEvent) => {
     if (e.button !== 0) return
     downRef.current = { x: e.clientX, y: e.clientY, id: e.pointerId }
@@ -121,16 +142,78 @@ export default function CountViewer({
     onPlace(nx, ny)
   }
 
+  // ── Erase overlay: click removes the dot under it; drag marquee removes all
+  //    dots inside. stopPropagation keeps the viewer from panning underneath. ────
+  const onErasePointerDown = (e: React.PointerEvent) => {
+    if (e.button !== 0) return
+    e.stopPropagation()
+    ;(e.currentTarget as Element).setPointerCapture?.(e.pointerId)
+    eraseDownRef.current = { x: e.clientX, y: e.clientY, id: e.pointerId }
+    setMarquee(null)
+  }
+  const onErasePointerMove = (e: React.PointerEvent) => {
+    const d = eraseDownRef.current
+    if (!d || d.id !== e.pointerId) return
+    e.stopPropagation()
+    const wrapR = wrapRef.current?.getBoundingClientRect()
+    if (!wrapR) return
+    setMarquee({
+      left: Math.min(d.x, e.clientX) - wrapR.left,
+      top: Math.min(d.y, e.clientY) - wrapR.top,
+      width: Math.abs(e.clientX - d.x),
+      height: Math.abs(e.clientY - d.y),
+    })
+  }
+  const onErasePointerUp = (e: React.PointerEvent) => {
+    const d = eraseDownRef.current
+    eraseDownRef.current = null
+    setMarquee(null)
+    if (!d || d.id !== e.pointerId) return
+    e.stopPropagation()
+    const canvas = canvasOf()
+    if (!canvas) return
+    const cR = canvas.getBoundingClientRect()
+    if (cR.width < 1 || cR.height < 1) return
+
+    if (Math.hypot(e.clientX - d.x, e.clientY - d.y) <= MOVE_TOLERANCE) {
+      // Click → delete the single dot under the cursor.
+      for (const m of marksRef.current) {
+        const sx = cR.left + m.x * cR.width
+        const sy = cR.top + m.y * cR.height
+        if (Math.hypot(e.clientX - sx, e.clientY - sy) <= HIT_RADIUS) { onDelete(m.id); return }
+      }
+      return
+    }
+
+    // Marquee → delete every dot whose center falls inside the box.
+    const minX = Math.min(d.x, e.clientX), maxX = Math.max(d.x, e.clientX)
+    const minY = Math.min(d.y, e.clientY), maxY = Math.max(d.y, e.clientY)
+    const hit: string[] = []
+    for (const m of marksRef.current) {
+      const sx = cR.left + m.x * cR.width
+      const sy = cR.top + m.y * cR.height
+      if (sx >= minX && sx <= maxX && sy >= minY && sy <= maxY) hit.push(m.id)
+    }
+    if (hit.length) onDeleteMany(hit)
+  }
+
   return (
     <div
       ref={wrapRef}
       className="relative h-full w-full"
-      onPointerDown={onPointerDown}
-      onPointerUp={onPointerUp}
+      onPointerDown={erasing ? undefined : onPointerDown}
+      onPointerUp={erasing ? undefined : onPointerUp}
     >
       {/* The viewer owns the canvas + its pan/zoom + toolbar. key=sheetKey forces a
-          clean remount when the sheet changes. */}
-      <FlattenedMarkupView key={sheetKey} baseUrl={baseUrl} markups={NO_MARKUPS} title={title} />
+          clean remount when the sheet changes; pageNumber flips pages in place. */}
+      <FlattenedMarkupView
+        key={sheetKey}
+        baseUrl={baseUrl}
+        markups={NO_MARKUPS}
+        title={title}
+        pageNumber={page + 1}
+        onPagesLoaded={onPagesLoaded}
+      />
 
       {/* Clip layer (pinned to the viewer's viewport) → inner layer (pinned to the
           canvas box). Both pointer-events:none so the viewer still gets the input. */}
@@ -156,6 +239,26 @@ export default function CountViewer({
           ))}
         </div>
       </div>
+
+      {/* Erase overlay — only mounted while erasing; sits above everything and
+          consumes input so the viewer can't pan/zoom during an erase gesture. */}
+      {erasing && (
+        <div
+          className="absolute inset-0 z-10"
+          style={{ cursor: "crosshair", touchAction: "none" }}
+          onPointerDown={onErasePointerDown}
+          onPointerMove={onErasePointerMove}
+          onPointerUp={onErasePointerUp}
+          onPointerCancel={onErasePointerUp}
+        >
+          {marquee && (
+            <div
+              className="absolute border border-[#DC2626] bg-[#DC2626]/10 pointer-events-none"
+              style={{ left: marquee.left, top: marquee.top, width: marquee.width, height: marquee.height }}
+            />
+          )}
+        </div>
+      )}
     </div>
   )
 }
