@@ -1,5 +1,6 @@
 import { PDFDocument, StandardFonts, rgb, PDFFont, PDFPage, PDFImage } from "pdf-lib"
 import { clampLogoScalePct } from "./logo-scale"
+import { sanitizeWinAnsi } from "./pdf-text"
 
 // ─── Design tokens ────────────────────────────────────────────────────────────
 // The shared TuttoHQ PDF design system. Steel-blue "coversheet" skin: clean
@@ -156,6 +157,7 @@ export interface CalendarChip {
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 /** Truncate `text` with an ellipsis so it fits within `maxPx` at `size`. */
 function clip(font: PDFFont, text: string, maxPx: number, size: number): string {
+  text = sanitizeWinAnsi(text)   // every drawn/measured string funnels through here
   if (font.widthOfTextAtSize(text, size) <= maxPx) return text
   let s = text
   while (s.length > 1 && font.widthOfTextAtSize(s + "…", size) > maxPx) s = s.slice(0, -1)
@@ -207,7 +209,12 @@ export class PDFBuilder {
     builder.reg = await builder.doc.embedFont(StandardFonts.Helvetica)
     builder.meta = {
       ...meta,
-      documentType: meta.documentType,
+      // Sanitize user/tenant-supplied header text once here so the title, meta
+      // line, running header and brand name are all WinAnsi-safe (these draw
+      // directly, bypassing the clip()/wrapTextWith() chokepoints).
+      documentType: sanitizeWinAnsi(meta.documentType),
+      documentNumber: meta.documentNumber != null ? sanitizeWinAnsi(String(meta.documentNumber)) : meta.documentNumber,
+      brandName: meta.brandName ? sanitizeWinAnsi(meta.brandName) : meta.brandName,
       generationDate: meta.generationDate ?? new Date(),
     }
 
@@ -546,6 +553,7 @@ export class PDFBuilder {
   }
 
   private wrapTextWith(font: PDFFont, text: string, size: number, maxW: number): string[] {
+    text = sanitizeWinAnsi(text)   // preserves "\n", so paragraph splitting below still works
     const lines: string[] = []
     for (const paragraph of text.split(/\r?\n/)) {
       const words = paragraph.split(/\s+/).filter(Boolean)
@@ -623,12 +631,14 @@ export class PDFBuilder {
       }
     }
     if (opts.companyName) {
-      const w = this.bold.widthOfTextAtSize(opts.companyName, 13)
-      this.page.drawText(opts.companyName, { x: this.M + (this.CW - w) / 2, y: top - 22, size: 13, font: this.bold, color: PDF.color.ink })
+      const name = sanitizeWinAnsi(opts.companyName)
+      const w = this.bold.widthOfTextAtSize(name, 13)
+      this.page.drawText(name, { x: this.M + (this.CW - w) / 2, y: top - 22, size: 13, font: this.bold, color: PDF.color.ink })
     }
     if (opts.phone) {
-      const w = this.reg.widthOfTextAtSize(opts.phone, 8.5)
-      this.page.drawText(opts.phone, { x: this.M + this.CW - w, y: top - 9, size: 8.5, font: this.reg, color: PDF.color.label })
+      const phone = sanitizeWinAnsi(opts.phone)
+      const w = this.reg.widthOfTextAtSize(phone, 8.5)
+      this.page.drawText(phone, { x: this.M + this.CW - w, y: top - 9, size: 8.5, font: this.reg, color: PDF.color.label })
     }
     const ruleY = Math.min(logoBottom, top - 34) - 6
     this.page.drawLine({ start: { x: this.M, y: ruleY }, end: { x: this.M + this.CW, y: ruleY }, thickness: 1.5, color: PDF.color.ink })
@@ -837,6 +847,7 @@ export class PDFBuilder {
   // ── Pricing block ───────────────────────────────────────────────────────────
   /** Emphasized total-amount block (used by change orders). */
   pricingBlock(amount: string, approved: boolean) {
+    amount = sanitizeWinAnsi(amount)
     this.spacer(6)
     const h = 60
     this.ensureSpace(h + 6)

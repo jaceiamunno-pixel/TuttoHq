@@ -24,6 +24,7 @@
 
 import { PDFDocument, StandardFonts, LineCapStyle, degrees, rgb, type PDFPage, type PDFFont } from "pdf-lib"
 import { cloudOutline, CLOUD_SCALLOP_FRAC, type Markup, type MarkupDoc } from "./drawing-markup"
+import { sanitizeWinAnsi } from "./pdf-text"
 
 type Color = ReturnType<typeof rgb>
 
@@ -40,19 +41,8 @@ function normalizeRotation(angle: number): 0 | 90 | 180 | 270 {
   return (((Math.round((angle || 0) / 90) * 90) % 360) + 360) % 360 as 0 | 90 | 180 | 270
 }
 
-// StandardFonts.Helvetica is WinAnsi — drawText THROWS on a glyph it can't
-// encode. A throwaway export must never blow up on a stray smart-quote/emoji, so
-// map the common typographic chars to ASCII and drop anything still un-encodable.
-const SMART: Record<string, string> = {
-  "‘": "'", "’": "'", "“": '"', "”": '"',
-  "–": "-", "—": "-", "…": "...", "•": "-", " ": " ",
-}
-function sanitizeForHelvetica(s: string): string {
-  return s
-    .replace(/[\r\n\t]+/g, " ")
-    .replace(/[‘’“”–—…• ]/g, c => SMART[c] ?? " ")
-    .replace(/[^\x20-\xFF]/g, "") // outside Latin-1 → drop (WinAnsi can't encode)
-}
+// The sanitizer now lives in the shared ./pdf-text module (single source of
+// truth) — imported above as sanitizeWinAnsi.
 
 /** Download filename: "A-101-markup.pdf"; "sheet-markup.pdf" when unnamed. */
 export function markupExportFilename(sheetNumber?: string | null): string {
@@ -163,7 +153,7 @@ function drawMarkup(
       // Editor anchors text at its top-left; the baseline sits ~fontSize below
       // (displayed space). Counter-rotate so it reads upright after /Rotate.
       const anchor = toPage(m.x, m.y + m.style.fontSize)
-      page.drawText(sanitizeForHelvetica(m.text), {
+      page.drawText(sanitizeWinAnsi(m.text), {
         x: anchor.x, y: anchor.y, size, font, color, rotate: degrees(rot),
       })
       break

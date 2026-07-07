@@ -13,6 +13,7 @@ import fontkit from "@pdf-lib/fontkit"
 import fs from "node:fs"
 import path from "node:path"
 import { clampLogoScalePct } from "./logo-scale"
+import { sanitizeWinAnsi } from "./pdf-text"
 
 export type RGB = ReturnType<typeof rgb>
 
@@ -101,8 +102,18 @@ export class PdfDoc {
   ensure(h: number) { if (this.y - h < BOTTOM) this.newPage() }
   down(pt: number) { this.y -= pt }
 
+  // Sanitize ONLY text drawn with the WinAnsi StandardFonts (Helvetica sans /
+  // sansBold): those throw on any glyph cp1252 can't encode. The embedded Source
+  // Serif 4 subset (serif / serifSemi) encodes any codepoint — unsupported ones
+  // become .notdef and never throw — so serif text is left untouched and keeps
+  // its curly quotes, em-dashes and ellipsis.
+  private san(font: PDFFont, s: string): string {
+    return font === this.sans || font === this.sansBold ? sanitizeWinAnsi(s) : s
+  }
+
   // Truncate text with an ellipsis to fit maxW at size.
   clip(font: PDFFont, text: string, maxW: number, size: number): string {
+    text = this.san(font, text)
     if (font.widthOfTextAtSize(text, size) <= maxW) return text
     let s = text
     while (s.length > 1 && font.widthOfTextAtSize(s + "…", size) > maxW) s = s.slice(0, -1)
@@ -110,10 +121,11 @@ export class PdfDoc {
   }
 
   text(s: string, x: number, baselineY: number, font: PDFFont, size: number, color: RGB) {
-    this.page.drawText(s, { x, y: baselineY, size, font, color })
+    this.page.drawText(this.san(font, s), { x, y: baselineY, size, font, color })
   }
   // Draw right-aligned text whose right edge sits at xRight.
   rtext(s: string, xRight: number, baselineY: number, font: PDFFont, size: number, color: RGB) {
+    s = this.san(font, s)
     const w = font.widthOfTextAtSize(s, size)
     this.page.drawText(s, { x: xRight - w, y: baselineY, size, font, color })
   }
@@ -124,6 +136,7 @@ export class PdfDoc {
   // Wrap text to width; honors explicit newlines. Tokens longer than the column
   // (e.g. long unspaced names) are hard-broken by character so nothing overflows.
   wrap(font: PDFFont, text: string, size: number, maxW: number): string[] {
+    text = this.san(font, text)
     const out: string[] = []
     for (const para of text.split(/\r?\n/)) {
       const words = para.split(/\s+/).filter(Boolean)
