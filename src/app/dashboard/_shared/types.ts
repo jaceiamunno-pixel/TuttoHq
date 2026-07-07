@@ -443,3 +443,47 @@ export interface OpenFileCtx { file: SubmittalFile; divNum: string; divName: str
 export type CoverContentSource = "original" | "stripped"
 export interface CoverFormData { contentSource: CoverContentSource; projectName: string; projectNumber: string; projectLocation: string; gcName: string; architect: string; specSectionNo: string; specSectionTitle: string; description: string; dateSubmitted: string; submittalNo: string; revisionNo: string; dueDate: string; isCritical: boolean; partyRequired: boolean; copyTo: string; reviewedBy: string; certifiedBy: string; notes: string; sendToType: "cm" | "subcontractor" | "supplier" | ""; sendToCompany: string; sendToContact: string; sendToEmail: string; sendToPhone: string; sendToAddress: string; transmittedBy: string; transmittedByCompany: string }
 export interface CoverContact { id: string; company_name: string; contact_name: string | null; email: string | null; phone: string | null; address?: string | null }
+
+// ─── RFQ / Bid Requests (ADR-016 v1a — manual) ──────────────────────────────
+// A GC packages spec sections + drawings for a scope, sends to subs/suppliers,
+// and plugs the returned quotes into the estimate. v1a is MANUAL: the estimator
+// sends from their own mail client (mailto + downloadable package) and drag-drops
+// the returned quote PDF back in. Tables rfqs + rfq_recipients (migration 0030).
+export type RfqStatus = "draft" | "sent" | "closed"
+export type RfqRecipientState = "sent" | "quote_received" | "no_response" | "declined"
+export interface Rfq {
+  id: string
+  project_id: string
+  company_id: string | null
+  name: string
+  scope_description: string | null
+  division_code: string | null
+  due_date: string | null
+  status: RfqStatus
+  package_pdf_path: string | null
+  created_at: string
+  created_by: string
+  // Aggregates attached by the list endpoint (never summed client-side).
+  recipient_count?: number
+  quote_received_count?: number
+}
+export interface RfqRecipient {
+  id: string
+  rfq_id: string
+  company_id: string | null
+  vendor_id: string
+  vendor_person_id: string | null
+  state: RfqRecipientState
+  sent_at: string | null
+  quote_file_path: string | null
+  quoted_amount: number | null
+  // Optional link to an estimate line (populates that line's sub-category number).
+  // v1a carries the column through the API; the picker lands when estimates ships.
+  linked_estimate_line_id: string | null
+  created_at: string
+  // Enriched by GET /api/rfq/[id] (stitched from vendors + vendor_people).
+  vendor_company_name?: string | null
+  vendor_email?: string | null
+  person_name?: string | null
+  person_email?: string | null
+}
