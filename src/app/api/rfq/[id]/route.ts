@@ -57,7 +57,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   const { id } = await params
   const updates = await req.json().catch(() => ({}))
 
-  const allowed = ["name", "scope_description", "division_code", "due_date", "status", "package_pdf_path"]
+  const allowed = ["name", "scope_description", "division_code", "due_date", "status", "package_pdf_path", "pkg_spec_numbers", "pkg_sheet_ids"]
   const safe: Record<string, unknown> = Object.fromEntries(
     Object.entries(updates).filter(([k]) => allowed.includes(k))
   )

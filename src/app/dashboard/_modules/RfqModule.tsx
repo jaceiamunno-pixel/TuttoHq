@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useCallback } from "react"
+import { useState, useEffect, useCallback, useRef } from "react"
 import type { Rfq, RfqRecipient, Project, Vendor } from "../_shared/types"
 import { fmtDateOnly } from "../_shared/format"
 import { PlusIcon, SpinnerIcon, XIcon } from "../_shared/icons"
@@ -202,6 +202,7 @@ export default function RfqModule({ globalProjectId, appProjects }: {
       {/* Detail */}
       {openId && (
         <RfqDetail
+          key={openId}
           rfqId={openId}
           projectId={globalProjectId}
           project={appProjects.find(p => p.id === globalProjectId) ?? null}
@@ -240,11 +241,23 @@ function RfqDetail({ rfqId, projectId, project, onClose, onDelete }: {
   const [pickVendor, setPickVendor]   = useState<Vendor | null>(null)
   const [adding, setAdding]           = useState(false)
 
+  // Rehydrate the package selection from the persisted columns exactly once, on
+  // open — later reloads (after a recipient/status change) must not clobber
+  // in-progress checkbox picks the user hasn't generated yet.
+  const hydratedRef = useRef(false)
+
   const loadDetail = useCallback(() => {
     setLoading(true)
     fetch(`/api/rfq/${rfqId}`)
       .then(r => r.json())
-      .then(d => { setRfq(d.rfq ?? null); setRecipients(d.recipients ?? []) })
+      .then(d => {
+        setRfq(d.rfq ?? null); setRecipients(d.recipients ?? [])
+        if (!hydratedRef.current && d.rfq) {
+          setSelSpecs(new Set<string>((d.rfq.pkg_spec_numbers ?? []) as string[]))
+          setSelSheets(new Set<string>((d.rfq.pkg_sheet_ids ?? []) as string[]))
+          hydratedRef.current = true
+        }
+      })
       .finally(() => setLoading(false))
   }, [rfqId])
 
@@ -319,18 +332,12 @@ function RfqDetail({ rfqId, projectId, project, onClose, onDelete }: {
     if (d.url) window.open(d.url, "_blank")
   }
 
-  // Send handoff — NO Gmail. Open the package for the estimator to attach, then
-  // pop their own mail client with prefilled to/subject/body. The app never sends.
-  async function sendRfq() {
-    // Ensure we have a fresh package link to hand off (re-sign the stored one).
-    let pkg = packageUrl
-    if (!pkg && rfq?.package_pdf_path) {
-      const res = await fetch(`/api/rfq/${rfqId}/package`)
-      const d = await res.json().catch(() => null)
-      pkg = d?.url ?? null
-    }
-    if (pkg) window.open(pkg, "_blank") // estimator downloads + attaches manually
-
+  // Send handoff — NO Gmail. Fire the estimator's OWN mail client with a
+  // prefilled draft, then hand off the package for them to attach. The app never
+  // sends. The mailto MUST fire synchronously inside the click gesture — an
+  // `await` before it lets the browser drop the navigation — and it opens even
+  // with an empty To: (estimator mails themselves / types the sub's address).
+  function sendRfq() {
     const emails = recipients.map(r => r.person_email || r.vendor_email).filter(Boolean)
     const subject = `Bid Request — ${project?.name ?? ""} — ${rfq?.name ?? ""}`.trim()
     const bodyLines = [
@@ -341,18 +348,34 @@ function RfqDetail({ rfqId, projectId, project, onClose, onDelete }: {
       rfq?.division_code ? `CSI Division: ${rfq.division_code}` : "",
       rfq?.due_date ? `Quotes due: ${fmtDateOnly(rfq.due_date)}` : "",
       "",
-      pkg ? "The bid package (specs + drawings) is attached." : "",
+      rfq?.package_pdf_path ? "The bid package (specs + drawings) is attached." : "",
       "",
       "Please reply with your quote. Thank you.",
     ].filter(l => l !== "")
+    // Empty `emails` → `mailto:?subject=…&body=…`, still a valid mailto the OS opens.
     const mailto = `mailto:${emails.join(",")}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(bodyLines.join("\n"))}`
 
-    // Mark the RFQ sent, then hand off to the mail client.
-    if (rfq?.status === "draft") await patchRfq({ status: "sent" })
+    // 1) Mail client first — synchronous, in-gesture, always fires.
     window.location.href = mailto
+
+    // 2) Hand off the package to attach. A cached signed URL opens in-gesture;
+    //    otherwise re-sign async (best-effort — the "View current package" button
+    //    is the fallback if a popup blocker eats the async open).
+    if (packageUrl) {
+      window.open(packageUrl, "_blank")
+    } else if (rfq?.package_pdf_path) {
+      fetch(`/api/rfq/${rfqId}/package`)
+        .then(r => r.json())
+        .then(d => { if (d?.url) window.open(d.url, "_blank") })
+        .catch(() => {})
+    }
+
+    // 3) Mark sent — fire-and-forget so it never blocks the handoff.
+    if (rfq?.status === "draft") patchRfq({ status: "sent" })
   }
 
   const quoteCount = recipients.filter(r => r.state === "quote_received").length
+  const missingEmailCount = recipients.filter(r => !(r.person_email || r.vendor_email)).length
 
   return (
     <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onClick={e => { if (e.target === e.currentTarget) onClose() }}>
@@ -473,7 +496,9 @@ function RfqDetail({ rfqId, projectId, project, onClose, onDelete }: {
                         <tr key={r.id} className="border-b border-[#E2E8F0]/60">
                           <td className="px-3 py-2">
                             <p className="text-[#0F172A] font-medium truncate">{r.vendor_company_name ?? "—"}</p>
-                            <p className="text-[11px] text-[#64748B] truncate">{r.vendor_email ?? "no email on file"}</p>
+                            {(r.person_email || r.vendor_email)
+                              ? <p className="text-[11px] text-[#64748B] truncate">{r.person_email || r.vendor_email}</p>
+                              : <p className="text-[11px] text-amber-600 truncate">no email on file · won't pre-fill</p>}
                           </td>
                           <td className="px-3 py-2">
                             <select value={r.state} onChange={e => patchRecipient(r.id, { state: e.target.value })}
@@ -516,7 +541,12 @@ function RfqDetail({ rfqId, projectId, project, onClose, onDelete }: {
         <div className="flex items-center justify-between px-6 py-4 border-t border-[#E2E8F0] flex-shrink-0">
           <button onClick={onDelete} className="h-8 px-4 rounded-md border border-red-500/30 text-[13px] text-red-400 hover:bg-red-500/10 transition-colors">Delete</button>
           <div className="flex gap-2 items-center">
-            <span className="text-[11px] text-[#94A3B8] hidden sm:inline">Opens your mail client · app doesn't send</span>
+            <div className="text-[11px] hidden sm:flex flex-col items-end leading-tight">
+              <span className="text-[#94A3B8]">Opens your mail client · app doesn&apos;t send</span>
+              {missingEmailCount > 0 && (
+                <span className="text-amber-600">{missingEmailCount} recipient{missingEmailCount > 1 ? "s" : ""} with no email — add in your mail client</span>
+              )}
+            </div>
             <button onClick={onClose} className="h-8 px-4 rounded-md border border-[#E2E8F0] text-[13px] text-[#64748B] hover:bg-[#0F172A]/[0.04] transition-colors">Close</button>
             <button onClick={sendRfq} disabled={loading || recipients.length === 0}
               className="h-8 px-4 rounded-md bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors disabled:opacity-50 flex items-center gap-2">
