@@ -48,6 +48,34 @@ export function PunchPriorityBadge({ priority }: { priority: string }) {
   return <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-semibold ${cls}`}>{priority}</span>
 }
 
+const RFQ_STATUS_STYLES: Record<string, string> = {
+  "draft":  "bg-gray-100 text-gray-500",
+  "sent":   "bg-blue-100 text-blue-700",
+  "closed": "bg-green-100 text-green-700",
+}
+export function RfqStatusBadge({ status }: { status: string }) {
+  const cls = RFQ_STATUS_STYLES[status] ?? "bg-gray-100 text-gray-500"
+  const label = status.charAt(0).toUpperCase() + status.slice(1)
+  return <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-semibold ${cls}`}>{label}</span>
+}
+
+const RFQ_RECIPIENT_STATE_STYLES: Record<string, string> = {
+  "sent":           "bg-blue-100 text-blue-700",
+  "quote_received": "bg-green-100 text-green-700",
+  "no_response":    "bg-gray-100 text-gray-500",
+  "declined":       "bg-red-100 text-red-700",
+}
+const RFQ_RECIPIENT_STATE_LABELS: Record<string, string> = {
+  "sent":           "Sent",
+  "quote_received": "Quote Received",
+  "no_response":    "No Response",
+  "declined":       "Declined",
+}
+export function RfqRecipientStateBadge({ state }: { state: string }) {
+  const cls = RFQ_RECIPIENT_STATE_STYLES[state] ?? "bg-gray-100 text-gray-500"
+  return <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-semibold ${cls}`}>{RFQ_RECIPIENT_STATE_LABELS[state] ?? state}</span>
+}
+
 const DRAWING_STATUS_STYLES: Record<string, string> = {
   "Issued for Construction": "bg-green-100 text-green-700",
   "Issued for Bid":          "bg-blue-100 text-blue-700",
