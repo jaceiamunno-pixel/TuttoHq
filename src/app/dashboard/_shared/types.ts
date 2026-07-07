@@ -457,13 +457,13 @@ export interface Rfq {
   company_id: string | null
   name: string
   scope_description: string | null
-  csi_division: string | null
+  division_code: string | null
   due_date: string | null
   status: RfqStatus
   package_pdf_path: string | null
   sent_at: string | null
   created_at: string
-  uploaded_by: string
+  created_by: string
   // Aggregates attached by the list endpoint (never summed client-side).
   recipient_count?: number
   quote_received_count?: number

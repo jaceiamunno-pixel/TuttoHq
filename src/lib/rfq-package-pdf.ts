@@ -48,7 +48,7 @@ export async function composeRfqPackagePdf(
 ): Promise<{ storagePath: string }> {
   const { data: rfq, error: rfqErr } = await supabase
     .from("rfqs")
-    .select("id, project_id, company_id, name, scope_description, csi_division, due_date")
+    .select("id, project_id, company_id, name, scope_description, division_code, due_date")
     .eq("id", rfqId)
     .maybeSingle()
   if (rfqErr || !rfq) throw new Error("RFQ not found")
@@ -157,7 +157,7 @@ export async function composeRfqPackagePdf(
   pdf.fieldGrid([
     [{ label: "Scope", value: rfq.name }],
     [
-      { label: "CSI Division", value: rfq.csi_division || "—" },
+      { label: "CSI Division", value: rfq.division_code || "—" },
       { label: "Quote Due", value: rfq.due_date ? fmtDate(rfq.due_date) : "—" },
     ],
   ])

@@ -49,7 +49,7 @@ export async function POST(req: NextRequest) {
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
   const body: Record<string, string | null> = await req.json().catch(() => ({}))
-  const { name, scope_description, csi_division, due_date, project_id } = body
+  const { name, scope_description, division_code, due_date, project_id } = body
 
   if (!name?.trim()) return NextResponse.json({ error: "name is required" }, { status: 400 })
   if (!project_id) return NextResponse.json({ error: "project_id is required" }, { status: 400 })
@@ -63,10 +63,10 @@ export async function POST(req: NextRequest) {
     company_id:        companyId,
     name:              name.trim(),
     scope_description: scope_description?.trim() || null,
-    csi_division:      csi_division?.trim() || null,
+    division_code:     division_code?.trim() || null,
     due_date:          due_date || null,
     status:            "draft",
-    uploaded_by:       user.id,
+    created_by:        user.id,
   }).select("id").single()
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })

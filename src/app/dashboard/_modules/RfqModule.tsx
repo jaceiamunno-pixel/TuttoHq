@@ -57,7 +57,7 @@ export default function RfqModule({ globalProjectId, appProjects }: {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          name, scope_description: scope, csi_division: csiDivision,
+          name, scope_description: scope, division_code: csiDivision,
           due_date: dueDate, project_id: globalProjectId,
         }),
       })
@@ -134,7 +134,7 @@ export default function RfqModule({ globalProjectId, appProjects }: {
                         <p className="text-[#0F172A] font-medium truncate" title={r.name}>{r.name}</p>
                         {r.scope_description && <p className="text-[11px] text-[#64748B] truncate">{r.scope_description}</p>}
                       </td>
-                      <td className="px-4 py-2.5 text-[#64748B] text-[12px] font-mono">{r.csi_division ?? "—"}</td>
+                      <td className="px-4 py-2.5 text-[#64748B] text-[12px] font-mono">{r.division_code ?? "—"}</td>
                       <td className="px-4 py-2.5 text-[12px] whitespace-nowrap">
                         {r.due_date ? <span className={isOverdue ? "text-red-400 font-medium" : "text-[#64748B]"}>{fmtDateOnly(r.due_date)}{isOverdue ? " ⚠" : ""}</span> : <span className="text-[#64748B]">—</span>}
                       </td>
@@ -338,7 +338,7 @@ function RfqDetail({ rfqId, projectId, project, onClose, onDelete }: {
       "",
       `Scope: ${rfq?.name ?? ""}`,
       rfq?.scope_description ? `\n${rfq.scope_description}\n` : "",
-      rfq?.csi_division ? `CSI Division: ${rfq.csi_division}` : "",
+      rfq?.division_code ? `CSI Division: ${rfq.division_code}` : "",
       rfq?.due_date ? `Quotes due: ${fmtDateOnly(rfq.due_date)}` : "",
       "",
       pkg ? "The bid package (specs + drawings) is attached." : "",
@@ -374,7 +374,7 @@ function RfqDetail({ rfqId, projectId, project, onClose, onDelete }: {
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
               <div className="rounded-md bg-[#F4F5F7] px-3 py-2">
                 <p className="text-[10px] font-bold text-[#64748B] uppercase tracking-widest mb-0.5">Division</p>
-                <p className="text-[12px] text-[#0F172A] font-mono">{rfq.csi_division ?? "—"}</p>
+                <p className="text-[12px] text-[#0F172A] font-mono">{rfq.division_code ?? "—"}</p>
               </div>
               <div className="rounded-md bg-[#F4F5F7] px-3 py-2">
                 <p className="text-[10px] font-bold text-[#64748B] uppercase tracking-widest mb-0.5">Quote Due</p>
