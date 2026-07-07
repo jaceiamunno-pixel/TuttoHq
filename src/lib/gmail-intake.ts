@@ -1,6 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk"
 import { createClient as createServiceClient, SupabaseClient } from "@supabase/supabase-js"
-import { refreshAccessToken } from "./gmail"
+import { refreshAccessToken, setupWatch } from "./gmail"
 import { normalizeSubmittalTitle } from "./title-normalize"
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -94,6 +94,23 @@ function getHeader(headers: Array<{ name: string; value: string }>, name: string
   return headers.find(h => h.name.toLowerCase() === name.toLowerCase())?.value ?? ""
 }
 
+// The Date header is sender-supplied and occasionally malformed; a bad value
+// makes `new Date(...).toISOString()` throw RangeError, which (pre-fix) aborted
+// the whole batch. Prefer the header when valid, then fall back to Gmail's
+// server-stamped internalDate (ms since epoch), then to now — never throw. (#2c)
+function safeReceivedAt(dateHeader: string, internalDate?: string): string {
+  if (dateHeader) {
+    const t = new Date(dateHeader)
+    if (!isNaN(t.getTime())) return t.toISOString()
+    log("date-parse: invalid Date header, falling back to internalDate/now", { dateHeader })
+  }
+  if (internalDate) {
+    const ms = Number(internalDate)
+    if (Number.isFinite(ms) && ms > 0) return new Date(ms).toISOString()
+  }
+  return new Date().toISOString()
+}
+
 async function gmailGet(token: string, url: string): Promise<Response> {
   return fetch(url, { headers: { Authorization: `Bearer ${token}` } })
 }
@@ -177,7 +194,7 @@ export async function processGmailNotification(emailAddress: string, historyId: 
   // ── 1. Look up the stored connection ───────────────────────────────────────
   const { data: conn, error: connErr } = await supabase
     .from("gmail_connections")
-    .select("user_id, company_id, access_token, refresh_token, token_expiry, history_id")
+    .select("user_id, company_id, access_token, refresh_token, token_expiry, history_id, watch_expiry")
     .eq("gmail_address", emailAddress)
     .single()
 
@@ -211,59 +228,150 @@ export async function processGmailNotification(emailAddress: string, historyId: 
     log("token-refresh: token still valid")
   }
 
-  // ── 3. Fetch Gmail history since last cursor ────────────────────────────────
+  // ── 2b. Auto-renew the Gmail watch if it lapses within 24h ──────────────────
+  // The watch subscription has a ~7-day Gmail cap; once it lapses, inbound stops
+  // with NO error and no notification ever fires again. Every inbound
+  // notification is a natural heartbeat, so re-arm here when we're inside the
+  // 24h window. We update ONLY watch_expiry — never history_id — so re-arming
+  // does not disturb the processing cursor below. Non-fatal: a failed renew must
+  // not block this batch. (#2d)
+  //
+  // NOTE — residual gap: this self-heals only while mail is still flowing. A
+  // mailbox that goes fully silent past the 7-day cap has no heartbeat to
+  // re-arm it. Closing that hole needs a scheduled job (there is already a
+  // vercel.json `crons` block); tracked as a follow-up rather than smuggled into
+  // this logic-only pass. See the writeup's (d) section.
+  // TODO(bug#2d follow-up): add /api/cron/gmail-watch-renew to vercel.json crons
+  //   to cover fully-silent mailboxes; this inline renew only covers active ones.
+  try {
+    const watchExpiry = conn.watch_expiry ? new Date(conn.watch_expiry as string).getTime() : 0
+    if (watchExpiry - Date.now() < 24 * 60 * 60 * 1000) {
+      log("watch-renew: within 24h of expiry (or unset) — re-arming", { watchExpiry: conn.watch_expiry ?? null })
+      const w = await setupWatch(accessToken)
+      await supabase
+        .from("gmail_connections")
+        .update({ watch_expiry: new Date(parseInt(w.expiration)).toISOString() })
+        .eq("gmail_address", emailAddress)
+      log("watch-renew: re-armed", { newExpiry: w.expiration })
+    }
+  } catch (err) {
+    logError("watch-renew", err)
+  }
+
+  // ── 3. Fetch Gmail history since last cursor (paginated) ────────────────────
+  // Cursor model (bug #2a/#2b): the stored history_id is a watermark advanced
+  // ONLY after every message in the batch has been attempted (section 5). On any
+  // batch-fatal condition — history API error, network throw, or the page cap —
+  // we return WITHOUT advancing, so the next Pub/Sub notification re-drains the
+  // same range. Re-drain is safe because per-attachment dedup is keyed on
+  // (gmail_message_id, fileName) (see processAttachment): an already-filed
+  // message is skipped, never double-filed.
   const startHistoryId = (conn.history_id as string) ?? historyId
   log("history-fetch", { startHistoryId, incomingHistoryId: historyId })
 
-  const histRes = await gmailGet(
-    accessToken,
-    `https://gmail.googleapis.com/gmail/v1/users/me/history?startHistoryId=${startHistoryId}&historyTypes=messageAdded`
-  )
-  const histData = await histRes.json()
+  const MAX_HISTORY_PAGES = 25   // runaway guard; ~100 records/page → ~2500 records/notification
 
-  log("history-response", {
-    status: histRes.status,
-    hasHistory: Array.isArray(histData.history),
-    historyLength: histData.history?.length ?? 0,
-    error: histData.error ?? null,
-  })
-
-  // Advance the cursor regardless so we don't reprocess on the next notification
-  await supabase
-    .from("gmail_connections")
-    .update({ history_id: historyId })
-    .eq("gmail_address", emailAddress)
-
-  if (histData.error) {
-    log("FAIL history-api-error", histData.error)
-    return
-  }
-
-  if (!Array.isArray(histData.history) || histData.history.length === 0) {
-    log("history-empty: no new messages to process")
-    return
-  }
-
-  // ── 4. Collect unique message IDs ──────────────────────────────────────────
   const messageIds = new Set<string>()
-  for (const item of histData.history as Array<{ messagesAdded?: Array<{ message: { id: string } }> }>) {
-    for (const added of item.messagesAdded ?? []) {
-      messageIds.add(added.message.id)
-    }
-  }
-  log("messages-found", { count: messageIds.size, ids: [...messageIds] })
+  let latestHistoryId = historyId   // fallback watermark if a page omits historyId
+  let pageToken: string | undefined
+  let truncated = false
+  let page = 0
 
+  try {
+    do {
+      const url = new URL("https://gmail.googleapis.com/gmail/v1/users/me/history")
+      url.searchParams.set("startHistoryId", startHistoryId)
+      url.searchParams.set("historyTypes", "messageAdded")
+      if (pageToken) url.searchParams.set("pageToken", pageToken)
+
+      const histRes  = await gmailGet(accessToken, url.toString())
+      const histData = await histRes.json()
+      page++
+
+      log("history-response", {
+        page,
+        status: histRes.status,
+        hasHistory: Array.isArray(histData.history),
+        historyLength: histData.history?.length ?? 0,
+        hasNextPage: !!histData.nextPageToken,
+        error: histData.error ?? null,
+      })
+
+      if (histData.error) {
+        // Do NOT advance the cursor — retry this range on the next notification.
+        log("FAIL history-api-error", histData.error)
+        return
+      }
+
+      // The mailbox's current historyId on this page = the point we're caught
+      // up to once this page is drained.
+      if (histData.historyId) latestHistoryId = String(histData.historyId)
+
+      for (const item of (histData.history ?? []) as Array<{ messagesAdded?: Array<{ message: { id: string } }> }>) {
+        for (const added of item.messagesAdded ?? []) {
+          messageIds.add(added.message.id)
+        }
+      }
+
+      pageToken = histData.nextPageToken as string | undefined
+
+      if (page >= MAX_HISTORY_PAGES && pageToken) {
+        // Bounded loop (#2b): stop, process what we have, and DON'T advance the
+        // cursor (section 5) so the remaining pages re-drain next notification.
+        // Nothing is dropped — only deferred — and it is logged, not silent.
+        truncated = true
+        log("history-page-cap-hit: pausing pagination, remainder resumes next notification", { page })
+        break
+      }
+    } while (pageToken)
+  } catch (err) {
+    // Network/parse failure mid-fetch → leave the cursor where it is and retry.
+    logError("history-fetch", err)
+    return
+  }
+
+  log("messages-found", { count: messageIds.size, pages: page, truncated })
+
+  if (messageIds.size === 0) {
+    // Empty range: still advance (below) past it so a stale cursor can't age out.
+    log("history-empty: no new messages to process")
+  }
+
+  // ── 4. Process every message — one bad message never aborts the batch ───────
   const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
+  let processed = 0
+  let failed = 0
 
   for (const msgId of messageIds) {
-    await processMessage(
-      supabase, anthropic, accessToken, msgId,
-      conn.user_id as string, (conn.company_id as string | null) ?? null,
-      emailAddress,
-    )
+    try {
+      await processMessage(
+        supabase, anthropic, accessToken, msgId,
+        conn.user_id as string, (conn.company_id as string | null) ?? null,
+        emailAddress,
+      )
+      processed++
+    } catch (err) {
+      // (#2c) A single-message throw — e.g. a malformed Date header, or any
+      // downstream error — is logged and skipped, never allowed to kill the
+      // batch or wedge the cursor. The Date case is also fixed at the source
+      // (safeReceivedAt); this catch is the belt-and-suspenders for anything
+      // else unexpected in one message.
+      failed++
+      logError(`process-message ${msgId}`, err)
+    }
   }
 
-  log("done", { emailAddress, processedMessages: messageIds.size })
+  // ── 5. Advance the cursor — only now that the whole batch was attempted ──────
+  // Skipped when truncated so the un-drained pages are re-fetched next time.
+  if (!truncated) {
+    const { error: cursorErr } = await supabase
+      .from("gmail_connections")
+      .update({ history_id: latestHistoryId })
+      .eq("gmail_address", emailAddress)
+    if (cursorErr) log("FAIL cursor-advance", { error: cursorErr.message })
+  }
+
+  log("done", { emailAddress, processed, failed, truncated, cursor: truncated ? startHistoryId : latestHistoryId })
 }
 
 // ─── Per-message processing ───────────────────────────────────────────────────
@@ -302,7 +410,7 @@ async function processMessage(
   const fromMatch   = fromRaw.match(/^"?([^"<]*)"?\s*<?([^>]*)>?$/)
   const senderName  = fromMatch?.[1]?.trim() || fromRaw
   const senderEmail = fromMatch?.[2]?.trim() || fromRaw
-  const receivedAt  = dateHeader ? new Date(dateHeader).toISOString() : new Date().toISOString()
+  const receivedAt  = safeReceivedAt(dateHeader, msg.internalDate)
 
   // ── Self-loop guard (K2) ────────────────────────────────────────────────────
   // Skip only when an inbound message is our OWN outbound looping back through
