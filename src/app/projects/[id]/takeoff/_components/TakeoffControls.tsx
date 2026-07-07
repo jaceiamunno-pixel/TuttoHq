@@ -180,6 +180,10 @@ export default function TakeoffControls({
                 const active = t.id === activeTagId
                 return (
                   <li key={t.id} className={`flex items-center gap-1 rounded px-1 py-0.5 ${active ? "bg-[#5A7A94]/10 ring-1 ring-[#5A7A94]" : ""}`}>
+                    <span
+                      className="w-3.5 flex-shrink-0 text-center text-[10px] font-bold tabular-nums text-[#94A3B8]"
+                      title={i < 9 ? `Press ${i + 1} to select` : undefined}
+                    >{i < 9 ? i + 1 : ""}</span>
                     <button
                       onClick={() => setActiveTagId(t.id)}
                       title={active ? "Active tag" : "Set active tag"}

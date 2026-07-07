@@ -41,7 +41,7 @@ type PdfPage = {
   getViewport: (opts: { scale: number }) => Viewport
   render: (opts: { canvas: HTMLCanvasElement; canvasContext: CanvasRenderingContext2D; viewport: Viewport }) => RenderTask
 }
-type PdfDoc = { getPage: (n: number) => Promise<PdfPage>; destroy: () => Promise<void> }
+type PdfDoc = { getPage: (n: number) => Promise<PdfPage>; destroy: () => Promise<void>; numPages: number }
 
 const SETTLE_MS = 120              // debounce before a crisp re-render after a gesture
 const MAX_BITMAP_PX = 16_000_000   // raster ceiling (~16M px ≈ crisp through ~4× fit)
@@ -54,11 +54,17 @@ const MAX_ZOOM_REL = 16            // in to 1600% of fit (soft past ~4×)
 const MinusIcon = () => <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeWidth={2} d="M5 12h14" /></svg>
 const PlusIcon = () => <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeWidth={2} d="M12 5v14M5 12h14" /></svg>
 
-export default function FlattenedMarkupView({ baseUrl, markups, title }: {
+export default function FlattenedMarkupView({ baseUrl, markups, title, pageNumber = 1, onPagesLoaded }: {
   baseUrl: string
   /** The revision's serialized doc (or a bare Markup[]). */
   markups: MarkupDoc | Markup[]
   title?: string | null
+  /** 1-indexed page to display. Default 1 = the historical single-page behaviour.
+   *  Honoured only when `markups` is empty (the count/takeoff use): the composite
+   *  path flattens onto page 1 only, so it stays single-page as before. */
+  pageNumber?: number
+  /** Reports the source PDF's total page count once loaded (for a page selector). */
+  onPagesLoaded?: (numPages: number) => void
 }) {
   const [state, setState] = useState<"loading" | "ready" | "error">("loading")
   const [readout, setReadout] = useState(100) // zoom %, relative to fit-to-width
@@ -71,6 +77,13 @@ export default function FlattenedMarkupView({ baseUrl, markups, title }: {
   const pageRef = useRef<PdfPage | null>(null)
   const pdfDocRef = useRef<PdfDoc | null>(null)
   const baseRef = useRef<Viewport | null>(null)
+  // Multi-page: the loaded doc is kept alive across page flips (flipping only
+  // getPage()s + re-renders — never re-fetches/re-composites).
+  const numPagesRef = useRef(1)
+  const pageNumberRef = useRef(pageNumber)
+  const shownPageRef = useRef(0)            // last page actually rendered (0 = none yet)
+  const onPagesLoadedRef = useRef(onPagesLoaded)
+  onPagesLoadedRef.current = onPagesLoaded
   // Off-screen buffer the crisp re-render paints into before the flash-free blit.
   const offscreenRef = useRef<HTMLCanvasElement | null>(null)
   const renderTaskRef = useRef<RenderTask | null>(null)
@@ -209,7 +222,26 @@ export default function FlattenedMarkupView({ baseUrl, markups, title }: {
     void renderCrisp()
   }, [applyTransform, clampOffset, renderCrisp])
 
-  // ── Composite ONCE per (baseUrl, markups); keep the page alive for zoom ──────
+  // Load a page from the already-alive doc and reset it to fit-to-width. Used for
+  // both the initial render and every page flip (no re-fetch, no re-composite).
+  // renderGenRef supersedes an older in-flight page-load if a newer one starts.
+  const showPage = useCallback(async (n: number) => {
+    const pdf = pdfDocRef.current
+    if (!pdf) return
+    const total = Math.max(1, numPagesRef.current)
+    const clamped = Math.min(Math.max(1, Math.round(n)), total)
+    const gen = ++renderGenRef.current
+    let page: PdfPage
+    try { page = await pdf.getPage(clamped) } catch { return }
+    if (gen !== renderGenRef.current) return // superseded by a newer load
+    pageRef.current = page
+    const base = page.getViewport({ scale: 1 })
+    baseRef.current = { width: base.width, height: base.height }
+    shownPageRef.current = clamped
+    fitToWidth() // fit-to-width + renderCrisp (reproduces the initial-view path)
+  }, [fitToWidth])
+
+  // ── Load ONCE per (baseUrl, markups); keep the doc alive for zoom + page flips ─
   useEffect(() => {
     let alive = true
     setState("loading")
@@ -217,39 +249,32 @@ export default function FlattenedMarkupView({ baseUrl, markups, title }: {
     ;(async () => {
       try {
         const ab = await (await fetch(baseUrl)).arrayBuffer()
-        // pdf-lib only loads when a markup view is actually opened.
-        const { exportMarkedUpSheet } = await import("@/lib/drawing-markup-export")
-        const bytes = await exportMarkedUpSheet(ab, markups)
+        const mk = Array.isArray(markups) ? markups : markups.markups
+        // WITH markups: composite onto page 1 (existing single-page behaviour —
+        // exportMarkedUpSheet is page-1-only). WITHOUT markups (count/takeoff):
+        // render the ORIGINAL directly so all pages survive for the page selector.
+        let bytes: Uint8Array
+        if ((mk?.length ?? 0) > 0) {
+          const { exportMarkedUpSheet } = await import("@/lib/drawing-markup-export")
+          bytes = await exportMarkedUpSheet(ab, markups)
+        } else {
+          bytes = new Uint8Array(ab)
+        }
         if (!alive) return
 
-        // Render the composited bytes with pdf.js (via unpdf — the same path the
-        // splitter/editor use; no new dependency). Lazy-import so it loads only
-        // when this view mounts, matching the export module above.
+        // Render the bytes with pdf.js (via unpdf — the same path the splitter/
+        // editor use; no new dependency). Lazy-import so it loads only when this
+        // view mounts, matching the export module above.
         const { getDocumentProxy, createIsomorphicCanvasFactory } = await import("unpdf")
         const CanvasFactory = await createIsomorphicCanvasFactory()
         // new Uint8Array(bytes) copies into a fresh buffer — pdf.js may neuter it.
         const pdf = (await getDocumentProxy(new Uint8Array(bytes), { CanvasFactory })) as unknown as PdfDoc
         if (!alive) { try { await pdf.destroy() } catch { /* noop */ } return }
         pdfDocRef.current = pdf
-        const page = await pdf.getPage(1)
-        if (!alive) return
-        pageRef.current = page
-        const base = page.getViewport({ scale: 1 })
-        baseRef.current = { width: base.width, height: base.height }
+        numPagesRef.current = Math.max(1, pdf.numPages || 1)
+        onPagesLoadedRef.current?.(numPagesRef.current)
 
-        // Initial view = fit-to-width (reproduces the pre-zoom render exactly).
-        const vw = wrapRef.current?.clientWidth || base.width
-        const vh = wrapRef.current?.clientHeight || base.height
-        const ds = vw / base.width
-        const ph = base.height * ds
-        displayScaleRef.current = ds
-        fitScaleRef.current = ds
-        renderedScaleRef.current = ds
-        offsetRef.current = { x: 0, y: ph > vh ? 0 : (vh - ph) / 2 }
-        isFitRef.current = true
-        setReadout(100)
-
-        await renderCrisp()
+        await showPage(pageNumberRef.current) // initial view = fit-to-width of the requested page
         if (!alive) return
         setState("ready")
       } catch (err) {
@@ -267,8 +292,17 @@ export default function FlattenedMarkupView({ baseUrl, markups, title }: {
       pdfDocRef.current = null
       pageRef.current = null
       baseRef.current = null
+      shownPageRef.current = 0
     }
-  }, [baseUrl, markups, renderCrisp])
+  }, [baseUrl, markups, showPage])
+
+  // ── Flip to a new page on the alive doc (no re-fetch/re-composite) ───────────
+  useEffect(() => {
+    pageNumberRef.current = pageNumber
+    if (pdfDocRef.current && shownPageRef.current !== 0 && shownPageRef.current !== pageNumber) {
+      void showPage(pageNumber)
+    }
+  }, [pageNumber, showPage])
 
   // ── Wheel zoom (native, non-passive so we can preventDefault the page scroll) ─
   useEffect(() => {
