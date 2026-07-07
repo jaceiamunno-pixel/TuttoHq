@@ -22,9 +22,8 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
 
 // POST /api/rfq/[id]/package — build the bid package PDF from the selected spec
 // sections (by spec_number) + drawing sheets, store it company-scoped, persist
-// rfqs.package_pdf_path, and return a 7-day signed URL. Selection is passed in
-// the body (ephemeral) — v1a doesn't persist the section/sheet picks, so re-pick
-// to regenerate.
+// rfqs.package_pdf_path + the selection (pkg_spec_numbers/pkg_sheet_ids, migration
+// 0031) so the builder checkboxes rehydrate on reopen, and return a 7-day signed URL.
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
@@ -45,7 +44,13 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
   try {
     const { storagePath } = await composeRfqPackagePdf(supabase, id, { specNumbers, sheetIds }, Date.now())
-    await supabase.from("rfqs").update({ package_pdf_path: storagePath }).eq("id", id)
+    // Persist the built PDF path AND the exact selection so reopening the RFQ
+    // rehydrates the builder checkboxes (specs by spec_number, sheets by id).
+    await supabase.from("rfqs").update({
+      package_pdf_path: storagePath,
+      pkg_spec_numbers: specNumbers,
+      pkg_sheet_ids: sheetIds,
+    }).eq("id", id)
     const { data: signed } = await supabase.storage.from("submittals").createSignedUrl(storagePath, 604800)
     return NextResponse.json({ ok: true, package_pdf_path: storagePath, url: signed?.signedUrl ?? null })
   } catch (e) {

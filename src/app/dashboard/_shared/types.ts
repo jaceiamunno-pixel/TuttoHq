@@ -461,6 +461,11 @@ export interface Rfq {
   due_date: string | null
   status: RfqStatus
   package_pdf_path: string | null
+  // Persisted package selection (migration 0031) — rehydrates the builder
+  // checkboxes so a Sent RFQ remembers its own contents. Specs keyed by
+  // spec_number TEXT (LINKAGE LAW); sheets by drawing_sheets.id.
+  pkg_spec_numbers: string[] | null
+  pkg_sheet_ids: string[] | null
   created_at: string
   created_by: string
   // Aggregates attached by the list endpoint (never summed client-side).
