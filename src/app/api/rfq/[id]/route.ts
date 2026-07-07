@@ -57,15 +57,10 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   const { id } = await params
   const updates = await req.json().catch(() => ({}))
 
-  const allowed = ["name", "scope_description", "division_code", "due_date", "status", "package_pdf_path", "sent_at"]
+  const allowed = ["name", "scope_description", "division_code", "due_date", "status", "package_pdf_path"]
   const safe: Record<string, unknown> = Object.fromEntries(
     Object.entries(updates).filter(([k]) => allowed.includes(k))
   )
-
-  // First transition to "sent" stamps sent_at (unless the caller set one).
-  if (safe.status === "sent" && safe.sent_at === undefined) {
-    safe.sent_at = new Date().toISOString()
-  }
 
   if (Object.keys(safe).length === 0) return NextResponse.json({ error: "No valid fields" }, { status: 400 })
 

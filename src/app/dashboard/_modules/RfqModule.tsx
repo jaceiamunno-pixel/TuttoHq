@@ -463,7 +463,6 @@ function RfqDetail({ rfqId, projectId, project, onClose, onDelete }: {
                       <tr>
                         <th className="text-left px-3 py-2 text-[10px] font-bold text-[#64748B] uppercase tracking-widest">Vendor</th>
                         <th className="text-left px-3 py-2 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-36">State</th>
-                        <th className="text-left px-3 py-2 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-32">Due</th>
                         <th className="text-left px-3 py-2 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-32">Quote $</th>
                         <th className="text-left px-3 py-2 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-28">Quote PDF</th>
                         <th className="px-3 py-2 w-10"></th>
@@ -484,11 +483,6 @@ function RfqDetail({ rfqId, projectId, project, onClose, onDelete }: {
                               <option value="no_response">No Response</option>
                               <option value="declined">Declined</option>
                             </select>
-                          </td>
-                          <td className="px-3 py-2">
-                            <input type="date" defaultValue={r.due_date ?? ""} key={`due-${r.id}-${r.due_date}`}
-                              onChange={e => patchRecipient(r.id, { due_date: e.target.value || null })}
-                              className="w-full h-8 px-2 rounded border border-[#E2E8F0] text-[12px] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40" />
                           </td>
                           <td className="px-3 py-2">
                             <input type="number" step="0.01" min="0" placeholder="—" defaultValue={r.quoted_amount ?? ""} key={`amt-${r.id}-${r.quoted_amount}`}

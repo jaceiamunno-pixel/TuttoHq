@@ -461,7 +461,6 @@ export interface Rfq {
   due_date: string | null
   status: RfqStatus
   package_pdf_path: string | null
-  sent_at: string | null
   created_at: string
   created_by: string
   // Aggregates attached by the list endpoint (never summed client-side).
@@ -476,7 +475,6 @@ export interface RfqRecipient {
   vendor_person_id: string | null
   state: RfqRecipientState
   sent_at: string | null
-  due_date: string | null
   quote_file_path: string | null
   quoted_amount: number | null
   // Optional link to an estimate line (populates that line's sub-category number).

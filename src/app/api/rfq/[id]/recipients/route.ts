@@ -20,7 +20,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
   // 1. Ownership check — RLS-scoped fetch of the parent RFQ.
   const { data: rfq } = await supabase
-    .from("rfqs").select("id, company_id, due_date").eq("id", rfqId).maybeSingle()
+    .from("rfqs").select("id, company_id").eq("id", rfqId).maybeSingle()
   if (!rfq) return NextResponse.json({ error: "RFQ not found" }, { status: 404 })
 
   const body = await req.json().catch(() => ({}))
@@ -53,7 +53,6 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       vendor_person_id: r.vendor_person_id,
       state:            "sent",
       sent_at:          sentAt,
-      due_date:         rfq.due_date ?? null,
     }))
 
   if (toInsert.length === 0) return NextResponse.json({ ok: true, added: 0 })
