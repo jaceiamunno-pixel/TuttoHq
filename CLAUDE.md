@@ -2,20 +2,22 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Knowledge Base — TuttoHQ Vault
+## Knowledge Base — TuttoHQ Vault (Notion)
 
-A separate Obsidian vault contains all product strategy, feature specs, customer notes, and architecture decisions.
+The canonical knowledge base is the **Notion TuttoHQ Vault** — root page ID `36ea2f15-d107-81e7-9fe7-f72850497f41`. Product strategy, current build state, session updates, ADRs, feature/design pages, customer notes, and the roadmap all live there.
 
-**Location:** `C:\Users\jacei_7431w1\Documents\TuttoHQ_Vault`
+**At session start:** fetch the Notion root page and read the **most recent `SESSION UPDATE` block** for the current build state and prod HEAD. Blocks are dated; newer blocks supersede older ones — read the latest one.
 
-**Read the vault when:**
-- Starting any feature work → read `00 - Meta\CLAUDE.md` first for product context
-- Working on a specific feature → read `01 - Features\[feature name].md`
-- Making architectural decisions → **only ADR-001 and ADR-002 live in the vault** (`04 - Decisions\`, locked). **ADR-003 onward live in Notion** (TuttoHQ Vault → ADRs, DRAFT/design-first: ADR-003 through ADR-014+). Check Notion for anything numbered 003+.
-- A customer is mentioned → check `03 - Customers\[customer].md`
-- Looking for product roadmap or priorities → read `00 - Meta\Roadmap.md`
+**When you need product context, look in the Notion vault for:**
+- Product state / current build / prod HEAD → the latest `SESSION UPDATE` block on the root page
+- A specific feature you're working on → its feature/design page
+- A customer that's mentioned → that customer's page
+- Roadmap or priorities → the roadmap page
+- Architectural decisions → all ADRs live in Notion. **ADR-001 and ADR-002 are the locked/foundational ones; ADR-003 onward are DRAFT/design-first.**
 
-**Do NOT modify vault files** unless explicitly asked. The vault is canonical product knowledge; code changes happen in this repo only.
+A local Obsidian export (`C:\Users\jacei_7431w1\Documents\TuttoHQ_Vault`) may still exist, but it's a mirror we do not maintain and may be stale — **Notion is the source of truth.**
+
+**Do NOT modify vault content** unless explicitly asked. The vault is canonical product knowledge; code changes happen in this repo only.
 
 ## Commands
 
