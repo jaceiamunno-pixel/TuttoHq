@@ -13,10 +13,47 @@
 // print-friendly counterpart to the .xlsx download.
 
 import { PDFBuilder } from "@/lib/pdf-builder"
+import { createClient } from "@/lib/supabase/client"
 import { computeCoTotals } from "./co-math"
 import type {
   SubmittalRecord, ChangeOrder, VendorRow, VendorPersonRow,
 } from "./types"
+
+// ─── Tenant PDF header identity (logo + brand + scale) ───────────────────────
+// These log PDFs are generated in the BROWSER, but they still want the same
+// navy-header identity every server-generated document gets (RFI, CO, cover,
+// schedule calendar…). Load it the exact same way those server PDF routes do —
+// e.g. /api/schedule-export/calendar: read the tenant's company_settings row and
+// download its logo from the company-assets bucket. RLS scopes BOTH reads to the
+// caller's own company via the auth session (company_settings + company-assets
+// each have an authenticated SELECT policy keyed on get_my_company_id()), so no
+// company_id is ever passed from the client and a user can never pull another
+// tenant's mark. Every field is nullable and degrades cleanly: no logo →
+// brandName text fallback (see PDFBuilder.drawHeader), neither → a clean header.
+async function loadTenantPdfHeader(): Promise<{
+  logoBytes: ArrayBuffer | null
+  brandName: string | null
+  logoScalePct: number | undefined
+}> {
+  try {
+    const sb = createClient()
+    const { data: settings } = await sb.from("company_settings").select("*").maybeSingle()
+    let logoBytes: ArrayBuffer | null = null
+    if (settings?.logo_path) {
+      const { data: blob } = await sb.storage.from("company-assets").download(settings.logo_path)
+      if (blob) logoBytes = await blob.arrayBuffer()
+    }
+    return {
+      logoBytes,
+      brandName: settings?.display_name ?? null,
+      logoScalePct: settings?.logo_scale_pct ?? undefined,
+    }
+  } catch {
+    // Header identity is decorative — a storage/RLS hiccup must never sink the
+    // export. Fall back to a header with no mark.
+    return { logoBytes: null, brandName: null, logoScalePct: undefined }
+  }
+}
 
 // ─── Small formatters (kept local so this module is self-contained) ──────────
 const usd = (n: number | null | undefined) =>
@@ -93,10 +130,12 @@ export interface ExportChangeOrderLogPdfArgs {
 export async function exportChangeOrderLogToPdf(args: ExportChangeOrderLogPdfArgs): Promise<void> {
   const meta = [args.projectName.trim(), args.projectNumber ? `No. ${args.projectNumber}` : null]
     .filter(Boolean).join("   ·   ")
+  const header = await loadTenantPdfHeader()
   const doc = await PDFBuilder.create({
     documentType: "Change Order Log",
     documentNumber: meta || null,
     orientation: "landscape",
+    ...header,
   })
 
   // Columns mirror the on-screen CO log (Actions dropped — not data). Widths sum
@@ -151,10 +190,12 @@ export interface ExportSubmittalLogPdfArgs {
 
 export async function exportSubmittalLogToPdf(args: ExportSubmittalLogPdfArgs): Promise<void> {
   const company = (args.gcName ?? "").trim() || args.projectName.trim()
+  const header = await loadTenantPdfHeader()
   const doc = await PDFBuilder.create({
     documentType: "Submittal Log",
     documentNumber: company || null,
     orientation: "landscape",
+    ...header,
   })
 
   // Columns mirror the on-screen log header set (Actions dropped). Description
