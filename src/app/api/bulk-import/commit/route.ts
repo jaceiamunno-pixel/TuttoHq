@@ -3,20 +3,52 @@ import { createClient } from "@/lib/supabase/server"
 import { isValidSha256 } from "@/lib/file-hash"
 
 // POST /api/bulk-import/commit — Stage 2a write path. Attach each Bulk
-// Import row to its user-confirmed spec-built submittals row. Model A:
-// matches into existing rows; NEVER creates a row.
+// Import row to a spec-built submittals row. Model A never fabricates spec
+// identity: every attachment lands on a row whose CSI division / section /
+// type came from the spec book — either the confirmed placeholder or a
+// sibling spawned from it (see the auto-split contract).
+//
+// AUTO-SPLIT CONTRACT (the one-file-one-log-row rule):
+//   Every uploaded file becomes its OWN top-level log row. A spec book
+//   generates exactly ONE placeholder per (section, submittal_type), so a
+//   real project with two DISTINCT submittals of the same type in one
+//   section auto-matches both files to the SAME placeholder. The second
+//   file must NOT silently stack onto the first as a fake revision.
+//
+//   Per incoming file, keyed on target_row_id (the confirmed placeholder):
+//     • First file for a FREE placeholder (no attachment from a prior
+//       commit AND not yet claimed earlier in this batch) → attaches to
+//       the placeholder itself.
+//     • Any later file whose placeholder is already claimed in this batch,
+//       OR whose placeholder already carries an attachment from a prior
+//       commit → SPAWNS a new sibling submittals row that clones ONLY the
+//       placeholder's spec identity, and attaches there as that row's own
+//       (current) revision.
+//   Distinct submittals are NEVER silently merged as revisions of one
+//   another. Revision-stacking is an explicit, per-row user action handled
+//   elsewhere (the /submittals/[id]/attachments route) — it is never
+//   inferred from a batch, and this route does not touch that path.
+//
+// IDEMPOTENCY (retry-safe, no double-spawn):
+//   Before spawning, we re-resolve by file_sha256 within the placeholder's
+//   sibling group. If this exact file already lives on the placeholder or a
+//   previously-spawned sibling, we re-attach there and the RPC's same-bytes
+//   guard no-ops. A re-run of the same batch therefore converges on the
+//   rows the first run created instead of minting new ones. Files with no
+//   sha keep the same best-effort behavior they always had — the RPC guard
+//   needs a sha to fire, so a null-sha retry can still duplicate.
 //
 // HARD WRITE RULES:
 //   1. Caller must own the project (project.company_id == caller company).
 //   2. Each target row must belong to: caller's company, the specified
-//      project, source = 'spec_ingestion', and have NO existing PDF
-//      attached (storage_path IS NULL). Re-commit is refused — the
-//      operator must explicitly clear the old attachment first.
+//      project, and source = 'spec_ingestion'. It MAY already hold a PDF —
+//      an occupied placeholder drives the auto-split above, not a refusal
+//      and not a stacked revision.
 //   3. Each staging_path must be inside the caller's own
 //      `{company}/bulk-import-staging/` directory.
-//   4. Each row commit is independent: a single bad row produces a per-row
-//      error in the response, not an envelope failure. The other rows in
-//      the batch commit normally.
+//   4. Each row commit is independent: a single bad row (including a failed
+//      spawn) produces a per-row error in the response, not an envelope
+//      failure. The other rows in the batch commit normally.
 //   5. Storage transactionality: COPY (not move) from staging to uploads.
 //      The DB UPDATE runs after the copy succeeds. On UPDATE failure we
 //      attempt to delete the freshly-copied uploads object so it doesn't
@@ -27,8 +59,11 @@ import { isValidSha256 } from "@/lib/file-hash"
 //
 // Cross-tenant safety: every SELECT / UPDATE goes through the caller's
 // authenticated client (RLS enforces company), AND the WHERE clauses on
-// .eq("company_id") / .eq("project_id") explicitly re-filter. Either one
-// alone is sufficient; both together is defense-in-depth.
+// .eq("company_id") / .eq("project_id") explicitly re-filter. Spawned
+// sibling rows stamp company_id + project_id copied from the placeholder
+// (already RLS-verified as the caller's) — never from client input; the
+// RLS WITH CHECK backstops. Either guard alone suffices; both is
+// defense-in-depth.
 
 interface RowIn {
   /** Modal-local id; echoed back so the client can map result → row. */
@@ -73,6 +108,10 @@ interface CommitResult {
    *  The client surfaces this as "Already attached" (the row is in the
    *  intended state — just nothing new was created this run). */
   was_duplicate?: boolean
+  /** True when the file did NOT land on the confirmed placeholder but on a
+   *  newly-spawned sibling row (auto-split: the placeholder was already
+   *  claimed this batch or held a prior attachment). row_id is the sibling. */
+  spawned?: boolean
 }
 
 export async function POST(req: NextRequest) {
@@ -109,6 +148,134 @@ export async function POST(req: NextRequest) {
   const results: CommitResult[] = []
   const nowIso = new Date().toISOString()
 
+  // The spec-identity fields cloned onto a spawned sibling. Read off the
+  // (already RLS- + company- + project-verified) placeholder row.
+  type TargetRow = {
+    id: string
+    company_id: string
+    project_id: string
+    source: string | null
+    status: string | null
+    storage_path: string | null
+    csi_division: string | null
+    division_name: string | null
+    csi_section: string | null
+    section_name: string | null
+    material_name: string | null
+    spec_section_id: string | null
+    submittal_type: string | null
+  }
+
+  // target_row_ids that an earlier file in THIS batch has already claimed as
+  // its placeholder. A second file for the same placeholder must spawn a
+  // sibling instead of stacking (see the auto-split contract in the header).
+  const claimedTargets = new Set<string>()
+
+  // Idempotency re-resolve. The placeholder and every sibling spawned from
+  // it share (project_id, csi_section, submittal_type, source='spec_ingestion').
+  // If this exact file (by sha) already lives on any row in that group, return
+  // that row's id so the commit re-attaches there (RPC same-bytes no-op) rather
+  // than spawning a duplicate on retry. Returns { id } (may be null) or { error }.
+  async function findSiblingHoldingSha(
+    ph: TargetRow,
+    sha: string,
+  ): Promise<{ id: string | null; error?: string }> {
+    // 1) All rows in the placeholder's spec-identity group (includes the
+    //    placeholder itself and any previously-spawned siblings).
+    let q = supabase
+      .from("submittals")
+      .select("id")
+      .eq("company_id", companyId)
+      .eq("project_id", projectId)
+      .eq("source", "spec_ingestion")
+      .neq("status", "deleted")
+      .eq("csi_section", ph.csi_section ?? "")
+    q = ph.submittal_type == null
+      ? q.is("submittal_type", null)
+      : q.eq("submittal_type", ph.submittal_type)
+    const { data: groupRows, error: groupErr } = await q
+    if (groupErr) return { id: null, error: groupErr.message }
+    const groupIds = (groupRows ?? []).map((g) => g.id as string)
+    if (groupIds.length === 0) return { id: null }
+
+    // 2) Is this file's sha already attached to one of them?
+    const { data: att, error: attErr } = await supabase
+      .from("submittal_attachments")
+      .select("submittal_id")
+      .eq("company_id", companyId)
+      .eq("file_sha256", sha)
+      .in("submittal_id", groupIds)
+      .limit(1)
+    if (attErr) return { id: null, error: attErr.message }
+    return { id: att && att.length > 0 ? (att[0].submittal_id as string) : null }
+  }
+
+  // Spawn a new sibling submittals row that clones ONLY the placeholder's
+  // spec identity. company_id + project_id are stamped from the placeholder
+  // (never client input). submittal_seq is allocated via the race-safe
+  // per-project counter RPC so concurrent commits get disjoint numbers.
+  async function spawnSibling(
+    ph: TargetRow,
+    reviewStatus: string,
+    fileName: string,
+  ): Promise<{ id: string } | { error: string }> {
+    const { data: seqBase, error: seqErr } = await supabase
+      .rpc("next_submittal_seq", { p_project_id: projectId, p_count: 1 })
+    if (seqErr || typeof seqBase !== "number") {
+      return { error: `seq allocation failed: ${seqErr?.message ?? "no seq returned"}` }
+    }
+    const { data: row, error: insErr } = await supabase
+      .from("submittals")
+      .insert({
+        // Spec identity — copied verbatim from the placeholder.
+        csi_division:     ph.csi_division,
+        division_name:    ph.division_name,
+        csi_section:      ph.csi_section,
+        section_name:     ph.section_name,
+        material_name:    ph.material_name,
+        spec_section_id:  ph.spec_section_id,
+        submittal_type:   ph.submittal_type,
+        source:           "spec_ingestion",
+        status:           "active",
+        // Tenant stamp — from the placeholder, RLS WITH CHECK backstops.
+        company_id:       ph.company_id,
+        project_id:       ph.project_id,
+        // Fresh identity for its own log row.
+        submittal_seq:    seqBase + 1,
+        submittal_number: null,
+        revision_number:  "R0",
+        review_status:    reviewStatus || null,
+        title_locked:     false,
+        // Sensible pre-attach title; the attachment sync trigger overwrites
+        // file_name with the committed PDF's name once it lands.
+        file_name:        fileName,
+        uploaded_by:      user!.id,
+      })
+      .select("id")
+      .single()
+    if (insErr || !row) {
+      return { error: insErr?.message ?? "insert returned no row" }
+    }
+    return { id: row.id as string }
+  }
+
+  // Best-effort delete of a sibling we spawned but failed to attach a PDF to.
+  // Scoped by company + project + spec_ingestion; the FK cascade + the fact it
+  // has no attachment yet make this safe (never deletes a populated row).
+  async function deleteEmptySpawnedRow(rowId: string): Promise<void> {
+    const { error } = await supabase
+      .from("submittals")
+      .delete()
+      .eq("id", rowId)
+      .eq("company_id", companyId)
+      .eq("project_id", projectId)
+      .eq("source", "spec_ingestion")
+      .is("storage_path", null)
+    if (error) {
+      console.warn("[bulk-import-commit] failed to clean up empty spawned row", rowId, error.message)
+    }
+  }
+
   for (const r of rows) {
     const cid = typeof r.client_row_id === "string" ? r.client_row_id : ""
     if (!cid) {
@@ -143,7 +310,7 @@ export async function POST(req: NextRequest) {
     // assert company_id and project_id explicitly.
     const { data: target, error: tErr } = await supabase
       .from("submittals")
-      .select("id, company_id, project_id, source, status, storage_path")
+      .select("id, company_id, project_id, source, status, storage_path, csi_division, division_name, csi_section, section_name, material_name, spec_section_id, submittal_type")
       .eq("id", r.target_row_id)
       .single()
     if (tErr || !target) {
@@ -169,10 +336,59 @@ export async function POST(req: NextRequest) {
       results.push({ client_row_id: cid, status: "error", error: "target row is deleted" })
       continue
     }
-    // No more storage_path-non-null refuse. Stage 2a-v2 allows multiple
-    // attachments per submittal — each commit adds a new attachment under
-    // the same parent row, and the RPC decides whether it becomes current
-    // based on revision number (newest wins) rather than insertion order.
+    // ── Auto-split resolution ────────────────────────────────────────────
+    // The placeholder (target) is only the SPEC-IDENTITY source. Decide which
+    // submittals row this file's PDF actually attaches to: the placeholder
+    // itself, a sibling we spawned earlier this batch/retry, or a brand-new
+    // sibling. Distinct submittals never stack as revisions of one another.
+    const ph = target as TargetRow
+    const sha = isValidSha256(r.file_sha256) ? r.file_sha256 : null
+
+    let effectiveRowId = r.target_row_id
+    let spawnedRowId: string | null = null
+
+    // DELIBERATE EXCEPTION to one-row-per-upload: two byte-identical files in a
+    // batch resolve to the SAME row (dedup), never spawn a second. This is both
+    // the retry-convergence mechanism AND the accidental-double-drag guard. The
+    // result carries was_duplicate=true so the UI shows "Already attached" — the
+    // dedup is surfaced to the user, never silent. Distinct-bytes files always
+    // get their own row.
+    //
+    // 1. Idempotency re-resolve: if this exact file already lives on the
+    //    placeholder or a previously-spawned sibling, re-attach there so a
+    //    retried batch converges instead of double-spawning. (Needs a sha;
+    //    without one we fall through to the fresh-file path, same as before.)
+    let reResolved = false
+    if (sha) {
+      const found = await findSiblingHoldingSha(ph, sha)
+      if (found.error) {
+        results.push({ client_row_id: cid, status: "error", error: `idempotency check failed: ${found.error}` })
+        continue
+      }
+      if (found.id) {
+        effectiveRowId = found.id
+        reResolved = true
+      }
+    }
+
+    // 2/3. Fresh file: attach to the placeholder if it's FREE, else spawn a
+    //      sibling. Free = no attachment from a prior commit (storage_path is
+    //      null) AND not yet claimed by an earlier file in this batch.
+    if (!reResolved) {
+      const placeholderTaken = ph.storage_path != null || claimedTargets.has(r.target_row_id)
+      if (!placeholderTaken) {
+        effectiveRowId = r.target_row_id
+        claimedTargets.add(r.target_row_id)
+      } else {
+        const spawn = await spawnSibling(ph, r.review_status, r.file_name)
+        if ("error" in spawn) {
+          results.push({ client_row_id: cid, status: "error", error: `spawn sibling failed: ${spawn.error}` })
+          continue
+        }
+        effectiveRowId = spawn.id
+        spawnedRowId = spawn.id
+      }
+    }
 
     // Derive the canonical uploads path. Keep the UUID prefix from staging
     // so storage paths stay unique per attachment.
@@ -208,6 +424,8 @@ export async function POST(req: NextRequest) {
       .from("submittals")
       .copy(r.staging_path, uploadsPath)
     if (copyErr) {
+      // Delete the empty sibling we just spawned so a retry re-spawns cleanly.
+      if (spawnedRowId) await deleteEmptySpawnedRow(spawnedRowId)
       results.push({
         client_row_id: cid, status: "error",
         error: `storage copy failed: ${copyErr.message}`,
@@ -218,10 +436,10 @@ export async function POST(req: NextRequest) {
     // Attach via the add_submittal_attachment RPC — atomic newest-wins
     // (unset prev current + insert new + trigger syncs submittals row).
     // The RPC enforces tenant scope via get_my_company_id() and refuses
-    // to write if the submittal isn't accessible to the caller.
-    const sha = isValidSha256(r.file_sha256) ? r.file_sha256 : null
+    // to write if the submittal isn't accessible to the caller. For a spawned
+    // sibling this is its FIRST (and only) attachment → it becomes current.
     const { data: attachment, error: rpcErr } = await supabase.rpc("add_submittal_attachment", {
-      p_submittal_id:     r.target_row_id,
+      p_submittal_id:     effectiveRowId,
       p_storage_path:     uploadsPath,
       p_file_name:        r.file_name,
       p_file_size:        r.file_size ?? null,
@@ -235,8 +453,10 @@ export async function POST(req: NextRequest) {
     }).single()
 
     if (rpcErr || !attachment) {
-      // Roll back the storage copy (best-effort).
+      // Roll back the storage copy (best-effort) and drop the empty sibling
+      // (if we spawned one) so a retry re-spawns cleanly instead of orphaning.
       await supabase.storage.from("submittals").remove([uploadsPath]).catch(() => {})
+      if (spawnedRowId) await deleteEmptySpawnedRow(spawnedRowId)
       results.push({
         client_row_id: cid, status: "error",
         error: `attach failed: ${rpcErr?.message ?? "RPC returned no row"}`,
@@ -307,9 +527,12 @@ export async function POST(req: NextRequest) {
     results.push({
       client_row_id: cid,
       status: "ok",
-      row_id: r.target_row_id,
+      // The row the file actually landed on — the placeholder, or the sibling
+      // we spawned/re-resolved for the auto-split. NOT always target_row_id.
+      row_id: effectiveRowId,
       attached_path: att.storage_path,
       was_duplicate: wasDuplicate,
+      spawned: spawnedRowId != null,
     })
   }
 

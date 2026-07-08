@@ -70,6 +70,12 @@ interface Row {
    *  shows "Already attached" instead of "Attached to log row" to make
    *  the no-op explicit to the operator. */
   wasDuplicate?: boolean
+  /** True when the server auto-split this file onto a NEW sibling log row
+   *  instead of the confirmed placeholder — the placeholder was already
+   *  claimed earlier in this batch or held a prior attachment (two distinct
+   *  submittals of the same spec section+type). The modal shows "Added as new
+   *  row" so the operator sees the extra log row that was created. */
+  wasSpawned?: boolean
   // ── Part C: exact-duplicate detection ───────────────────────────────────
   /** SHA-256 of the file bytes (lowercase hex). Computed server-side in
    *  /api/bulk-import/analyze (the buffer is already in memory there for
@@ -541,7 +547,7 @@ export default function BulkImportModal({
       if (!res.ok) throw new Error(data?.error ?? `Commit failed (HTTP ${res.status})`)
       const results: Array<{
         client_row_id: string; status: "ok" | "error";
-        row_id?: string; error?: string; was_duplicate?: boolean;
+        row_id?: string; error?: string; was_duplicate?: boolean; spawned?: boolean;
       }> = Array.isArray(data?.results) ? data.results : []
       let ok = 0, err = 0
       setRows(prev => prev.map(r => {
@@ -555,6 +561,7 @@ export default function BulkImportModal({
             committedRowId: result.row_id,
             commitError: undefined,
             wasDuplicate: result.was_duplicate === true,
+            wasSpawned: result.spawned === true,
           }
         } else {
           err++
@@ -784,9 +791,17 @@ export default function BulkImportModal({
                                 <Spinner className="h-3 w-3" /> Committing…
                               </p>
                             )}
-                            {r.status === "committed" && !r.wasDuplicate && (
+                            {r.status === "committed" && !r.wasDuplicate && !r.wasSpawned && (
                               <p className="text-[10px] text-emerald-700 mt-1 font-semibold">
                                 ✓ Attached to log row
+                              </p>
+                            )}
+                            {r.status === "committed" && !r.wasDuplicate && r.wasSpawned && (
+                              <p
+                                className="text-[10px] text-emerald-700 mt-1 font-semibold flex items-center gap-1"
+                                title="Two distinct submittals matched the same spec section+type. This file was added as its own new log row rather than stacked as a revision of the first."
+                              >
+                                ✚ Added as new row
                               </p>
                             )}
                             {r.status === "committed" && r.wasDuplicate && (
