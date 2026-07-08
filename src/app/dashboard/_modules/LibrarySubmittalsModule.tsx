@@ -2016,13 +2016,13 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                           <table className="w-full text-[13px] border-collapse">
                             <tbody>
                               {specMode === "detailed" ? rows.map(r => (
-                                <tr key={r.id} className="border-b border-[#E2E8F0]/60 last:border-0 hover:bg-[#F8F9FA] transition-colors">
+                                <tr key={r.id} className={`border-b border-[#E2E8F0]/60 last:border-0 transition-colors ${r.reference_only ? "bg-[#F8F9FA] opacity-60" : "hover:bg-[#F8F9FA]"}`}>
                                   <td className="px-3 py-2 w-8 align-top">
                                     <input type="checkbox" checked={r.is_selected}
                                       onChange={() => patchStaged([r.id], { is_selected: !r.is_selected })}
                                       className="accent-[#7B9BB5] mt-0.5" />
                                   </td>
-                                  <td className="px-2 py-2 w-8 align-top text-[12px] font-semibold text-[#64748B]">{r.letter ?? ""}</td>
+                                  <td className="px-2 py-2 w-14 align-top text-[12px] font-semibold text-[#64748B] whitespace-nowrap">{[r.article, r.letter].filter(Boolean).join(" ")}</td>
                                   <td className="px-2 py-2 w-56 align-top">
                                     <input type="text" value={r.project_item_name}
                                       onChange={e => updateStagedLocal([r.id], { project_item_name: e.target.value })}
@@ -2036,15 +2036,23 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                                       {SUBMITTAL_TYPE_OPTIONS.map(t => <option key={t} value={t}>{t}</option>)}
                                     </select>
                                   </td>
-                                  <td className="px-2 py-2 align-top text-[12px] text-[#64748B]">{r.description}</td>
+                                  <td className="px-2 py-2 align-top text-[12px] text-[#64748B]">
+                                    {r.reference_only && (
+                                      <span className="mr-1.5 inline-block rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide bg-[#E2E8F0] text-[#94A3B8] align-middle" title="Cross-reference to another section — not a chase-able deliverable">Reference</span>
+                                    )}
+                                    {r.description}
+                                  </td>
                                 </tr>
                               )) : SUBMITTAL_TYPE_OPTIONS.flatMap(type => {
                                 const group = rows.filter(r => r.submittal_type === type)
                                 if (group.length === 0) return []
                                 const ids = group.map(g => g.id)
                                 const allSelected = group.every(g => g.is_selected)
+                                // A type-group that is entirely cross-references is
+                                // de-emphasized like a detailed reference row.
+                                const groupRefOnly = group.every(g => g.reference_only)
                                 return [(
-                                  <tr key={`${secId}-${type}`} className="border-b border-[#E2E8F0]/60 last:border-0 hover:bg-[#F8F9FA] transition-colors">
+                                  <tr key={`${secId}-${type}`} className={`border-b border-[#E2E8F0]/60 last:border-0 transition-colors ${groupRefOnly ? "bg-[#F8F9FA] opacity-60" : "hover:bg-[#F8F9FA]"}`}>
                                     <td className="px-3 py-2 w-8 align-top">
                                       <input type="checkbox" checked={allSelected}
                                         onChange={() => patchStaged(ids, { is_selected: !allSelected })}
@@ -2056,7 +2064,12 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                                         onBlur={e => patchStaged(ids, { project_item_name: e.target.value })}
                                         className="w-full h-7 px-2 rounded border border-[#E2E8F0] text-[12px] text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40" />
                                     </td>
-                                    <td className="px-2 py-2 align-top text-[12px] text-[#0F172A] font-medium">{typeLabels[type] ?? type}</td>
+                                    <td className="px-2 py-2 align-top text-[12px] text-[#0F172A] font-medium">
+                                      {groupRefOnly && (
+                                        <span className="mr-1.5 inline-block rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide bg-[#E2E8F0] text-[#94A3B8] align-middle" title="Cross-references to other sections — not chase-able deliverables">Reference</span>
+                                      )}
+                                      {typeLabels[type] ?? type}
+                                    </td>
                                     <td className="px-2 py-2 w-20 align-top text-[11px] text-[#64748B]">{group.length} item{group.length === 1 ? "" : "s"}</td>
                                   </tr>
                                 )]

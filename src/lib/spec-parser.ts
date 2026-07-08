@@ -750,12 +750,42 @@ function firstHardStopAfter(text: string, from: number): number {
   return m ? m.index : text.length
 }
 
+// PART-1 article titles that carry chase-able submittal deliverables. The
+// SUBMITTALS article is the obvious one, but real spec sections scatter real
+// submittal items across sibling articles that a SUBMITTAL-only filter silently
+// dropped:
+//   QUALITY ASSURANCE      — mfr/installer qualification statements, mockups, certs
+//   WARRANTY / GUARANTEES AND WARRANTIES — each individually-termed warranty
+//   MAINTENANCE MATERIAL SUBMITTALS      — attic stock / spare materials
+//   DELEGATED DESIGN       — signed/sealed delegated-design data to submit
+//   CLOSEOUT SUBMITTALS    — already covered by "SUBMITTAL"
+// Match is SUBSTRING, case-insensitive, against the whitespace-normalized title
+// — NOT exact equality: "GUARANTEES AND WARRANTIES" and "MAINTENANCE MATERIAL
+// SUBMITTALS" both occur in real books and exact-match would miss them. So
+// "WARRANT" catches WARRANTY/WARRANTIES and "GUARANTEE" catches GUARANTEE(S).
+// This whitelist was validated against ALL 107 sections of the Long Lots spec
+// book (full scan). "CT HIGH PERFORMANCE BUILDING STANDARD REQUIREMENTS" is
+// deliberately excluded to match the Procore benchmark.
+const SUBMITTAL_ARTICLE_KEYWORDS = [
+  "SUBMITTAL", "WARRANT", "GUARANTEE", "QUALITY ASSURANCE", "MAINTENANCE", "DELEGATED DESIGN",
+] as const
+
+/** True when an article title names an article that carries submittal items. */
+function isSubmittalBearingArticle(title: string): boolean {
+  const t = title.replace(/\s+/g, " ").toUpperCase()
+  return SUBMITTAL_ARTICLE_KEYWORDS.some(k => t.includes(k))
+}
+
 /**
- * Extracts every SUBMITTALS-type article (SUBMITTALS, ACTION SUBMITTALS,
- * INFORMATIONAL SUBMITTALS, CLOSEOUT SUBMITTALS) from a section's text. Each
- * article runs until the FIRST of: the next article heading, the next PART
- * heading, or END OF SECTION — so it never reads past its natural end.
- * Returns "" when none are present.
+ * Extracts every submittal-bearing PART-1 article from a section's text. This is
+ * the SUBMITTALS article (SUBMITTALS, ACTION / INFORMATIONAL / CLOSEOUT
+ * SUBMITTALS) PLUS the sibling articles that carry real submittal items —
+ * QUALITY ASSURANCE, WARRANTY / GUARANTEES AND WARRANTIES, MAINTENANCE MATERIAL
+ * SUBMITTALS, DELEGATED DESIGN (see SUBMITTAL_ARTICLE_KEYWORDS). Articles are
+ * located by TITLE, not by number (SUBMITTALS sits at 1.3 in some sections, 1.4
+ * in others). Each article runs until the FIRST of: the next article heading,
+ * the next PART heading, or END OF SECTION — so it never reads past its natural
+ * end. Returns "" when none are present.
  */
 export function extractSubmittalsText(sectionText: string): string {
   const headings: { index: number; title: string }[] = []
@@ -767,7 +797,7 @@ export function extractSubmittalsText(sectionText: string): string {
 
   const blocks: string[] = []
   for (let i = 0; i < headings.length; i++) {
-    if (!/SUBMITTAL/i.test(headings[i].title)) continue
+    if (!isSubmittalBearingArticle(headings[i].title)) continue
     const start = headings[i].index
     const nextArticle = i + 1 < headings.length ? headings[i + 1].index : sectionText.length
     const hardStop = firstHardStopAfter(sectionText, start + 1)

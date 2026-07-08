@@ -146,10 +146,13 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ do
       project_id: string
       spec_number: string
       letter: string | null
+      article: string | null
       project_item_name: string
       submittal_type: string
       description: string
       sub_bullets: string[]
+      reference_only: boolean
+      is_selected: boolean
     }
     const staged: StagedRow[] = []
     let done = 0
@@ -168,18 +171,26 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ do
 
       for (const { sec, items } of classified) {
         for (const it of items) {
+          // Backstop: default false when the classifier didn't flag the row.
+          const refOnly = it.reference_only === true
           staged.push({
             project_document_id: documentId,
             spec_section_id:     sec.id,
             project_id:          doc.project_id,
             spec_number:         sec.spec_number,
             letter:              it.letter || null,
+            article:             it.article || null,
             project_item_name:   sec.spec_title,
             submittal_type:      it.type,
             description:         it.sub_bullets.length > 0
               ? it.sub_bullets.join("; ")
               : (it.description || sec.spec_title),
             sub_bullets:         it.sub_bullets,
+            reference_only:      refOnly,
+            // Cross-reference rows are shown in Pending Review but start
+            // deselected — not chase-able deliverables, so not committed as
+            // outstanding unless the reviewer explicitly opts them in.
+            is_selected:         !refOnly,
           })
         }
       }
