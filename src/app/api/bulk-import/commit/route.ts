@@ -347,6 +347,13 @@ export async function POST(req: NextRequest) {
     let effectiveRowId = r.target_row_id
     let spawnedRowId: string | null = null
 
+    // DELIBERATE EXCEPTION to one-row-per-upload: two byte-identical files in a
+    // batch resolve to the SAME row (dedup), never spawn a second. This is both
+    // the retry-convergence mechanism AND the accidental-double-drag guard. The
+    // result carries was_duplicate=true so the UI shows "Already attached" — the
+    // dedup is surfaced to the user, never silent. Distinct-bytes files always
+    // get their own row.
+    //
     // 1. Idempotency re-resolve: if this exact file already lives on the
     //    placeholder or a previously-spawned sibling, re-attach there so a
     //    retried batch converges instead of double-spawning. (Needs a sha;
