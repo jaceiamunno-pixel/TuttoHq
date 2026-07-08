@@ -105,4 +105,5 @@ end;
 $$;
 
 revoke all on function public.remove_submittal_attachment(uuid) from public;
+revoke execute on function public.remove_submittal_attachment(uuid) from anon;
 grant execute on function public.remove_submittal_attachment(uuid) to authenticated;
