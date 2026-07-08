@@ -314,6 +314,8 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
   }> | null>(null)
   const [revHistoryLoading, setRevHistoryLoading] = useState(false)
   const [revHistoryError,   setRevHistoryError]   = useState<string | null>(null)
+  // Which attachment in the slide-out is mid-delete (disables its button).
+  const [revDeletingId,     setRevDeletingId]     = useState<string | null>(null)
 
   // Batch upload
   const [showBatch, setShowBatch]     = useState(false)
@@ -841,6 +843,33 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
     setRevHistorySub(null)
     setRevHistoryItems(null)
     setRevHistoryError(null)
+  }
+
+  // Delete a single revision attachment from the open slide-out. Destructive:
+  // removes the submittal_attachments row + its storage object server-side and,
+  // if it was the current revision, re-promotes the next-newest (or resets the
+  // parent to an empty placeholder when it was the last one). Behind a native
+  // confirm. On success, refresh the panel (reflects the new current /
+  // empty-placeholder state) + the underlying log row and revision counts.
+  async function deleteRevAttachment(att: { id: string; revision_label: string }) {
+    if (!revHistorySub) return
+    if (!window.confirm("Delete this file? This cannot be undone.")) return
+    setRevDeletingId(att.id)
+    try {
+      const res = await fetch(
+        `/api/submittals/${encodeURIComponent(revHistorySub.id)}/attachments/${encodeURIComponent(att.id)}`,
+        { method: "DELETE" },
+      )
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data?.error ?? `Failed (HTTP ${res.status})`)
+      const sub = revHistorySub
+      await openRevHistory(sub)
+      loadSubmittals(activeProjectId)
+    } catch (e) {
+      setRevHistoryError(e instanceof Error ? e.message : "Failed to delete revision")
+    } finally {
+      setRevDeletingId(null)
+    }
   }
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -4013,12 +4042,20 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                             Uploaded {new Date(att.uploaded_at).toLocaleDateString()} · via {att.source}
                           </p>
                         </div>
-                        <a
-                          href={`/api/download/${encodeURIComponent(revHistorySub.id)}?path=${encodeURIComponent(att.storage_path)}`}
-                          target="_blank" rel="noreferrer"
-                          className="flex-shrink-0 text-[11px] text-[#7B9BB5] hover:text-[#5A7A94] px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors">
-                          Download
-                        </a>
+                        <div className="flex-shrink-0 flex items-center gap-1">
+                          <a
+                            href={`/api/download/${encodeURIComponent(revHistorySub.id)}?path=${encodeURIComponent(att.storage_path)}`}
+                            target="_blank" rel="noreferrer"
+                            className="text-[11px] text-[#7B9BB5] hover:text-[#5A7A94] px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors">
+                            Download
+                          </a>
+                          <button
+                            onClick={() => deleteRevAttachment(att)}
+                            disabled={revDeletingId === att.id}
+                            className="text-[11px] text-red-600 hover:text-red-700 px-2 py-1 rounded hover:bg-red-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+                            {revDeletingId === att.id ? "Deleting…" : "Delete"}
+                          </button>
+                        </div>
                       </div>
                     </li>
                   ))}
