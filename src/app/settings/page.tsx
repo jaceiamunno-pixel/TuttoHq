@@ -9,6 +9,8 @@ import { CSI_DIVISIONS } from "@/app/dashboard/_shared/csi"
 import ProjectSpecBooks from "@/components/project-spec-books"
 import { useNavRegion } from "@/components/keyboard-nav"
 import LaborRatesTab from "@/components/labor-rates-tab"
+import BidDefaultsTab from "@/components/bid-defaults-tab"
+import GcTemplateTab from "@/components/gc-template-tab"
 import ProfileSignature from "@/components/profile-signature"
 import ProfilePoNumbering from "@/components/profile-po-numbering"
 import CompanyDetailsCard from "@/components/company-details-card"
@@ -41,6 +43,7 @@ type SectionId = "account" | "company" | "people" | "directories" | "integration
 type View =
   | "account"
   | "company-identity" | "company-labor" | "company-reminders" | "company-cover"
+  | "company-bid-defaults" | "company-gc-template"
   | "people-team" | "people-contacts"
   | "dir-companies" | "dir-projects"
   | "gmail"
@@ -63,6 +66,8 @@ const SETTINGS_NAV: { id: SectionId; label: string; defaultView: View; subs: { v
   { id: "company", label: "Company", defaultView: "company-identity", subs: [
     { view: "company-identity",  label: "Identity" },
     { view: "company-labor",     label: "Labor Rates" },
+    { view: "company-bid-defaults", label: "Bid Defaults" },
+    { view: "company-gc-template",  label: "GC Template" },
     { view: "company-reminders", label: "Reminders" },
     { view: "company-cover",     label: "Cover Page" },
   ] },
@@ -1714,6 +1719,14 @@ export default function SettingsPage() {
 
         {activeView === "company-labor" && (
           <LaborRatesTab canEdit={currentRole === "admin"} />
+        )}
+
+        {activeView === "company-bid-defaults" && (
+          <BidDefaultsTab canEdit={currentRole === "admin"} />
+        )}
+
+        {activeView === "company-gc-template" && (
+          <GcTemplateTab canEdit={currentRole === "admin"} />
         )}
 
         {activeView === "company-identity" && (
