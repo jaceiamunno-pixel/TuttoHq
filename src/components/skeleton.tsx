@@ -8,6 +8,8 @@
 // Palette matches the app: #E2E8F0 (borders/bars) + #F1F5F9 (lighter fills).
 // Every bar carries `animate-pulse`, so a composite's bars pulse in sync.
 
+import type { ReactNode } from "react"
+
 type Props = { className?: string }
 
 // A single pulsing bar. Default height 12px; override width/height via className.
@@ -99,6 +101,65 @@ export function SkeletonTable({
       {Array.from({ length: rows }).map((_, i) => (
         <SkeletonRow key={i} cols={cols} />
       ))}
+    </div>
+  )
+}
+
+// A placeholder for the white, border-b action bar every project module renders
+// above its content — a title/tab block on the left, a couple of action buttons
+// on the right. Shape-matches the real toolbar so it doesn't pop in.
+export function SkeletonToolbar({ className = "" }: Props) {
+  return (
+    <div className={`flex-shrink-0 border-b border-[#E2E8F0] bg-white flex items-center justify-between gap-2 px-4 py-2.5 ${className}`}>
+      <div className="flex items-center gap-2 min-w-0">
+        <SkeletonLine className="h-7 w-44 rounded-md" />
+        <SkeletonLine className="h-3 w-24 hidden sm:block" />
+      </div>
+      <div className="flex items-center gap-2 flex-shrink-0">
+        <SkeletonLine className="h-8 w-20 rounded-md" />
+        <SkeletonLine className="h-8 w-24 rounded-md" />
+      </div>
+    </div>
+  )
+}
+
+// The full project-module loading frame: the toolbar placeholder over a
+// scrolling body. `children` fills the body (defaults to a table, matching the
+// log-style modules). Route-level loading.tsx files render this so section
+// navigation shows an instant, shape-matched skeleton BEFORE the heavy client
+// module mounts and fires its fetch waterfall. It fills only the content area —
+// the persistent project chrome (left rail) lives in the layout and stays put.
+export function SkeletonModule({ children }: { children?: ReactNode }) {
+  return (
+    <>
+      <SkeletonToolbar />
+      <div className="flex-1 overflow-y-auto min-h-0 px-4 py-4">
+        {children ?? <SkeletonTable rows={10} cols={7} />}
+      </div>
+    </>
+  )
+}
+
+// A month-grid placeholder: a weekday header over 6 weeks × 7 day cells. Matches
+// the manpower / schedule month-calendar cell sizing so the grid doesn't reflow
+// when the real calendar loads in.
+export function SkeletonCalendar({ className = "" }: Props) {
+  return (
+    <div className={`rounded-xl border border-[#E2E8F0] bg-white overflow-hidden ${className}`}>
+      <div className="grid grid-cols-7 bg-[#FAFBFC] border-b border-[#E2E8F0]">
+        {Array.from({ length: 7 }).map((_, i) => (
+          <div key={i} className="py-2.5 flex justify-center">
+            <SkeletonLine className="h-2.5 w-6" />
+          </div>
+        ))}
+      </div>
+      <div className="grid grid-cols-7 gap-px bg-[#EEF1F4]">
+        {Array.from({ length: 42 }).map((_, i) => (
+          <div key={i} className="min-h-[84px] sm:min-h-[116px] bg-white p-1.5 sm:p-2">
+            <SkeletonLine className="h-2.5 w-4" />
+          </div>
+        ))}
+      </div>
     </div>
   )
 }
