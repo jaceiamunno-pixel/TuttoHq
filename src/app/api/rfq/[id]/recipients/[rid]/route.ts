@@ -33,6 +33,19 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     .from("rfq_recipients").select("id").eq("id", rid).eq("rfq_id", rfqId).maybeSingle()
   if (!row) return NextResponse.json({ error: "Not found" }, { status: 404 })
 
+  // Tenant-seam guard: when SETTING a link (non-null), verify the estimate line
+  // belongs to the caller's company before writing. RLS scopes this SELECT to the
+  // tenant, so a foreign line id returns nothing — the recipient FK only checks the
+  // line EXISTS, not that it's same-tenant. A null value (unlink) skips the check
+  // and is always allowed. Mirrors the ownership-before-insert guard in
+  // POST /api/estimate/[id]/lines.
+  const linkId = safe.linked_estimate_line_id
+  if ("linked_estimate_line_id" in safe && linkId != null) {
+    const { data: line } = await supabase
+      .from("estimate_lines").select("id").eq("id", linkId as string).maybeSingle()
+    if (!line) return NextResponse.json({ error: "estimate line not found" }, { status: 404 })
+  }
+
   const { error } = await supabase.from("rfq_recipients").update(safe).eq("id", rid).eq("rfq_id", rfqId)
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   return NextResponse.json({ ok: true })

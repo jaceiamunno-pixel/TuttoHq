@@ -272,6 +272,7 @@ function EstimateEditor({ estimateId, project, onBack }: {
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
   const [savingLine, setSavingLine] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [deleting, setDeleting] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -345,6 +346,20 @@ function EstimateEditor({ estimateId, project, onBack }: {
     applyEstimate(d.estimate)
   }
 
+  // Whole-estimate delete (cascades all lines via the FK, migration 0029). Confirm
+  // first — a misclick is costly. On success, back to the list (which reloads and
+  // drops this estimate).
+  async function deleteEstimate() {
+    if (!confirm(`Delete "${estimate?.name ?? "this estimate"}"? This permanently removes the estimate and all of its lines. This cannot be undone.`)) return
+    setDeleting(true)
+    try {
+      const res = await fetch(`/api/estimate/${estimateId}`, { method: "DELETE" })
+      const d = await res.json().catch(() => ({}))
+      if (!res.ok) { setError(d.error ?? "Could not delete estimate"); return }
+      onBack()
+    } finally { setDeleting(false) }
+  }
+
   function duplicateLine(l: EstimateLine) {
     // "Split" = duplicate the line so the estimator can break one scope into two
     // priced lines (ADR-015 merge/split ops; merge deferred pending Jace's UX call).
@@ -398,6 +413,14 @@ function EstimateEditor({ estimateId, project, onBack }: {
           <option value="draft">draft</option>
           <option value="finalized">finalized</option>
         </select>
+        <button
+          onClick={deleteEstimate}
+          disabled={deleting}
+          title="Delete this estimate"
+          className="h-8 px-3 rounded-md border border-[#E2E8F0] text-[13px] font-semibold text-[#DC2626] hover:bg-red-50 disabled:opacity-50 flex-shrink-0"
+        >
+          {deleting ? "Deleting…" : "Delete"}
+        </button>
       </div>
 
       {estimate.defaults_incomplete && (

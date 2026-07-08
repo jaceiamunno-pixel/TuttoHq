@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useCallback, useRef } from "react"
+import { useState, useEffect, useCallback, useRef, useMemo } from "react"
 import type { Rfq, RfqRecipient, Project, Vendor } from "../_shared/types"
 import { fmtDateOnly } from "../_shared/format"
 import { PlusIcon, SpinnerIcon, XIcon } from "../_shared/icons"
@@ -217,6 +217,9 @@ export default function RfqModule({ globalProjectId, appProjects }: {
 // ─── Detail modal: package builder + recipients + send handoff + status log ──
 interface ScopeSection { spec_number: string; spec_title: string; in_scope: boolean }
 interface SheetRow { id: string; sheet_number: string; title: string | null; file_url: string | null }
+// Flat estimate-line index (Wire 2) — powers the "link quote to estimate line"
+// picker + the linked-line label on a recipient row.
+interface EstLineLite { id: string; cost_code: string | null; description: string | null; category: string; estimate_id: string; estimate_name: string }
 
 function RfqDetail({ rfqId, projectId, project, onClose, onDelete }: {
   rfqId: string
@@ -240,6 +243,12 @@ function RfqDetail({ rfqId, projectId, project, onClose, onDelete }: {
   // Recipient add
   const [pickVendor, setPickVendor]   = useState<Vendor | null>(null)
   const [adding, setAdding]           = useState(false)
+
+  // Estimate-line linking (Wire 2). Optional — an RFQ works fine with no link
+  // (v1a behavior unchanged). estLines indexes the project's estimate lines;
+  // linkingRid holds the recipient whose picker is open.
+  const [estLines, setEstLines]       = useState<EstLineLite[]>([])
+  const [linkingRid, setLinkingRid]   = useState<string | null>(null)
 
   // Rehydrate the package selection from the persisted columns exactly once, on
   // open — later reloads (after a recipient/status change) must not clobber
@@ -271,6 +280,28 @@ function RfqDetail({ rfqId, projectId, project, onClose, onDelete }: {
     fetch(`/api/drawings/sheets?project_id=${encodeURIComponent(projectId)}`).then(r => r.json())
       .then(d => setSheets((d.sheets ?? []).filter((s: SheetRow) => !!s.file_url)))
       .catch(() => setSheets([]))
+  }, [projectId])
+
+  // Flatten the project's estimate lines (estimates → their lines) for the link
+  // picker + linked-line labels. Best-effort + N is small (a handful of estimates
+  // per project); a failure just leaves linking unavailable, never blocks the RFQ.
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        const er = await fetch(`/api/estimate?project_id=${encodeURIComponent(projectId)}`).then(r => r.json())
+        const ests: { id: string; name: string }[] = er.estimates ?? []
+        const all: EstLineLite[] = []
+        for (const e of ests) {
+          const d = await fetch(`/api/estimate/${e.id}`).then(r => r.json()).catch(() => null)
+          for (const l of (d?.lines ?? [])) {
+            all.push({ id: l.id, cost_code: l.cost_code, description: l.description, category: l.category, estimate_id: e.id, estimate_name: e.name })
+          }
+        }
+        if (!cancelled) setEstLines(all)
+      } catch { if (!cancelled) setEstLines([]) }
+    })()
+    return () => { cancelled = true }
   }, [projectId])
 
   function toggle(set: Set<string>, setter: (s: Set<string>) => void, key: string) {
@@ -376,8 +407,10 @@ function RfqDetail({ rfqId, projectId, project, onClose, onDelete }: {
 
   const quoteCount = recipients.filter(r => r.state === "quote_received").length
   const missingEmailCount = recipients.filter(r => !(r.person_email || r.vendor_email)).length
+  const lineById = useMemo(() => new Map(estLines.map(l => [l.id, l])), [estLines])
 
   return (
+    <>
     <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onClick={e => { if (e.target === e.currentTarget) onClose() }}>
       <div className="bg-white rounded-xl border border-[#E2E8F0] shadow-2xl w-full sm:w-[860px] mx-4 sm:mx-0 flex flex-col max-h-[92vh]">
         {/* Header */}
@@ -481,13 +514,14 @@ function RfqDetail({ rfqId, projectId, project, onClose, onDelete }: {
                 <p className="px-4 py-6 text-[12px] text-[#94A3B8] text-center">No recipients yet. Add the subs/suppliers you're sending this to.</p>
               ) : (
                 <div className="overflow-x-auto">
-                  <table className="w-full text-[12px] border-collapse min-w-[720px]">
+                  <table className="w-full text-[12px] border-collapse min-w-[880px]">
                     <thead className="bg-white border-b border-[#E2E8F0]">
                       <tr>
                         <th className="text-left px-3 py-2 text-[10px] font-bold text-[#64748B] uppercase tracking-widest">Vendor</th>
                         <th className="text-left px-3 py-2 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-36">State</th>
                         <th className="text-left px-3 py-2 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-32">Quote $</th>
                         <th className="text-left px-3 py-2 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-28">Quote PDF</th>
+                        <th className="text-left px-3 py-2 text-[10px] font-bold text-[#64748B] uppercase tracking-widest w-40">Est. Line</th>
                         <th className="px-3 py-2 w-10"></th>
                       </tr>
                     </thead>
@@ -524,6 +558,26 @@ function RfqDetail({ rfqId, projectId, project, onClose, onDelete }: {
                               </label>
                             )}
                           </td>
+                          <td className="px-3 py-2">
+                            {r.linked_estimate_line_id ? (() => {
+                              const l = lineById.get(r.linked_estimate_line_id)
+                              const label = l ? `${l.cost_code ? l.cost_code + " " : ""}${l.description ?? "line"}` : "linked line"
+                              return (
+                                <div className="flex items-center gap-1 min-w-0">
+                                  <button onClick={() => setLinkingRid(r.id)} title="Change linked line"
+                                    className="text-[11px] text-[#0F172A] hover:text-[#7B9BB5] truncate max-w-[130px] text-left">{label}</button>
+                                  <button onClick={() => patchRecipient(r.id, { linked_estimate_line_id: null })} title="Unlink"
+                                    className="text-[11px] text-[#94A3B8] hover:text-red-400 flex-shrink-0">✕</button>
+                                </div>
+                              )
+                            })() : (
+                              <button onClick={() => setLinkingRid(r.id)} disabled={estLines.length === 0}
+                                title={estLines.length === 0 ? "No estimate lines on this project yet" : "Link this quote to an estimate line"}
+                                className="text-[12px] text-[#7B9BB5] font-medium hover:underline disabled:text-[#94A3B8] disabled:no-underline disabled:cursor-default">
+                                Link
+                              </button>
+                            )}
+                          </td>
                           <td className="px-3 py-2 text-right">
                             <button onClick={() => removeRecipient(r.id)} className="text-[11px] text-red-400/60 hover:text-red-400" title="Remove">✕</button>
                           </td>
@@ -554,6 +608,83 @@ function RfqDetail({ rfqId, projectId, project, onClose, onDelete }: {
               Send RFQ
             </button>
           </div>
+        </div>
+      </div>
+    </div>
+
+      {linkingRid && (() => {
+        const rid = linkingRid
+        return (
+          <EstimateLineLinkPicker
+            lines={estLines}
+            currentId={recipients.find(r => r.id === rid)?.linked_estimate_line_id ?? null}
+            onPick={lineId => { patchRecipient(rid, { linked_estimate_line_id: lineId }); setLinkingRid(null) }}
+            onClose={() => setLinkingRid(null)}
+          />
+        )
+      })()}
+    </>
+  )
+}
+
+// Wire 2 — pick an estimate line to link a returned quote to. Grouped by estimate;
+// defaults to subcontractor lines (RFQs are sub bids) with a toggle to show all.
+// Persist happens in the caller via the existing recipient PATCH; this is pure UI.
+function EstimateLineLinkPicker({ lines, currentId, onPick, onClose }: {
+  lines: EstLineLite[]
+  currentId: string | null
+  onPick: (lineId: string) => void
+  onClose: () => void
+}) {
+  const [subsOnly, setSubsOnly] = useState(true)
+  const [q, setQ] = useState("")
+
+  const filtered = lines.filter(l => {
+    if (subsOnly && l.category !== "subcontractor") return false
+    if (q.trim()) {
+      const hay = `${l.cost_code ?? ""} ${l.description ?? ""} ${l.estimate_name}`.toLowerCase()
+      if (!hay.includes(q.toLowerCase())) return false
+    }
+    return true
+  })
+  const byEst = new Map<string, { name: string; rows: EstLineLite[] }>()
+  for (const l of filtered) {
+    if (!byEst.has(l.estimate_id)) byEst.set(l.estimate_id, { name: l.estimate_name, rows: [] })
+    byEst.get(l.estimate_id)!.rows.push(l)
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-4" onClick={e => { if (e.target === e.currentTarget) onClose() }}>
+      <div className="bg-white rounded-xl border border-[#E2E8F0] shadow-2xl w-full sm:w-[520px] flex flex-col max-h-[80vh]">
+        <div className="flex items-center justify-between px-5 pt-4 pb-3 border-b border-[#E2E8F0] flex-shrink-0">
+          <h3 className="text-[14px] font-bold text-[#0F172A]">Link to estimate line</h3>
+          <button onClick={onClose} className="text-[#64748B] hover:text-[#0F172A] transition-colors"><XIcon className="h-4 w-4" /></button>
+        </div>
+        <div className="px-5 py-3 border-b border-[#E2E8F0] flex items-center gap-3 flex-shrink-0">
+          <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search cost code / description…"
+            className="flex-1 h-8 px-2.5 rounded-md border border-[#E2E8F0] text-[12px] text-[#0F172A] focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40" />
+          <label className="flex items-center gap-1.5 text-[12px] text-[#64748B] whitespace-nowrap">
+            <input type="checkbox" checked={subsOnly} onChange={e => setSubsOnly(e.target.checked)} className="accent-[#7B9BB5]" /> Subs only
+          </label>
+        </div>
+        <div className="overflow-y-auto px-2 py-2 min-h-0">
+          {filtered.length === 0 ? (
+            <p className="text-[12px] text-[#94A3B8] text-center py-8">
+              {lines.length === 0 ? "No estimate lines on this project." : "No matching lines. Try turning off “Subs only.”"}
+            </p>
+          ) : [...byEst.entries()].map(([eid, g]) => (
+            <div key={eid} className="mb-2">
+              <p className="text-[10px] font-bold text-[#64748B] uppercase tracking-widest px-2 py-1">{g.name}</p>
+              {g.rows.map(l => (
+                <button key={l.id} onClick={() => onPick(l.id)}
+                  className={`w-full text-left px-2.5 py-1.5 rounded-md hover:bg-[#F4F5F7] flex items-center gap-2 ${currentId === l.id ? "bg-[#7B9BB5]/10" : ""}`}>
+                  <span className="text-[11px] font-mono text-[#64748B] w-14 flex-shrink-0 truncate">{l.cost_code ?? "—"}</span>
+                  <span className="text-[12px] text-[#0F172A] flex-1 truncate">{l.description ?? "—"}</span>
+                  <span className="text-[10px] text-[#94A3B8] flex-shrink-0 capitalize">{l.category}</span>
+                </button>
+              ))}
+            </div>
+          ))}
         </div>
       </div>
     </div>
