@@ -286,12 +286,18 @@ export interface StagedSubmittal {
   spec_section_id: string
   spec_number: string
   letter: string | null
+  /** Article the item sits under ("1.4"); with letter, the section+article+letter
+   *  row grain that disambiguates same-letter items across sibling articles. */
+  article: string | null
   project_item_name: string
   submittal_type: string
   description: string
   sub_bullets: string[]
   is_selected: boolean
   committed_at: string | null
+  /** Bare cross-reference ("See Section 01 30 00…") — shown greyed in Pending
+   *  Review and deselected by default; not a chase-able deliverable. */
+  reference_only: boolean
 }
 export interface ParseSummary {
   sectionsScoped: number
