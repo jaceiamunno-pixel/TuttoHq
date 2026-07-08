@@ -1,17 +1,25 @@
-import type { TakeoffMatrix } from "./matrix"
+import type { MatrixTagRow, TakeoffMatrix } from "./matrix"
 
 // Export the tag×room matrix to .xlsx using the repo's existing Excel lib (exceljs,
 // dynamic-imported — same pattern as _shared/excel-export.ts). Layout mirrors the
-// user's hand-kept takeoff sheet exactly:
-//   title row · header (Tag | Description | TOTAL | <one col per room>) ·
-//   per category: a section header row, one row per tag (per-room counts + TOTAL),
+// user's hand-kept takeoff sheet:
+//   title row · header (Tag | Description | Unit | TOTAL | <one col per room>) ·
+//   per category: a section header row, one row per tag (per-room values + TOTAL),
 //   then a "<CATEGORY> — TOTAL" subtotal row · finally "GRAND TOTAL — PER ROOM".
-// Cell rule (matches the on-screen matrix): per-room tag cells are blank at zero;
-// TOTAL column + subtotal/grand rows always show a number.
+// Count tags carry integer counts (unit "ea"); measured tags carry their summed
+// real-world quantity in the tag's unit (LF/SF/…). Cell rule (matches the on-screen
+// matrix): per-room tag cells blank at zero; TOTAL/subtotal/grand always show a
+// value — "—" when a subtotal would mix units (or a measurement lacks a scale).
 
 function sanitizeFileName(s: string): string {
   return (s || "takeoff").replace(/[^\w.-]+/g, "_").replace(/^_+|_+$/g, "") || "takeoff"
 }
+
+const round2 = (n: number) => Math.round(n * 100) / 100
+const fmtNum = (n: number, isCount: boolean): number => (isCount ? Math.round(n) : round2(n))
+const rowIsCount = (row: MatrixTagRow) => row.kind === "count"
+const rowUnresolved = (row: MatrixTagRow) => row.kind !== "count" && row.unitLabel == null
+const rowUnit = (row: MatrixTagRow) => (row.kind === "count" ? "ea" : row.unitLabel ?? "?")
 
 export async function exportTakeoffToExcel(args: {
   projectName: string
@@ -27,7 +35,8 @@ export async function exportTakeoffToExcel(args: {
 
   const { matrix } = args
   const rooms = matrix.rooms
-  const lastCol = 3 + rooms.length // A=Tag, B=Description, C=TOTAL, then one per room
+  const R0 = 5                       // first room column (A=Tag B=Desc C=Unit D=TOTAL)
+  const lastCol = 4 + rooms.length
 
   const THIN = { style: "thin" as const, color: { argb: "FFD0D7DE" } }
   const BORDER = { top: THIN, left: THIN, bottom: THIN, right: THIN }
@@ -38,7 +47,7 @@ export async function exportTakeoffToExcel(args: {
 
   // Column widths
   ws.columns = [
-    { width: 16 }, { width: 40 }, { width: 10 },
+    { width: 16 }, { width: 40 }, { width: 8 }, { width: 10 },
     ...rooms.map(() => ({ width: 12 })),
   ]
 
@@ -51,7 +60,7 @@ export async function exportTakeoffToExcel(args: {
   ws.getRow(1).height = 24
 
   // 2) Header row
-  const headerLabels = ["Tag", "Description", "TOTAL", ...rooms.map(r => r.name)]
+  const headerLabels = ["Tag", "Description", "Unit", "TOTAL", ...rooms.map(r => r.name)]
   const headerRow = ws.getRow(2)
   headerRow.height = 22
   headerLabels.forEach((label, i) => {
@@ -64,7 +73,7 @@ export async function exportTakeoffToExcel(args: {
   })
 
   let r = 3
-  const blankZero = (n: number) => (n === 0 ? "" : n)
+  const blankZero = (n: number, isCount: boolean): number | string => (n === 0 ? "" : fmtNum(n, isCount))
 
   for (const group of matrix.groups) {
     // Category section header (merged)
@@ -79,11 +88,14 @@ export async function exportTakeoffToExcel(args: {
 
     // Tag rows
     for (const row of group.rows) {
+      const isCount = rowIsCount(row)
+      const unresolved = rowUnresolved(row)
       const xlRow = ws.getRow(r)
       xlRow.getCell(1).value = row.tag.code
       xlRow.getCell(2).value = row.tag.description ?? ""
-      xlRow.getCell(3).value = row.total
-      rooms.forEach((_, i) => { xlRow.getCell(4 + i).value = blankZero(row.perRoom[i]) })
+      xlRow.getCell(3).value = rowUnit(row)
+      xlRow.getCell(4).value = unresolved ? "—" : fmtNum(row.total, isCount)
+      rooms.forEach((_, i) => { xlRow.getCell(R0 + i).value = unresolved ? "" : blankZero(row.perRoom[i], isCount) })
       for (let c = 1; c <= lastCol; c++) {
         const cell = xlRow.getCell(c)
         cell.font = { name: "Calibri", size: 11 }
@@ -94,10 +106,13 @@ export async function exportTakeoffToExcel(args: {
     }
 
     // Category subtotal row
+    const mixed = group.subtotalPerRoom === null
+    const subIsCount = group.unitLabel === ""
     const subRow = ws.getRow(r)
     subRow.getCell(1).value = `${group.name} — TOTAL`
-    subRow.getCell(3).value = group.subtotalTotal
-    rooms.forEach((_, i) => { subRow.getCell(4 + i).value = group.subtotalPerRoom[i] })
+    subRow.getCell(3).value = mixed ? "mixed" : (group.unitLabel || "ea")
+    subRow.getCell(4).value = mixed ? "—" : fmtNum(group.subtotalTotal!, subIsCount)
+    rooms.forEach((_, i) => { subRow.getCell(R0 + i).value = mixed ? "—" : fmtNum(group.subtotalPerRoom![i], subIsCount) })
     for (let c = 1; c <= lastCol; c++) {
       const cell = subRow.getCell(c)
       cell.font = { name: "Arial", size: 11, bold: true }
@@ -109,10 +124,13 @@ export async function exportTakeoffToExcel(args: {
   }
 
   // Grand total row
+  const grandMixed = matrix.grandPerRoom === null
+  const grandIsCount = matrix.grandUnitLabel === ""
   const grandRow = ws.getRow(r)
   grandRow.getCell(1).value = "GRAND TOTAL — PER ROOM"
-  grandRow.getCell(3).value = matrix.grandTotal
-  rooms.forEach((_, i) => { grandRow.getCell(4 + i).value = matrix.grandPerRoom[i] })
+  grandRow.getCell(3).value = grandMixed ? "mixed" : (matrix.grandUnitLabel || "ea")
+  grandRow.getCell(4).value = grandMixed ? "—" : fmtNum(matrix.grandTotal!, grandIsCount)
+  rooms.forEach((_, i) => { grandRow.getCell(R0 + i).value = grandMixed ? "—" : fmtNum(matrix.grandPerRoom![i], grandIsCount) })
   for (let c = 1; c <= lastCol; c++) {
     const cell = grandRow.getCell(c)
     cell.font = { name: "Arial", size: 11, bold: true }
@@ -121,7 +139,7 @@ export async function exportTakeoffToExcel(args: {
     cell.border = BORDER
   }
 
-  ws.views = [{ state: "frozen", ySplit: 2, xSplit: 3 }]
+  ws.views = [{ state: "frozen", ySplit: 2, xSplit: 4 }]
 
   // Download
   const buf = await wb.xlsx.writeBuffer()

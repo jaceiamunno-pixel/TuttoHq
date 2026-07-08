@@ -1,22 +1,33 @@
 "use client"
 
-import type { TakeoffMatrix } from "../_lib/matrix"
+import type { MatrixGroup, MatrixTagRow, TakeoffMatrix } from "../_lib/matrix"
+import { fmtQty } from "../_lib/measure"
 
 // The live deliverable: tags (grouped by category) × rooms, with a leading TOTAL
-// column, per-category subtotal rows and a final grand-total row. Mirrors the
-// Excel export exactly (both read computeMatrix). Non-total cells blank at zero;
-// total/subtotal/grand cells always show a number.
+// column, per-category subtotal rows and a final grand-total row. Mirrors the Excel
+// export exactly (both read computeMatrix). Count tags show integer counts; measured
+// tags show their summed real-world quantity in the tag's unit (LF/SF/…). Non-total
+// cells blank at zero. Subtotals/grand totals fold only rows that share one unit —
+// a mixed group shows "—" rather than adding counts to square-feet.
 
 const cell = "px-2 py-1 text-[12px] text-center tabular-nums border-b border-[#EEF1F4] whitespace-nowrap"
 const totalCol = "bg-[#F8FAFC] font-semibold"
+
+const fmtNum = (n: number, isCount: boolean) => (isCount ? String(Math.round(n)) : fmtQty(n))
+const cellVal = (n: number, isCount: boolean, blankZero: boolean) =>
+  blankZero && n === 0 ? "" : fmtNum(n, isCount)
+
+function UnitChip({ label }: { label: string }) {
+  return <span className="ml-1 rounded bg-[#E2E8F0] px-1 text-[9px] font-semibold text-[#475569] align-middle">{label}</span>
+}
 
 export default function TakeoffMatrix({ matrix, onExport, exporting }: {
   matrix: TakeoffMatrix
   onExport: () => void
   exporting?: boolean
 }) {
-  const { rooms, groups, grandPerRoom, grandTotal } = matrix
-  const blank = (n: number) => (n === 0 ? "" : n)
+  const { rooms, groups, grandUnitLabel, grandPerRoom, grandTotal } = matrix
+  const grandIsCount = grandUnitLabel === ""
 
   return (
     <div className="border-t border-[#E2E8F0] pt-3">
@@ -47,13 +58,19 @@ export default function TakeoffMatrix({ matrix, onExport, exporting }: {
               <tr><td colSpan={2 + rooms.length} className="px-2 py-3 text-center text-[12px] text-[#94A3B8]">Add categories and tags to build the matrix.</td></tr>
             )}
             {groups.map(group => (
-              <GroupRows key={group.id} group={group} roomCount={rooms.length} blank={blank} />
+              <GroupRows key={group.id} group={group} roomCount={rooms.length} />
             ))}
             {groups.length > 0 && (
               <tr className="bg-[#DDE6EE] font-bold">
-                <td className="px-2 py-1 text-[12px] text-left sticky left-0 bg-[#DDE6EE] z-10">GRAND TOTAL — PER ROOM</td>
-                <td className={`${cell} bg-[#cfdbe6]`}>{grandTotal}</td>
-                {grandPerRoom.map((n, i) => <td key={i} className={cell}>{n}</td>)}
+                <td className="px-2 py-1 text-[12px] text-left sticky left-0 bg-[#DDE6EE] z-10">
+                  GRAND TOTAL — PER ROOM
+                  {grandPerRoom === null ? <span className="ml-1 font-normal text-[10px] text-[#64748B]">(mixed units)</span>
+                    : grandUnitLabel ? <UnitChip label={grandUnitLabel} /> : null}
+                </td>
+                <td className={`${cell} bg-[#cfdbe6]`}>{grandTotal === null ? "—" : fmtNum(grandTotal, grandIsCount)}</td>
+                {rooms.map((_, i) => (
+                  <td key={i} className={cell}>{grandPerRoom === null ? "—" : fmtNum(grandPerRoom[i], grandIsCount)}</td>
+                ))}
               </tr>
             )}
           </tbody>
@@ -63,33 +80,45 @@ export default function TakeoffMatrix({ matrix, onExport, exporting }: {
   )
 }
 
-function GroupRows({ group, roomCount, blank }: {
-  group: TakeoffMatrix["groups"][number]
-  roomCount: number
-  blank: (n: number) => number | string
-}) {
+function GroupRows({ group, roomCount }: { group: MatrixGroup; roomCount: number }) {
+  const subIsCount = group.unitLabel === ""
+  const mixed = group.subtotalPerRoom === null
   return (
     <>
       <tr className="bg-[#EAF0F5]">
         <td colSpan={2 + roomCount} className="px-2 py-1 text-[11px] font-bold text-[#1A2840] sticky left-0 bg-[#EAF0F5]">{group.name}</td>
       </tr>
-      {group.rows.map(row => (
-        <tr key={row.tag.id} className="hover:bg-[#F8FAFC]">
-          <td className="px-2 py-1 text-[12px] text-left sticky left-0 bg-white z-10">
-            <span className="inline-flex items-center gap-1.5">
-              <span className="h-2.5 w-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: row.tag.color }} />
-              <span className="font-semibold">{row.tag.code}</span>
-            </span>
-          </td>
-          <td className={`${cell} ${totalCol}`}>{row.total}</td>
-          {row.perRoom.map((n, i) => <td key={i} className={cell}>{blank(n)}</td>)}
-        </tr>
-      ))}
+      {group.rows.map(row => <TagRow key={row.tag.id} row={row} />)}
       <tr className="bg-[#F1F5F9] font-semibold">
-        <td className="px-2 py-1 text-[12px] text-left sticky left-0 bg-[#F1F5F9] z-10">{group.name} — TOTAL</td>
-        <td className={`${cell} ${totalCol}`}>{group.subtotalTotal}</td>
-        {group.subtotalPerRoom.map((n, i) => <td key={i} className={cell}>{n}</td>)}
+        <td className="px-2 py-1 text-[12px] text-left sticky left-0 bg-[#F1F5F9] z-10">
+          {group.name} — TOTAL
+          {mixed ? <span className="ml-1 font-normal text-[10px] text-[#64748B]">(mixed units)</span>
+            : group.unitLabel ? <UnitChip label={group.unitLabel} /> : null}
+        </td>
+        <td className={`${cell} ${totalCol}`}>{mixed ? "—" : fmtNum(group.subtotalTotal!, subIsCount)}</td>
+        {Array.from({ length: roomCount }, (_, i) => (
+          <td key={i} className={cell}>{mixed ? "—" : fmtNum(group.subtotalPerRoom![i], subIsCount)}</td>
+        ))}
       </tr>
     </>
+  )
+}
+
+function TagRow({ row }: { row: MatrixTagRow }) {
+  const isCount = row.kind === "count"
+  const unitless = !isCount && row.unitLabel == null // measured but no scale yet
+  return (
+    <tr className="hover:bg-[#F8FAFC]">
+      <td className="px-2 py-1 text-[12px] text-left sticky left-0 bg-white z-10">
+        <span className="inline-flex items-center gap-1.5">
+          <span className="h-2.5 w-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: row.tag.color }} />
+          <span className="font-semibold">{row.tag.code}</span>
+          {!isCount && (row.unitLabel ? <UnitChip label={row.unitLabel} /> : <UnitChip label="?" />)}
+          {row.missingScale && <span className="text-[10px] text-[#92400E]" title="Some marks are on pages with no scale — set a scale to price them">⚠</span>}
+        </span>
+      </td>
+      <td className={`${cell} ${totalCol}`}>{unitless ? "—" : fmtNum(row.total, isCount)}</td>
+      {row.perRoom.map((n, i) => <td key={i} className={cell}>{unitless ? "" : cellVal(n, isCount, true)}</td>)}
+    </tr>
   )
 }

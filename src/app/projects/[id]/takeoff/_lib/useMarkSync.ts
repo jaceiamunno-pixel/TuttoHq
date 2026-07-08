@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react"
 import * as api from "./api"
-import type { TakeoffMark } from "./types"
+import type { MarkKind, Pt, TakeoffMark } from "./types"
 
 // ── Optimistic count-mark sync ────────────────────────────────────────────────
 // V1 blocked the UI on every dot: one serial POST per placement inside a busy
@@ -47,6 +47,9 @@ export interface NewMarkInput {
   page: number
   x: number
   y: number
+  kind: MarkKind
+  points: Pt[] | null
+  raw_measure: number | null
 }
 
 type UndoAction =
@@ -79,6 +82,7 @@ export interface MarkSync {
 
 const toInput = (m: LocalMark): NewMarkInput => ({
   tag_id: m.tag_id, room_id: m.room_id, source_ref: m.source_ref, page: m.page, x: m.x, y: m.y,
+  kind: m.kind, points: m.points, raw_measure: m.raw_measure,
 })
 
 export function useMarkSync(): MarkSync {

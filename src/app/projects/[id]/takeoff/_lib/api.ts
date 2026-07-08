@@ -1,5 +1,6 @@
 import type {
-  Takeoff, TakeoffBundle, TakeoffCategory, TakeoffRoom, TakeoffTag, TakeoffMark, CountSheet,
+  Takeoff, TakeoffBundle, TakeoffCategory, TakeoffRoom, TakeoffTag, TakeoffMark,
+  TakeoffPageScale, CountSheet, MarkKind, Pt, ScaleUnit,
 } from "./types"
 
 // Thin client data layer: every call hits an /api/takeoffs route (server resolves
@@ -111,8 +112,19 @@ export async function deleteTag(takeoffId: string, tagId: string): Promise<void>
   await jsonOrThrow(await fetch(`/api/takeoffs/${takeoffId}/tags?tag_id=${encodeURIComponent(tagId)}`, { method: "DELETE" }))
 }
 
-// ── Marks ─────────────────────────────────────────────────────────────────────────
-export async function createMark(takeoffId: string, input: { tag_id: string; room_id: string; source_ref: string | null; page: number; x: number; y: number }): Promise<TakeoffMark> {
+// ── Marks (count + measurement) ─────────────────────────────────────────────────
+export interface CreateMarkInput {
+  tag_id: string
+  room_id: string
+  source_ref: string | null
+  page: number
+  x: number
+  y: number
+  kind: MarkKind
+  points: Pt[] | null
+  raw_measure: number | null
+}
+export async function createMark(takeoffId: string, input: CreateMarkInput): Promise<TakeoffMark> {
   const body = await jsonOrThrow(await fetch(`/api/takeoffs/${takeoffId}/marks`, {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input),
@@ -121,4 +133,23 @@ export async function createMark(takeoffId: string, input: { tag_id: string; roo
 }
 export async function deleteMark(takeoffId: string, markId: string): Promise<void> {
   await jsonOrThrow(await fetch(`/api/takeoffs/${takeoffId}/marks?mark_id=${encodeURIComponent(markId)}`, { method: "DELETE" }))
+}
+
+// ── Page scales (calibration) ────────────────────────────────────────────────────
+// A scale belongs to a (sheet, page): source_ref is the drawing_sheets id, the same
+// value the sheet's marks carry (null for an ad-hoc PDF with no ingested sheet).
+export async function upsertScale(takeoffId: string, input: {
+  source_ref: string | null; page: number; units_per_px: number; unit: ScaleUnit
+  cal_x1: number; cal_y1: number; cal_x2: number; cal_y2: number
+}): Promise<TakeoffPageScale> {
+  const body = await jsonOrThrow(await fetch(`/api/takeoffs/${takeoffId}/scales`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  }))
+  return body.scale
+}
+export async function deleteScale(takeoffId: string, sourceRef: string | null, page: number): Promise<void> {
+  const qs = new URLSearchParams({ page: String(page) })
+  if (sourceRef != null) qs.set("source_ref", sourceRef)
+  await jsonOrThrow(await fetch(`/api/takeoffs/${takeoffId}/scales?${qs.toString()}`, { method: "DELETE" }))
 }
