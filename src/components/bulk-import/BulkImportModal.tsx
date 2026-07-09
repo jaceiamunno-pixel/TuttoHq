@@ -315,11 +315,21 @@ export default function BulkImportModal({
     // editing (and re-nulling a pick they just made). See Bug 2.
     const firedForSection = section
     const firedForType    = type
-    // True when a later edit superseded this match. Restores status to
-    // "ready" so the row is never stuck disabled in "matching".
+    // Also snapshot the pick. Picking a log row does NOT change section/type,
+    // so a rematch in flight when the user picks would otherwise pass the
+    // stale check and null the pick back out (re-introducing Bug 1 via a
+    // race — the *ordinary* path, since clicking "pick a log row" blurs the
+    // section input and fires this very rematch). Treat a changed pick as
+    // superseding too.
+    const firedForPick = row.pickedTargetRowId ?? null
+    // True when a later edit OR resolution superseded this match. Restores
+    // status to "ready" so the row is never stuck disabled in "matching".
     const isStale = () => {
       const cur = rowsRef.current.find(r => r.id === id)
-      return !cur || cur.section !== firedForSection || cur.type !== firedForType
+      return !cur
+        || cur.section !== firedForSection
+        || cur.type !== firedForType
+        || (cur.pickedTargetRowId ?? null) !== firedForPick
     }
     updateRow(id, { status: "matching" })
     try {
@@ -341,14 +351,20 @@ export default function BulkImportModal({
       const outcome = data?.results?.[0]?.outcome as MatchOutcome | undefined
       if (!outcome) throw new Error("Match returned no outcome")
       if (isStale()) { updateRow(id, { status: "ready" }); return }
-      // Auto-confirm the picked target for auto-match. Ambiguous-distinct
-      // defaults to the highest-fuzzy candidate but stays "unconfirmed"
-      // until the user clicks — we don't silently choose.
+      // Auto-confirm the picked target for auto-match. For no-match /
+      // ambiguous the outcome carries no authoritative pick — so PRESERVE any
+      // pick the row already holds (user intent) instead of nulling it. A
+      // fresh (never-picked) row's pick is already null, so this only ever
+      // keeps a real user selection; it never invents one. Defense in depth
+      // alongside the firedForPick staleness check above.
+      const cur = rowsRef.current.find(r => r.id === id)
       updateRow(id, {
         status: "ready",
         match: outcome,
         pickedTargetRowId:
-          outcome.kind === "auto-match" ? outcome.targetRowId : null,
+          outcome.kind === "auto-match"
+            ? outcome.targetRowId
+            : (cur?.pickedTargetRowId ?? null),
       })
     } catch (err) {
       console.error("[bulk-import] matchRow failed for", row.file.name, err)
