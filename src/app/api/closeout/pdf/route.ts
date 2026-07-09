@@ -16,7 +16,7 @@ export async function POST(req: NextRequest) {
     supabase.from("projects").select("*").eq("id", project_id).single(),
     supabase.from("closeout_items").select("*").eq("project_id", project_id).order("sort_order"),
     supabase.from("punch_items").select("*").eq("project_id", project_id).order("item_number"),
-    supabase.from("submittals").select("*").eq("project_id", project_id).eq("status", "active").is("deleted_at", null).order("created_at"),
+    supabase.from("submittals").select("*").eq("project_id", project_id).eq("status", "active").order("created_at"),
     supabase.from("rfis").select("*").eq("project_id", project_id).order("rfi_number"),
     supabase.from("change_orders").select("*").eq("project_id", project_id).order("co_number"),
     supabase.from("drawing_log").select("*").eq("project_id", project_id).eq("is_current", true).order("drawing_number"),

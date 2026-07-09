@@ -47,7 +47,6 @@ export async function GET(req: NextRequest) {
     .select("id, received_via_package_id")
     .in("received_via_package_id", ids)
     .eq("status", "active")
-    .is("deleted_at", null)
 
   const itemCount = new Map<string, number>()
   const receivedCount = new Map<string, number>()
