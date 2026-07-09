@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from "react"
 import type { SubmittalPackage, SubmittalPackageDetail, SubmittalRecord } from "@/app/dashboard/_shared/types"
 import GenerationFiles, { type GenFile } from "./GenerationFiles"
 import { downloadFilesAsZip } from "@/lib/zip"
+import { formatSectionNumber, padSectionSeq } from "@/lib/section-number"
 
 // ─── Packages tab ───────────────────────────────────────────────────────────
 // Lists a project's transmittal packages and a detail panel showing the
@@ -355,7 +356,7 @@ function PackageDetail({ packageId, onBack, onChanged }: {
           <tbody>
             {pkg.items.map((s: SubmittalRecord) => (
               <tr key={s.id} className="border-b border-[#E2E8F0]/60 last:border-0">
-                <td className="px-3 py-2 tabular-nums text-[#64748B]">{s.submittal_seq ?? "—"}</td>
+                <td className="px-3 py-2 tabular-nums text-[#64748B]" title={formatSectionNumber(s.csi_section, s.section_seq)}>{padSectionSeq(s.section_seq)}</td>
                 <td className="px-3 py-2 font-mono text-[11px] text-[#0F172A]">{s.csi_section ?? "—"}</td>
                 <td className="px-3 py-2 text-[#0F172A] max-w-[280px] truncate" title={s.file_name}>{s.file_name}</td>
                 <td className="px-3 py-2 text-[#64748B]">{s.submittal_type ?? "—"}</td>

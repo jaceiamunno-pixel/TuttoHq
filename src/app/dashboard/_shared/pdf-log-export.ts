@@ -15,6 +15,7 @@
 import { PDFBuilder } from "@/lib/pdf-builder"
 import { createClient } from "@/lib/supabase/client"
 import { computeCoTotals } from "./co-math"
+import { padSectionSeq } from "@/lib/section-number"
 import type {
   SubmittalRecord, ChangeOrder, VendorRow, VendorPersonRow,
 } from "./types"
@@ -221,7 +222,8 @@ export async function exportSubmittalLogToPdf(args: ExportSubmittalLogPdfArgs): 
   const rows: string[][] = args.rows.map(s => {
     const appr = approvalDays(s)
     return [
-      s.submittal_seq != null ? String(s.submittal_seq) : "—",
+      // Compact section number ("004"); the Spec # column beside it has the section.
+      padSectionSeq(s.section_seq),
       s.csi_section ?? "—",
       s.file_name,
       s.submittal_type ?? "—",

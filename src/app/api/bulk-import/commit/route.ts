@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import { isValidSha256 } from "@/lib/file-hash"
+import { allocateSectionSeqAndInsert } from "@/lib/section-seq"
 
 // POST /api/bulk-import/commit — Stage 2a write path. Attach each Bulk
 // Import row to a spec-built submittals row. Model A never fabricates spec
@@ -224,9 +225,12 @@ export async function POST(req: NextRequest) {
     if (seqErr || typeof seqBase !== "number") {
       return { error: `seq allocation failed: ${seqErr?.message ?? "no seq returned"}` }
     }
-    const { data: row, error: insErr } = await supabase
-      .from("submittals")
-      .insert({
+    // Allocate section_seq (migration 0039) for the placeholder's section +
+    // insert with retry-on-conflict. A spawned sibling shares the placeholder's
+    // csi_section, so it takes the next number in that section.
+    const { data: row, error: insErr } = await allocateSectionSeqAndInsert(
+      supabase, ph.project_id, ph.csi_section,
+      (sectionSeq) => ({
         // Spec identity — copied verbatim from the placeholder.
         csi_division:     ph.csi_division,
         division_name:    ph.division_name,
@@ -242,6 +246,7 @@ export async function POST(req: NextRequest) {
         project_id:       ph.project_id,
         // Fresh identity for its own log row.
         submittal_seq:    seqBase + 1,
+        section_seq:      sectionSeq,
         submittal_number: null,
         revision_number:  "R0",
         review_status:    reviewStatus || null,
@@ -250,11 +255,11 @@ export async function POST(req: NextRequest) {
         // file_name with the committed PDF's name once it lands.
         file_name:        fileName,
         uploaded_by:      user!.id,
-      })
-      .select("id")
-      .single()
+      }),
+      "id",
+    )
     if (insErr || !row) {
-      return { error: insErr?.message ?? "insert returned no row" }
+      return { error: insErr ?? "insert returned no row" }
     }
     return { id: row.id as string }
   }

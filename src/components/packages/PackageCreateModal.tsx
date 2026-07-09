@@ -4,6 +4,7 @@ import { useState } from "react"
 import type { SubmittalRecord, SubmittalPackage } from "@/app/dashboard/_shared/types"
 import GenerationFiles, { type GenFile } from "./GenerationFiles"
 import { normalizeSubmittalTitle } from "@/lib/title-normalize"
+import { formatSectionNumber, padSectionSeq } from "@/lib/section-number"
 
 // ─── Transmittal-package create modal ───────────────────────────────────────
 // A package = pick submittal log rows → choose who it's going to → choose a
@@ -218,7 +219,7 @@ export default function PackageCreateModal({
                   <tbody>
                     {submittals.map(s => (
                       <tr key={s.id} className="border-b border-[#E2E8F0]/60 last:border-0">
-                        <td className="px-3 py-1.5 tabular-nums text-[#64748B]">{s.submittal_seq ?? "—"}</td>
+                        <td className="px-3 py-1.5 tabular-nums text-[#64748B]" title={formatSectionNumber(s.csi_section, s.section_seq)}>{padSectionSeq(s.section_seq)}</td>
                         <td className="px-3 py-1.5 font-mono text-[11px] text-[#0F172A]">{s.csi_section ?? "—"}</td>
                         <td className="px-3 py-1.5 text-[#0F172A] truncate max-w-[260px]" title={s.file_name}>{s.file_name}</td>
                         <td className="px-3 py-1.5 text-[#64748B]">{s.submittal_type ?? "—"}</td>

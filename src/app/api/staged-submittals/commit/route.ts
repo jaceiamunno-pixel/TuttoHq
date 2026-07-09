@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import { divisionNameFor, divisionNumberOf } from "@/lib/spec-parser"
 import { normalizeSubmittalTitle } from "@/lib/title-normalize"
+import { sectionSeqStarts, assignSectionSeqBlock, isSectionSeqConflict } from "@/lib/section-seq"
 
 export const maxDuration = 30
 
@@ -152,13 +153,42 @@ export async function POST(req: NextRequest) {
   }
   submittalRows.forEach((row, i) => { row.submittal_seq = seqBase + 1 + i })
 
-  const { data: inserted, error: insertError } = await supabase
-    .from("submittals")
-    .insert(submittalRows)
-    .select("id")
-  if (insertError || !inserted || inserted.length !== submittalRows.length) {
+  // Allocate section_seq (migration 0039) for the whole block in ONE pass —
+  // one MAX lookup per DISTINCT section (never per row). Retry the batch on a
+  // unique-index conflict, re-reading each section's MAX each attempt (a
+  // concurrent commit may have taken numbers in the same section between our
+  // read and this insert). The insert is atomic, so a conflict leaves nothing
+  // inserted and the retry is clean.
+  let inserted: { id: string }[] | null = null
+  const MAX_ATTEMPTS = 5
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    let starts: Map<string, number>
+    try {
+      starts = await sectionSeqStarts(supabase, projectId, submittalRows.map(r => (r.csi_section as string | null)))
+    } catch (e) {
+      return NextResponse.json(
+        { error: e instanceof Error ? e.message : "section_seq lookup failed" },
+        { status: 500 },
+      )
+    }
+    assignSectionSeqBlock(submittalRows, starts)
+    const { data, error: insertError } = await supabase
+      .from("submittals")
+      .insert(submittalRows)
+      .select("id")
+    if (!insertError && data && data.length === submittalRows.length) {
+      inserted = data as { id: string }[]
+      break
+    }
+    if (isSectionSeqConflict(insertError) && attempt < MAX_ATTEMPTS - 1) continue
     return NextResponse.json(
       { error: insertError?.message ?? "Failed to insert submittals" },
+      { status: 500 },
+    )
+  }
+  if (!inserted) {
+    return NextResponse.json(
+      { error: "Could not allocate unique section numbers after retries" },
       { status: 500 },
     )
   }

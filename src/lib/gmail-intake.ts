@@ -2,6 +2,7 @@ import Anthropic from "@anthropic-ai/sdk"
 import { createClient as createServiceClient, SupabaseClient } from "@supabase/supabase-js"
 import { refreshAccessToken, setupWatch } from "./gmail"
 import { normalizeSubmittalTitle } from "./title-normalize"
+import { allocateSectionSeqAndInsert } from "./section-seq"
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnySupabase = SupabaseClient<any, any, any>
@@ -788,9 +789,15 @@ async function matchBackAttachment(ctx: MatchBackCtx): Promise<void> {
     status:                  "active",
     uploaded_by:             userId,
   }
-  const { error } = await supabase.from("submittals").insert(record)
+  // Allocate section_seq (migration 0039) — this inbound lands in a project +
+  // section, so it takes the next number in that section (retry-on-conflict).
+  const { error } = await allocateSectionSeqAndInsert(
+    supabase, pkg.project_id, classification.section_number,
+    (sectionSeq) => ({ ...record, section_seq: sectionSeq }),
+    "id",
+  )
   if (error) {
-    log("FAIL package-match-orphan", { packageId: pkg.id, error: error.message })
+    log("FAIL package-match-orphan", { packageId: pkg.id, error })
     return
   }
   log("package-match-orphan", { packageId: pkg.id, candidateCount: candidates.length, section: wantSection })

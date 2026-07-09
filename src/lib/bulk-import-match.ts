@@ -33,6 +33,7 @@ export interface MatchedRow {
   csi_section: string | null
   submittal_type: string | null
   submittal_seq: number | null
+  section_seq: number | null
   material_name: string | null
   spec_section_id: string | null
 }
@@ -138,7 +139,7 @@ export async function matchSubmittalRow(
 
   const { data: candidates, error } = await supabase
     .from("submittals")
-    .select("id, csi_section, submittal_type, submittal_seq, material_name, spec_section_id")
+    .select("id, csi_section, submittal_type, submittal_seq, section_seq, material_name, spec_section_id")
     .eq("project_id", args.project_id)
     .eq("source", "spec_ingestion")
     .eq("csi_section", args.section)

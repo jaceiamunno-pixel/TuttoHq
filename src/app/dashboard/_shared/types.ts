@@ -70,6 +70,11 @@ export interface SubmittalRecord {
   copy_to: string | null
   // Submittal-log tracker columns (2026-05-21 overhaul)
   submittal_seq: number | null
+  // Per-(project, csi_section) submittal number (migration 0039). NULL on
+  // deleted rows / rows created before numbering landed. This is the number the
+  // CM sees — rendered as "{csi_section}-{section_seq:3}". submittal_seq stays
+  // the internal row id and is never shown.
+  section_seq: number | null
   received_date: string | null
   sent_to_ae_date: string | null
   returned_from_ae_date: string | null
@@ -99,6 +104,7 @@ export type BatchPhase  = "select" | "classifying" | "review" | "uploading" | "d
 export interface BatchItemDupeMatch {
   same_project_matches: Array<{
     submittal_id: string; file_name: string; submittal_seq: number | null;
+    section_seq: number | null; csi_section: string | null;
     submittal_number: string | null; revision_number: string | null;
   }>
   cross_project_matches: Array<{

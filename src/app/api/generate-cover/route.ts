@@ -4,6 +4,7 @@ import { PDFDocument } from "pdf-lib"
 import { type SubmittalCoversheetProps } from "@/components/submittals/SubmittalCoversheet"
 import { buildCoversheetPdf, type CoversheetReviewer } from "@/lib/coversheet-pdf"
 import { normalizeSubmittalTitle } from "@/lib/title-normalize"
+import { padSectionSeq } from "@/lib/section-number"
 
 export const maxDuration = 60
 
@@ -75,12 +76,14 @@ export async function POST(req: NextRequest) {
     .from("user_profiles").select("full_name").maybeSingle()
   const reviewedByName = profile?.full_name ?? ""
 
-  // Stamp's Submittal No. — "{spec section}-{submittal}.{revision}" (e.g.
-  // "07 84 40-7.0"). Omit any part that's missing; an empty string omits the row.
+  // Stamp's Submittal No. — "{spec section}-{section_seq:3}.{revision}" (e.g.
+  // "10 44 00-004.0"). PADDED to 3 digits so it matches the log / every other
+  // printed surface and the convention already in the imported data
+  // (092116-001.0). Omit any part that's missing; an empty string omits the row.
   const secPart = (specSectionNo ?? "").trim()
   const subInt = parseInt(String(submittalNo ?? ""), 10)
   const numPart = Number.isFinite(subInt)
-    ? `${subInt}.${parseInt(String(revisionNo ?? "0"), 10) || 0}`
+    ? `${padSectionSeq(subInt)}.${parseInt(String(revisionNo ?? "0"), 10) || 0}`
     : ""
   const stampSubmittalNo = [secPart, numPart].filter(Boolean).join("-")
 
@@ -101,7 +104,7 @@ export async function POST(req: NextRequest) {
     submittalDescription:  description    || "",
     specSectionTitle:      specSectionTitle || "",
     specSectionNumber:     specSectionNo  || "",
-    submittalNumber:       String(Math.max(1, parseInt(submittalNo || "1", 10) || 1)).padStart(2, "0"),
+    submittalNumber:       Number.isFinite(subInt) ? padSectionSeq(subInt) : "",
     revisionNumber:        String(parseInt(revisionNo || "0", 10) || 0).padStart(2, "0"),
     dateSubmitted:         dateSubmitted  || "",
     submittalDueDate:      dueDate        || "",

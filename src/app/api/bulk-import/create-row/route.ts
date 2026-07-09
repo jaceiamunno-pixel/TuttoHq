@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
+import { allocateSectionSeqAndInsert } from "@/lib/section-seq"
 
 // POST /api/bulk-import/create-row — Stage 2a "no open row of this type" path.
 //
@@ -103,9 +104,10 @@ export async function POST(req: NextRequest) {
     )
   }
 
-  const { data: row, error: insErr } = await supabase
-    .from("submittals")
-    .insert({
+  // Allocate section_seq (migration 0039) + insert with retry-on-conflict.
+  const { data: row, error: insErr } = await allocateSectionSeqAndInsert(
+    supabase, projectId, csiSection,
+    (sectionSeq) => ({
       // Spec identity — cloned from the donor row in this section.
       csi_division:     donor.csi_division,
       division_name:    donor.division_name,
@@ -122,6 +124,7 @@ export async function POST(req: NextRequest) {
       project_id:       donor.project_id,
       // Fresh identity for its own empty placeholder log row.
       submittal_seq:    seqBase + 1,
+      section_seq:      sectionSeq,
       submittal_number: null,
       revision_number:  "R0",
       review_status:    "Received",
@@ -130,12 +133,12 @@ export async function POST(req: NextRequest) {
       // file_name with the committed PDF's name once the file lands.
       file_name:        donor.material_name || donor.section_name || `${csiSection} ${submittalType}`,
       uploaded_by:      user.id,
-    })
-    .select("id, csi_section, submittal_type, submittal_seq, material_name, spec_section_id")
-    .single()
+    }),
+    "id, csi_section, section_seq, submittal_type, submittal_seq, material_name, spec_section_id",
+  )
   if (insErr || !row) {
     return NextResponse.json(
-      { error: insErr?.message ?? "insert returned no row" },
+      { error: insErr ?? "insert returned no row" },
       { status: 500 },
     )
   }
