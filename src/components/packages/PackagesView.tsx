@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from "react"
 import type { SubmittalPackage, SubmittalPackageDetail, SubmittalRecord } from "@/app/dashboard/_shared/types"
 import GenerationFiles, { type GenFile } from "./GenerationFiles"
+import { downloadFilesAsZip } from "@/lib/zip"
 
 // ─── Packages tab ───────────────────────────────────────────────────────────
 // Lists a project's transmittal packages and a detail panel showing the
@@ -165,7 +166,28 @@ function PackageDetail({ packageId, onBack, onChanged }: {
 
   useEffect(() => { load(); loadGens() }, [load, loadGens])
 
-  // Re-generate: append a NEW generation, then refresh the list.
+  // Download the LATEST generation — a pure READ. Re-fetches /files so the
+  // signed URLs are fresh, then opens (package) or zips (per_item). It appends
+  // NOTHING. Distinct from "Generate again", which is the only write.
+  async function downloadLatest() {
+    setBusy("dl"); setError(null)
+    try {
+      const res = await fetch(`/api/submittal-packages/${packageId}/files`)
+      const d = await res.json().catch(() => ({}))
+      const latest = d.generations?.[0]
+      const ready: GenFile[] = (latest?.files ?? []).filter((f: GenFile) => f.url)
+      if (ready.length === 0) { setError("No generated files yet — use Generate again."); return }
+      if (latest.coversheetMode === "package") {
+        window.open(ready[0].url!, "_blank")
+      } else {
+        await downloadFilesAsZip(ready.map(f => ({ name: f.fileName, url: f.url! })), `${pkg?.package_number ?? "package"}.zip`)
+      }
+    } catch {
+      setError("Could not download the latest generation.")
+    } finally { setBusy(null) }
+  }
+
+  // Re-generate: append a NEW generation (the only write), then refresh the list.
   async function regenerate() {
     setBusy("gen"); setError(null)
     try {
@@ -217,10 +239,16 @@ function PackageDetail({ packageId, onBack, onChanged }: {
           </div>
           <div className="flex items-center gap-2">
             {pkg.recipient_type && (
-              <button onClick={regenerate} disabled={!!busy}
-                className="h-8 px-3 rounded-md bg-[#7B9BB5] text-white text-[12px] font-semibold hover:bg-[#6A8AA4] transition-colors disabled:opacity-50">
-                {busy === "gen" ? "Generating…" : "Generate again"}
-              </button>
+              <>
+                <button onClick={downloadLatest} disabled={!!busy || gens.length === 0}
+                  className="h-8 px-3 rounded-md bg-emerald-600 text-white text-[12px] font-semibold hover:bg-emerald-700 transition-colors disabled:opacity-50">
+                  {busy === "dl" ? "Preparing…" : "Download latest"}
+                </button>
+                <button onClick={regenerate} disabled={!!busy}
+                  className="h-8 px-3 rounded-md border border-[#E2E8F0] text-[12px] font-semibold text-[#0F172A] hover:bg-[#0F172A]/[0.04] transition-colors disabled:opacity-50">
+                  {busy === "gen" ? "Generating…" : "Generate again"}
+                </button>
+              </>
             )}
             <button onClick={remove} disabled={!!busy}
               className="h-8 px-3 rounded-md border border-red-200 text-[12px] font-semibold text-red-500 hover:bg-red-50 transition-colors disabled:opacity-50">
