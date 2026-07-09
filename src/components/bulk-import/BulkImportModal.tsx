@@ -123,40 +123,61 @@ function newRow(file: File): Row {
  *
  *   BLOCKS on:
  *     - row not in "ready" state (still uploading/analyzing/matching/error)
- *     - section empty
- *     - type empty
  *     - match unresolved: no `match` yet, OR
  *       no-match with no fallback pick, OR
  *       ambiguous-distinct with no pick, OR
  *       match errored
+ *     - auto-match ONLY: section/type empty (the row's own section IS the
+ *       placement key on the auto path). Once the user picks an explicit
+ *       target log row (no-match / ambiguous-distinct), the picked row
+ *       carries the authoritative section/type/identity, so the import
+ *       row's own — often empty, that's WHY it no-matched — section/type
+ *       is irrelevant and does NOT block.
  *   Does NOT block on:
  *     - approvalDate (metadata; amber cue stays on the input)
  *     - submittalNo  (metadata, GC-side label — not a join key)
  *     - coverSplit   (Library copy is Stage 2b, doesn't ship yet)
  *     - reviewStatus (always defaults to "Approved")
- *     - multi-section presence per se — the section input must be
- *       non-empty, but the analyzePdf pre-fill already populates it
- *       with the primary; if the user wants a sibling they edit it.
- *       Either way the section-empty rule above gates correctly.
+ *     - section/type once an explicit target is picked (see above)
  */
 function commitReadiness(r: Row): "ready" | "blocked" | "skip" | "done" | "in-flight" {
   if (r.status === "committed" || r.committedRowId) return "done"
   if (r.status === "committing") return "in-flight"
   if (r.matchSkip) return "skip"
   if (r.status !== "ready") return "blocked"
-  if (!r.section.trim() || !r.type) return "blocked"
   if (!r.match) return "blocked"  // match call still pending
-  if (r.match.kind === "no-match") {
-    return r.pickedTargetRowId ? "ready" : "blocked"
-  }
-  if (r.match.kind === "ambiguous-distinct") {
+  // An explicit target pick fully resolves the destination — check it BEFORE
+  // (and instead of) the section/type emptiness rule. A no-match/ambiguous
+  // row is *supposed* to have an empty parsed section; once a log row is
+  // picked, that pick — not the parsed section — is the placement key.
+  if (r.match.kind === "no-match" || r.match.kind === "ambiguous-distinct") {
     return r.pickedTargetRowId ? "ready" : "blocked"
   }
   if (r.match.kind === "auto-match") {
+    // Auto path: no explicit pick was made, so the row's own section/type
+    // IS the placement key and must be present.
+    if (!r.section.trim() || !r.type) return "blocked"
     return "ready"
   }
   // error
   return "blocked"
+}
+
+/** Human-readable reason a "ready"-state row is still commit-blocked, so a
+ *  disabled Commit button is never silent. Returns null when the row is not
+ *  blocked. Mirrors commitReadiness()'s gate order. */
+function commitBlockReason(r: Row): string | null {
+  if (commitReadiness(r) !== "blocked") return null
+  if (r.status !== "ready") return "still processing"
+  if (!r.match) return "waiting on match…"
+  if (r.match.kind === "no-match") return "pick a log row to route this file"
+  if (r.match.kind === "ambiguous-distinct") return "pick one of the candidate log rows"
+  if (r.match.kind === "auto-match") {
+    if (!r.section.trim()) return "spec section is empty"
+    if (!r.type) return "submittal type is empty"
+  }
+  if (r.match.kind === "error") return r.match.message || "match failed"
+  return "unresolved"
 }
 
 function effectiveTargetRowId(r: Row): string | null {
@@ -276,11 +297,9 @@ export default function BulkImportModal({
   // Same shape of race that bit `processRow` earlier (the rowsRef pattern
   // in commit 620e81e). Audited the modal for other instances; the
   // remaining rowsRef reads are either (a) read-then-await-then-render
-  // (runBatch, doCommit) or (b) post-debounce (scheduleRematch's 400ms),
-  // both of which are safe.
-  //
-  // Debounced re-matches from scheduleRematch keep calling matchRow(id)
-  // without `fresh` — they're safe because by 400ms React has rendered.
+  // (runBatch, doCommit) or (b) edit-triggered re-matches, which now go
+  // through `rematchForEdit` and pass the settled value via `fresh` —
+  // so they never depend on rowsRef having caught up.
   const matchRow = useCallback(async (
     id: string,
     fresh?: { section: string; type: SubmittalType | ""; description: string | null },
@@ -290,6 +309,28 @@ export default function BulkImportModal({
     const section     = fresh?.section     ?? row.section
     const type        = fresh?.type        ?? row.type
     const description = fresh?.description ?? row.analysis?.coverFields?.specSectionTitle ?? null
+    // Snapshot the placement key this match is being computed for. If the
+    // user edits section/type again before the round-trip returns, the result
+    // is stale — discard it rather than clobbering the field they're now
+    // editing (and re-nulling a pick they just made). See Bug 2.
+    const firedForSection = section
+    const firedForType    = type
+    // Also snapshot the pick. Picking a log row does NOT change section/type,
+    // so a rematch in flight when the user picks would otherwise pass the
+    // stale check and null the pick back out (re-introducing Bug 1 via a
+    // race — the *ordinary* path, since clicking "pick a log row" blurs the
+    // section input and fires this very rematch). Treat a changed pick as
+    // superseding too.
+    const firedForPick = row.pickedTargetRowId ?? null
+    // True when a later edit OR resolution superseded this match. Restores
+    // status to "ready" so the row is never stuck disabled in "matching".
+    const isStale = () => {
+      const cur = rowsRef.current.find(r => r.id === id)
+      return !cur
+        || cur.section !== firedForSection
+        || cur.type !== firedForType
+        || (cur.pickedTargetRowId ?? null) !== firedForPick
+    }
     updateRow(id, { status: "matching" })
     try {
       const res = await fetch("/api/bulk-import/match", {
@@ -309,17 +350,25 @@ export default function BulkImportModal({
       if (!res.ok) throw new Error(data?.error ?? `Match failed (HTTP ${res.status})`)
       const outcome = data?.results?.[0]?.outcome as MatchOutcome | undefined
       if (!outcome) throw new Error("Match returned no outcome")
-      // Auto-confirm the picked target for auto-match. Ambiguous-distinct
-      // defaults to the highest-fuzzy candidate but stays "unconfirmed"
-      // until the user clicks — we don't silently choose.
+      if (isStale()) { updateRow(id, { status: "ready" }); return }
+      // Auto-confirm the picked target for auto-match. For no-match /
+      // ambiguous the outcome carries no authoritative pick — so PRESERVE any
+      // pick the row already holds (user intent) instead of nulling it. A
+      // fresh (never-picked) row's pick is already null, so this only ever
+      // keeps a real user selection; it never invents one. Defense in depth
+      // alongside the firedForPick staleness check above.
+      const cur = rowsRef.current.find(r => r.id === id)
       updateRow(id, {
         status: "ready",
         match: outcome,
         pickedTargetRowId:
-          outcome.kind === "auto-match" ? outcome.targetRowId : null,
+          outcome.kind === "auto-match"
+            ? outcome.targetRowId
+            : (cur?.pickedTargetRowId ?? null),
       })
     } catch (err) {
       console.error("[bulk-import] matchRow failed for", row.file.name, err)
+      if (isStale()) { updateRow(id, { status: "ready" }); return }
       updateRow(id, {
         status: "ready",  // match failure doesn't kill the analyze result
         match: { kind: "error", message: err instanceof Error ? err.message : "match failed" },
@@ -596,14 +645,28 @@ export default function BulkImportModal({
     return { total, ready, errored, inFlight, flagged, missingDate, missingSection, missingType, commitReady, commitBlocked, commitDone, commitSkip }
   }, [rows])
 
-  // When the user edits section or type after a match has resolved, the
-  // stored match is stale. Re-run match for that row. Debounced via a
-  // single setTimeout per row, cleared on subsequent edits.
-  const reMatchTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
-  function scheduleRematch(id: string) {
-    if (reMatchTimers.current[id]) clearTimeout(reMatchTimers.current[id])
-    reMatchTimers.current[id] = setTimeout(() => { matchRow(id).catch(() => {}) }, 400)
-  }
+  // When the user edits section or type after a match resolved, the stored
+  // match is stale — but we do NOT rematch on every keystroke. A per-keystroke
+  // rematch (a) flips status to "matching", which disables the very input
+  // being edited and steals focus mid-type, and (b) re-nulls pickedTargetRowId
+  // on each partial value. Instead we rematch only when the value is SETTLED:
+  // the text field fires on blur (and only if it actually changed since focus),
+  // the type <select> fires on change (a select value is settled by nature).
+  // We pass the settled value through `fresh` so the match doesn't depend on
+  // rowsRef having caught up to the last edit.
+  //
+  // editStartRef holds each field's value at focus-in, so a blur with no real
+  // change is a no-op (never clobbers an existing match / manual pick).
+  const editStartRef = useRef<Record<string, string>>({})
+  const rematchForEdit = useCallback((id: string, override: { section?: string; type?: SubmittalType | "" }) => {
+    const row = rowsRef.current.find(r => r.id === id)
+    if (!row) return
+    matchRow(id, {
+      section: override.section ?? row.section,
+      type: override.type ?? row.type,
+      description: row.analysis?.coverFields?.specSectionTitle ?? null,
+    }).catch(() => {})
+  }, [matchRow])
 
   return (
     <div className="fixed inset-0 bg-black/70 z-50 flex items-stretch sm:items-center justify-center"
@@ -885,16 +948,37 @@ export default function BulkImportModal({
                                 <button onClick={() => matchRow(r.id)} className="ml-2 underline text-[#7B9BB5]">retry</button>
                               </p>
                             )}
+                            {/* Never leave a blocked-after-pick row a silent
+                                disabled button — spell out why. (No-pick
+                                no-match / ambiguous rows are already covered by
+                                their own prominent picker UI above.) */}
+                            {r.status === "ready"
+                              && r.pickedTargetRowId != null
+                              && commitReadiness(r) === "blocked" && (
+                              <p className="text-[10px] text-red-700 mt-1">
+                                blocked: {commitBlockReason(r)}
+                              </p>
+                            )}
                           </div>
                         </div>
                       </td>
 
-                      {/* Spec section — editable. Edits trigger re-match. */}
+                      {/* Spec section — editable. Re-match fires on blur (and
+                          only if the value actually changed), NOT per keystroke —
+                          so the user can type the whole "10 44 00" without the
+                          input disabling/resetting mid-type. */}
                       <td className="px-3 py-2 align-top">
                         <input
                           type="text"
                           value={r.section}
-                          onChange={e => { updateRow(r.id, { section: e.target.value, pickedTargetRowId: null }); scheduleRematch(r.id) }}
+                          onFocus={() => { editStartRef.current[`sec:${r.id}`] = r.section }}
+                          onChange={e => updateRow(r.id, { section: e.target.value })}
+                          onBlur={e => {
+                            const started = editStartRef.current[`sec:${r.id}`]
+                            if (started !== undefined && started !== e.target.value) {
+                              rematchForEdit(r.id, { section: e.target.value })
+                            }
+                          }}
                           placeholder={r.status === "ready" ? "XX YY ZZ" : "…"}
                           disabled={r.status !== "ready"}
                           className={`w-full h-7 px-2 rounded border text-[12px] tabular-nums ${
@@ -910,11 +994,17 @@ export default function BulkImportModal({
                         )}
                       </td>
 
-                      {/* Submittal type — fixed-vocab dropdown. Edits trigger re-match. */}
+                      {/* Submittal type — fixed-vocab dropdown. A select value is
+                          settled by nature (no partial typing), so re-match fires
+                          on change, passing the new value through `fresh`. */}
                       <td className="px-3 py-2 align-top">
                         <select
                           value={r.type}
-                          onChange={e => { updateRow(r.id, { type: e.target.value as SubmittalType | "", pickedTargetRowId: null }); scheduleRematch(r.id) }}
+                          onChange={e => {
+                            const v = e.target.value as SubmittalType | ""
+                            updateRow(r.id, { type: v })
+                            rematchForEdit(r.id, { type: v })
+                          }}
                           disabled={r.status !== "ready"}
                           className={`w-full h-7 px-1.5 rounded border text-[12px] ${
                             flagged && r.analysis?.typeFlag
