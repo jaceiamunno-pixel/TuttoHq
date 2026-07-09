@@ -1,5 +1,11 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
+import {
+  composeTransmittalPackagePdf, RECIPIENT_LABEL,
+  type RecipientType, type CoversheetMode,
+} from "@/lib/package-pdf"
+
+export const maxDuration = 60
 
 // ─── Submittal packages — collection (Session I) ────────────────────────────
 // GET  /api/submittal-packages?project_id=…  — list packages for a project,
@@ -70,8 +76,26 @@ export async function GET(req: NextRequest) {
   })
 }
 
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
 
+// The recipient type decides which submittal date column gets stamped:
+//   cm  → sent_to_ae_date  (the CM is the conduit to the A/E — same upstream hop)
+//   ae  → sent_to_ae_date
+//   subcontractor → sent_to_sub_date
+const DATE_COLUMN: Record<RecipientType, "sent_to_ae_date" | "sent_to_sub_date"> = {
+  cm: "sent_to_ae_date",
+  ae: "sent_to_ae_date",
+  subcontractor: "sent_to_sub_date",
+}
+
+// POST /api/submittal-packages — assemble a TRANSMITTAL package.
+//
+// A package = selected submittal log rows + a recipient type + a send date + a
+// coversheet mode. On create we compose the transmittal PDF (the actual
+// approved documents, not spec pages), store it, and — unless saving a draft —
+// stamp the chosen date column on every packaged submittal. Creating the
+// package IS the send event; the PM sends the downloaded PDF from their own
+// email client. There is no dispatch/email action.
 export async function POST(req: NextRequest) {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
@@ -79,30 +103,37 @@ export async function POST(req: NextRequest) {
 
   const body = await req.json().catch(() => ({}))
   const {
-    project_id, vendor_id, vendor_type, vendor_name, sent_to_email,
-    due_date, notes, submittal_ids,
+    project_id, recipient_type, send_date, coversheet_mode,
+    notes, submittal_ids, is_draft,
   } = body as {
     project_id?: string
-    vendor_id?: string | null
-    vendor_type?: string | null
-    vendor_name?: string
-    sent_to_email?: string
-    due_date?: string | null
+    recipient_type?: string
+    send_date?: string
+    coversheet_mode?: string
     notes?: string | null
     submittal_ids?: string[]
+    is_draft?: boolean
   }
 
   if (!project_id) return NextResponse.json({ error: "project_id is required" }, { status: 400 })
-  if (!vendor_name?.trim()) return NextResponse.json({ error: "A vendor name is required" }, { status: 400 })
-  if (!sent_to_email?.trim() || !EMAIL_RE.test(sent_to_email.trim())) {
-    return NextResponse.json({ error: "A valid recipient email is required" }, { status: 400 })
+  if (recipient_type !== "cm" && recipient_type !== "ae" && recipient_type !== "subcontractor") {
+    return NextResponse.json({ error: "Choose who this is being sent to (CM, A/E, or Subcontractor)" }, { status: 400 })
+  }
+  if (coversheet_mode !== "per_item" && coversheet_mode !== "package") {
+    return NextResponse.json({ error: "Choose a coversheet mode" }, { status: 400 })
+  }
+  const sendDate = (send_date ?? "").trim()
+  if (!DATE_RE.test(sendDate) || Number.isNaN(new Date(`${sendDate}T00:00:00`).getTime())) {
+    return NextResponse.json({ error: "A valid send date is required" }, { status: 400 })
   }
   if (!Array.isArray(submittal_ids) || submittal_ids.length === 0) {
     return NextResponse.json({ error: "Select at least one submittal to package" }, { status: 400 })
   }
-  if (vendor_type && vendor_type !== "subcontractor" && vendor_type !== "supplier") {
-    return NextResponse.json({ error: "Invalid vendor_type" }, { status: 400 })
-  }
+  const recipientType = recipient_type as RecipientType
+  const coversheetMode = coversheet_mode as CoversheetMode
+
+  const { data: companyId } = await supabase.rpc("get_my_company_id")
+  if (!companyId) return NextResponse.json({ error: "No company association" }, { status: 403 })
 
   // All submittals must belong to the target project (no cross-project packages).
   const { data: subRows, error: subErr } = await supabase
@@ -112,7 +143,9 @@ export async function POST(req: NextRequest) {
     .eq("project_id", project_id)
     .eq("status", "active")
   if (subErr) return NextResponse.json({ error: subErr.message }, { status: 500 })
-  const validIds = (subRows ?? []).map(r => r.id)
+  const valid = new Set((subRows ?? []).map(r => r.id))
+  // Preserve the caller's selection order for the appended documents.
+  const validIds = submittal_ids.filter(id => valid.has(id))
   if (validIds.length === 0) {
     return NextResponse.json({ error: "None of the selected submittals belong to this project" }, { status: 400 })
   }
@@ -132,18 +165,29 @@ export async function POST(req: NextRequest) {
   const shortId = projectRow.short_id || project_id.replace(/-/g, "").slice(0, 4).toUpperCase()
   const packageNumber = `TTQ-${shortId}-${seq}`
 
+  const draft = is_draft === true
+
+  // The recipient type is recorded in vendor_name_snapshot (the human label the
+  // Packages list shows). There is no recipient email — sent_to_email is NOT
+  // NULL in the schema, so it's stored empty. reminders_paused=true keeps the
+  // reminder cron (built for the old solicitation flow) from ever touching a
+  // transmittal package. A sent package uses status 'dispatched' + dispatched_at
+  // = the send date purely for display; a draft stays 'draft' with no date.
   const { data: pkg, error: insErr } = await supabase
     .from("submittal_packages")
     .insert({
       project_id,
       package_number: packageNumber,
-      vendor_id: vendor_id || null,
-      vendor_type: vendor_type || null,
-      vendor_name_snapshot: vendor_name.trim(),
-      sent_to_email: sent_to_email.trim(),
-      due_date: due_date || null,
+      vendor_id: null,
+      vendor_type: null,
+      vendor_name_snapshot: RECIPIENT_LABEL[recipientType],
+      sent_to_email: "",
+      due_date: null,
       notes: notes?.trim() || null,
-      status: "draft",
+      status: draft ? "draft" : "dispatched",
+      reminders_paused: true,
+      dispatched_at: draft ? null : `${sendDate}T00:00:00`,
+      dispatched_by: draft ? null : user.id,
       created_by: user.id,
     })
     .select()
@@ -154,10 +198,65 @@ export async function POST(req: NextRequest) {
     .from("submittal_package_items")
     .insert(validIds.map(sid => ({ package_id: pkg.id, submittal_id: sid })))
   if (itemErr) {
-    // Roll back the package so we don't leave an empty draft behind.
+    // Roll back the package so we don't leave an empty row behind.
     await supabase.from("submittal_packages").delete().eq("id", pkg.id)
     return NextResponse.json({ error: itemErr.message }, { status: 500 })
   }
 
-  return NextResponse.json({ package: { ...pkg, item_count: validIds.length } }, { status: 201 })
+  // Compose the transmittal PDF (approved documents) and store it. A failure
+  // here rolls the whole package back — a package with no PDF is useless.
+  let pdfPath: string
+  let warnings: string[] = []
+  try {
+    const res = await composeTransmittalPackagePdf(supabase, {
+      packageId: pkg.id,
+      projectId: project_id,
+      companyId,
+      packageNumber,
+      recipientType,
+      sendDate,
+      coversheetMode,
+      submittalIds: validIds,
+    })
+    pdfPath = res.storagePath
+    warnings = res.warnings
+  } catch (err) {
+    await supabase.from("submittal_packages").delete().eq("id", pkg.id)
+    return NextResponse.json(
+      { error: err instanceof Error ? err.message : "Failed to build the package PDF" },
+      { status: 500 },
+    )
+  }
+  await supabase.from("submittal_packages").update({ pdf_file_path: pdfPath }).eq("id", pkg.id)
+
+  // ── Date stamp — the one write to live submittal rows. Sending upstream (or
+  //    to a sub) stamps the corresponding date column; re-packaging OVERWRITES
+  //    it (most-recent-send wins). Nothing else on the row changes. Authed
+  //    client only — RLS scopes the update to the caller's company. Skipped for
+  //    a draft (an unsent, assembled package). ──────────────────────────────
+  if (!draft) {
+    const column = DATE_COLUMN[recipientType]
+    const { error: stampErr } = await supabase
+      .from("submittals")
+      .update({ [column]: sendDate })
+      .in("id", validIds)
+    if (stampErr) {
+      // The package + PDF already exist; surface the stamp failure but don't
+      // orphan the package. The PM can re-send to retry the stamp.
+      return NextResponse.json(
+        { error: `Package created, but stamping ${column} failed: ${stampErr.message}` },
+        { status: 500 },
+      )
+    }
+  }
+
+  // Signed URL so the modal can preview immediately without a second round-trip.
+  const { data: signed } = await supabase.storage
+    .from("submittals")
+    .createSignedUrl(pdfPath, 60 * 60)
+
+  return NextResponse.json(
+    { package: { ...pkg, pdf_file_path: pdfPath, item_count: validIds.length }, url: signed?.signedUrl ?? null, warnings },
+    { status: 201 },
+  )
 }

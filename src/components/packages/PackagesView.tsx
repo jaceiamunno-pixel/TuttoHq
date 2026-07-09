@@ -2,12 +2,11 @@
 
 import { useState, useEffect, useCallback } from "react"
 import type { SubmittalPackage, SubmittalPackageDetail, SubmittalRecord } from "@/app/dashboard/_shared/types"
-import ReminderSettingsPanel from "@/components/reminders/ReminderSettingsPanel"
 
-// ─── Packages tab (Session I) ───────────────────────────────────────────────
-// Lists dispatched + draft packages for a project, and a detail panel showing
-// expected items (with received state), inbound replies awaiting review, and
-// preview / dispatch / delete actions.
+// ─── Packages tab ───────────────────────────────────────────────────────────
+// Lists a project's transmittal packages and a detail panel showing the
+// packaged items + download / delete. There is no dispatch/send action — a
+// package is assembled and downloaded; the PM sends it from their own email.
 
 function fmtDate(iso: string | null | undefined): string {
   if (!iso) return "—"
@@ -22,7 +21,7 @@ const STATUS_STYLE: Record<string, string> = {
   complete:         "bg-green-100 text-green-700",
 }
 const STATUS_LABEL: Record<string, string> = {
-  draft: "Draft", dispatched: "Dispatched", partial_received: "Partial", complete: "Complete",
+  draft: "Draft", dispatched: "Sent", partial_received: "Partial", complete: "Complete",
 }
 
 function StatusBadge({ status }: { status: string }) {
@@ -70,9 +69,9 @@ export default function PackagesView({ projectId }: { projectId: string }) {
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
           </svg>
         </div>
-        <p className="text-[15px] font-bold text-[#0F172A]">No submittal packages yet</p>
+        <p className="text-[15px] font-bold text-[#0F172A]">No transmittal packages yet</p>
         <p className="text-[13px] text-[#64748B] mt-1.5 max-w-sm">
-          In the Submittal Log, turn on Select mode, choose a vendor&apos;s rows, and create a package to dispatch.
+          In the Submittal Log, turn on Select mode, pick the rows to send, and assemble a transmittal package to download.
         </p>
       </div>
     )
@@ -84,7 +83,7 @@ export default function PackagesView({ projectId }: { projectId: string }) {
         <table className="w-full text-[13px] border-collapse">
           <thead className="bg-[#F8F9FA]">
             <tr className="border-b border-[#E2E8F0]">
-              {["Package #", "Vendor", "Status", "Items", "Received", "Due", "Dispatched"].map(h => (
+              {["Package #", "Sent To", "Status", "Items", "Sent"].map(h => (
                 <th key={h} className="text-left px-4 py-2.5 text-[10px] font-bold text-[#64748B] uppercase tracking-wider whitespace-nowrap">{h}</th>
               ))}
             </tr>
@@ -95,20 +94,8 @@ export default function PackagesView({ projectId }: { projectId: string }) {
                 className="border-b border-[#E2E8F0]/60 last:border-0 hover:bg-[#F8F9FA] cursor-pointer transition-colors">
                 <td className="px-4 py-2.5 font-mono text-[12px] font-semibold text-[#0F172A] whitespace-nowrap">{p.package_number}</td>
                 <td className="px-4 py-2.5 text-[#0F172A] max-w-[200px] truncate" title={p.vendor_name_snapshot}>{p.vendor_name_snapshot}</td>
-                <td className="px-4 py-2.5">
-                  <div className="flex items-center gap-1.5">
-                    <StatusBadge status={p.status} />
-                    {(p.needs_review_count ?? 0) > 0 && (
-                      <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-red-100 text-red-700"
-                        title="Inbound replies need review">
-                        {p.needs_review_count} to review
-                      </span>
-                    )}
-                  </div>
-                </td>
+                <td className="px-4 py-2.5"><StatusBadge status={p.status} /></td>
                 <td className="px-4 py-2.5 tabular-nums text-[#64748B]">{p.item_count ?? 0}</td>
-                <td className="px-4 py-2.5 tabular-nums text-[#64748B]">{p.received_count ?? 0} / {p.item_count ?? 0}</td>
-                <td className="px-4 py-2.5 text-[#64748B] whitespace-nowrap">{fmtDate(p.due_date)}</td>
                 <td className="px-4 py-2.5 text-[#64748B] whitespace-nowrap">{fmtDate(p.dispatched_at)}</td>
               </tr>
             ))}
@@ -142,23 +129,13 @@ function PackageDetail({ packageId, onBack, onChanged }: {
 
   useEffect(() => { load() }, [load])
 
-  async function previewPdf() {
+  async function downloadPdf() {
     setBusy("pdf"); setError(null)
     try {
       const res = await fetch(`/api/submittal-packages/${packageId}/pdf`, { method: "POST" })
       const d = await res.json().catch(() => ({}))
-      if (!res.ok || !d.url) { setError(d.error ?? "Could not generate the PDF"); return }
+      if (!res.ok || !d.url) { setError(d.error ?? "Could not open the PDF"); return }
       window.open(d.url, "_blank")
-    } finally { setBusy(null) }
-  }
-
-  async function dispatch() {
-    setBusy("dispatch"); setError(null)
-    try {
-      const res = await fetch(`/api/submittal-packages/${packageId}/dispatch`, { method: "POST" })
-      const d = await res.json().catch(() => ({}))
-      if (!res.ok) { setError(d.error ?? "Dispatch failed"); return }
-      load(); onChanged()
     } finally { setBusy(null) }
   }
 
@@ -196,20 +173,16 @@ function PackageDetail({ packageId, onBack, onChanged }: {
               <h2 className="text-[15px] font-bold text-[#0F172A] font-mono">{pkg.package_number}</h2>
               <StatusBadge status={pkg.status} />
             </div>
-            <p className="text-[13px] text-[#0F172A] mt-1">{pkg.vendor_name_snapshot}</p>
-            <p className="text-[12px] text-[#64748B]">{pkg.sent_to_email}</p>
+            <p className="text-[13px] text-[#0F172A] mt-1">Sending to {pkg.vendor_name_snapshot}</p>
+            <p className="text-[12px] text-[#64748B]">
+              {pkg.status === "draft" ? "Draft — not sent" : `Sent ${fmtDate(pkg.dispatched_at)}`}
+            </p>
           </div>
           <div className="flex items-center gap-2">
-            <button onClick={previewPdf} disabled={!!busy}
-              className="h-8 px-3 rounded-md border border-[#E2E8F0] text-[12px] font-semibold text-[#0F172A] hover:bg-[#0F172A]/[0.04] transition-colors disabled:opacity-50">
-              {busy === "pdf" ? "Generating…" : "Preview PDF"}
+            <button onClick={downloadPdf} disabled={!!busy}
+              className="h-8 px-3 rounded-md bg-emerald-600 text-white text-[12px] font-semibold hover:bg-emerald-700 transition-colors disabled:opacity-50">
+              {busy === "pdf" ? "Opening…" : "Download PDF"}
             </button>
-            {pkg.status === "draft" && (
-              <button onClick={dispatch} disabled={!!busy}
-                className="h-8 px-3 rounded-md bg-emerald-600 text-white text-[12px] font-semibold hover:bg-emerald-700 transition-colors disabled:opacity-50">
-                {busy === "dispatch" ? "Dispatching…" : "Dispatch"}
-              </button>
-            )}
             <button onClick={remove} disabled={!!busy}
               className="h-8 px-3 rounded-md border border-red-200 text-[12px] font-semibold text-red-500 hover:bg-red-50 transition-colors disabled:opacity-50">
               Delete
@@ -219,9 +192,9 @@ function PackageDetail({ packageId, onBack, onChanged }: {
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4">
           {[
             ["Tracking Ref", `[${pkg.package_number}]`],
-            ["Due Date", fmtDate(pkg.due_date)],
-            ["Dispatched", fmtDate(pkg.dispatched_at)],
-            ["Received", `${pkg.received_count ?? 0} / ${pkg.item_count ?? 0}`],
+            ["Sent To", pkg.vendor_name_snapshot],
+            ["Sent", fmtDate(pkg.dispatched_at)],
+            ["Items", String(pkg.item_count ?? 0)],
           ].map(([label, value]) => (
             <div key={label}>
               <p className="text-[10px] font-bold text-[#64748B] uppercase tracking-widest mb-0.5">{label}</p>
@@ -233,15 +206,7 @@ function PackageDetail({ packageId, onBack, onChanged }: {
         {error && <div className="rounded-md bg-red-50 border border-red-200 px-3 py-2 text-[12px] text-red-600 mt-3">{error}</div>}
       </div>
 
-      {/* Reminder settings */}
-      <ReminderSettingsPanel
-        pkg={pkg}
-        reminderSettings={pkg.reminder_settings}
-        saveEndpoint={`/api/submittal-packages/${packageId}/settings`}
-        onSaved={load}
-      />
-
-      {/* Needs-review inbound replies */}
+      {/* Needs-review inbound replies (legacy solicitation packages only) */}
       {pkg.needs_review.length > 0 && (
         <div className="rounded-xl border border-red-200 bg-red-50/50 overflow-clip">
           <div className="px-4 py-2.5 border-b border-red-200 bg-red-50">
@@ -275,7 +240,7 @@ function PackageDetail({ packageId, onBack, onChanged }: {
       {/* Expected items */}
       <div className="rounded-xl border border-[#E2E8F0] overflow-clip bg-white">
         <div className="px-4 py-2.5 border-b border-[#E2E8F0] bg-[#F8F9FA]">
-          <p className="text-[12px] font-bold text-[#0F172A]">Expected Items <span className="font-normal text-[#64748B]">({pkg.items.length})</span></p>
+          <p className="text-[12px] font-bold text-[#0F172A]">Items <span className="font-normal text-[#64748B]">({pkg.items.length})</span></p>
         </div>
         <table className="w-full text-[12px] border-collapse">
           <thead>

@@ -19,7 +19,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { getValidToken } from "./gmail"
 import { sendGmailMessage } from "./gmail-send"
-import { composePackagePdf } from "./package-pdf"
+import { loadStoredPackagePdf } from "./package-pdf"
 import { composeCloseoutPackagePdf } from "./closeout-package-pdf"
 import { resolveEffectiveSettings, type CompanyReminderDefaults } from "./reminder-settings"
 
@@ -43,7 +43,11 @@ const KIND: Record<PackageKind, KindConfig> = {
   submittal: {
     packagesTable:  "submittal_packages",
     remindersTable: "submittal_package_reminders",
-    composePdf: composePackagePdf,
+    // Transmittal packages compose their PDF once at create and store it; the
+    // reminder re-attaches that stored artifact rather than recomposing. (New
+    // transmittal packages set reminders_paused=true, so this path is only hit
+    // by legacy dispatched packages.)
+    composePdf: loadStoredPackagePdf,
     pdfFilenamePrefix: "Submittal_Package",
     subjectLabel: "Submittal Package",
     bodyKind: "submittal package",
@@ -307,9 +311,8 @@ async function sendOneReminder(
     return { packageId: row.id, status: "skipped_token_unavailable", reminderNumber: nextIdx }
   }
 
-  // Optional: re-attach the original package PDF. Cheaper to rebuild than to
-  // add a download-from-storage path here — composePackagePdf already runs
-  // in the dispatch route's hot path.
+  // Optional: re-attach the package PDF. Submittal packages load the stored
+  // transmittal artifact; closeout packages rebuild theirs (see KIND.composePdf).
   const attachments: Array<{ filename: string; mimeType: string; content: Uint8Array }> = []
   if (row.effective_attach) {
     try {

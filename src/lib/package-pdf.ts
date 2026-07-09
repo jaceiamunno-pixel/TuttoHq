@@ -1,16 +1,44 @@
 import { PDFDocument } from "pdf-lib"
 import { createClient as createServiceClient, type SupabaseClient } from "@supabase/supabase-js"
 import { PDFBuilder } from "./pdf-builder"
+import { buildCoversheetPdf, type CoversheetReviewer } from "./coversheet-pdf"
+import type { SubmittalCoversheetProps } from "@/components/submittals/SubmittalCoversheet"
+import { normalizeSubmittalTitle } from "./title-normalize"
 
-// ─── Submittal-package PDF (Session I) ──────────────────────────────────────
-// Composes the outbound package a PM sends a sub: a cover + summary, the list
-// of submittal items the sub must produce, an index of the spec sections in
-// scope, and the actual spec-book pages for each of those sections appended at
-// the end. Front matter is built with the shared PDFBuilder; spec pages are
-// merged in with pdf-lib copyPages (same pattern as the transmittal route).
+// ─── Transmittal-package PDF ────────────────────────────────────────────────
+// A package is an OUTBOUND TRANSMITTAL: the PM assembles the APPROVED submittal
+// documents and sends them upstream (to the CM / A/E) or to a subcontractor,
+// from their own email client. It is NOT a solicitation — no spec-book pages,
+// no "items the sub must produce". The PDF contains the actual current
+// attachment for each selected submittal, front-matter built with PDFBuilder,
+// documents merged in with pdf-lib copyPages.
+//
+// Two coversheet modes:
+//   MODE B ("package")  — one package cover listing every item, then all the
+//                         documents appended in order.
+//   MODE A ("per_item") — each submittal gets its OWN coversheet page (the
+//                         same coversheet /api/generate-cover produces) placed
+//                         immediately before its document.
+//
+// Document selection mirrors /api/generate-cover exactly: the CURRENT
+// attachment is the one synced onto the submittals row (submittal_attachments
+// is_current → submittals.storage_path via trigger), and we prefer the
+// cover-STRIPPED copy (stripped_storage_path) when present so a Tutto cover is
+// never stacked on an existing coversheet. When stripped_storage_path is null
+// we fall back to storage_path and note it in `warnings`.
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnySupabase = SupabaseClient<any, any, any>
+
+export type RecipientType = "cm" | "ae" | "subcontractor"
+export type CoversheetMode = "per_item" | "package"
+
+/** Short recipient label printed on the package cover + stored on the row. */
+export const RECIPIENT_LABEL: Record<RecipientType, string> = {
+  cm: "Construction Manager",
+  ae: "Architect / Engineer",
+  subcontractor: "Subcontractor",
+}
 
 function fmtDate(iso: string | null | undefined): string {
   if (!iso) return "—"
@@ -23,140 +51,110 @@ function stripExt(name: string): string {
   return name.replace(/\.[^./\\]+$/, "")
 }
 
-// ─── Pure PDF composition ───────────────────────────────────────────────────
+// ─── Resolved per-item shape the pure composer consumes ─────────────────────
 
-export interface PackagePdfItem {
-  submittal_seq: number | null
-  spec_number: string | null
+interface ResolvedItem {
+  seq: number | null
+  specNumber: string | null
   description: string
-  submittal_type: string | null
-  due_date: string | null
+  submittalType: string | null
+  /** The item's document bytes (stripped copy preferred). null → skipped. */
+  documentBytes: ArrayBuffer | null
+  /** Mode A coversheet inputs. */
+  coversheet: SubmittalCoversheetProps
+  reviewer: CoversheetReviewer
 }
 
-export interface PackagePdfSpecExcerpt {
-  spec_number: string
-  spec_title: string
-  /** Spec-book PDF bytes that contain this section. */
-  pdfBytes: ArrayBuffer
-  /** 1-based page numbers, inclusive. */
-  startPage: number
-  endPage: number
-}
-
-export interface PackagePdfInput {
-  /** Tracking ref, already bracketed — e.g. "[TTQ-ABCD-7]". */
-  trackingRef: string
-  vendorName: string
-  vendorEmail: string
+export interface TransmittalPdfInput {
+  packageNumber: string
+  recipientType: RecipientType
+  /** ISO date (YYYY-MM-DD) the package is sent. */
+  sendDate: string
+  coversheetMode: CoversheetMode
   project: { name?: string | null; number?: string | null; location?: string | null; gc_name?: string | null; architect?: string | null }
   gcName: string
   logoBytes: ArrayBuffer | null
-  /** Per-tenant logo size percent (company_settings.logo_scale_pct). */
   logoScalePct?: number | null
-  /** ISO date string, or null when no package-wide due date is set. */
-  dueDate: string | null
-  generationDate: Date
-  items: PackagePdfItem[]
-  specExcerpts: PackagePdfSpecExcerpt[]
+  items: ResolvedItem[]
 }
 
-const INSTRUCTIONS =
-  "Please review the submittal list below and prepare each required item per the project " +
-  "schedule. The relevant specification section excerpts are appended to this package for " +
-  "your reference. When you respond, reply to the dispatch email with your submittal documents " +
-  "attached and keep the tracking reference in the subject line — our system uses it to match " +
-  "your submission back to this package automatically."
+/** Build the transmittal-package PDF from already-resolved inputs. */
+export async function buildTransmittalPackagePdf(input: TransmittalPdfInput): Promise<Uint8Array> {
+  const generationDate = new Date(`${input.sendDate}T00:00:00`)
+  const merged = await PDFDocument.create()
 
-/** Build the package PDF from already-resolved inputs. */
-export async function buildPackagePdf(input: PackagePdfInput): Promise<Uint8Array> {
-  const pdf = await PDFBuilder.create({
-    documentType: `Submittal Package — ${input.vendorName}`,
-    documentNumber: input.trackingRef,
-    generationDate: input.generationDate,
-    logoBytes: input.logoBytes,
-    logoScalePct: input.logoScalePct ?? undefined,
-    brandName: input.gcName,
-  })
+  const appendDoc = async (bytes: ArrayBuffer | Uint8Array | null) => {
+    if (!bytes) return
+    try {
+      const src = await PDFDocument.load(bytes)
+      const pages = await merged.copyPages(src, src.getPageIndices())
+      pages.forEach(p => merged.addPage(p))
+    } catch {
+      // A single unreadable document must not fail the whole package.
+    }
+  }
 
-  // ── Cover: project + package summary ──────────────────────────────────────
-  pdf.projectBlock({
-    name: input.project.name,
-    number: input.project.number,
-    location: input.project.location,
-    gc_name: input.project.gc_name,
-    architect: input.project.architect,
-  })
+  if (input.coversheetMode === "package") {
+    // ── MODE B: one package cover, then every document in order. ──────────
+    const pdf = await PDFBuilder.create({
+      documentType: "Submittal Transmittal",
+      documentNumber: `[${input.packageNumber}]`,
+      generationDate,
+      logoBytes: input.logoBytes,
+      logoScalePct: input.logoScalePct ?? undefined,
+      brandName: input.gcName,
+    })
 
-  pdf.sectionDivider("Package Summary")
-  pdf.fieldGrid([
-    [{ label: "Vendor", value: input.vendorName }, { label: "Sent To", value: input.vendorEmail }],
-    [
-      { label: "Items Expected", value: String(input.items.length) },
-      { label: "Due Date", value: input.dueDate ? fmtDate(input.dueDate) : "Per project schedule" },
-    ],
-    [
-      { label: "Tracking Ref", value: input.trackingRef },
-      { label: "Package Date", value: fmtDate(input.generationDate.toISOString()) },
-    ],
-  ])
+    pdf.projectBlock({
+      name: input.project.name,
+      number: input.project.number,
+      location: input.project.location,
+      gc_name: input.project.gc_name,
+      architect: input.project.architect,
+    })
 
-  pdf.textBlock("Instructions", INSTRUCTIONS)
+    pdf.sectionDivider("Transmittal")
+    pdf.fieldGrid([
+      [
+        { label: "Sent To", value: RECIPIENT_LABEL[input.recipientType] },
+        { label: "Date", value: fmtDate(input.sendDate) },
+      ],
+      [
+        { label: "Items", value: String(input.items.length) },
+        { label: "Tracking Ref", value: `[${input.packageNumber}]` },
+      ],
+    ])
 
-  // ── Submittal list ────────────────────────────────────────────────────────
-  pdf.sectionDivider("Submittal List")
-  if (input.items.length === 0) {
-    pdf.textBlock("", "No submittal items are attached to this package.")
-  } else {
-    const listW = [46, 70, 235, 95, 80] // = 526 (PDF.contentW)
+    pdf.sectionDivider("Items")
+    const listW = [46, 90, 305, 85] // = 526 (PDF.contentW)
     pdf.table(
-      ["Subm. #", "Spec #", "Description", "Type", "Due Date"],
+      ["#", "Spec #", "Description", "Type"],
       input.items.map(it => [
-        it.submittal_seq != null ? String(it.submittal_seq) : "—",
-        it.spec_number || "—",
+        it.seq != null ? String(it.seq) : "—",
+        it.specNumber || "—",
         it.description || "—",
-        it.submittal_type || "—",
-        it.due_date ? fmtDate(it.due_date) : (input.dueDate ? fmtDate(input.dueDate) : "—"),
+        it.submittalType || "—",
       ]),
       listW,
     )
-  }
 
-  // ── Spec-excerpt index ────────────────────────────────────────────────────
-  if (input.specExcerpts.length > 0) {
-    pdf.sectionDivider("Spec Section Excerpts")
-    const idxW = [80, 366, 80] // = 526
-    pdf.table(
-      ["Spec #", "Section Title", "Pages"],
-      input.specExcerpts.map(e => [
-        e.spec_number,
-        e.spec_title,
-        String(Math.max(0, e.endPage - e.startPage + 1)),
-      ]),
-      idxW,
-    )
-  }
+    const frontBytes = await pdf.save()
+    const frontDoc = await PDFDocument.load(frontBytes)
+    const frontPages = await merged.copyPages(frontDoc, frontDoc.getPageIndices())
+    frontPages.forEach(p => merged.addPage(p))
 
-  const frontBytes = await pdf.save()
-
-  // ── Merge: front matter + spec-book pages for each section ────────────────
-  const merged = await PDFDocument.create()
-  const frontDoc = await PDFDocument.load(frontBytes)
-  const frontPages = await merged.copyPages(frontDoc, frontDoc.getPageIndices())
-  frontPages.forEach(p => merged.addPage(p))
-
-  for (const ex of input.specExcerpts) {
-    try {
-      const src = await PDFDocument.load(ex.pdfBytes)
-      const total = src.getPageCount()
-      const start = Math.max(1, Math.floor(ex.startPage))
-      const end = Math.min(total, Math.floor(ex.endPage))
-      if (end < start) continue
-      const indices: number[] = []
-      for (let i = start - 1; i <= end - 1; i++) indices.push(i)
-      const pages = await merged.copyPages(src, indices)
-      pages.forEach(p => merged.addPage(p))
-    } catch {
-      // Skip an unreadable excerpt rather than failing the whole package.
+    for (const it of input.items) await appendDoc(it.documentBytes)
+  } else {
+    // ── MODE A: per-item coversheet immediately before each document. ─────
+    for (const it of input.items) {
+      // Items with no resolvable document are skipped entirely (a lone cover
+      // page with no document behind it is a confusing artifact).
+      if (!it.documentBytes) continue
+      const coverBytes = await buildCoversheetPdf(
+        it.coversheet, input.logoBytes, it.reviewer, input.logoScalePct ?? undefined,
+      )
+      await appendDoc(coverBytes)
+      await appendDoc(it.documentBytes)
     }
   }
 
@@ -168,48 +166,60 @@ export async function buildPackagePdf(input: PackagePdfInput): Promise<Uint8Arra
 const PKG_BUCKET = "submittals"
 
 /** Storage path for a package's generated PDF. Tenant-prefixed so the
- *  new storage RLS can scope via (storage.foldername(name))[1]. */
+ *  storage RLS can scope via (storage.foldername(name))[1]. */
 export function packagePdfPath(companyId: string, packageId: string): string {
   return `${companyId}/submittal-packages/${packageId}/package.pdf`
 }
 
-interface PackageRow {
-  id: string
-  project_id: string
-  company_id: string
-  package_number: string
-  vendor_name_snapshot: string
-  sent_to_email: string
-  due_date: string | null
+function serviceClient(): AnySupabase {
+  return createServiceClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!,
+    { auth: { persistSession: false } },
+  )
+}
+
+export interface ComposeTransmittalArgs {
+  packageId: string
+  projectId: string
+  companyId: string
+  packageNumber: string
+  recipientType: RecipientType
+  sendDate: string
+  coversheetMode: CoversheetMode
+  /** Submittal ids to include, in the order the caller wants them appended. */
+  submittalIds: string[]
 }
 
 /**
- * Gather every input for a package, build its PDF, upload it to storage, and
- * return the bytes + storage path. Used by both the preview and dispatch
- * routes. The caller is responsible for persisting `pdf_file_path`.
+ * Gather every input for a transmittal package, build its PDF, upload it to
+ * storage, and return the bytes + storage path + any per-item warnings.
+ *
+ * All DB reads and document downloads run through the caller's authed
+ * `supabase` client (RLS-scoped to their company). Only the final upload of
+ * the generated artifact uses the service-role client — same pattern the old
+ * package composer and gmail-intake use for their own generated uploads.
  */
-export async function composePackagePdf(
+export async function composeTransmittalPackagePdf(
   supabase: AnySupabase,
-  packageId: string,
-): Promise<{ bytes: Uint8Array; storagePath: string }> {
-  const { data: pkg, error: pkgErr } = await supabase
-    .from("submittal_packages")
-    .select("id, project_id, company_id, package_number, vendor_name_snapshot, sent_to_email, due_date")
-    .eq("id", packageId)
-    .maybeSingle()
-  if (pkgErr || !pkg) throw new Error("Package not found")
-  const pkgRow = pkg as PackageRow
-  if (!pkgRow.company_id) throw new Error("Package has no company_id")
+  args: ComposeTransmittalArgs,
+): Promise<{ bytes: Uint8Array; storagePath: string; warnings: string[] }> {
+  const warnings: string[] = []
 
-  // Project + company branding
-  const [projectRes, settingsRes] = await Promise.all([
-    supabase.from("projects").select("name, number, location, gc_name, architect").eq("id", pkgRow.project_id).maybeSingle(),
+  // Project + branding + reviewer identity (for Mode A coversheet stamps).
+  const [projectRes, settingsRes, companyRes, profileRes] = await Promise.all([
+    supabase.from("projects").select("name, number, location, gc_name, architect").eq("id", args.projectId).maybeSingle(),
     supabase.from("company_settings").select("logo_path, logo_scale_pct").maybeSingle(),
+    supabase.from("companies").select("name").eq("id", args.companyId).maybeSingle(),
+    supabase.from("user_profiles").select("full_name").maybeSingle(),
   ])
   const project = (projectRes.data ?? {}) as {
     name?: string | null; number?: string | null; location?: string | null
     gc_name?: string | null; architect?: string | null
   }
+  const reviewedByName = (profileRes.data?.full_name as string | undefined) ?? ""
+  const stampCompanyName = (companyRes.data?.name as string | undefined) ?? ""
+  const logoScalePct = settingsRes.data?.logo_scale_pct ?? undefined
 
   let logoBytes: ArrayBuffer | null = null
   if (settingsRes.data?.logo_path) {
@@ -217,104 +227,132 @@ export async function composePackagePdf(
     if (logoBlob) logoBytes = await logoBlob.arrayBuffer()
   }
 
-  // Package items → submittal detail
-  const { data: itemRows } = await supabase
-    .from("submittal_package_items")
-    .select("submittal_id, submittals(submittal_seq, csi_section, file_name, submittal_type, due_date, spec_section_id)")
-    .eq("package_id", packageId)
+  // Submittal rows for the requested ids (company-scoped by RLS, active only).
+  const { data: subRows } = await supabase
+    .from("submittals")
+    .select("id, submittal_seq, csi_section, spec_section_id, file_name, submittal_type, storage_path, stripped_storage_path, mime_type, submittal_number, revision_number, due_date")
+    .in("id", args.submittalIds)
+    .eq("status", "active")
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const submittals = (itemRows ?? []).map((r: any) => r.submittals).filter(Boolean)
-  submittals.sort((a: { submittal_seq: number | null }, b: { submittal_seq: number | null }) =>
-    (a.submittal_seq ?? 0) - (b.submittal_seq ?? 0))
+  const rows = (subRows ?? []) as any[]
+  // Preserve the caller's requested order (falls back to seq for stability).
+  const byId = new Map(rows.map(r => [r.id as string, r]))
+  const ordered = args.submittalIds.map(id => byId.get(id)).filter(Boolean)
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const items: PackagePdfItem[] = submittals.map((s: any) => ({
-    submittal_seq: s.submittal_seq ?? null,
-    spec_number: s.csi_section ?? null,
-    description: stripExt(String(s.file_name ?? "")) || "—",
-    submittal_type: s.submittal_type ?? null,
-    due_date: s.due_date ?? null,
-  }))
-
-  // Unique spec sections referenced by the items
-  const sectionIds = [...new Set(
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    submittals.map((s: any) => s.spec_section_id).filter((id: string | null): id is string => !!id),
-  )]
-
-  const specExcerpts: PackagePdfSpecExcerpt[] = []
+  // Resolve spec-section titles for Mode A coversheets (best-effort).
+  const sectionIds = [...new Set(ordered.map(r => r.spec_section_id).filter((v): v is string => !!v))]
+  const titleById = new Map<string, string>()
   if (sectionIds.length > 0) {
-    const { data: sections } = await supabase
-      .from("spec_sections")
-      .select("id, spec_number, spec_title, start_page, end_page, project_document_id")
-      .in("id", sectionIds)
-
-    // Download each unique spec-book document once, then slice per section.
-    const docCache = new Map<string, ArrayBuffer | null>()
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const sortedSections = [...(sections ?? [])].sort((a: any, b: any) =>
-      String(a.spec_number).localeCompare(String(b.spec_number)))
-
-    for (const sec of sortedSections) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const s = sec as any
-      if (s.start_page == null || s.end_page == null || !s.project_document_id) continue
-
-      if (!docCache.has(s.project_document_id)) {
-        const { data: doc } = await supabase
-          .from("project_documents")
-          .select("file_path")
-          .eq("id", s.project_document_id)
-          .maybeSingle()
-        let bytes: ArrayBuffer | null = null
-        if (doc?.file_path) {
-          const { data: blob } = await supabase.storage.from(PKG_BUCKET).download(doc.file_path)
-          if (blob) bytes = await blob.arrayBuffer()
-        }
-        docCache.set(s.project_document_id, bytes)
-      }
-
-      const pdfBytes = docCache.get(s.project_document_id)
-      if (!pdfBytes) continue
-      specExcerpts.push({
-        spec_number: String(s.spec_number),
-        spec_title: String(s.spec_title),
-        pdfBytes,
-        startPage: s.start_page,
-        endPage: s.end_page,
-      })
+    const { data: secs } = await supabase.from("spec_sections").select("id, spec_title").in("id", sectionIds)
+    for (const s of (secs ?? []) as Array<{ id: string; spec_title: string | null }>) {
+      titleById.set(s.id, s.spec_title ?? "")
     }
   }
 
-  const bytes = await buildPackagePdf({
-    trackingRef: `[${pkgRow.package_number}]`,
-    vendorName: pkgRow.vendor_name_snapshot,
-    vendorEmail: pkgRow.sent_to_email,
+  const items: ResolvedItem[] = []
+  for (const r of ordered) {
+    const description = normalizeSubmittalTitle(String(r.file_name ?? "")) || stripExt(String(r.file_name ?? "")) || "—"
+    const label = r.submittal_seq != null ? `#${r.submittal_seq}` : (r.csi_section || description)
+
+    // Document selection — mirror /api/generate-cover's "stripped" branch:
+    //   stripped_storage_path (clean product) → storage_path (current file).
+    const documentPath = r.stripped_storage_path || r.storage_path
+    let documentBytes: ArrayBuffer | null = null
+    if (r.mime_type === "application/pdf" && documentPath) {
+      const { data: blob } = await supabase.storage.from(PKG_BUCKET).download(documentPath)
+      if (blob) {
+        documentBytes = await blob.arrayBuffer()
+        if (!r.stripped_storage_path) {
+          warnings.push(`${label}: no cover-stripped copy on file — used the original (any existing coversheet is retained).`)
+        }
+      } else {
+        warnings.push(`${label}: attachment file could not be read — skipped.`)
+      }
+    } else {
+      warnings.push(`${label}: no current PDF attachment — skipped.`)
+    }
+
+    // Mode A coversheet inputs (unused in Mode B but cheap to build).
+    const specNumber = (r.csi_section as string | null) ?? ""
+    const subInt = parseInt(String(r.submittal_number ?? ""), 10)
+    const numPart = Number.isFinite(subInt)
+      ? `${subInt}.${parseInt(String(r.revision_number ?? "0"), 10) || 0}`
+      : ""
+    const stampSubmittalNo = [specNumber.trim(), numPart].filter(Boolean).join("-")
+
+    const coversheet: SubmittalCoversheetProps = {
+      gcName: project.gc_name ?? "",
+      projectName: project.name ?? "",
+      projectNumber: project.number ?? "",
+      projectLocation: project.location ?? "",
+      submittalDescription: description,
+      specSectionTitle: (r.spec_section_id && titleById.get(r.spec_section_id)) || "",
+      specSectionNumber: specNumber,
+      submittalNumber: String(Math.max(1, parseInt(String(r.submittal_number ?? "1"), 10) || 1)).padStart(2, "0"),
+      revisionNumber: String(parseInt(String(r.revision_number ?? "0"), 10) || 0).padStart(2, "0"),
+      dateSubmitted: fmtDate(args.sendDate),
+      submittalDueDate: r.due_date ? fmtDate(r.due_date) : "",
+    }
+    const reviewer: CoversheetReviewer = {
+      company: stampCompanyName,
+      projectName: project.name ?? "",
+      projectNumber: project.number ?? "",
+      submittalNo: stampSubmittalNo,
+      reviewedBy: reviewedByName,
+      date: new Date(`${args.sendDate}T00:00:00`).toLocaleDateString("en-US"),
+    }
+
+    items.push({
+      seq: r.submittal_seq ?? null,
+      specNumber: r.csi_section ?? null,
+      description,
+      submittalType: r.submittal_type ?? null,
+      documentBytes,
+      coversheet,
+      reviewer,
+    })
+  }
+
+  const bytes = await buildTransmittalPackagePdf({
+    packageNumber: args.packageNumber,
+    recipientType: args.recipientType,
+    sendDate: args.sendDate,
+    coversheetMode: args.coversheetMode,
     project,
     gcName: project.gc_name ?? "",
     logoBytes,
-    logoScalePct: settingsRes.data?.logo_scale_pct ?? undefined,
-    dueDate: pkgRow.due_date,
-    generationDate: new Date(),
+    logoScalePct,
     items,
-    specExcerpts,
   })
 
-  const storagePath = packagePdfPath(pkgRow.company_id, packageId)
-  // The package PDF is a generated artifact. Upload it with the service-role
-  // client so it isn't subject to the submittals bucket's storage RLS, which
-  // whitelists only specific path prefixes — same approach gmail-intake uses
-  // for its own uploads. Every DB read above stays RLS-scoped to the user.
-  const admin = createServiceClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!,
-    { auth: { persistSession: false } },
-  )
-  const { error: uploadErr } = await admin.storage
+  const storagePath = packagePdfPath(args.companyId, args.packageId)
+  const { error: uploadErr } = await serviceClient().storage
     .from(PKG_BUCKET)
     .upload(storagePath, bytes, { contentType: "application/pdf", upsert: true })
   if (uploadErr) throw new Error(`Failed to store package PDF: ${uploadErr.message}`)
 
-  return { bytes, storagePath }
+  return { bytes, storagePath, warnings }
+}
+
+/**
+ * Load a package's already-composed PDF from storage. The transmittal PDF is
+ * built ONCE at package create and stored at `pdf_file_path`; preview and the
+ * reminder runner just re-read that stored artifact rather than recomposing
+ * (recomposition would need the mode/recipient/date that aren't persisted).
+ */
+export async function loadStoredPackagePdf(
+  supabase: AnySupabase,
+  packageId: string,
+): Promise<{ bytes: Uint8Array; storagePath: string }> {
+  const { data: pkg } = await supabase
+    .from("submittal_packages")
+    .select("pdf_file_path")
+    .eq("id", packageId)
+    .maybeSingle()
+  const path = (pkg?.pdf_file_path as string | null) ?? null
+  if (!path) throw new Error("Package has no stored PDF")
+  const { data: blob, error } = await serviceClient().storage.from(PKG_BUCKET).download(path)
+  if (error || !blob) throw new Error("Stored package PDF not found")
+  return { bytes: new Uint8Array(await blob.arrayBuffer()), storagePath: path }
 }
