@@ -1,4 +1,5 @@
 import { PDFDocument } from "pdf-lib"
+import { randomUUID } from "node:crypto"
 import { createClient as createServiceClient, type SupabaseClient } from "@supabase/supabase-js"
 import { PDFBuilder } from "./pdf-builder"
 import { buildCoversheetPdf, type CoversheetReviewer } from "./coversheet-pdf"
@@ -8,17 +9,18 @@ import { normalizeSubmittalTitle } from "./title-normalize"
 // ─── Transmittal-package PDF ────────────────────────────────────────────────
 // A package is an OUTBOUND TRANSMITTAL: the PM assembles the APPROVED submittal
 // documents and sends them upstream (to the CM / A/E) or to a subcontractor,
-// from their own email client. It is NOT a solicitation — no spec-book pages,
-// no "items the sub must produce". The PDF contains the actual current
-// attachment for each selected submittal, front-matter built with PDFBuilder,
-// documents merged in with pdf-lib copyPages.
+// from their own email client. It is NOT a solicitation — no spec-book pages.
 //
-// Two coversheet modes:
-//   MODE B ("package")  — one package cover listing every item, then all the
-//                         documents appended in order.
-//   MODE A ("per_item") — each submittal gets its OWN coversheet page (the
-//                         same coversheet /api/generate-cover produces) placed
-//                         immediately before its document.
+// Two coversheet modes, which now produce DIFFERENT NUMBERS OF FILES:
+//   MODE 'package'  — ONE PDF: a package cover listing every item, then all the
+//                     documents appended in order.
+//   MODE 'per_item' — N PDFs, one per submittal: that item's coversheet followed
+//                     by that item's document. A 'per_item' generation is a SET
+//                     of separate files, never a single merged PDF.
+//
+// Generations are append-only: each call to generateTransmittalPackage writes a
+// fresh set of files under a new generation_id and inserts one
+// submittal_package_files row per file. Nothing is ever overwritten.
 //
 // Document selection mirrors /api/generate-cover exactly: the CURRENT
 // attachment is the one synced onto the submittals row (submittal_attachments
@@ -51,9 +53,19 @@ function stripExt(name: string): string {
   return name.replace(/\.[^./\\]+$/, "")
 }
 
+/** Storage-safe, human-readable file-name fragment. */
+function sanitize(s: string, max = 48): string {
+  return (s || "")
+    .replace(/[^A-Za-z0-9._-]+/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^[_.-]+|[_.-]+$/g, "")
+    .slice(0, max) || "file"
+}
+
 // ─── Resolved per-item shape the pure composer consumes ─────────────────────
 
 interface ResolvedItem {
+  submittalId: string
   seq: number | null
   specNumber: string | null
   description: string
@@ -78,24 +90,36 @@ export interface TransmittalPdfInput {
   items: ResolvedItem[]
 }
 
-/** Build the transmittal-package PDF from already-resolved inputs. */
-export async function buildTransmittalPackagePdf(input: TransmittalPdfInput): Promise<Uint8Array> {
-  const generationDate = new Date(`${input.sendDate}T00:00:00`)
-  const merged = await PDFDocument.create()
+/** One emitted PDF. submittalId is null for the whole-package file (mode
+ *  'package'); set to the item's id for a per-item file (mode 'per_item'). */
+export interface TransmittalFile {
+  submittalId: string | null
+  bytes: Uint8Array
+  fileName: string
+}
 
-  const appendDoc = async (bytes: ArrayBuffer | Uint8Array | null) => {
-    if (!bytes) return
-    try {
-      const src = await PDFDocument.load(bytes)
-      const pages = await merged.copyPages(src, src.getPageIndices())
-      pages.forEach(p => merged.addPage(p))
-    } catch {
-      // A single unreadable document must not fail the whole package.
-    }
+async function appendInto(merged: PDFDocument, bytes: ArrayBuffer | Uint8Array | null) {
+  if (!bytes) return
+  try {
+    const src = await PDFDocument.load(bytes)
+    const pages = await merged.copyPages(src, src.getPageIndices())
+    pages.forEach(p => merged.addPage(p))
+  } catch {
+    // A single unreadable document must not fail the whole package.
   }
+}
+
+/**
+ * Build the transmittal-package file(s) from already-resolved inputs.
+ *   'package'  → a single-element array (the merged package PDF).
+ *   'per_item' → one element per item that has a resolvable document.
+ */
+export async function buildTransmittalPackageFiles(input: TransmittalPdfInput): Promise<TransmittalFile[]> {
+  const generationDate = new Date(`${input.sendDate}T00:00:00`)
+  const numBase = sanitize(input.packageNumber)
 
   if (input.coversheetMode === "package") {
-    // ── MODE B: one package cover, then every document in order. ──────────
+    // ── MODE 'package': one cover, then every document in order → 1 PDF. ────
     const pdf = await PDFBuilder.create({
       documentType: "Submittal Transmittal",
       documentNumber: `[${input.packageNumber}]`,
@@ -138,38 +162,40 @@ export async function buildTransmittalPackagePdf(input: TransmittalPdfInput): Pr
       listW,
     )
 
-    const frontBytes = await pdf.save()
-    const frontDoc = await PDFDocument.load(frontBytes)
-    const frontPages = await merged.copyPages(frontDoc, frontDoc.getPageIndices())
-    frontPages.forEach(p => merged.addPage(p))
+    const merged = await PDFDocument.create()
+    await appendInto(merged, await pdf.save())
+    for (const it of input.items) await appendInto(merged, it.documentBytes)
 
-    for (const it of input.items) await appendDoc(it.documentBytes)
-  } else {
-    // ── MODE A: per-item coversheet immediately before each document. ─────
-    for (const it of input.items) {
-      // Items with no resolvable document are skipped entirely (a lone cover
-      // page with no document behind it is a confusing artifact).
-      if (!it.documentBytes) continue
-      const coverBytes = await buildCoversheetPdf(
-        it.coversheet, input.logoBytes, it.reviewer, input.logoScalePct ?? undefined,
-      )
-      await appendDoc(coverBytes)
-      await appendDoc(it.documentBytes)
-    }
+    return [{ submittalId: null, bytes: await merged.save(), fileName: `${numBase}.pdf` }]
   }
 
-  return merged.save()
+  // ── MODE 'per_item': one SEPARATE PDF per item (cover + that item's doc). ──
+  const files: TransmittalFile[] = []
+  let ordinal = 0
+  for (const it of input.items) {
+    // Items with no resolvable document are skipped entirely (already warned in
+    // the compose step). A lone cover with no document is not a useful artifact.
+    if (!it.documentBytes) continue
+    ordinal++
+    const doc = await PDFDocument.create()
+    const coverBytes = await buildCoversheetPdf(
+      it.coversheet, input.logoBytes, it.reviewer, input.logoScalePct ?? undefined,
+    )
+    await appendInto(doc, coverBytes)
+    await appendInto(doc, it.documentBytes)
+    const tag = it.seq != null ? `${it.seq}` : String(ordinal).padStart(2, "0")
+    files.push({
+      submittalId: it.submittalId,
+      bytes: await doc.save(),
+      fileName: `${numBase}_${sanitize(tag, 8)}_${sanitize(it.description)}.pdf`,
+    })
+  }
+  return files
 }
 
 // ─── Data gathering + storage ───────────────────────────────────────────────
 
 const PKG_BUCKET = "submittals"
-
-/** Storage path for a package's generated PDF. Tenant-prefixed so the
- *  storage RLS can scope via (storage.foldername(name))[1]. */
-export function packagePdfPath(companyId: string, packageId: string): string {
-  return `${companyId}/submittal-packages/${packageId}/package.pdf`
-}
 
 function serviceClient(): AnySupabase {
   return createServiceClient(
@@ -179,7 +205,30 @@ function serviceClient(): AnySupabase {
   )
 }
 
-export interface ComposeTransmittalArgs {
+/** Batch-sign storage paths → Map<path, signedUrl>. Missing/failed paths are
+ *  simply absent from the map. */
+export async function signPaths(
+  supabase: AnySupabase,
+  paths: string[],
+  expiresIn = 3600,
+): Promise<Map<string, string>> {
+  const map = new Map<string, string>()
+  if (paths.length === 0) return map
+  const { data } = await supabase.storage.from(PKG_BUCKET).createSignedUrls(paths, expiresIn)
+  for (const row of (data ?? []) as Array<{ path: string | null; signedUrl: string | null }>) {
+    if (row?.path && row?.signedUrl) map.set(row.path, row.signedUrl)
+  }
+  return map
+}
+
+/** Storage key for one generation's file. Company-first so the submittals
+ *  bucket's tenant RLS ((storage.foldername(name))[1] = company) permits the
+ *  authed upload; generation-scoped so nothing is ever overwritten. */
+function generationFilePath(companyId: string, packageId: string, generationId: string, fileName: string): string {
+  return `${companyId}/submittal-packages/${packageId}/${generationId}/${fileName}`
+}
+
+export interface GenerateTransmittalArgs {
   packageId: string
   projectId: string
   companyId: string
@@ -187,26 +236,35 @@ export interface ComposeTransmittalArgs {
   recipientType: RecipientType
   sendDate: string
   coversheetMode: CoversheetMode
-  /** Submittal ids to include, in the order the caller wants them appended. */
+  /** Submittal ids to include, in the order the caller wants them emitted. */
   submittalIds: string[]
+  /** auth.uid() of the generating user, recorded on each file row. */
+  generatedBy: string
+}
+
+export interface GeneratedFileMeta {
+  submittalId: string | null
+  storagePath: string
+  fileName: string
+  fileSize: number
 }
 
 /**
- * Gather every input for a transmittal package, build its PDF, upload it to
- * storage, and return the bytes + storage path + any per-item warnings.
+ * Compose a transmittal package's file(s), upload each to storage, and INSERT
+ * one append-only submittal_package_files row per file under a fresh
+ * generation_id. Returns the generation id + file metadata + per-item warnings.
  *
- * All DB reads and document downloads run through the caller's authed
- * `supabase` client (RLS-scoped to their company). Only the final upload of
- * the generated artifact uses the service-role client — same pattern the old
- * package composer and gmail-intake use for their own generated uploads.
+ * Everything runs through the caller's AUTHED `supabase` client — reads,
+ * document downloads, uploads (the submittals bucket's tenant RLS permits
+ * writes under the company-first path), and the row inserts. No service-role.
  */
-export async function composeTransmittalPackagePdf(
+export async function generateTransmittalPackage(
   supabase: AnySupabase,
-  args: ComposeTransmittalArgs,
-): Promise<{ bytes: Uint8Array; storagePath: string; warnings: string[] }> {
+  args: GenerateTransmittalArgs,
+): Promise<{ generationId: string; files: GeneratedFileMeta[]; warnings: string[] }> {
   const warnings: string[] = []
 
-  // Project + branding + reviewer identity (for Mode A coversheet stamps).
+  // Project + branding + reviewer identity (for the per-item coversheets).
   const [projectRes, settingsRes, companyRes, profileRes] = await Promise.all([
     supabase.from("projects").select("name, number, location, gc_name, architect").eq("id", args.projectId).maybeSingle(),
     supabase.from("company_settings").select("logo_path, logo_scale_pct").maybeSingle(),
@@ -236,11 +294,10 @@ export async function composeTransmittalPackagePdf(
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const rows = (subRows ?? []) as any[]
-  // Preserve the caller's requested order (falls back to seq for stability).
   const byId = new Map(rows.map(r => [r.id as string, r]))
   const ordered = args.submittalIds.map(id => byId.get(id)).filter(Boolean)
 
-  // Resolve spec-section titles for Mode A coversheets (best-effort).
+  // Resolve spec-section titles for the coversheets (best-effort).
   const sectionIds = [...new Set(ordered.map(r => r.spec_section_id).filter((v): v is string => !!v))]
   const titleById = new Map<string, string>()
   if (sectionIds.length > 0) {
@@ -273,7 +330,6 @@ export async function composeTransmittalPackagePdf(
       warnings.push(`${label}: no current PDF attachment — skipped.`)
     }
 
-    // Mode A coversheet inputs (unused in Mode B but cheap to build).
     const specNumber = (r.csi_section as string | null) ?? ""
     const subInt = parseInt(String(r.submittal_number ?? ""), 10)
     const numPart = Number.isFinite(subInt)
@@ -304,6 +360,7 @@ export async function composeTransmittalPackagePdf(
     }
 
     items.push({
+      submittalId: r.id,
       seq: r.submittal_seq ?? null,
       specNumber: r.csi_section ?? null,
       description,
@@ -314,7 +371,7 @@ export async function composeTransmittalPackagePdf(
     })
   }
 
-  const bytes = await buildTransmittalPackagePdf({
+  const built = await buildTransmittalPackageFiles({
     packageNumber: args.packageNumber,
     recipientType: args.recipientType,
     sendDate: args.sendDate,
@@ -326,20 +383,47 @@ export async function composeTransmittalPackagePdf(
     items,
   })
 
-  const storagePath = packagePdfPath(args.companyId, args.packageId)
-  const { error: uploadErr } = await serviceClient().storage
-    .from(PKG_BUCKET)
-    .upload(storagePath, bytes, { contentType: "application/pdf", upsert: true })
-  if (uploadErr) throw new Error(`Failed to store package PDF: ${uploadErr.message}`)
+  if (built.length === 0) {
+    throw new Error("No documents could be assembled for this package")
+  }
 
-  return { bytes, storagePath, warnings }
+  // One generation → new id shared by all its files. Upload every file first
+  // (unique, generation-scoped paths → no overwrite), then insert the rows.
+  const generationId = randomUUID()
+  const metas: GeneratedFileMeta[] = []
+  for (const f of built) {
+    const storagePath = generationFilePath(args.companyId, args.packageId, generationId, f.fileName)
+    const { error: uploadErr } = await supabase.storage
+      .from(PKG_BUCKET)
+      .upload(storagePath, f.bytes, { contentType: "application/pdf", upsert: false })
+    if (uploadErr) throw new Error(`Failed to store package file: ${uploadErr.message}`)
+    metas.push({ submittalId: f.submittalId, storagePath, fileName: f.fileName, fileSize: f.bytes.byteLength })
+  }
+
+  // Append-only history rows. company_id defaults to get_my_company_id();
+  // generated_at defaults to now(). NEVER update/delete these elsewhere.
+  const { error: insErr } = await supabase.from("submittal_package_files").insert(
+    metas.map(m => ({
+      package_id: args.packageId,
+      submittal_id: m.submittalId,
+      generation_id: generationId,
+      coversheet_mode: args.coversheetMode,
+      storage_path: m.storagePath,
+      file_name: m.fileName,
+      file_size: m.fileSize,
+      generated_by: args.generatedBy,
+    })),
+  )
+  if (insErr) throw new Error(`Failed to record package files: ${insErr.message}`)
+
+  return { generationId, files: metas, warnings }
 }
 
 /**
- * Load a package's already-composed PDF from storage. The transmittal PDF is
- * built ONCE at package create and stored at `pdf_file_path`; preview and the
- * reminder runner just re-read that stored artifact rather than recomposing
- * (recomposition would need the mode/recipient/date that aren't persisted).
+ * Load a LEGACY solicitation package's stored PDF (submittal_packages.
+ * pdf_file_path). Only the reminder runner uses this, and only for legacy
+ * solicitation packages (recipient_type IS NULL) — transmittal packages never
+ * write pdf_file_path and are excluded from reminders.
  */
 export async function loadStoredPackagePdf(
   supabase: AnySupabase,

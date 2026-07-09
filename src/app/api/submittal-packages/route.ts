@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import {
-  composeTransmittalPackagePdf,
+  generateTransmittalPackage, signPaths,
   type RecipientType, type CoversheetMode,
 } from "@/lib/package-pdf"
 
@@ -171,12 +171,12 @@ export async function POST(req: NextRequest) {
   //   recipient_type  — who it went to (decides which date column is stamped)
   //   coversheet_mode — how the PDF was assembled
   //   send_date       — the send date; NULL on an unsent draft
-  // The legacy solicitation columns (vendor_name_snapshot / sent_to_email) are
-  // NOT NULL but unused by transmittals, so they're stored empty until the
-  // follow-up cleanup migration drops them. status defaults to 'draft', which
-  // keeps transmittals OUT of the reminder cron (its candidate query requires
-  // status IN ('dispatched','partial_received')). No dispatched_at / dispatched_by
-  // / reminders_paused overload.
+  // The legacy solicitation columns (vendor_name_snapshot / sent_to_email) had
+  // their NOT NULL dropped (migration 0037), so a transmittal simply leaves them
+  // NULL — no empty-string sentinels. status defaults to 'draft', which keeps
+  // transmittals OUT of the reminder cron (its candidate query requires status
+  // IN ('dispatched','partial_received')). No dispatched_at / dispatched_by /
+  // reminders_paused overload.
   const { data: pkg, error: insErr } = await supabase
     .from("submittal_packages")
     .insert({
@@ -187,8 +187,6 @@ export async function POST(req: NextRequest) {
       send_date: draft ? null : sendDate,
       notes: notes?.trim() || null,
       created_by: user.id,
-      vendor_name_snapshot: "",
-      sent_to_email: "",
     })
     .select()
     .single()
@@ -203,12 +201,16 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: itemErr.message }, { status: 500 })
   }
 
-  // Compose the transmittal PDF (approved documents) and store it. A failure
-  // here rolls the whole package back — a package with no PDF is useless.
-  let pdfPath: string
+  // Generate the transmittal artifact(s) and record them append-only:
+  //   'package'  → 1 PDF (cover + all docs).
+  //   'per_item' → N PDFs, one per submittal.
+  // A failure rolls the whole package back — a package with no files is useless.
+  // pdf_file_path is NOT written; submittal_package_files is the source of truth.
+  let generationId: string
+  let files: Awaited<ReturnType<typeof generateTransmittalPackage>>["files"]
   let warnings: string[] = []
   try {
-    const res = await composeTransmittalPackagePdf(supabase, {
+    const res = await generateTransmittalPackage(supabase, {
       packageId: pkg.id,
       projectId: project_id,
       companyId,
@@ -217,17 +219,18 @@ export async function POST(req: NextRequest) {
       sendDate,
       coversheetMode,
       submittalIds: validIds,
+      generatedBy: user.id,
     })
-    pdfPath = res.storagePath
+    generationId = res.generationId
+    files = res.files
     warnings = res.warnings
   } catch (err) {
     await supabase.from("submittal_packages").delete().eq("id", pkg.id)
     return NextResponse.json(
-      { error: err instanceof Error ? err.message : "Failed to build the package PDF" },
+      { error: err instanceof Error ? err.message : "Failed to build the package files" },
       { status: 500 },
     )
   }
-  await supabase.from("submittal_packages").update({ pdf_file_path: pdfPath }).eq("id", pkg.id)
 
   // ── Date stamp — the one write to live submittal rows. Sending upstream (or
   //    to a sub) stamps the corresponding date column; re-packaging OVERWRITES
@@ -235,14 +238,12 @@ export async function POST(req: NextRequest) {
   //    client only — RLS scopes the update to the caller's company. Skipped for
   //    a draft (an unsent, assembled package).
   //
-  //    KNOWN INTERACTION (documented, accepted): sent_to_ae_date is ALSO synced
-  //    from the current attachment's submitted_date by the
-  //    submittal_attachments_sync_current_aiu trigger. Committing a NEW revision
-  //    for a packaged submittal re-fires that trigger and overwrites this stamp
-  //    with the new revision's submitted_date (or NULL if it has none). A new
-  //    revision is a new submission cycle, so that's acceptable — but it means a
-  //    CM/A/E stamp is not permanent across revisions. sent_to_sub_date is never
-  //    touched by that trigger, so subcontractor stamps are stable. ──────────
+  //    TRIGGER INTERACTION: sent_to_ae_date is also synced from the current
+  //    attachment's submitted_date by submittal_attachments_sync_current_aiu.
+  //    Migration 0037a made that sync COALESCE, so committing a revision with a
+  //    NULL submitted_date no longer erases this stamp; a revision WITH a
+  //    submitted_date still supersedes it (new revision = new send cycle).
+  //    sent_to_sub_date is never touched by that trigger. ──────────────────────
   if (!draft) {
     const column = DATE_COLUMN[recipientType]
     const { error: stampErr } = await supabase
@@ -250,7 +251,7 @@ export async function POST(req: NextRequest) {
       .update({ [column]: sendDate })
       .in("id", validIds)
     if (stampErr) {
-      // The package + PDF already exist; surface the stamp failure but don't
+      // The package + files already exist; surface the stamp failure but don't
       // orphan the package. The PM can re-send to retry the stamp.
       return NextResponse.json(
         { error: `Package created, but stamping ${column} failed: ${stampErr.message}` },
@@ -259,13 +260,23 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // Signed URL so the modal can preview immediately without a second round-trip.
-  const { data: signed } = await supabase.storage
-    .from("submittals")
-    .createSignedUrl(pdfPath, 60 * 60)
+  // Signed URLs so the modal can preview/download immediately.
+  const signedByPath = await signPaths(supabase, files.map(f => f.storagePath))
 
   return NextResponse.json(
-    { package: { ...pkg, pdf_file_path: pdfPath, item_count: validIds.length }, url: signed?.signedUrl ?? null, warnings },
+    {
+      package: { ...pkg, item_count: validIds.length },
+      generation: {
+        generationId,
+        coversheetMode,
+        files: files.map(f => ({
+          submittalId: f.submittalId,
+          fileName: f.fileName,
+          url: signedByPath.get(f.storagePath) ?? null,
+        })),
+      },
+      warnings,
+    },
     { status: 201 },
   )
 }

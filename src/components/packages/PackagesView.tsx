@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react"
 import type { SubmittalPackage, SubmittalPackageDetail, SubmittalRecord } from "@/app/dashboard/_shared/types"
+import GenerationFiles, { type GenFile } from "./GenerationFiles"
 
 // ─── Packages tab ───────────────────────────────────────────────────────────
 // Lists a project's transmittal packages and a detail panel showing the
@@ -127,12 +128,20 @@ export default function PackagesView({ projectId }: { projectId: string }) {
 
 // ─── Detail panel ───────────────────────────────────────────────────────────
 
+interface Generation {
+  generationId: string
+  generatedAt: string
+  coversheetMode: "per_item" | "package"
+  files: GenFile[]
+}
+
 function PackageDetail({ packageId, onBack, onChanged }: {
   packageId: string
   onBack: () => void
   onChanged: () => void
 }) {
   const [pkg, setPkg] = useState<SubmittalPackageDetail | null>(null)
+  const [gens, setGens] = useState<Generation[]>([])
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -146,15 +155,24 @@ function PackageDetail({ packageId, onBack, onChanged }: {
       .finally(() => setLoading(false))
   }, [packageId])
 
-  useEffect(() => { load() }, [load])
+  // Append-only generation history for the "Past generations" list.
+  const loadGens = useCallback(() => {
+    fetch(`/api/submittal-packages/${packageId}/files`)
+      .then(r => r.json())
+      .then(d => setGens(Array.isArray(d.generations) ? d.generations : []))
+      .catch(() => setGens([]))
+  }, [packageId])
 
-  async function downloadPdf() {
-    setBusy("pdf"); setError(null)
+  useEffect(() => { load(); loadGens() }, [load, loadGens])
+
+  // Re-generate: append a NEW generation, then refresh the list.
+  async function regenerate() {
+    setBusy("gen"); setError(null)
     try {
       const res = await fetch(`/api/submittal-packages/${packageId}/pdf`, { method: "POST" })
       const d = await res.json().catch(() => ({}))
-      if (!res.ok || !d.url) { setError(d.error ?? "Could not open the PDF"); return }
-      window.open(d.url, "_blank")
+      if (!res.ok) { setError(d.error ?? "Could not generate"); return }
+      loadGens()
     } finally { setBusy(null) }
   }
 
@@ -198,10 +216,12 @@ function PackageDetail({ packageId, onBack, onChanged }: {
             </p>
           </div>
           <div className="flex items-center gap-2">
-            <button onClick={downloadPdf} disabled={!!busy}
-              className="h-8 px-3 rounded-md bg-emerald-600 text-white text-[12px] font-semibold hover:bg-emerald-700 transition-colors disabled:opacity-50">
-              {busy === "pdf" ? "Opening…" : "Download PDF"}
-            </button>
+            {pkg.recipient_type && (
+              <button onClick={regenerate} disabled={!!busy}
+                className="h-8 px-3 rounded-md bg-[#7B9BB5] text-white text-[12px] font-semibold hover:bg-[#6A8AA4] transition-colors disabled:opacity-50">
+                {busy === "gen" ? "Generating…" : "Generate again"}
+              </button>
+            )}
             <button onClick={remove} disabled={!!busy}
               className="h-8 px-3 rounded-md border border-red-200 text-[12px] font-semibold text-red-500 hover:bg-red-50 transition-colors disabled:opacity-50">
               Delete
@@ -224,6 +244,41 @@ function PackageDetail({ packageId, onBack, onChanged }: {
         {pkg.notes && <p className="text-[12px] text-[#64748B] mt-3 whitespace-pre-wrap">{pkg.notes}</p>}
         {error && <div className="rounded-md bg-red-50 border border-red-200 px-3 py-2 text-[12px] text-red-600 mt-3">{error}</div>}
       </div>
+
+      {/* Past generations — every prior assembly, newest first (append-only) */}
+      {pkg.recipient_type && (
+        <div className="rounded-xl border border-[#E2E8F0] bg-white overflow-clip">
+          <div className="px-4 py-2.5 border-b border-[#E2E8F0] bg-[#F8F9FA]">
+            <p className="text-[12px] font-bold text-[#0F172A]">
+              Generations <span className="font-normal text-[#64748B]">({gens.length})</span>
+            </p>
+          </div>
+          {gens.length === 0 ? (
+            <p className="px-4 py-3 text-[12px] text-[#64748B]">No generated files yet. Use “Generate again” to build the package.</p>
+          ) : (
+            <div className="divide-y divide-[#E2E8F0]">
+              {gens.map((g, i) => (
+                <div key={g.generationId} className="px-4 py-3 space-y-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[12px] font-semibold text-[#0F172A]">
+                      {i === 0 ? "Latest" : `Generation ${gens.length - i}`}
+                    </span>
+                    <span className="text-[11px] text-[#64748B]">{fmtDate(g.generatedAt)}</span>
+                    <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-[#F1F5F9] text-[#64748B]">
+                      {g.coversheetMode === "per_item" ? "Per item" : "One cover"}
+                    </span>
+                  </div>
+                  <GenerationFiles
+                    packageNumber={pkg.package_number}
+                    coversheetMode={g.coversheetMode}
+                    files={g.files}
+                  />
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Needs-review inbound replies (legacy solicitation packages only) */}
       {pkg.needs_review.length > 0 && (

@@ -2,16 +2,22 @@
 
 import { useState } from "react"
 import type { SubmittalRecord, SubmittalPackage } from "@/app/dashboard/_shared/types"
+import GenerationFiles, { type GenFile } from "./GenerationFiles"
+import { normalizeSubmittalTitle } from "@/lib/title-normalize"
 
 // ─── Transmittal-package create modal ───────────────────────────────────────
 // A package = pick submittal log rows → choose who it's going to → choose a
-// coversheet mode → generate ONE PDF of the approved documents → download.
-// The PM sends it from their own email client. There is NO email field, NO
-// vendor lookup, NO dispatch/send action.
+// coversheet mode → generate the approved documents → download. The PM sends
+// them from their own email client. NO email field, NO vendor lookup, NO
+// dispatch/send action.
 //
-// Two steps: a form (recipient / date / mode / item review), then a preview of
-// the generated package PDF with a download button. Creating the package is the
-// send event — it stamps the chosen date column on every packaged submittal.
+// Coversheet mode drives the output shape: 'package' → one PDF (cover + all
+// docs); 'per_item' → N PDFs (one per submittal), delivered as per-item
+// downloads plus a client-side "Download all" zip.
+//
+// Two steps: a form (recipient / date / mode / item review), then the delivery
+// view. Creating the package is the send event — it stamps the chosen date
+// column on every packaged submittal.
 
 const inputCls =
   "w-full h-9 px-3 rounded-md border border-[#E2E8F0] text-[14px] text-[#0F172A] bg-white " +
@@ -51,9 +57,10 @@ export default function PackageCreateModal({
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
-  // Set once the package row + PDF exist.
+  // Set once the package + its first generation exist.
   const [pkg, setPkg] = useState<SubmittalPackage | null>(null)
-  const [pdfUrl, setPdfUrl] = useState<string | null>(null)
+  const [genFiles, setGenFiles] = useState<GenFile[]>([])
+  const [genMode, setGenMode] = useState<CoversheetMode>("package")
   const [warnings, setWarnings] = useState<string[]>([])
 
   function validate(): boolean {
@@ -88,13 +95,26 @@ export default function PackageCreateModal({
       if (!res.ok) { setError(d.error ?? "Failed to create the package"); return }
       setPkg(d.package ?? null)
       setWarnings(Array.isArray(d.warnings) ? d.warnings : [])
+      const gen = d.generation ?? { coversheetMode: coversheetMode, files: [] }
+      setGenMode(gen.coversheetMode as CoversheetMode)
+      setGenFiles(mapGenFiles(gen.files ?? []))
       if (isDraft) {
         onDone()
       } else {
-        setPdfUrl(d.url ?? null)
         setStep("preview")
       }
     } finally { setBusy(false) }
+  }
+
+  /** Attach a human label to each returned file (package PDF vs a named item). */
+  function mapGenFiles(files: Array<{ submittalId: string | null; fileName: string; url: string | null }>): GenFile[] {
+    return files.map(f => {
+      const s = f.submittalId ? submittals.find(x => x.id === f.submittalId) : null
+      const label = f.submittalId
+        ? (s ? (normalizeSubmittalTitle(s.file_name) || s.file_name) : f.fileName)
+        : "Full package"
+      return { submittalId: f.submittalId, fileName: f.fileName, url: f.url, label }
+    })
   }
 
   const trackingRef = pkg ? `[${pkg.package_number}]` : "[TTQ-…]"
@@ -240,11 +260,18 @@ export default function PackageCreateModal({
             )}
 
             <div>
-              <p className="text-[11px] font-semibold text-[#64748B] uppercase tracking-wider mb-1.5">Package PDF</p>
-              {pdfUrl ? (
-                <iframe src={pdfUrl} title="Package PDF preview" className="w-full rounded-lg border border-[#E2E8F0]" style={{ height: 440 }} />
+              <p className="text-[11px] font-semibold text-[#64748B] uppercase tracking-wider mb-1.5">
+                {genMode === "per_item" ? `Documents (${genFiles.length})` : "Package PDF"}
+              </p>
+              {genFiles.length > 0 ? (
+                <GenerationFiles
+                  packageNumber={pkg?.package_number ?? "package"}
+                  coversheetMode={genMode}
+                  files={genFiles}
+                  preview
+                />
               ) : (
-                <p className="text-[13px] text-[#64748B]">Preview unavailable — use Download to open the PDF.</p>
+                <p className="text-[13px] text-[#64748B]">No files were produced.</p>
               )}
             </div>
             {error && <div className="rounded-md bg-red-50 border border-red-200 px-3 py-2 text-[12px] text-red-600">{error}</div>}
@@ -272,15 +299,12 @@ export default function PackageCreateModal({
             </>
           ) : (
             <>
+              <p className="text-[12px] text-[#64748B]">
+                Download {genMode === "per_item" ? "the documents" : "the PDF"} above, then send from your email.
+              </p>
               <button onClick={onDone} disabled={busy}
-                className="h-9 px-4 rounded-md border border-[#E2E8F0] text-[13px] text-[#64748B] hover:bg-[#0F172A]/[0.04] transition-colors disabled:opacity-50">
-                Close
-              </button>
-              <button
-                onClick={() => { if (pdfUrl) window.open(pdfUrl, "_blank") }}
-                disabled={busy || !pdfUrl}
-                className="h-9 px-5 rounded-md bg-emerald-600 text-white text-[13px] font-semibold hover:bg-emerald-700 transition-colors disabled:opacity-50">
-                Download package PDF
+                className="h-9 px-5 rounded-md bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors disabled:opacity-50">
+                Done
               </button>
             </>
           )}
