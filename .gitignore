@@ -1,6 +1,11 @@
 .next/
 node_modules/
 .env.local
+# Never commit a native env file. The native export loads the repo-root
+# .env.local (via loadEnvConfig in native/next.config.ts), so native/.env*
+# should not exist — but block it either way (the bare `.env.local` above only
+# matches that exact basename, not native/.env or native/.env.production).
+native/.env*
 *.pem
 
 # Capacitor native shell — static export build output (native/.next covered above)

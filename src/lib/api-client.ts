@@ -23,7 +23,18 @@ import { Capacitor } from "@capacitor/core"
  */
 
 // Absolute origin the native shell talks to. Overridable for preview testing.
-export const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "https://tuttohq.com"
+//
+// MUST be the canonical, NON-redirecting host. Vercel redirects the apex
+// `tuttohq.com` → `www.tuttohq.com` with a 307 on every path, including /api/*.
+// From a WebView that turns each native /api call into a cross-origin redirect
+// hop that WebKit answers by STRIPPING the Authorization header (and which
+// CapacitorHttp's patched fetch can fail to follow) — the request dies on-device
+// before it reaches the API ("The string did not match the expected pattern",
+// no /api/projects in the Network tab). Hitting www directly avoids the hop.
+// Prefer configuring NEXT_PUBLIC_API_BASE_URL so the host is config, not a
+// literal; it must also resolve to the non-redirecting host.
+export const API_BASE_URL =
+  process.env.NEXT_PUBLIC_API_BASE_URL || "https://www.tuttohq.com"
 
 export function isNative(): boolean {
   return Capacitor.isNativePlatform()
