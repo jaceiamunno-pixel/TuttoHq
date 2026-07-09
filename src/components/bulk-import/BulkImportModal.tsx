@@ -95,6 +95,16 @@ interface Row {
       project_id: string | null; project_name: string | null; count: number;
     }>
   }
+  /** FIX 4 — cross-row duplicate acknowledgement. When this file's bytes are
+   *  already the CURRENT attachment on a DIFFERENT log row in this project, the
+   *  commit gate holds until the operator explicitly acknowledges it (checkbox).
+   *  This is how one PDF landed on both Certification and Shop Drawing: the
+   *  "possible duplicate" note was shown but never gated. We flag, never block —
+   *  the ack unblocks the same row without stopping the batch. */
+  dupeAcknowledged?: boolean
+  /** True while POST /api/bulk-import/create-row is in flight for this row
+   *  (the "Create a new <Type> row" action) so the button can't double-fire. */
+  creatingRow?: boolean
 }
 
 function newRow(file: File): Row {
@@ -146,6 +156,11 @@ function commitReadiness(r: Row): "ready" | "blocked" | "skip" | "done" | "in-fl
   if (r.matchSkip) return "skip"
   if (r.status !== "ready") return "blocked"
   if (!r.match) return "blocked"  // match call still pending
+  // FIX 4 — an un-acknowledged cross-row duplicate holds the gate regardless of
+  // how the destination was resolved. Flag, never hard-block: the operator ticks
+  // "commit anyway" and this same row unblocks (the rest of the batch is
+  // unaffected).
+  if (hasUnackedCrossRowDupe(r)) return "blocked"
   // An explicit target pick fully resolves the destination — check it BEFORE
   // (and instead of) the section/type emptiness rule. A no-match/ambiguous
   // row is *supposed* to have an empty parsed section; once a log row is
@@ -170,6 +185,7 @@ function commitBlockReason(r: Row): string | null {
   if (commitReadiness(r) !== "blocked") return null
   if (r.status !== "ready") return "still processing"
   if (!r.match) return "waiting on match…"
+  if (hasUnackedCrossRowDupe(r)) return "confirm this isn't a misfiled duplicate"
   if (r.match.kind === "no-match") return "pick a log row to route this file"
   if (r.match.kind === "ambiguous-distinct") return "pick one of the candidate log rows"
   if (r.match.kind === "auto-match") {
@@ -186,6 +202,20 @@ function effectiveTargetRowId(r: Row): string | null {
   if (r.match.kind === "ambiguous-distinct") return r.pickedTargetRowId ?? null
   if (r.match.kind === "no-match") return r.pickedTargetRowId ?? null
   return null
+}
+
+/** FIX 4 — does this row carry an UN-acknowledged cross-row duplicate?
+ *  True when the file's bytes are already the current attachment on a DIFFERENT
+ *  live submittal in this project (check-duplicate matches submittals.file_sha256,
+ *  which the trigger keeps in sync with the current attachment) than the one this
+ *  file would land on. A match on the SAME target row is a legitimate re-commit /
+ *  revision and is NOT gated. */
+function hasUnackedCrossRowDupe(r: Row): boolean {
+  const matches = r.dupeMatch?.same_project_matches ?? []
+  if (matches.length === 0) return false
+  const target = effectiveTargetRowId(r)
+  const crossRow = matches.some(m => m.submittal_id !== target)
+  return crossRow && !r.dupeAcknowledged
 }
 
 function fmtBytes(n: number): string {
@@ -288,6 +318,40 @@ export default function BulkImportModal({
     setPickerForRowId(null)
     setPickerQuery("")
   }
+
+  // ── FIX 3 — "Create a new <Type> row in <section>" ──────────────────────
+  // Offered on a no-match whose reason is "no-row-for-type": the section IS in
+  // the spec book but has no row of this submittal_type (Jace's rule: every
+  // uploaded file gets its own log row). Mints a fresh empty spec placeholder of
+  // this type (server clones the section's spec identity + fresh submittal_seq),
+  // then routes this file onto it by setting pickedTargetRowId — the ordinary
+  // commit path takes it from there.
+  const createRowForType = useCallback(async (rowId: string) => {
+    const row = rowsRef.current.find(r => r.id === rowId)
+    if (!row || row.creatingRow) return
+    const section = row.section.trim()
+    const type = row.type
+    if (!section || !type) return
+    updateRow(rowId, { creatingRow: true })
+    try {
+      const res = await fetch("/api/bulk-import/create-row", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ project_id: projectId, csi_section: section, submittal_type: type }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data?.error ?? `Failed (HTTP ${res.status})`)
+      const newId = typeof data?.row?.id === "string" ? data.row.id : undefined
+      if (!newId) throw new Error("create-row returned no row")
+      // Invalidate the cached log-row list so a later "Pick a log row" reflects
+      // the new placeholder; harmless if never reopened.
+      setLogRows(null)
+      updateRow(rowId, { pickedTargetRowId: newId, creatingRow: false })
+    } catch (e) {
+      updateRow(rowId, { creatingRow: false })
+      setGlobalError(e instanceof Error ? e.message : "Failed to create log row")
+    }
+  }, [projectId])
 
   // ── Match a single row's analysis against the spec book ─────────────────
   // Called after analyze lands. Single API call per row, no AI, no loops.
@@ -827,28 +891,51 @@ export default function BulkImportModal({
                                 ))}
                               </ul>
                             )}
-                            {r.dupeMatch && r.dupeMatch.same_project_matches.length > 0 && (
-                              <p
-                                className="text-[10px] text-amber-700 flex items-start gap-1 mt-1"
-                                title={`Same bytes as: ${r.dupeMatch.same_project_matches.map(m =>
-                                  (m.submittal_seq != null ? `Sub ${m.submittal_seq}` : m.file_name) +
-                                  (m.revision_number ? ` (${m.revision_number})` : "")
-                                ).join(", ")}. You can still commit — nothing is auto-blocked.`}
-                              >
-                                <FlagIcon className="h-3 w-3 flex-shrink-0 mt-0.5" />
-                                <span>
-                                  ⚠ Possible duplicate — same bytes as{" "}
-                                  {r.dupeMatch.same_project_matches.slice(0, 2).map((m, i) => (
-                                    <span key={m.submittal_id} className="font-semibold">
-                                      {i > 0 ? ", " : ""}
-                                      {m.submittal_seq != null ? `Sub ${m.submittal_seq}` : m.file_name}
-                                      {m.revision_number ? ` (${m.revision_number})` : ""}
-                                    </span>
-                                  ))}
-                                  {r.dupeMatch.same_project_matches.length > 2 ? ` +${r.dupeMatch.same_project_matches.length - 2} more` : ""}
-                                </span>
-                              </p>
-                            )}
+                            {r.dupeMatch && r.dupeMatch.same_project_matches.length > 0 && (() => {
+                              // FIX 4 — a match on a DIFFERENT row than this file's
+                              // target is a potential misfile (the incident: one
+                              // PDF on both Certification and Shop Drawing). It
+                              // must be acknowledged before commit. A match on the
+                              // SAME target row is a legit re-commit/revision — no
+                              // gate.
+                              const target = effectiveTargetRowId(r)
+                              const crossRow = r.dupeMatch!.same_project_matches.some(m => m.submittal_id !== target)
+                              return (
+                              <div className="mt-1">
+                                <p
+                                  className="text-[10px] text-amber-700 flex items-start gap-1"
+                                  title={`Same bytes as: ${r.dupeMatch!.same_project_matches.map(m =>
+                                    (m.submittal_seq != null ? `Sub ${m.submittal_seq}` : m.file_name) +
+                                    (m.revision_number ? ` (${m.revision_number})` : "")
+                                  ).join(", ")}.${crossRow ? " On a different log row — confirm before committing." : ""}`}
+                                >
+                                  <FlagIcon className="h-3 w-3 flex-shrink-0 mt-0.5" />
+                                  <span>
+                                    ⚠ Possible duplicate — same bytes as{" "}
+                                    {r.dupeMatch!.same_project_matches.slice(0, 2).map((m, i) => (
+                                      <span key={m.submittal_id} className="font-semibold">
+                                        {i > 0 ? ", " : ""}
+                                        {m.submittal_seq != null ? `Sub ${m.submittal_seq}` : m.file_name}
+                                        {m.revision_number ? ` (${m.revision_number})` : ""}
+                                      </span>
+                                    ))}
+                                    {r.dupeMatch!.same_project_matches.length > 2 ? ` +${r.dupeMatch!.same_project_matches.length - 2} more` : ""}
+                                  </span>
+                                </p>
+                                {crossRow && (
+                                  <label className="flex items-start gap-1.5 mt-1 ml-4 text-[10px] text-amber-900 cursor-pointer select-none">
+                                    <input
+                                      type="checkbox"
+                                      checked={!!r.dupeAcknowledged}
+                                      onChange={e => updateRow(r.id, { dupeAcknowledged: e.target.checked })}
+                                      className="mt-0.5 accent-amber-600"
+                                    />
+                                    <span>These bytes already sit on another log row. Commit anyway — this is a different submittal.</span>
+                                  </label>
+                                )}
+                              </div>
+                              )
+                            })()}
                             {r.dupeMatch && r.dupeMatch.cross_project_matches.length > 0 && (
                               <p className="text-[10px] text-[#64748B] italic mt-0.5 truncate">
                                 Also on{" "}
@@ -920,18 +1007,51 @@ export default function BulkImportModal({
                                 </select>
                               </div>
                             )}
-                            {r.status === "ready" && r.match?.kind === "no-match" && !r.matchSkip && (
+                            {r.status === "ready" && r.match?.kind === "no-match" && !r.matchSkip && (() => {
+                              // FIX 2 — the headline must tell the TRUTH. The old
+                              // copy always said "isn't in this project's spec
+                              // book", even when the section WAS present and only
+                              // a row of this type was missing (the incident: a
+                              // cleared Product Data placeholder). The matcher now
+                              // distinguishes the three cases via reason.
+                              const reason = r.match.reason
+                              const headline =
+                                reason === "no-row-for-type"
+                                  ? `No open ${r.type || "matching"} row in ${r.section || "this section"}.`
+                                  : reason === "section-or-type-missing"
+                                  ? `Couldn't read a section + type from this file — route it manually.`
+                                  : `Section ${r.section || "?"} isn't in this project's spec book.`
+                              // FIX 3 — offer "create a new <Type> row" only when
+                              // the section exists but lacks this type (there's a
+                              // donor row to clone spec identity from). For a
+                              // section that's genuinely absent, or a file with no
+                              // parsed type, there's nothing to clone — pick/skip.
+                              const canCreate = reason === "no-row-for-type" && !!r.type && !!r.section.trim()
+                              return (
                               <div className="mt-1 rounded border border-amber-300 bg-amber-50/80 px-2 py-1.5">
                                 <p className="text-[10px] text-amber-900 font-semibold flex items-start gap-1">
                                   <FlagIcon className="h-3 w-3 flex-shrink-0 mt-0.5 text-amber-700" />
-                                  <span>Needs routing — section {r.section || "?"} isn&apos;t in this project&apos;s spec book.</span>
+                                  <span>Needs routing — {headline}</span>
                                 </p>
                                 {!r.pickedTargetRowId ? (
                                   <>
                                     <p className="text-[10px] text-amber-800 mt-0.5 ml-4">
-                                      Pick a log row to file this under, or skip the file. (Not an error — it just doesn&apos;t auto-place.)
+                                      {canCreate
+                                        ? "Create a new log row for this type, pick an existing row, or skip the file."
+                                        : "Pick a log row to file this under, or skip the file."}
+                                      {" "}(Not an error — it just doesn&apos;t auto-place.)
                                     </p>
-                                    <div className="flex items-center gap-2 mt-1 ml-4">
+                                    <div className="flex items-center gap-2 mt-1 ml-4 flex-wrap">
+                                      {canCreate && (
+                                        <button
+                                          onClick={() => createRowForType(r.id)}
+                                          disabled={r.creatingRow}
+                                          className="h-6 px-2 rounded bg-emerald-600 text-white hover:bg-emerald-700 text-[10px] font-semibold disabled:opacity-50 flex items-center gap-1"
+                                        >
+                                          {r.creatingRow && <Spinner className="h-3 w-3" />}
+                                          Create a new {r.type} row in {r.section}
+                                        </button>
+                                      )}
                                       <button
                                         onClick={() => openLogRowPicker(r.id)}
                                         className="h-6 px-2 rounded bg-[#7B9BB5] text-white hover:bg-[#6A8AA4] text-[10px] font-semibold"
@@ -949,7 +1069,8 @@ export default function BulkImportModal({
                                   </p>
                                 )}
                               </div>
-                            )}
+                              )
+                            })()}
                             {r.status === "ready" && r.matchSkip && (
                               <p className="text-[10px] text-[#64748B] mt-1 italic">
                                 Skipped — won't commit.

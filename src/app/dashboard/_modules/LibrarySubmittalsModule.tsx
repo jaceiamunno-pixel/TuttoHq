@@ -1235,6 +1235,65 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
     }
   }
 
+  // Clear a spec-ingestion row: remove its file(s) but KEEP the log row as an
+  // empty placeholder. A spec row is STRUCTURE (the spec book says "this section
+  // requires this submittal") — the attached PDF is CONTENT. Deleting the row
+  // destroys the placeholder and the next import has nowhere to land (the
+  // incident: two cleared-by-delete rows → a Product Data PDF got misrouted onto
+  // Certification). So spec rows are cleared, never deleted.
+  //
+  // Removes EVERY attachment through the existing per-attachment delete path
+  // (remove_submittal_attachment via DELETE /attachments/[id]); the RPC's
+  // last-attachment branch resets the parent to the empty placeholder shape and
+  // orphan-checks each storage object before removal. We do NOT hand-roll a
+  // second deletion path. Legacy rows whose file lives only on
+  // submittals.storage_path (no attachment row) fall back to the Library detach
+  // route, which does the SAME placeholder reset for spec rows — so Clear is
+  // never a silent no-op.
+  async function clearSubmittal(s: SubmittalRecord) {
+    if (!window.confirm("Remove the file from this submittal? The log row stays.")) return
+    try {
+      const listRes = await fetch(`/api/submittals/${encodeURIComponent(s.id)}/attachments`)
+      const listData = await listRes.json().catch(() => ({}))
+      if (!listRes.ok) throw new Error(listData?.error ?? `Failed (HTTP ${listRes.status})`)
+      const atts: Array<{ id: string }> = Array.isArray(listData?.attachments) ? listData.attachments : []
+      if (atts.length > 0) {
+        // Delete each revision through the reviewed per-attachment path. The
+        // final deletion trips the RPC's placeholder-reset branch (row kept).
+        for (const a of atts) {
+          const dr = await fetch(
+            `/api/submittals/${encodeURIComponent(s.id)}/attachments/${encodeURIComponent(a.id)}`,
+            { method: "DELETE" },
+          )
+          if (!dr.ok) {
+            const de = await dr.json().catch(() => ({}))
+            throw new Error(de?.error ?? `Failed to remove a revision (HTTP ${dr.status})`)
+          }
+        }
+      } else if (s.storage_path) {
+        // Legacy: file on the parent row with no attachment rows. library-delete
+        // resets spec rows to the placeholder (keeps the row) — same shape.
+        const dr = await fetch(`/api/submittals/${encodeURIComponent(s.id)}/library-delete`, { method: "POST" })
+        if (!dr.ok) {
+          const de = await dr.json().catch(() => ({}))
+          throw new Error(de?.error ?? `Failed to remove the file (HTTP ${dr.status})`)
+        }
+      }
+      // The row survives as an empty placeholder — refresh so it re-reads that
+      // state (and reappears as an available bulk-import target). Clear the
+      // section cache so a section-view toggle re-fetches fresh.
+      setSectionFiles(prev => {
+        const next = { ...prev }
+        if (s.csi_section) delete next[s.csi_section]
+        return next
+      })
+      loadTree()
+      loadSubmittals()
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Failed to clear the file")
+    }
+  }
+
   async function saveEdit() {
     if (!editSubmittal) return
     setEditSaving(true)
@@ -2444,7 +2503,17 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                           className="text-[11px] text-emerald-700 hover:text-emerald-800 px-1.5 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors disabled:opacity-50 flex items-center gap-1">
                           {transmittalLoading && transmittalSub?.id === s.id ? <SpinnerIcon className="h-3 w-3" /> : null}Transmit
                         </button>
-                        <button onClick={() => deleteSubmittal(s)} className="text-[11px] text-[#64748B] hover:text-red-400 px-1.5 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors" title="Delete submittal">Delete</button>
+                        {s.source === "spec_ingestion" ? (
+                          // Spec rows are STRUCTURE — never delete the placeholder.
+                          // Offer Clear (remove the file, keep the row) only when
+                          // there's a file to clear; an empty placeholder has no
+                          // destructive action.
+                          s.storage_path && (
+                            <button onClick={() => clearSubmittal(s)} className="text-[11px] text-[#64748B] hover:text-amber-600 px-1.5 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors" title="Remove the file — keeps the spec log row">Clear</button>
+                          )
+                        ) : (
+                          <button onClick={() => deleteSubmittal(s)} className="text-[11px] text-[#64748B] hover:text-red-400 px-1.5 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors" title="Delete submittal">Delete</button>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -2531,7 +2600,13 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                       {transmittalLoading && transmittalSub?.id === s.id ? <SpinnerIcon className="h-3 w-3" /> : null}
                       Transmit
                     </button>
-                    <button onClick={() => deleteSubmittal(s)} className="text-[11px] text-red-400 px-2 py-1 rounded border border-[#E2E8F0] bg-white transition-colors">Delete</button>
+                    {s.source === "spec_ingestion" ? (
+                      s.storage_path && (
+                        <button onClick={() => clearSubmittal(s)} className="text-[11px] text-amber-600 px-2 py-1 rounded border border-[#E2E8F0] bg-white transition-colors" title="Remove the file — keeps the spec log row">Clear</button>
+                      )
+                    ) : (
+                      <button onClick={() => deleteSubmittal(s)} className="text-[11px] text-red-400 px-2 py-1 rounded border border-[#E2E8F0] bg-white transition-colors">Delete</button>
+                    )}
                   </div>
                 </div>
                 )
