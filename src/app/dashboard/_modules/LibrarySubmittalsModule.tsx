@@ -25,6 +25,8 @@ import OverflowMenu, { type OverflowEntry } from "@/components/overflow-menu"
 import BulkImportModal from "@/components/bulk-import/BulkImportModal"
 import { useNavRegion, useFocusTrap } from "@/components/keyboard-nav"
 import { SkeletonTable } from "@/components/skeleton"
+import { usePendingAction } from "@/hooks/usePendingAction"
+import { PendingActionToasts } from "@/components/pending-action-toasts"
 
 // Status options for the inline Status dropdown in the submittal log.
 // "Sent to Sub" is the outbound-dispatch milestone (Session I).
@@ -314,8 +316,10 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
   }> | null>(null)
   const [revHistoryLoading, setRevHistoryLoading] = useState(false)
   const [revHistoryError,   setRevHistoryError]   = useState<string | null>(null)
-  // Which attachment in the slide-out is mid-delete (disables its button).
-  const [revDeletingId,     setRevDeletingId]     = useState<string | null>(null)
+  // Deferred-with-undo mechanism for destructive actions. Wired here to the
+  // per-attachment delete in the slide-out (the DELETE fires only after the 8s
+  // undo window closes; Undo cancels it before it ever runs).
+  const pendingDelete = usePendingAction()
 
   // Batch upload
   const [showBatch, setShowBatch]     = useState(false)
@@ -840,6 +844,12 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
     }
   }
   function closeRevHistory() {
+    // Dismissing the panel cancels any pending attachment deletes — a closed
+    // slide-out means "didn't happen", same as navigating away. The deferred
+    // DELETE never fires.
+    pendingDelete.pending.forEach(p => {
+      if (p.key.startsWith("att:")) pendingDelete.cancel(p.key)
+    })
     setRevHistorySub(null)
     setRevHistoryItems(null)
     setRevHistoryError(null)
@@ -848,28 +858,35 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
   // Delete a single revision attachment from the open slide-out. Destructive:
   // removes the submittal_attachments row + its storage object server-side and,
   // if it was the current revision, re-promotes the next-newest (or resets the
-  // parent to an empty placeholder when it was the last one). Behind a native
-  // confirm. On success, refresh the panel (reflects the new current /
-  // empty-placeholder state) + the underlying log row and revision counts.
-  async function deleteRevAttachment(att: { id: string; revision_label: string }) {
+  // parent to an empty placeholder when it was the last one).
+  //
+  // Deferred-with-undo (no native confirm — the 8s undo window IS the
+  // confirmation): the row is marked immediately (dimmed + "Undo"), but the
+  // DELETE does not fire until the window closes. Undo cancels it before it
+  // ever runs. On success we refresh the panel (new current / empty-placeholder
+  // state) + the underlying log row and revision counts; on failure the row is
+  // already un-marked and we surface the error.
+  function deleteRevAttachment(att: { id: string; revision_label: string }) {
     if (!revHistorySub) return
-    if (!window.confirm("Delete this file? This cannot be undone.")) return
-    setRevDeletingId(att.id)
-    try {
-      const res = await fetch(
-        `/api/submittals/${encodeURIComponent(revHistorySub.id)}/attachments/${encodeURIComponent(att.id)}`,
-        { method: "DELETE" },
-      )
-      const data = await res.json().catch(() => ({}))
-      if (!res.ok) throw new Error(data?.error ?? `Failed (HTTP ${res.status})`)
-      const sub = revHistorySub
-      await openRevHistory(sub)
-      loadSubmittals(activeProjectId)
-    } catch (e) {
-      setRevHistoryError(e instanceof Error ? e.message : "Failed to delete revision")
-    } finally {
-      setRevDeletingId(null)
-    }
+    const sub = revHistorySub
+    setRevHistoryError(null)
+    pendingDelete.schedule({
+      key: `att:${att.id}`,
+      label: `Deleting Rev ${att.revision_label}…`,
+      onCommit: async () => {
+        const res = await fetch(
+          `/api/submittals/${encodeURIComponent(sub.id)}/attachments/${encodeURIComponent(att.id)}`,
+          { method: "DELETE" },
+        )
+        const data = await res.json().catch(() => ({}))
+        if (!res.ok) throw new Error(data?.error ?? `Failed (HTTP ${res.status})`)
+        await openRevHistory(sub)
+        loadSubmittals(activeProjectId)
+      },
+      onError: (e) => {
+        setRevHistoryError(e instanceof Error ? e.message : "Failed to delete revision")
+      },
+    })
   }
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -4010,10 +4027,14 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
               )}
               {revHistoryItems && revHistoryItems.length > 0 && (
                 <ul className="divide-y divide-[#E2E8F0]">
-                  {revHistoryItems.map(att => (
-                    <li key={att.id} className={`px-5 py-3 ${att.is_current ? "bg-emerald-50/60" : ""}`}>
+                  {revHistoryItems.map(att => {
+                    // "Marked for deletion" state is derived from the pending
+                    // mechanism — never duplicated into revHistoryItems.
+                    const marked = pendingDelete.isPending(`att:${att.id}`)
+                    return (
+                    <li key={att.id} className={`px-5 py-3 ${att.is_current && !marked ? "bg-emerald-50/60" : ""} ${marked ? "opacity-50" : ""}`}>
                       <div className="flex items-start gap-2">
-                        <div className="flex-1 min-w-0">
+                        <div className={`flex-1 min-w-0 ${marked ? "line-through" : ""}`}>
                           <div className="flex items-center gap-2">
                             <span className="text-[12px] font-semibold tabular-nums text-[#0F172A]">{att.revision_label}</span>
                             {att.is_current && (
@@ -4031,28 +4052,45 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                           </p>
                         </div>
                         <div className="flex-shrink-0 flex items-center gap-1">
-                          <a
-                            href={`/api/download/${encodeURIComponent(revHistorySub.id)}?path=${encodeURIComponent(att.storage_path)}`}
-                            target="_blank" rel="noreferrer"
-                            className="text-[11px] text-[#7B9BB5] hover:text-[#5A7A94] px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors">
-                            Download
-                          </a>
-                          <button
-                            onClick={() => deleteRevAttachment(att)}
-                            disabled={revDeletingId === att.id}
-                            className="text-[11px] text-red-600 hover:text-red-700 px-2 py-1 rounded hover:bg-red-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
-                            {revDeletingId === att.id ? "Deleting…" : "Delete"}
-                          </button>
+                          {marked ? (
+                            <div className="flex items-center gap-2 px-2 py-1">
+                              <span className="text-[11px] text-[#64748B]">Deleting…</span>
+                              <button
+                                onClick={() => pendingDelete.cancel(`att:${att.id}`)}
+                                className="text-[11px] font-semibold text-[#7B9BB5] hover:text-[#5A7A94] underline underline-offset-2 transition-colors">
+                                Undo
+                              </button>
+                            </div>
+                          ) : (
+                            <>
+                              <a
+                                href={`/api/download/${encodeURIComponent(revHistorySub.id)}?path=${encodeURIComponent(att.storage_path)}`}
+                                target="_blank" rel="noreferrer"
+                                className="text-[11px] text-[#7B9BB5] hover:text-[#5A7A94] px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors">
+                                Download
+                              </a>
+                              <button
+                                onClick={() => deleteRevAttachment(att)}
+                                className="text-[11px] text-red-600 hover:text-red-700 px-2 py-1 rounded hover:bg-red-50 transition-colors">
+                                Delete
+                              </button>
+                            </>
+                          )}
                         </div>
                       </div>
                     </li>
-                  ))}
+                    )
+                  })}
                 </ul>
               )}
             </div>
           </div>
         </div>
       )}
+
+      {/* Shared toast stack for pending destructive actions (currently wired
+          only to the per-attachment delete above). Self-hides when idle. */}
+      <PendingActionToasts items={pendingDelete.pending} onUndo={pendingDelete.cancel} />
     </>
   )
 }
