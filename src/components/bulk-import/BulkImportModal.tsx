@@ -215,9 +215,17 @@ function FlagIcon({ className = "h-3.5 w-3.5" }: { className?: string }) {
 export default function BulkImportModal({
   projectId,
   onClose,
+  onDone,
 }: {
   projectId: string
   onClose: () => void
+  /** Fired once per commit batch after at least one row reaches the
+   *  "committed" state, so the parent can re-fetch the submittal log and
+   *  show the newly attached / auto-split rows without a page refresh.
+   *  Not called when a commit produces zero committed rows (all errored),
+   *  and never called on plain close — closing without committing must not
+   *  trigger a needless refetch. */
+  onDone?: () => void
 }) {
   const [rows, setRows] = useState<Row[]>([])
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -598,12 +606,15 @@ export default function BulkImportModal({
         client_row_id: string; status: "ok" | "error";
         row_id?: string; error?: string; was_duplicate?: boolean; spawned?: boolean;
       }> = Array.isArray(data?.results) ? data.results : []
-      let ok = 0, err = 0
+      // Counts derived straight from the server response — not from the
+      // setRows updater, whose callback runs at React's flush time (so a
+      // counter read right after setRows could still be 0).
+      const ok  = results.filter(x => x.status === "ok").length
+      const err = results.filter(x => x.status === "error").length
       setRows(prev => prev.map(r => {
         const result = results.find(x => x.client_row_id === r.id)
         if (!result) return r.status === "committing" ? { ...r, status: "ready" } : r  // server skipped — restore
         if (result.status === "ok") {
-          ok++
           return {
             ...r,
             status: "committed",
@@ -613,11 +624,14 @@ export default function BulkImportModal({
             wasSpawned: result.spawned === true,
           }
         } else {
-          err++
           return { ...r, status: "ready", commitError: result.error ?? "Commit failed" }
         }
       }))
       setCommitSummary({ ok, err })
+      // Signal the parent to re-fetch the log — once per batch, and only
+      // when something actually landed. Fires even on a partial commit so
+      // the committed rows (incl. auto-split siblings) appear immediately.
+      if (ok > 0) onDone?.()
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Commit failed"
       setGlobalError(msg)
@@ -626,7 +640,7 @@ export default function BulkImportModal({
     } finally {
       setCommitting(false)
     }
-  }, [projectId, committing])
+  }, [projectId, committing, onDone])
 
   // Aggregates for the footer summary + commit gating.
   const totals = useMemo(() => {
