@@ -523,7 +523,7 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
       architect: proj?.architect ?? "", specSectionNo: s.csi_section ?? "",
       specSectionTitle: s.section_name ?? "",
       description: stripFileExt(s.file_name),
-      dateSubmitted: today, submittalNo: s.section_seq != null ? String(s.section_seq) : "1",
+      dateSubmitted: today, submittalNo: s.section_seq != null ? padSectionSeq(s.section_seq) : "1",
       revisionNo: s.revision_number ?? "00", dueDate: s.due_date ?? "",
       isCritical: s.is_critical ?? false, partyRequired: s.party_required ?? false,
       copyTo: s.copy_to ?? "",
@@ -644,7 +644,7 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
       architect: proj?.architect ?? "", specSectionNo: s.csi_section ?? "",
       specSectionTitle: s.section_name ?? "",
       description: stripFileExt(s.file_name),
-      dateSubmitted: today, submittalNo: s.section_seq != null ? String(s.section_seq) : "1",
+      dateSubmitted: today, submittalNo: s.section_seq != null ? padSectionSeq(s.section_seq) : "1",
       revisionNo: s.revision_number ?? "00", dueDate: s.due_date ?? "",
       isCritical: s.is_critical ?? false, partyRequired: s.party_required ?? false,
       copyTo: s.copy_to ?? "",
@@ -3201,7 +3201,7 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                         submittalDescription={coverForm!.description}
                         specSectionTitle={coverForm!.specSectionTitle}
                         specSectionNumber={coverForm!.specSectionNo}
-                        submittalNumber={String(Math.max(1, parseInt(coverForm!.submittalNo || "1", 10) || 1)).padStart(2, "0")}
+                        submittalNumber={Number.isFinite(parseInt(coverForm!.submittalNo, 10)) ? padSectionSeq(parseInt(coverForm!.submittalNo, 10)) : ""}
                         revisionNumber="00"
                         dateSubmitted={coverForm!.dateSubmitted}
                         submittalDueDate=""

@@ -333,11 +333,11 @@ export async function generateTransmittalPackage(
     }
 
     const specNumber = (r.csi_section as string | null) ?? ""
-    // Stamp's Submittal No. = "{spec section}-{section_seq}.{revision}" (e.g.
-    // "10 44 00-4.0") — the section number the CM sees, not legacy submittal_number.
+    // Stamp's Submittal No. = "{spec section}-{section_seq:3}.{revision}" (e.g.
+    // "10 44 00-004.0") — PADDED to match the log and every other printed surface.
     const secSeq = r.section_seq as number | null
     const numPart = secSeq != null
-      ? `${secSeq}.${parseInt(String(r.revision_number ?? "0"), 10) || 0}`
+      ? `${padSectionSeq(secSeq)}.${parseInt(String(r.revision_number ?? "0"), 10) || 0}`
       : ""
     const stampSubmittalNo = [specNumber.trim(), numPart].filter(Boolean).join("-")
 
@@ -349,7 +349,7 @@ export async function generateTransmittalPackage(
       submittalDescription: description,
       specSectionTitle: (r.spec_section_id && titleById.get(r.spec_section_id)) || "",
       specSectionNumber: specNumber,
-      submittalNumber: secSeq != null ? String(secSeq).padStart(2, "0") : "",
+      submittalNumber: secSeq != null ? padSectionSeq(secSeq) : "",
       revisionNumber: String(parseInt(String(r.revision_number ?? "0"), 10) || 0).padStart(2, "0"),
       dateSubmitted: fmtDate(args.sendDate),
       submittalDueDate: r.due_date ? fmtDate(r.due_date) : "",
