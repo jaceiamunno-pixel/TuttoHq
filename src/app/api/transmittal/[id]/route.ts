@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import { PDFDocument } from "pdf-lib"
 import { PDFBuilder, type FieldCell } from "@/lib/pdf-builder"
+import { formatSectionNumber, padSectionSeq } from "@/lib/section-number"
 
 export const maxDuration = 60
 
@@ -43,7 +44,9 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
   // ── Cover ─────────────────────────────────────────────────────────────────
   const pdf = await PDFBuilder.create({
     documentType: "Submittal Transmittal",
-    documentNumber: sub.submittal_number,
+    // The section number (e.g. "10 44 00-004") is the submittal identity the CM
+    // sees — not submittal_number (legacy junk) or submittal_seq (internal).
+    documentNumber: formatSectionNumber(sub.csi_section, sub.section_seq),
     logoBytes,
     logoScalePct: settingsRes.data?.logo_scale_pct ?? undefined,
   })
@@ -91,7 +94,8 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
      { label: "Spec Section Title", value: sub.section_name }],
     [{ label: "Submittal Description", value: sub.file_name.replace(/\.[^.]+$/, "") }],
     [{ label: "Date Submitted", value: new Date().toLocaleDateString("en-US") },
-     { label: "Submittal No.", value: sub.submittal_number }],
+     // Compact form — "Spec Section No." above already shows the csi_section.
+     { label: "Submittal No.", value: padSectionSeq(sub.section_seq) }],
   ])
 
   pdf.sectionDivider("Review / Certification")

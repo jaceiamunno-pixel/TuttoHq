@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { presignAndUpload } from "@/lib/storage-upload"
 import { SUBMITTAL_TYPES, type SubmittalType, type BulkImportAnalysis } from "@/lib/bulk-import-detect"
 import type { MatchOutcome, MatchedRow, ScoredCandidate } from "@/lib/bulk-import-match"
+import { formatSectionNumber } from "@/lib/section-number"
 
 // Bulk Import — Stage 2a modal. Drop many signed PDFs (or one — same engine,
 // per the design's single-upload-is-batch-of-one decision). Each file is
@@ -89,6 +90,7 @@ interface Row {
   dupeMatch?: {
     same_project_matches: Array<{
       submittal_id: string; file_name: string; submittal_seq: number | null;
+      section_seq: number | null; csi_section: string | null;
       submittal_number: string | null; revision_number: string | null;
     }>
     cross_project_matches: Array<{
@@ -905,7 +907,7 @@ export default function BulkImportModal({
                                 <p
                                   className="text-[10px] text-amber-700 flex items-start gap-1"
                                   title={`Same bytes as: ${r.dupeMatch!.same_project_matches.map(m =>
-                                    (m.submittal_seq != null ? `Sub ${m.submittal_seq}` : m.file_name) +
+                                    (m.section_seq != null ? formatSectionNumber(m.csi_section, m.section_seq) : m.file_name) +
                                     (m.revision_number ? ` (${m.revision_number})` : "")
                                   ).join(", ")}.${crossRow ? " On a different log row — confirm before committing." : ""}`}
                                 >
@@ -915,7 +917,7 @@ export default function BulkImportModal({
                                     {r.dupeMatch!.same_project_matches.slice(0, 2).map((m, i) => (
                                       <span key={m.submittal_id} className="font-semibold">
                                         {i > 0 ? ", " : ""}
-                                        {m.submittal_seq != null ? `Sub ${m.submittal_seq}` : m.file_name}
+                                        {m.section_seq != null ? formatSectionNumber(m.csi_section, m.section_seq) : m.file_name}
                                         {m.revision_number ? ` (${m.revision_number})` : ""}
                                       </span>
                                     ))}
@@ -1001,7 +1003,7 @@ export default function BulkImportModal({
                                   <option value="">— pick a log row —</option>
                                   {(r.match.candidates as ScoredCandidate[]).map(c => (
                                     <option key={c.id} value={c.id}>
-                                      {c.csi_section} {c.submittal_type} — {c.material_name ?? "(no name)"} (seq {c.submittal_seq ?? "?"})
+                                      {c.csi_section} {c.submittal_type} — {c.material_name ?? "(no name)"} ({formatSectionNumber(c.csi_section, c.section_seq)})
                                     </option>
                                   ))}
                                 </select>
@@ -1394,7 +1396,7 @@ export default function BulkImportModal({
                           <span className="font-semibold tabular-nums text-[#0F172A]">{lr.csi_section ?? "?"}</span>
                           <span className="text-[#64748B] ml-2">{lr.submittal_type ?? "?"}</span>
                           <span className="text-[#0F172A] ml-2">{lr.material_name ?? "(no name)"}</span>
-                          <span className="text-[10px] text-[#64748B] ml-2">seq {lr.submittal_seq ?? "?"}</span>
+                          <span className="text-[10px] text-[#64748B] ml-2">{formatSectionNumber(lr.csi_section, lr.section_seq)}</span>
                         </button>
                       </li>
                     ))}

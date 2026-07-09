@@ -36,7 +36,7 @@ export async function GET(req: NextRequest) {
 
   let query = supabase
     .from("submittals")
-    .select("id, csi_section, submittal_type, submittal_seq, material_name, spec_section_id, csi_division, division_name")
+    .select("id, csi_section, submittal_type, submittal_seq, section_seq, material_name, spec_section_id, csi_division, division_name")
     .eq("project_id", projectId)
     .eq("source", "spec_ingestion")
     .neq("status", "deleted")

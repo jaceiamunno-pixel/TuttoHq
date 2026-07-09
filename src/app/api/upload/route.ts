@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server"
 import { normalizeSubmittalTitle } from "@/lib/title-normalize"
 import { isValidSha256 } from "@/lib/file-hash"
 import { stripAndStore } from "@/lib/strip-and-store"
+import { allocateSectionSeqAndInsert } from "@/lib/section-seq"
 
 // Give after() room to download + strip + store a Library copy post-response.
 export const maxDuration = 60
@@ -89,29 +90,40 @@ export async function POST(req: NextRequest) {
   const rawName     = customName ?? (nameParts.length > 0 ? nameParts.join(" — ") : fileName)
   const displayName = normalizeSubmittalTitle(rawName) || fileName
 
-  // Insert DB row
-  const { data: inserted, error: dbError } = await supabase.from("submittals").insert({
-    file_name:     displayName,
-    storage_path:  filePath,
-    mime_type:     mimeType,
-    file_size:     fileSize,
-    csi_division:  divisionNum,
-    division_name: divisionName,
-    csi_section:   sectionCode,
-    section_name:  sectionName,
-    material_name:  materialName,
-    manufacturer:   manufacturer,
-    dimensions:     dimensions,
-    review_status:  reviewStatus,
-    ai_confidence:  aiConfidence,
-    ai_reasoning:   aiReasoning,
-    project_id:     projectId,
-    status:         "active",
-    uploaded_by:    user.id,
-    file_sha256:    fileSha256,
-  }).select("id, file_name, mime_type, file_size, created_at, csi_division, division_name, csi_section, section_name").single()
+  // Insert DB row. Allocate section_seq (migration 0039) with retry-on-conflict
+  // when this upload lands in a project + section; a Library shelf upload
+  // (project_id null) or an unclassified file (no section) inserts unnumbered.
+  const { data: inserted, error: dbError } = await allocateSectionSeqAndInsert<{
+    id: string; file_name: string; mime_type: string | null; file_size: number | null;
+    created_at: string; csi_division: string | null; division_name: string | null;
+    csi_section: string | null; section_name: string | null;
+  }>(
+    supabase, projectId, sectionCode,
+    (sectionSeq) => ({
+      file_name:     displayName,
+      storage_path:  filePath,
+      mime_type:     mimeType,
+      file_size:     fileSize,
+      csi_division:  divisionNum,
+      division_name: divisionName,
+      csi_section:   sectionCode,
+      section_name:  sectionName,
+      material_name:  materialName,
+      manufacturer:   manufacturer,
+      dimensions:     dimensions,
+      review_status:  reviewStatus,
+      ai_confidence:  aiConfidence,
+      ai_reasoning:   aiReasoning,
+      project_id:     projectId,
+      section_seq:    sectionSeq,
+      status:         "active",
+      uploaded_by:    user.id,
+      file_sha256:    fileSha256,
+    }),
+    "id, file_name, mime_type, file_size, created_at, csi_division, division_name, csi_section, section_name",
+  )
 
-  if (dbError) {
+  if (dbError || !inserted) {
     console.error("DB insert failed:", dbError)
     // Clean up the orphaned storage file
     await supabase.storage.from("submittals").remove([filePath])

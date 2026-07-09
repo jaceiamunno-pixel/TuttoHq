@@ -15,6 +15,7 @@
 import type { SubmittalRecord, VendorRow, VendorPersonRow, ChangeOrder } from "./types"
 import { SECTION_PALETTE_HEX_THP } from "./csi"
 import { computeCoTotals } from "./co-math"
+import { padSectionSeq } from "@/lib/section-number"
 
 // Light-gray cell border applied to every header/data/buffer cell in cols A-N.
 // Required because the section-tint and status fills render *over* Excel's
@@ -217,7 +218,9 @@ export async function exportSubmittalLogToExcel(args: ExportSubmittalLogArgs): P
     const status = s.review_status ?? "Received"
     const rowBg  = rowBgFor(s.csi_section)
 
-    row.getCell(COL_SUBM).value    = s.submittal_seq ?? ""
+    // Compact section number ("004") — the Spec column beside it carries the
+    // csi_section. Blank (not "—") when unnumbered so the cell reads clean.
+    row.getCell(COL_SUBM).value    = s.section_seq != null ? padSectionSeq(s.section_seq) : ""
     row.getCell(COL_SPEC).value    = s.csi_section   ?? ""
     row.getCell(3).value           = s.file_name
     row.getCell(COL_TYPE).value    = s.submittal_type ?? ""

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
+import { maxSectionSeq, isSectionSeqConflict } from "@/lib/section-seq"
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const supabase = await createClient()
@@ -40,21 +41,51 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     safe.title_locked = true
   }
 
-  // Assign a per-project submittal number when a submittal is attached to (or
-  // moved between) projects. Library uploads start with project_id = null and
-  // no number until they land in a project.
-  if (typeof safe.project_id === "string" && safe.project_id) {
+  // A move to a different project, or a reclassification to a different section,
+  // changes the (project_id, csi_section, section_seq) tuple the 0039 unique
+  // index guards. Re-derive the placement-scoped numbers for the destination:
+  //   • submittal_seq — per project; assigned on project attach/move (unchanged
+  //     legacy behavior; Library uploads start with project_id = null).
+  //   • section_seq — per (project, section); a numbered row that MOVES section
+  //     or project must take a FRESH number in the destination, because its old
+  //     number was scoped to the old section and could collide there under the
+  //     unique index (a plain UPDATE would 23505). Unnumbered rows stay so.
+  const changesProject = typeof safe.project_id === "string" && !!safe.project_id
+  const changesSection = "csi_section" in safe
+  if (changesProject || changesSection) {
     const { data: existing } = await supabase
       .from("submittals")
-      .select("submittal_seq, project_id")
+      .select("submittal_seq, project_id, csi_section, section_seq")
       .eq("id", id)
       .single()
-    const needsNumber =
-      !!existing && (existing.submittal_seq == null || existing.project_id !== safe.project_id)
-    if (needsNumber) {
-      const { data: seqBase } = await supabase
-        .rpc("next_submittal_seq", { p_project_id: safe.project_id, p_count: 1 })
-      if (typeof seqBase === "number") safe.submittal_seq = seqBase + 1
+
+    if (changesProject) {
+      const needsNumber =
+        !!existing && (existing.submittal_seq == null || existing.project_id !== safe.project_id)
+      if (needsNumber) {
+        const { data: seqBase } = await supabase
+          .rpc("next_submittal_seq", { p_project_id: safe.project_id, p_count: 1 })
+        if (typeof seqBase === "number") safe.submittal_seq = seqBase + 1
+      }
+    }
+
+    const destProject = changesProject ? (safe.project_id as string) : (existing?.project_id ?? null)
+    const destSection = changesSection
+      ? (typeof safe.csi_section === "string" ? safe.csi_section : null)
+      : (existing?.csi_section ?? null)
+    const placementMoved =
+      !!existing && (destProject !== existing.project_id || destSection !== existing.csi_section)
+
+    // Only re-number a row that actually MOVED and already carried a number.
+    if (placementMoved && destProject && destSection && existing!.section_seq != null) {
+      for (let attempt = 0; attempt < 5; attempt++) {
+        safe.section_seq = (await maxSectionSeq(supabase, destProject, destSection)) + 1
+        const { error } = await supabase.from("submittals").update(safe).eq("id", id)
+        if (!error) return NextResponse.json({ ok: true })
+        if (isSectionSeqConflict(error) && attempt < 4) continue
+        return NextResponse.json({ error: error.message }, { status: 500 })
+      }
+      return NextResponse.json({ error: "could not allocate a unique section number" }, { status: 500 })
     }
   }
 

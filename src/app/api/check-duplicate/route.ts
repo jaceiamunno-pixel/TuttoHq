@@ -36,6 +36,8 @@ interface SameProjectMatch {
   submittal_id: string
   file_name: string
   submittal_seq: number | null
+  section_seq: number | null
+  csi_section: string | null
   submittal_number: string | null
   revision_number: string | null
   received_at: string | null
@@ -71,7 +73,7 @@ export async function POST(req: NextRequest) {
   // rows so a previously-deleted dupe doesn't re-surface as a "match".
   const { data: matches, error } = await supabase
     .from("submittals")
-    .select("id, file_name, submittal_seq, submittal_number, revision_number, received_at, project_id")
+    .select("id, file_name, submittal_seq, section_seq, csi_section, submittal_number, revision_number, received_at, project_id")
     .eq("file_sha256", sha256)
     .neq("status", "deleted")
 
@@ -96,6 +98,8 @@ export async function POST(req: NextRequest) {
         submittal_id:     m.id,
         file_name:        m.file_name,
         submittal_seq:    m.submittal_seq,
+        section_seq:      m.section_seq,
+        csi_section:      m.csi_section,
         submittal_number: m.submittal_number,
         revision_number:  m.revision_number,
         received_at:      m.received_at,

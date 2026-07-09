@@ -5,6 +5,7 @@ import { PDFBuilder } from "./pdf-builder"
 import { buildCoversheetPdf, type CoversheetReviewer } from "./coversheet-pdf"
 import type { SubmittalCoversheetProps } from "@/components/submittals/SubmittalCoversheet"
 import { normalizeSubmittalTitle } from "./title-normalize"
+import { formatSectionNumber, padSectionSeq } from "./section-number"
 
 // ─── Transmittal-package PDF ────────────────────────────────────────────────
 // A package is an OUTBOUND TRANSMITTAL: the PM assembles the APPROVED submittal
@@ -66,7 +67,8 @@ function sanitize(s: string, max = 48): string {
 
 interface ResolvedItem {
   submittalId: string
-  seq: number | null
+  /** Per-(project, section) submittal number. Rendered "{specNumber}-{seq:3}". */
+  sectionSeq: number | null
   specNumber: string | null
   description: string
   submittalType: string | null
@@ -154,7 +156,7 @@ export async function buildTransmittalPackageFiles(input: TransmittalPdfInput): 
     pdf.table(
       ["#", "Spec #", "Description", "Type"],
       input.items.map(it => [
-        it.seq != null ? String(it.seq) : "—",
+        padSectionSeq(it.sectionSeq),
         it.specNumber || "—",
         it.description || "—",
         it.submittalType || "—",
@@ -183,7 +185,7 @@ export async function buildTransmittalPackageFiles(input: TransmittalPdfInput): 
     )
     await appendInto(doc, coverBytes)
     await appendInto(doc, it.documentBytes)
-    const tag = it.seq != null ? `${it.seq}` : String(ordinal).padStart(2, "0")
+    const tag = it.sectionSeq != null ? padSectionSeq(it.sectionSeq) : String(ordinal).padStart(2, "0")
     files.push({
       submittalId: it.submittalId,
       bytes: await doc.save(),
@@ -288,7 +290,7 @@ export async function generateTransmittalPackage(
   // Submittal rows for the requested ids (company-scoped by RLS, active only).
   const { data: subRows } = await supabase
     .from("submittals")
-    .select("id, submittal_seq, csi_section, spec_section_id, file_name, submittal_type, storage_path, stripped_storage_path, mime_type, submittal_number, revision_number, due_date")
+    .select("id, submittal_seq, section_seq, csi_section, spec_section_id, file_name, submittal_type, storage_path, stripped_storage_path, mime_type, submittal_number, revision_number, due_date")
     .in("id", args.submittalIds)
     .eq("status", "active")
 
@@ -310,7 +312,7 @@ export async function generateTransmittalPackage(
   const items: ResolvedItem[] = []
   for (const r of ordered) {
     const description = normalizeSubmittalTitle(String(r.file_name ?? "")) || stripExt(String(r.file_name ?? "")) || "—"
-    const label = r.submittal_seq != null ? `#${r.submittal_seq}` : (r.csi_section || description)
+    const label = r.section_seq != null ? formatSectionNumber(r.csi_section, r.section_seq) : (r.csi_section || description)
 
     // Document selection — mirror /api/generate-cover's "stripped" branch:
     //   stripped_storage_path (clean product) → storage_path (current file).
@@ -331,9 +333,11 @@ export async function generateTransmittalPackage(
     }
 
     const specNumber = (r.csi_section as string | null) ?? ""
-    const subInt = parseInt(String(r.submittal_number ?? ""), 10)
-    const numPart = Number.isFinite(subInt)
-      ? `${subInt}.${parseInt(String(r.revision_number ?? "0"), 10) || 0}`
+    // Stamp's Submittal No. = "{spec section}-{section_seq}.{revision}" (e.g.
+    // "10 44 00-4.0") — the section number the CM sees, not legacy submittal_number.
+    const secSeq = r.section_seq as number | null
+    const numPart = secSeq != null
+      ? `${secSeq}.${parseInt(String(r.revision_number ?? "0"), 10) || 0}`
       : ""
     const stampSubmittalNo = [specNumber.trim(), numPart].filter(Boolean).join("-")
 
@@ -345,7 +349,7 @@ export async function generateTransmittalPackage(
       submittalDescription: description,
       specSectionTitle: (r.spec_section_id && titleById.get(r.spec_section_id)) || "",
       specSectionNumber: specNumber,
-      submittalNumber: String(Math.max(1, parseInt(String(r.submittal_number ?? "1"), 10) || 1)).padStart(2, "0"),
+      submittalNumber: secSeq != null ? String(secSeq).padStart(2, "0") : "",
       revisionNumber: String(parseInt(String(r.revision_number ?? "0"), 10) || 0).padStart(2, "0"),
       dateSubmitted: fmtDate(args.sendDate),
       submittalDueDate: r.due_date ? fmtDate(r.due_date) : "",
@@ -361,7 +365,7 @@ export async function generateTransmittalPackage(
 
     items.push({
       submittalId: r.id,
-      seq: r.submittal_seq ?? null,
+      sectionSeq: r.section_seq ?? null,
       specNumber: r.csi_section ?? null,
       description,
       submittalType: r.submittal_type ?? null,

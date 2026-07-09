@@ -18,6 +18,7 @@ import { presignAndUpload } from "@/lib/storage-upload"
 import { isProjectTransmittalCopy } from "@/lib/storage-paths"
 import { truncateForDisplay } from "@/lib/title-normalize"
 import { hashFileInBrowser } from "@/lib/file-hash"
+import { formatSectionNumber, padSectionSeq } from "@/lib/section-number"
 import { exportSubmittalLogToExcel } from "../_shared/excel-export"
 import PackageCreateModal from "@/components/packages/PackageCreateModal"
 import PackagesView from "@/components/packages/PackagesView"
@@ -215,6 +216,7 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
   const [uploadDupeMatch, setUploadDupeMatch] = useState<{
     same_project_matches: Array<{
       submittal_id: string; file_name: string; submittal_seq: number | null;
+      section_seq: number | null; csi_section: string | null;
       submittal_number: string | null; revision_number: string | null;
     }>
     cross_project_matches: Array<{
@@ -521,7 +523,7 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
       architect: proj?.architect ?? "", specSectionNo: s.csi_section ?? "",
       specSectionTitle: s.section_name ?? "",
       description: stripFileExt(s.file_name),
-      dateSubmitted: today, submittalNo: s.submittal_number ?? "1",
+      dateSubmitted: today, submittalNo: s.section_seq != null ? String(s.section_seq) : "1",
       revisionNo: s.revision_number ?? "00", dueDate: s.due_date ?? "",
       isCritical: s.is_critical ?? false, partyRequired: s.party_required ?? false,
       copyTo: s.copy_to ?? "",
@@ -642,7 +644,7 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
       architect: proj?.architect ?? "", specSectionNo: s.csi_section ?? "",
       specSectionTitle: s.section_name ?? "",
       description: stripFileExt(s.file_name),
-      dateSubmitted: today, submittalNo: s.submittal_number ?? "1",
+      dateSubmitted: today, submittalNo: s.section_seq != null ? String(s.section_seq) : "1",
       revisionNo: s.revision_number ?? "00", dueDate: s.due_date ?? "",
       isCritical: s.is_critical ?? false, partyRequired: s.party_required ?? false,
       copyTo: s.copy_to ?? "",
@@ -792,7 +794,12 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
     }
   }
 
-  function loadSubmittals(pid = activeProjectId) {
+  // `silent` refreshes the list WITHOUT flipping logLoading — the loading state
+  // swaps the table for a skeleton (unmounts it), which resets the user's scroll
+  // on a 1200-row log. A silent refetch keeps the table mounted; React updates in
+  // place by stable row key, so scroll is preserved. Used after a per-attachment
+  // delete, whose post-state (promotion vs placeholder reset) is server-derived.
+  function loadSubmittals(pid = activeProjectId, opts?: { silent?: boolean }) {
     // The Submittal Log is strictly scoped to the current project — it must
     // never run the cross-project query (that is the Library's job). With no
     // project selected, show nothing rather than every company submittal.
@@ -802,7 +809,7 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
       setLogLoading(false)
       return
     }
-    setLogLoading(true)
+    if (!opts?.silent) setLogLoading(true)
     const seq = ++logReqSeq.current
     fetch(`/api/submittals?project_id=${encodeURIComponent(pid)}`)
       .then(r => r.json())
@@ -881,7 +888,9 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
         const data = await res.json().catch(() => ({}))
         if (!res.ok) throw new Error(data?.error ?? `Failed (HTTP ${res.status})`)
         await openRevHistory(sub)
-        loadSubmittals(activeProjectId)
+        // Silent refetch: reflect the server-derived post-state (promoted revision
+        // or placeholder reset) WITHOUT the skeleton swap that resets scroll.
+        loadSubmittals(activeProjectId, { silent: true })
       },
       onError: (e) => {
         setRevHistoryError(e instanceof Error ? e.message : "Failed to delete revision")
@@ -966,6 +975,15 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
   function exitSelectMode() { setSelectMode(false); setSelectedIds(new Set()) }
 
   const selectedSubmittals = logSubmittals.filter(s => selectedIds.has(s.id))
+
+  // Patch ONE log row in local state, no refetch — preserves the user's scroll
+  // (loadSubmittals flips logLoading → skeleton → the table unmounts and jumps to
+  // top). Client-only: no server write (the mutation already happened). Mirrors
+  // patchSubmittal's optimistic state write across both the log and search views.
+  function patchLogRowLocal(id: string, updates: Partial<SubmittalRecord>) {
+    setLogSubmittals(prev => prev.map(s => s.id === id ? { ...s, ...updates } as SubmittalRecord : s))
+    setSearchResults(prev => prev ? prev.map(s => s.id === id ? { ...s, ...updates } as SubmittalRecord : s) : prev)
+  }
 
   // Optimistic local update + 500ms-debounced PATCH, coalescing several field
   // edits on the same row into one request.
@@ -1279,16 +1297,34 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
           throw new Error(de?.error ?? `Failed to remove the file (HTTP ${dr.status})`)
         }
       }
-      // The row survives as an empty placeholder — refresh so it re-reads that
-      // state (and reappears as an available bulk-import target). Clear the
-      // section cache so a section-view toggle re-fetches fresh.
+      // The row survives as an empty placeholder. Patch it IN PLACE — the end
+      // state is deterministic (the RPC's placeholder-reset shape) — instead of a
+      // full reload, so the user's scroll on a long log is preserved. KEEP
+      // section_seq (the number identifies the spec SLOT, not the file) and every
+      // identity field; null only the file-derived columns.
+      patchLogRowLocal(s.id, {
+        storage_path: null,
+        file_size: null,
+        mime_type: null,
+        received_file_name: null,
+        review_status: "Received",
+        revision_number: "00",
+      })
+      // Drop the row's revision badge (it now has zero attachments).
+      setAttachmentCounts(prev => {
+        if (!(s.id in prev)) return prev
+        const next = { ...prev }
+        delete next[s.id]
+        return next
+      })
+      // Clear the section cache so a section-view toggle re-fetches fresh, and
+      // refresh the sidebar tree (neither touches the log table's scroll).
       setSectionFiles(prev => {
         const next = { ...prev }
         if (s.csi_section) delete next[s.csi_section]
         return next
       })
       loadTree()
-      loadSubmittals()
     } catch (err) {
       alert(err instanceof Error ? err.message : "Failed to clear the file")
     }
@@ -1314,7 +1350,10 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
     } finally { setEditSaving(false) }
   }
 
+  // subNum stays the internal submittal_seq (unchanged call sites); the number
+  // the CM READS is the section number, derived from the row.
   async function handleTransmittal(sub: SubmittalRecord, subNum: number) {
+    void subNum
     setTransmittalSub(sub)
     setTransmittalLoading(true)
     setTransmittalPdfUrl(null)
@@ -1328,7 +1367,8 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
       const title = sub.file_name.replace(/\.[^.]+$/, "")
       const safeName = title.replace(/[^a-zA-Z0-9_-]/g, "_")
       const div = [sub.csi_division, sub.division_name].filter(Boolean).join(" — ")
-      const emailSubject = `Submittal Transmittal — ${proj?.name ?? ""} — ${subNum} — ${title} — ${div}`
+      const submittalNoLabel = formatSectionNumber(sub.csi_section, sub.section_seq)
+      const emailSubject = `Submittal Transmittal — ${proj?.name ?? ""} — ${submittalNoLabel} — ${title} — ${div}`
       const today = new Date().toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })
       const senderName = sub.transmitted_by ?? ""
       const senderCompany = sub.transmitted_by_company ?? proj?.gc_name ?? ""
@@ -1336,7 +1376,7 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
         "Please find attached the following submittal for your review:",
         "",
         `Project: ${proj?.name ?? ""}`,
-        `Submittal No.: ${subNum}`,
+        `Submittal No.: ${submittalNoLabel}`,
         `Title: ${title}`,
         `CSI Division: ${div}`,
         `Section: ${sub.section_name ?? sub.csi_section ?? ""}`,
@@ -2357,7 +2397,7 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                           className="accent-[#7B9BB5] align-middle" />
                       </td>
                     )}
-                    <td className={`px-3 py-1.5 tabular-nums ${hasAttachment ? "text-[#0F172A] font-semibold" : "text-[#94A3B8] font-medium"} border-l-4 ${c.border} whitespace-nowrap`}>{s.submittal_seq ?? "—"}</td>
+                    <td className={`px-3 py-1.5 tabular-nums ${hasAttachment ? "text-[#0F172A] font-semibold" : "text-[#94A3B8] font-medium"} border-l-4 ${c.border} whitespace-nowrap`}>{formatSectionNumber(s.csi_section, s.section_seq)}</td>
                     <td className="px-3 py-1.5 whitespace-nowrap">
                       <span className={`inline-block px-1.5 py-0.5 rounded font-mono text-[11px] font-semibold ${c.chip}`}>{s.csi_section ?? "—"}</span>
                     </td>
@@ -2547,7 +2587,7 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                           onChange={() => toggleRowSelected(s.id)}
                           className="accent-[#7B9BB5] flex-shrink-0" />
                       )}
-                      <span className="text-[11px] font-bold tabular-nums text-[#64748B] flex-shrink-0">#{s.submittal_seq ?? "—"}</span>
+                      <span className="text-[11px] font-bold tabular-nums text-[#64748B] flex-shrink-0" title={formatSectionNumber(s.csi_section, s.section_seq)}>{padSectionSeq(s.section_seq)}</span>
                       <button
                         type="button"
                         onClick={() => openDetailModal(s)}
@@ -3444,7 +3484,7 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                       <span key={m.submittal_id}>
                         {i > 0 ? ", " : ""}
                         <span className="font-medium">
-                          {m.submittal_seq != null ? `Sub ${m.submittal_seq}` : m.file_name}
+                          {m.section_seq != null ? formatSectionNumber(m.csi_section, m.section_seq) : m.file_name}
                           {m.revision_number ? ` (${m.revision_number})` : ""}
                         </span>
                       </span>
@@ -3588,9 +3628,7 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
             <div className="flex items-start justify-between gap-3 px-5 py-4 border-b border-[#E2E8F0]">
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2 text-[11px] text-[#64748B] mb-1">
-                  <span className="font-mono font-semibold">#{s.submittal_seq ?? "—"}</span>
-                  <span>·</span>
-                  <span className="font-mono">{s.csi_section ?? "—"}</span>
+                  <span className="font-mono font-semibold">{formatSectionNumber(s.csi_section, s.section_seq)}</span>
                   {s.submittal_type && <><span>·</span><span>{s.submittal_type}</span></>}
                   {s.title_locked && (
                     <span title="Title set manually — automated re-process will not overwrite it" className="ml-1 inline-flex items-center gap-0.5 text-[#94A3B8]">
@@ -3661,7 +3699,7 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                   </div>
                   <div>
                     <p className="text-[10px] font-bold text-[#64748B] uppercase tracking-widest mb-1">Submittal #</p>
-                    <p className="text-[13px] text-[#0F172A] tabular-nums">{s.submittal_seq ?? "—"}</p>
+                    <p className="text-[13px] text-[#0F172A] tabular-nums">{formatSectionNumber(s.csi_section, s.section_seq)}</p>
                   </div>
                   <div>
                     <p className="text-[10px] font-bold text-[#64748B] uppercase tracking-widest mb-1">Type</p>
@@ -3865,7 +3903,7 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                               <span
                                 className="text-[10px] text-amber-700 bg-amber-50 border border-amber-300 rounded px-1.5 py-0.5 self-start"
                                 title={`Same bytes as: ${item.dupeMatch.same_project_matches.map(m =>
-                                  (m.submittal_seq != null ? `Sub ${m.submittal_seq}` : m.file_name) +
+                                  (m.section_seq != null ? formatSectionNumber(m.csi_section, m.section_seq) : m.file_name) +
                                   (m.revision_number ? ` (${m.revision_number})` : "")
                                 ).join(", ")}. You can still upload — nothing is auto-blocked.`}
                               >
