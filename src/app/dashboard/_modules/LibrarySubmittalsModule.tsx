@@ -19,7 +19,7 @@ import { isProjectTransmittalCopy } from "@/lib/storage-paths"
 import { truncateForDisplay } from "@/lib/title-normalize"
 import { hashFileInBrowser } from "@/lib/file-hash"
 import { exportSubmittalLogToExcel } from "../_shared/excel-export"
-import PackageCreateModal, { type VendorPreset } from "@/components/packages/PackageCreateModal"
+import PackageCreateModal from "@/components/packages/PackageCreateModal"
 import PackagesView from "@/components/packages/PackagesView"
 import OverflowMenu, { type OverflowEntry } from "@/components/overflow-menu"
 import BulkImportModal from "@/components/bulk-import/BulkImportModal"
@@ -948,22 +948,6 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
   }
   function exitSelectMode() { setSelectMode(false); setSelectedIds(new Set()) }
 
-  // Derive a vendor preset for the package modal: when every selected submittal
-  // shares one vendor, prefill it; otherwise the PM names the recipient.
-  function computeVendorPreset(picked: SubmittalRecord[]): VendorPreset | null {
-    if (picked.length === 0) return null
-    const ids = new Set(picked.map(s => s.vendor_id))
-    if (ids.size === 1 && !ids.has(null)) {
-      const v = vendors.find(x => x.id === [...ids][0])
-      if (v) return {
-        id: v.id,
-        type: v.is_subcontractor ? "subcontractor" : v.is_supplier ? "supplier" : "subcontractor",
-        name: v.company_name,
-        email: v.email ?? null,
-      }
-    }
-    return null
-  }
   const selectedSubmittals = logSubmittals.filter(s => selectedIds.has(s.id))
 
   // Optimistic local update + 500ms-debounced PATCH, coalescing several field
@@ -2583,8 +2567,6 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
           projectId={globalProjectId}
           projectName={appProjects.find(p => p.id === globalProjectId)?.name ?? "Project"}
           submittals={selectedSubmittals}
-          vendorPreset={computeVendorPreset(selectedSubmittals)}
-          vendors={vendors}
           onClose={() => setShowPackageModal(false)}
           onDone={() => {
             setShowPackageModal(false)

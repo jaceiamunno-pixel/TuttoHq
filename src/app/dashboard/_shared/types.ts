@@ -367,6 +367,12 @@ export interface SubmittalPackage {
   status: PackageStatus
   notes: string | null
   created_at: string
+  // Transmittal-package columns (migration 0036). NULL recipient_type = a
+  // legacy solicitation package; a transmittal derives its "sent" state from
+  // send_date, not from status.
+  recipient_type: "cm" | "ae" | "subcontractor" | null
+  send_date: string | null
+  coversheet_mode: "per_item" | "package" | null
   // Reminder overrides (Session K2). null = inherit company default.
   reminder_cadence_days: number[] | null
   reminder_max_count:    number   | null

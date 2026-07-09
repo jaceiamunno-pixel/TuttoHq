@@ -19,7 +19,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { getValidToken } from "./gmail"
 import { sendGmailMessage } from "./gmail-send"
-import { composePackagePdf } from "./package-pdf"
+import { loadStoredPackagePdf } from "./package-pdf"
 import { composeCloseoutPackagePdf } from "./closeout-package-pdf"
 import { resolveEffectiveSettings, type CompanyReminderDefaults } from "./reminder-settings"
 
@@ -43,7 +43,11 @@ const KIND: Record<PackageKind, KindConfig> = {
   submittal: {
     packagesTable:  "submittal_packages",
     remindersTable: "submittal_package_reminders",
-    composePdf: composePackagePdf,
+    // Transmittal packages compose their PDF once at create and store it; the
+    // reminder re-attaches that stored artifact rather than recomposing. (New
+    // transmittal packages set reminders_paused=true, so this path is only hit
+    // by legacy dispatched packages.)
+    composePdf: loadStoredPackagePdf,
     pdfFilenamePrefix: "Submittal_Package",
     subjectLabel: "Submittal Package",
     bodyKind: "submittal package",
@@ -121,7 +125,7 @@ async function fetchCandidates(
   // neither owns the other). The two queries return identical data with
   // negligible overhead at the small row counts we expect (active
   // dispatched packages per tenant).
-  const { data, error } = await supabase
+  let query = supabase
     .from(packagesTable)
     .select(`
       id,
@@ -143,6 +147,18 @@ async function fetchCandidates(
     .in("status", ["dispatched", "partial_received"])
     .eq("reminders_paused", false)
     .not("dispatched_at", "is", null)
+
+  // Transmittal packages (recipient_type IS NOT NULL) are NOT solicitations and
+  // must never be reminded — they carry no recipient email and are sent by the
+  // PM by hand. They share submittal_packages with legacy solicitation rows;
+  // exclude them EXPLICITLY here rather than relying on the write path happening
+  // to leave status='draft'. closeout_packages has no recipient_type column, so
+  // this predicate is scoped to the submittal side only.
+  if (kind === "submittal") {
+    query = query.is("recipient_type", null)
+  }
+
+  const { data, error } = await query
 
   if (error) {
     log("FAIL candidates-query", { kind, error: error.message })
@@ -307,9 +323,8 @@ async function sendOneReminder(
     return { packageId: row.id, status: "skipped_token_unavailable", reminderNumber: nextIdx }
   }
 
-  // Optional: re-attach the original package PDF. Cheaper to rebuild than to
-  // add a download-from-storage path here — composePackagePdf already runs
-  // in the dispatch route's hot path.
+  // Optional: re-attach the package PDF. Submittal packages load the stored
+  // transmittal artifact; closeout packages rebuild theirs (see KIND.composePdf).
   const attachments: Array<{ filename: string; mimeType: string; content: Uint8Array }> = []
   if (row.effective_attach) {
     try {
