@@ -19,10 +19,12 @@
 //                            User must pick. We fuzzy-rank by the
 //                            coversheet description so the most-likely
 //                            candidate is the default.
-//   no-match              — Stage 1 didn't extract a section/type OR no
-//                            spec-built row matches in this project.
-//                            User must pick a different row OR skip.
-//                            Commit MUST refuse this row until resolved.
+//   no-match              — Stage 1 didn't extract a section/type, OR the
+//                            section isn't in this project's spec book, OR the
+//                            section is present but has no row of this type
+//                            (reason distinguishes all three). User must pick a
+//                            different row, CREATE a new row of this type, or
+//                            skip. Commit MUST refuse this row until resolved.
 
 import type { SupabaseClient } from "@supabase/supabase-js"
 
@@ -59,7 +61,18 @@ export type MatchOutcome =
     }
   | {
       kind: "no-match"
-      reason: "section-or-type-missing" | "no-spec-row-for-section-type"
+      /** Why the row didn't auto-place. The three cases drive DISTINCT UI copy:
+       *   - section-or-type-missing  : Stage 1 didn't extract a section/type.
+       *   - section-not-in-project   : the csi_section has NO spec-built rows in
+       *                                this project at all → "isn't in the spec
+       *                                book".
+       *   - no-row-for-type          : the section EXISTS (other types are built)
+       *                                but there is no row of THIS submittal_type
+       *                                → "No open <Type> row in <section>". This
+       *                                is the case the incident actually hit; the
+       *                                old code collapsed it into the "not in the
+       *                                spec book" lie. */
+      reason: "section-or-type-missing" | "section-not-in-project" | "no-row-for-type"
     }
   | {
       kind: "error"
@@ -134,7 +147,26 @@ export async function matchSubmittalRow(
 
   if (error) return { kind: "error", message: error.message }
   if (!candidates || candidates.length === 0) {
-    return { kind: "no-match", reason: "no-spec-row-for-section-type" }
+    // Zero rows of this (section, type). Distinguish "the section isn't in the
+    // spec book" from "the section is here but has no row of this type" — the
+    // latter is the incident case (a deleted Product Data placeholder), and
+    // conflating them tells the user a falsehood. A cheap section-only probe
+    // (same tenant-scoped RLS + explicit project_id) decides which.
+    const { data: sectionRows, error: secErr } = await supabase
+      .from("submittals")
+      .select("id")
+      .eq("project_id", args.project_id)
+      .eq("source", "spec_ingestion")
+      .eq("csi_section", args.section)
+      .neq("status", "deleted")
+      .limit(1)
+    if (secErr) return { kind: "error", message: secErr.message }
+    return {
+      kind: "no-match",
+      reason: sectionRows && sectionRows.length > 0
+        ? "no-row-for-type"
+        : "section-not-in-project",
+    }
   }
   if (candidates.length === 1) {
     return { kind: "auto-match", targetRowId: candidates[0].id, target: candidates[0] }

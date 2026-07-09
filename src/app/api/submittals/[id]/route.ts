@@ -72,9 +72,21 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
   const { id } = await params
 
   const { data: row, error: selErr } = await supabase
-    .from("submittals").select("id").eq("id", id).maybeSingle()
+    .from("submittals").select("id, source").eq("id", id).maybeSingle()
   if (selErr) return NextResponse.json({ error: "Database error" }, { status: 500 })
   if (!row) return NextResponse.json({ error: "Not found" }, { status: 404 })
+
+  // Spec-ingestion rows are STRUCTURE (the spec book's requirement), not
+  // user-created content — deleting one destroys the placeholder that future
+  // imports land on. They are cleared (file removed, row kept) via the Library
+  // detach / per-attachment path, never soft-deleted. Gate it here so no code
+  // path can soft-delete a spec row, whatever the client sends.
+  if (row.source === "spec_ingestion") {
+    return NextResponse.json(
+      { error: "Spec-book rows can't be deleted — clear the file instead (the log row is the spec requirement)." },
+      { status: 409 },
+    )
+  }
 
   const { error } = await supabase
     .from("submittals")
