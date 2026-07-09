@@ -24,10 +24,29 @@ const STATUS_LABEL: Record<string, string> = {
   draft: "Draft", dispatched: "Sent", partial_received: "Partial", complete: "Complete",
 }
 
-function StatusBadge({ status }: { status: string }) {
+const RECIPIENT_LABEL: Record<string, string> = { cm: "CM", ae: "A/E", subcontractor: "Subcontractor" }
+
+// "Sent to" label — a transmittal (recipient_type set) shows the recipient
+// type; a legacy solicitation package falls back to its stored vendor name.
+function sentToLabel(p: SubmittalPackage): string {
+  return p.recipient_type ? (RECIPIENT_LABEL[p.recipient_type] ?? p.recipient_type) : (p.vendor_name_snapshot || "—")
+}
+
+// The date the package was sent — transmittals use send_date, legacy packages
+// their dispatched_at.
+function sentDate(p: SubmittalPackage): string | null {
+  return p.recipient_type ? p.send_date : p.dispatched_at
+}
+
+// State badge — a transmittal is Sent once it has a send_date, else Draft; a
+// legacy package uses its solicitation status.
+function PkgBadge({ p }: { p: SubmittalPackage }) {
+  const { label, style } = p.recipient_type
+    ? (p.send_date ? { label: "Sent", style: STATUS_STYLE.dispatched } : { label: "Draft", style: STATUS_STYLE.draft })
+    : { label: STATUS_LABEL[p.status] ?? p.status, style: STATUS_STYLE[p.status] ?? STATUS_STYLE.draft }
   return (
-    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold ${STATUS_STYLE[status] ?? STATUS_STYLE.draft}`}>
-      {STATUS_LABEL[status] ?? status}
+    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold ${style}`}>
+      {label}
     </span>
   )
 }
@@ -93,10 +112,10 @@ export default function PackagesView({ projectId }: { projectId: string }) {
               <tr key={p.id} onClick={() => setSelectedId(p.id)}
                 className="border-b border-[#E2E8F0]/60 last:border-0 hover:bg-[#F8F9FA] cursor-pointer transition-colors">
                 <td className="px-4 py-2.5 font-mono text-[12px] font-semibold text-[#0F172A] whitespace-nowrap">{p.package_number}</td>
-                <td className="px-4 py-2.5 text-[#0F172A] max-w-[200px] truncate" title={p.vendor_name_snapshot}>{p.vendor_name_snapshot}</td>
-                <td className="px-4 py-2.5"><StatusBadge status={p.status} /></td>
+                <td className="px-4 py-2.5 text-[#0F172A] max-w-[200px] truncate" title={sentToLabel(p)}>{sentToLabel(p)}</td>
+                <td className="px-4 py-2.5"><PkgBadge p={p} /></td>
                 <td className="px-4 py-2.5 tabular-nums text-[#64748B]">{p.item_count ?? 0}</td>
-                <td className="px-4 py-2.5 text-[#64748B] whitespace-nowrap">{fmtDate(p.dispatched_at)}</td>
+                <td className="px-4 py-2.5 text-[#64748B] whitespace-nowrap">{fmtDate(sentDate(p))}</td>
               </tr>
             ))}
           </tbody>
@@ -171,11 +190,11 @@ function PackageDetail({ packageId, onBack, onChanged }: {
           <div className="min-w-0">
             <div className="flex items-center gap-2">
               <h2 className="text-[15px] font-bold text-[#0F172A] font-mono">{pkg.package_number}</h2>
-              <StatusBadge status={pkg.status} />
+              <PkgBadge p={pkg} />
             </div>
-            <p className="text-[13px] text-[#0F172A] mt-1">Sending to {pkg.vendor_name_snapshot}</p>
+            <p className="text-[13px] text-[#0F172A] mt-1">Sending to {sentToLabel(pkg)}</p>
             <p className="text-[12px] text-[#64748B]">
-              {pkg.status === "draft" ? "Draft — not sent" : `Sent ${fmtDate(pkg.dispatched_at)}`}
+              {sentDate(pkg) ? `Sent ${fmtDate(sentDate(pkg))}` : "Draft — not sent"}
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -192,8 +211,8 @@ function PackageDetail({ packageId, onBack, onChanged }: {
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4">
           {[
             ["Tracking Ref", `[${pkg.package_number}]`],
-            ["Sent To", pkg.vendor_name_snapshot],
-            ["Sent", fmtDate(pkg.dispatched_at)],
+            ["Sent To", sentToLabel(pkg)],
+            ["Sent", fmtDate(sentDate(pkg))],
             ["Items", String(pkg.item_count ?? 0)],
           ].map(([label, value]) => (
             <div key={label}>

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import {
-  composeTransmittalPackagePdf, RECIPIENT_LABEL,
+  composeTransmittalPackagePdf,
   type RecipientType, type CoversheetMode,
 } from "@/lib/package-pdf"
 
@@ -167,28 +167,28 @@ export async function POST(req: NextRequest) {
 
   const draft = is_draft === true
 
-  // The recipient type is recorded in vendor_name_snapshot (the human label the
-  // Packages list shows). There is no recipient email — sent_to_email is NOT
-  // NULL in the schema, so it's stored empty. reminders_paused=true keeps the
-  // reminder cron (built for the old solicitation flow) from ever touching a
-  // transmittal package. A sent package uses status 'dispatched' + dispatched_at
-  // = the send date purely for display; a draft stays 'draft' with no date.
+  // Transmittal facts live in dedicated columns (migration 0036):
+  //   recipient_type  — who it went to (decides which date column is stamped)
+  //   coversheet_mode — how the PDF was assembled
+  //   send_date       — the send date; NULL on an unsent draft
+  // The legacy solicitation columns (vendor_name_snapshot / sent_to_email) are
+  // NOT NULL but unused by transmittals, so they're stored empty until the
+  // follow-up cleanup migration drops them. status defaults to 'draft', which
+  // keeps transmittals OUT of the reminder cron (its candidate query requires
+  // status IN ('dispatched','partial_received')). No dispatched_at / dispatched_by
+  // / reminders_paused overload.
   const { data: pkg, error: insErr } = await supabase
     .from("submittal_packages")
     .insert({
       project_id,
       package_number: packageNumber,
-      vendor_id: null,
-      vendor_type: null,
-      vendor_name_snapshot: RECIPIENT_LABEL[recipientType],
-      sent_to_email: "",
-      due_date: null,
+      recipient_type: recipientType,
+      coversheet_mode: coversheetMode,
+      send_date: draft ? null : sendDate,
       notes: notes?.trim() || null,
-      status: draft ? "draft" : "dispatched",
-      reminders_paused: true,
-      dispatched_at: draft ? null : `${sendDate}T00:00:00`,
-      dispatched_by: draft ? null : user.id,
       created_by: user.id,
+      vendor_name_snapshot: "",
+      sent_to_email: "",
     })
     .select()
     .single()
@@ -233,7 +233,16 @@ export async function POST(req: NextRequest) {
   //    to a sub) stamps the corresponding date column; re-packaging OVERWRITES
   //    it (most-recent-send wins). Nothing else on the row changes. Authed
   //    client only — RLS scopes the update to the caller's company. Skipped for
-  //    a draft (an unsent, assembled package). ──────────────────────────────
+  //    a draft (an unsent, assembled package).
+  //
+  //    KNOWN INTERACTION (documented, accepted): sent_to_ae_date is ALSO synced
+  //    from the current attachment's submitted_date by the
+  //    submittal_attachments_sync_current_aiu trigger. Committing a NEW revision
+  //    for a packaged submittal re-fires that trigger and overwrites this stamp
+  //    with the new revision's submitted_date (or NULL if it has none). A new
+  //    revision is a new submission cycle, so that's acceptable — but it means a
+  //    CM/A/E stamp is not permanent across revisions. sent_to_sub_date is never
+  //    touched by that trigger, so subcontractor stamps are stable. ──────────
   if (!draft) {
     const column = DATE_COLUMN[recipientType]
     const { error: stampErr } = await supabase
