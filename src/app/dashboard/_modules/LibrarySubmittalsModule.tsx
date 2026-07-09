@@ -3703,6 +3703,12 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
         <BulkImportModal
           projectId={activeProjectId}
           onClose={() => setShowBulkImport(false)}
+          // Re-fetch the log after each commit batch so the newly attached
+          // rows (including auto-split siblings — loadSubmittals refetches
+          // the whole active project, not a scoped id set) appear without a
+          // page refresh. The modal only fires this when ≥1 row committed,
+          // so a plain close won't trigger a needless refetch.
+          onDone={() => loadSubmittals(activeProjectId)}
         />
       )}
 
