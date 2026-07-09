@@ -125,7 +125,7 @@ async function fetchCandidates(
   // neither owns the other). The two queries return identical data with
   // negligible overhead at the small row counts we expect (active
   // dispatched packages per tenant).
-  const { data, error } = await supabase
+  let query = supabase
     .from(packagesTable)
     .select(`
       id,
@@ -147,6 +147,18 @@ async function fetchCandidates(
     .in("status", ["dispatched", "partial_received"])
     .eq("reminders_paused", false)
     .not("dispatched_at", "is", null)
+
+  // Transmittal packages (recipient_type IS NOT NULL) are NOT solicitations and
+  // must never be reminded — they carry no recipient email and are sent by the
+  // PM by hand. They share submittal_packages with legacy solicitation rows;
+  // exclude them EXPLICITLY here rather than relying on the write path happening
+  // to leave status='draft'. closeout_packages has no recipient_type column, so
+  // this predicate is scoped to the submittal side only.
+  if (kind === "submittal") {
+    query = query.is("recipient_type", null)
+  }
+
+  const { data, error } = await query
 
   if (error) {
     log("FAIL candidates-query", { kind, error: error.message })
