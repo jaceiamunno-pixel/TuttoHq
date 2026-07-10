@@ -18,7 +18,6 @@ export async function GET(req: NextRequest) {
     .select("id, file_name, storage_path, mime_type, file_size, created_at, submittal_type, source, project_id")
     .eq("csi_section", code)
     .eq("status", "active")
-    .is("deleted_at", null)
     .not("storage_path", "is", null)
     .order("file_name")
 

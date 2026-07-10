@@ -14,7 +14,6 @@ export async function GET(req: NextRequest) {
     .from("submittals")
     .select("*")
     .eq("status", "active")
-    .is("deleted_at", null)
     .order("created_at", { ascending: false })
 
   if (projectId) query = query.eq("project_id", projectId)

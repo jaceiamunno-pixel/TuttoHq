@@ -46,7 +46,6 @@ export async function GET(req: NextRequest) {
     .from("submittals")
     .select("id, file_name, storage_path, mime_type, file_size, created_at, csi_division, division_name, csi_section, section_name, submittal_type, source, project_id")
     .eq("status", "active")
-    .is("deleted_at", null)
     .not("storage_path", "is", null)
     .or(orFilter)
     .order("file_name")
