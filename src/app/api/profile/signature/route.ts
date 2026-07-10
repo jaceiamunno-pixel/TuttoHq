@@ -32,7 +32,7 @@ export async function GET() {
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
   const { data: profile } = await supabase
-    .from("user_profiles").select("signature_storage_path").maybeSingle()
+    .from("user_profiles").select("signature_storage_path").eq("user_id", user.id).maybeSingle()
 
   return NextResponse.json({ signature_url: await signedUrlFor(supabase, profile?.signature_storage_path) })
 }
@@ -86,7 +86,7 @@ export async function DELETE() {
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
   const { data: profile } = await supabase
-    .from("user_profiles").select("signature_storage_path").maybeSingle()
+    .from("user_profiles").select("signature_storage_path").eq("user_id", user.id).maybeSingle()
 
   if (profile?.signature_storage_path) {
     await supabase.storage.from("company-assets").remove([profile.signature_storage_path])

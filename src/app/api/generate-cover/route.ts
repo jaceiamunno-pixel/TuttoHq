@@ -73,7 +73,7 @@ export async function POST(req: NextRequest) {
     stampCompanyName = companyRow?.name ?? ""
   }
   const { data: profile } = await supabase
-    .from("user_profiles").select("full_name").maybeSingle()
+    .from("user_profiles").select("full_name").eq("user_id", user.id).maybeSingle()
   const reviewedByName = profile?.full_name ?? ""
 
   // Stamp's Submittal No. — "{spec section}-{section_seq:3}.{revision}" (e.g.

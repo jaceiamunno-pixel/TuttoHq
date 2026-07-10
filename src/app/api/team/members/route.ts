@@ -24,7 +24,7 @@ export async function GET(req: NextRequest) {
   }
 
   const { data: myProfile } = await supabase
-    .from("user_profiles").select("company_id").maybeSingle()
+    .from("user_profiles").select("company_id").eq("user_id", user.id).maybeSingle()
   if (!myProfile?.company_id) {
     return NextResponse.json({ error: "No company association" }, { status: 500 })
   }

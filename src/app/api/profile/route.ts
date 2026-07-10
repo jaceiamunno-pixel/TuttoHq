@@ -19,7 +19,7 @@ export async function GET() {
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
   const { data: profile } = await supabase
-    .from("user_profiles").select("full_name").maybeSingle()
+    .from("user_profiles").select("full_name").eq("user_id", user.id).maybeSingle()
 
   return NextResponse.json({ full_name: profile?.full_name ?? null })
 }

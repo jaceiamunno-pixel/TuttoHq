@@ -74,7 +74,7 @@ export async function PUT(
 
   // Re-snapshot the saver's signature on each save (the person saving signs this
   // revision). SELECT-own; never trusted from the client.
-  const { data: prof } = await supabase.from("user_profiles").select("signature_storage_path").maybeSingle()
+  const { data: prof } = await supabase.from("user_profiles").select("signature_storage_path").eq("user_id", user.id).maybeSingle()
 
   const { data, error } = await supabase.rpc("save_pco", {
     p_id:                    id,

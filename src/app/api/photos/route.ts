@@ -52,7 +52,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Missing fields" }, { status: 400 })
   }
 
-  const { data: profile } = await supabase.from("user_profiles").select("company_id").maybeSingle()
+  const { data: profile } = await supabase.from("user_profiles").select("company_id").eq("user_id", user.id).maybeSingle()
   const company_id = profile?.company_id ?? null
 
   const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
