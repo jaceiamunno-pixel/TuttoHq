@@ -112,7 +112,8 @@ export async function buildTransmittalPackageFiles(input: TransmittalPdfInput): 
   const generationDate = new Date(`${input.sendDate}T00:00:00`)
 
   if (input.coversheetMode === "package") {
-    // ── MODE 'package': one cover, then every document in order → 1 PDF. ────
+    // ── MODE 'package': one list cover, then [stamped cover + document] per
+    //    item, all merged in order → 1 PDF. ────────────────────────────────
     const pdf = await PDFBuilder.create({
       documentType: "Submittal Transmittal",
       documentNumber: `[${input.packageNumber}]`,
@@ -157,7 +158,34 @@ export async function buildTransmittalPackageFiles(input: TransmittalPdfInput): 
 
     const merged = await PDFDocument.create()
     await appendInto(merged, await pdf.save())
-    for (const it of input.items) await appendInto(merged, it.documentBytes)
+    // Every document travels behind its own STAMPED per-item coversheet — the
+    // same buildCoversheetPdf(cover, reviewer) call per_item mode uses, so the
+    // reviewer stamp appears on every coversheet the app produces, in both
+    // modes. The single list cover above stays; this is additive behind it:
+    //   [list cover] [stamped cover 1][doc 1] [stamped cover 2][doc 2] …
+    for (const it of input.items) {
+      // No resolvable document → no stamped cover either (mirrors per_item:
+      // a lone cover with no document is not a useful artifact; the compose
+      // step already pushed a "skipped" warning for this item).
+      if (!it.documentBytes) continue
+      // Parse the document BEFORE appending its cover so an unreadable file
+      // drops the ITEM — cover and document together. Appending the cover
+      // first and letting appendInto's swallow-guard eat the document would
+      // hand the CM a stamped cover with nothing behind it.
+      let srcDoc: PDFDocument
+      try {
+        srcDoc = await PDFDocument.load(it.documentBytes)
+      } catch {
+        // One unreadable document must not fail the whole package.
+        continue
+      }
+      const coverBytes = await buildCoversheetPdf(
+        it.coversheet, input.logoBytes, it.reviewer, input.logoScalePct ?? undefined,
+      )
+      await appendInto(merged, coverBytes)
+      const pages = await merged.copyPages(srcDoc, srcDoc.getPageIndices())
+      pages.forEach(p => merged.addPage(p))
+    }
 
     // Single-PDF name reads like the artifact it is, e.g.
     // "Submittal Transmittal - Construction Manager - 2026-07-10.pdf".

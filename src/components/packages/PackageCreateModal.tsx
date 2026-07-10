@@ -306,8 +306,8 @@ export default function PackageCreateModal({
               <label className={labelCls}>Coversheet <span className="text-red-400">*</span></label>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                 {([
-                  { value: "per_item" as const, title: "Cover sheet per item", desc: "Each submittal gets its own coversheet before its document." },
-                  { value: "package" as const, title: "One cover sheet", desc: "A single cover listing every item, then all documents." },
+                  { value: "per_item" as const, title: "Cover sheet per item", desc: "Each submittal gets its own coversheet before its document. One PDF per item." },
+                  { value: "package" as const, title: "One merged PDF", desc: "A transmittal cover listing every item, then each document behind its own coversheet." },
                 ]).map(m => (
                   <button
                     key={m.value} type="button"
