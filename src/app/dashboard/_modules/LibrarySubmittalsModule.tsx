@@ -523,7 +523,10 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
       architect: proj?.architect ?? "", specSectionNo: s.csi_section ?? "",
       specSectionTitle: s.section_name ?? "",
       description: stripFileExt(s.file_name),
-      dateSubmitted: today, submittalNo: s.section_seq != null ? padSectionSeq(s.section_seq) : "1",
+      // An unnumbered row (section_seq NULL) carries NO number — pass "" so the
+      // cover omits it, never a fabricated "001". Submittal numbers print on
+      // transmittals and are meaningful to the CM; the system must not invent one.
+      dateSubmitted: today, submittalNo: s.section_seq != null ? padSectionSeq(s.section_seq) : "",
       revisionNo: s.revision_number ?? "00", dueDate: s.due_date ?? "",
       isCritical: s.is_critical ?? false, partyRequired: s.party_required ?? false,
       copyTo: s.copy_to ?? "",
@@ -644,7 +647,8 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
       architect: proj?.architect ?? "", specSectionNo: s.csi_section ?? "",
       specSectionTitle: s.section_name ?? "",
       description: stripFileExt(s.file_name),
-      dateSubmitted: today, submittalNo: s.section_seq != null ? padSectionSeq(s.section_seq) : "1",
+      // See openEditCoverSheet: unnumbered rows pass "" (never a fabricated "001").
+      dateSubmitted: today, submittalNo: s.section_seq != null ? padSectionSeq(s.section_seq) : "",
       revisionNo: s.revision_number ?? "00", dueDate: s.due_date ?? "",
       isCritical: s.is_critical ?? false, partyRequired: s.party_required ?? false,
       copyTo: s.copy_to ?? "",
