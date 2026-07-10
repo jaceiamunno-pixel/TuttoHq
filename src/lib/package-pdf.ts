@@ -272,17 +272,26 @@ export interface ResolvedPackage {
  */
 export async function resolvePackageItems(
   supabase: AnySupabase,
-  args: { projectId: string; companyId: string; sendDate: string; submittalIds: string[] },
+  args: { projectId: string; companyId: string; sendDate: string; submittalIds: string[]; userId: string },
   opts: { withDocuments: boolean },
 ): Promise<ResolvedPackage> {
   const warnings: string[] = []
 
   // Project + branding + reviewer identity (for the per-item coversheets).
+  //
+  // The user_profiles read is filtered to the CALLER'S OWN row (PK user_id =
+  // auth uid) — never an unfiltered maybeSingle(). This makes the reviewer
+  // identity correct BY CONSTRUCTION instead of leaning on the current
+  // "select own" RLS policy: if that policy is ever widened (team-visible
+  // profiles), an unfiltered read would error into an empty stamp on
+  // multi-profile visibility — or worse, silently stamp a DIFFERENT user's
+  // name as the reviewer where exactly one other row is visible. The stamp
+  // is what a CM sees on the transmittal; it must name the generating user.
   const [projectRes, settingsRes, companyRes, profileRes] = await Promise.all([
     supabase.from("projects").select("name, number, location, gc_name, architect").eq("id", args.projectId).maybeSingle(),
     supabase.from("company_settings").select("logo_path, logo_scale_pct").maybeSingle(),
     supabase.from("companies").select("name").eq("id", args.companyId).maybeSingle(),
-    supabase.from("user_profiles").select("full_name").maybeSingle(),
+    supabase.from("user_profiles").select("full_name").eq("user_id", args.userId).maybeSingle(),
   ])
   const project = (projectRes.data ?? {}) as ResolvedPackage["project"]
   const reviewedByName = (profileRes.data?.full_name as string | undefined) ?? ""
@@ -413,7 +422,7 @@ export async function generateTransmittalPackage(
 ): Promise<{ generationId: string; files: GeneratedFileMeta[]; warnings: string[] }> {
   const resolved = await resolvePackageItems(
     supabase,
-    { projectId: args.projectId, companyId: args.companyId, sendDate: args.sendDate, submittalIds: args.submittalIds },
+    { projectId: args.projectId, companyId: args.companyId, sendDate: args.sendDate, submittalIds: args.submittalIds, userId: args.generatedBy },
     { withDocuments: true },
   )
   const warnings = resolved.warnings
