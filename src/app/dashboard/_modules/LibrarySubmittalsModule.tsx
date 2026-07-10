@@ -18,7 +18,7 @@ import { presignAndUpload } from "@/lib/storage-upload"
 import { isProjectTransmittalCopy } from "@/lib/storage-paths"
 import { truncateForDisplay } from "@/lib/title-normalize"
 import { hashFileInBrowser } from "@/lib/file-hash"
-import { formatSectionNumber, padSectionSeq } from "@/lib/section-number"
+import { formatSectionNumber, padSectionSeq, compareBySectionOrder } from "@/lib/section-number"
 import { exportSubmittalLogToExcel } from "../_shared/excel-export"
 import PackageCreateModal from "@/components/packages/PackageCreateModal"
 import PackagesView from "@/components/packages/PackagesView"
@@ -1006,7 +1006,7 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
   // ── Excel export ─────────────────────────────────────────────────────────────
   // Replicates the table's in-render sort so the spreadsheet row order matches
   // what the user sees on screen. `displaySubmittals` already accounts for the
-  // search filter; `groupBySection` flips between section/type/seq vs seq only.
+  // search filter; `groupBySection` flips between section/section_seq vs seq only.
   const [exporting, setExporting] = useState(false)
   const [exportingPdf, setExportingPdf] = useState(false)
   // The currently-displayed log rows in render order — search filter applied
@@ -1015,10 +1015,7 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
   function orderedExportRows(): SubmittalRecord[] {
     const exportRows = [...displaySubmittals]
     if (groupBySection) {
-      exportRows.sort((a, b) =>
-        (a.csi_section ?? "").localeCompare(b.csi_section ?? "") ||
-        (a.submittal_type ?? "").localeCompare(b.submittal_type ?? "") ||
-        (a.submittal_seq ?? 0) - (b.submittal_seq ?? 0))
+      exportRows.sort(compareBySectionOrder)
     } else {
       exportRows.sort((a, b) => (a.submittal_seq ?? 0) - (b.submittal_seq ?? 0))
     }
@@ -2243,8 +2240,9 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
               </button>
             </div>
           ) : (() => {
-            // Sort + colour-band the rows. Grouped: spec section, then type,
-            // then number. Ungrouped: per-project submittal number.
+            // Sort + colour-band the rows. Grouped: spec section, then
+            // section_seq (so the displayed number matches row position).
+            // Ungrouped: per-project submittal number.
             // Date-only "today" for all ball-in-court math (matches lateState).
             const today = new Date().toISOString().slice(0, 10)
             // Client-side ball-in-court filtering over the already-fetched rows.
@@ -2264,10 +2262,7 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                 return courtSort === "desc" ? db - da : da - db
               })
             } else if (groupBySection) {
-              rows.sort((a, b) =>
-                (a.csi_section ?? "").localeCompare(b.csi_section ?? "") ||
-                (a.submittal_type ?? "").localeCompare(b.submittal_type ?? "") ||
-                (a.submittal_seq ?? 0) - (b.submittal_seq ?? 0))
+              rows.sort(compareBySectionOrder)
             } else {
               rows.sort((a, b) => (a.submittal_seq ?? 0) - (b.submittal_seq ?? 0))
             }
