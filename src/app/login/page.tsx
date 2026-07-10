@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation"
 import Link from "next/link"
 import { createClient } from "@/lib/supabase/client"
 
-type Mode = "signin" | "set-password"
+type Mode = "signin" | "set-password" | "forgot"
 
 export default function LoginPage() {
   const [mode, setMode]         = useState<Mode>("signin")
@@ -13,8 +13,16 @@ export default function LoginPage() {
   const [password, setPassword] = useState("")
   const [confirm, setConfirm]   = useState("")
   const [error, setError]       = useState<string | null>(null)
+  const [notice, setNotice]     = useState<string | null>(null)
   const [loading, setLoading]   = useState(false)
   const router = useRouter()
+
+  // Switch modes without leaking a stale error/notice from the previous form.
+  function go(next: Mode) {
+    setError(null)
+    setNotice(null)
+    setMode(next)
+  }
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.hash.slice(1))
@@ -41,6 +49,29 @@ export default function LoginPage() {
       router.push("/dashboard")
       router.refresh()
     }
+  }
+
+  async function handleForgot(e: React.FormEvent) {
+    e.preventDefault()
+    setLoading(true)
+    setError(null)
+
+    // App-initiated reset. The explicit redirectTo is the whole point: it
+    // bypasses the Supabase Site URL and, because the client is PKCE, produces a
+    // `?code=` link (query param — survives the apex→www 301, immune to
+    // mail-scanner prefetch). `window.location.origin` is the canonical host the
+    // user is already on (www in prod, post-redirect), so the code lands on the
+    // same host that holds the PKCE verifier cookie — see /auth/callback.
+    await createClient().auth.resetPasswordForEmail(email, {
+      redirectTo: `${window.location.origin}/auth/callback`,
+    })
+
+    // Deliberately UNIFORM: we ignore the result entirely and never branch on
+    // whether the address exists. Same message, same code path, same timing for
+    // every input — no account enumeration. (resetPasswordForEmail itself does
+    // not error on unknown addresses; GoTrue rate-limits the send — see note.)
+    setLoading(false)
+    setNotice("If an account exists for that email, we've sent a password reset link. Check your inbox.")
   }
 
   async function handleSetPassword(e: React.FormEvent) {
@@ -85,7 +116,13 @@ export default function LoginPage() {
               />
             </div>
             <div>
-              <label className="block text-[12px] font-medium text-[#64748B] mb-1.5">Password</label>
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="block text-[12px] font-medium text-[#64748B]">Password</label>
+                <button type="button" onClick={() => go("forgot")}
+                  className="text-[12px] text-[#7B9BB5] hover:text-[#6A8AA4] font-medium transition-colors">
+                  Forgot password?
+                </button>
+              </div>
               <input
                 type="password" value={password} onChange={e => setPassword(e.target.value)}
                 required placeholder="••••••••"
@@ -102,6 +139,31 @@ export default function LoginPage() {
               <Link href="/signup" className="text-[#7B9BB5] hover:text-[#6A8AA4] font-medium transition-colors">
                 Create an account
               </Link>
+            </p>
+          </form>
+        ) : mode === "forgot" ? (
+          <form onSubmit={handleForgot} className="space-y-4">
+            <p className="text-[13px] text-[#64748B] -mt-2 mb-1">
+              Enter your email and we&apos;ll send you a link to reset your password.
+            </p>
+            <div>
+              <label className="block text-[12px] font-medium text-[#64748B] mb-1.5">Email</label>
+              <input
+                type="email" value={email} onChange={e => setEmail(e.target.value)}
+                required autoFocus placeholder="you@company.com"
+                className={inputCls}
+              />
+            </div>
+            {notice && <p className="text-[12px] text-[#0F172A] bg-[#7B9BB5]/10 border border-[#7B9BB5]/25 rounded-md px-3 py-2">{notice}</p>}
+            <button type="submit" disabled={loading}
+              className="w-full h-10 bg-[#7B9BB5] text-white text-[14px] font-semibold rounded-md hover:bg-[#6A8AA4] transition-colors disabled:opacity-50">
+              {loading ? "Sending…" : "Send reset link"}
+            </button>
+            <p className="text-center text-[12px] text-[#64748B] pt-1">
+              <button type="button" onClick={() => go("signin")}
+                className="text-[#7B9BB5] hover:text-[#6A8AA4] font-medium transition-colors">
+                Back to sign in
+              </button>
             </p>
           </form>
         ) : (
