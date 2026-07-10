@@ -86,7 +86,7 @@ export async function POST(req: NextRequest) {
   // Resolve cover data — NO document downloads (cover-only preview), NO writes.
   const resolved = await resolvePackageItems(
     supabase,
-    { projectId: project_id, companyId, sendDate, submittalIds: validIds },
+    { projectId: project_id, companyId, sendDate, submittalIds: validIds, userId: user.id },
     { withDocuments: false },
   )
 
