@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import { isValidSha256 } from "@/lib/file-hash"
 import { allocateSectionSeqAndInsert } from "@/lib/section-seq"
+import { normalizeSubmittalTitle } from "@/lib/title-normalize"
 
 // POST /api/bulk-import/commit — Stage 2a write path. Attach each Bulk
 // Import row to a spec-built submittals row. Model A never fabricates spec
@@ -146,6 +147,51 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "project not in your company" }, { status: 403 })
   }
 
+  // ── Placeholder title sync: prefetch the project's spec-book titles ──────
+  // The attachment sync trigger DELIBERATELY stopped propagating file_name
+  // (sql/trigger-stop-renaming-rows.sql) because a blanket rename-on-commit
+  // destroyed human/spec titles. But an UNTOUCHED placeholder — title_locked
+  // false, file_name still exactly the spec-book section title — carries no
+  // per-document information: three same-section rows all read "Residential
+  // Appliances" and the transmittal generator emits three identically-titled
+  // PDFs. When the first real document lands on such a row (below, after the
+  // attach RPC succeeds), its title is replaced with the document's filename —
+  // the same title a direct upload of that file would have produced.
+  //
+  // LINKAGE LAW: the placeholder test joins spec_sections on spec_number —
+  // submittals.csi_section IS the spec_number verbatim (staged-submittals
+  // commit sets csi_section = s.spec_number); spec_section_id does not survive
+  // a re-parse. One batched query here, never a per-row lookup in the loop.
+  // A spec_number can repeat across volumes, so titles collect into a set;
+  // both the raw spec_title and its normalized form count as "untouched"
+  // (the placeholder was seeded via normalizeSubmittalTitle).
+  //
+  // Best-effort: a failed prefetch disables the sync for this batch (empty
+  // map → no renames) but never blocks the attach itself.
+  const placeholderTitles = new Map<string, Set<string>>()
+  {
+    const { data: specTitleRows, error: stErr } = await supabase
+      .from("spec_sections")
+      .select("spec_number, spec_title")
+      .eq("project_id", projectId)
+    if (stErr) {
+      console.warn("[bulk-import-commit] spec_title prefetch failed — placeholder title sync disabled for this batch:", stErr.message)
+    }
+    for (const row of specTitleRows ?? []) {
+      const raw = typeof row.spec_title === "string" ? row.spec_title.trim() : ""
+      if (!raw || typeof row.spec_number !== "string") continue
+      let set = placeholderTitles.get(row.spec_number)
+      if (!set) { set = new Set(); placeholderTitles.set(row.spec_number, set) }
+      set.add(raw)
+      const normalized = normalizeSubmittalTitle(raw)
+      if (normalized) set.add(normalized)
+    }
+  }
+  const isUntouchedPlaceholderTitle = (csiSection: string | null, fileName: string | null): boolean => {
+    if (!csiSection || !fileName) return false
+    return placeholderTitles.get(csiSection)?.has(fileName.trim()) ?? false
+  }
+
   const results: CommitResult[] = []
   const nowIso = new Date().toISOString()
 
@@ -165,6 +211,8 @@ export async function POST(req: NextRequest) {
     material_name: string | null
     spec_section_id: string | null
     submittal_type: string | null
+    file_name: string | null
+    title_locked: boolean | null
   }
 
   // target_row_ids that an earlier file in THIS batch has already claimed as
@@ -251,8 +299,9 @@ export async function POST(req: NextRequest) {
         revision_number:  "R0",
         review_status:    reviewStatus || null,
         title_locked:     false,
-        // Sensible pre-attach title; the attachment sync trigger overwrites
-        // file_name with the committed PDF's name once it lands.
+        // This IS the row's final title — the attachment sync trigger
+        // deliberately does NOT touch file_name (sql/trigger-stop-renaming-
+        // rows.sql), so the sibling is named after its own file up front.
         file_name:        fileName,
         uploaded_by:      user!.id,
       }),
@@ -315,7 +364,7 @@ export async function POST(req: NextRequest) {
     // assert company_id and project_id explicitly.
     const { data: target, error: tErr } = await supabase
       .from("submittals")
-      .select("id, company_id, project_id, source, status, storage_path, csi_division, division_name, csi_section, section_name, material_name, spec_section_id, submittal_type")
+      .select("id, company_id, project_id, source, status, storage_path, csi_division, division_name, csi_section, section_name, material_name, spec_section_id, submittal_type, file_name, title_locked")
       .eq("id", r.target_row_id)
       .single()
     if (tErr || !target) {
@@ -439,7 +488,9 @@ export async function POST(req: NextRequest) {
     }
 
     // Attach via the add_submittal_attachment RPC — atomic newest-wins
-    // (unset prev current + insert new + trigger syncs submittals row).
+    // (unset prev current + insert new + trigger syncs the submittals row's
+    // per-revision fields: storage_path, dates, revision, review_status —
+    // NOT file_name; see the placeholder title sync below).
     // The RPC enforces tenant scope via get_my_company_id() and refuses
     // to write if the submittal isn't accessible to the caller. For a spawned
     // sibling this is its FIRST (and only) attachment → it becomes current.
@@ -487,6 +538,39 @@ export async function POST(req: NextRequest) {
         .remove([uploadsPath])
       if (orphanErr) {
         console.warn("[bulk-import-commit] orphan uploads cleanup failed for", uploadsPath, orphanErr.message)
+      }
+    }
+
+    // ── Placeholder title sync (see the prefetch block above the loop) ──────
+    // The document just landed on the confirmed placeholder itself and that
+    // row still carries the untouched spec-book title → replace the generic
+    // title with the document's filename. Guards:
+    //   - only when the file landed on the row we inspected (a spawned or
+    //     sha-re-resolved sibling is already named after its own file)
+    //   - never when title_locked — a human-edited title is sacred; checked
+    //     on the row we read AND re-asserted in the UPDATE's WHERE against a
+    //     concurrent edit
+    //   - never when the title diverged from the spec title for any reason
+    //   - r.file_name goes in VERBATIM (no .pdf strip) — same convention as
+    //     spawnSibling; normalizeSubmittalTitle / transmittalItemFileName
+    //     already handle a trailing ".pdf" downstream
+    //   - runs in the wasDuplicate case too: the bytes are on this row either
+    //     way, and a retry of a pre-fix commit should heal the stale title
+    //   - best-effort: a failed rename never fails the committed attach
+    if (
+      effectiveRowId === r.target_row_id &&
+      ph.title_locked !== true &&
+      isUntouchedPlaceholderTitle(ph.csi_section, ph.file_name)
+    ) {
+      const { error: renameErr } = await supabase
+        .from("submittals")
+        .update({ file_name: r.file_name })
+        .eq("id", effectiveRowId)
+        .eq("company_id", companyId)
+        .eq("project_id", projectId)
+        .eq("title_locked", false)
+      if (renameErr) {
+        console.warn("[bulk-import-commit] placeholder title sync failed for", effectiveRowId, renameErr.message)
       }
     }
 
