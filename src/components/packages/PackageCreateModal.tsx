@@ -1,24 +1,32 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import type { SubmittalRecord, SubmittalPackage } from "@/app/dashboard/_shared/types"
+import type { SubmittalCoversheetProps } from "@/components/submittals/SubmittalCoversheet"
+import SubmittalCoversheet from "@/components/submittals/SubmittalCoversheet"
 import GenerationFiles, { type GenFile } from "./GenerationFiles"
 import { normalizeSubmittalTitle } from "@/lib/title-normalize"
 import { formatSectionNumber, padSectionSeq } from "@/lib/section-number"
 
 // ─── Transmittal-package create modal ───────────────────────────────────────
 // A package = pick submittal log rows → choose who it's going to → choose a
-// coversheet mode → generate the approved documents → download. The PM sends
-// them from their own email client. NO email field, NO vendor lookup, NO
-// dispatch/send action.
+// coversheet mode → PREVIEW & FIX the cover → generate the approved documents →
+// download. The PM sends them from their own email client. NO email field, NO
+// vendor lookup, NO dispatch/send action.
 //
 // Coversheet mode drives the output shape: 'package' → one PDF (cover + all
 // docs); 'per_item' → N PDFs (one per submittal), delivered as per-item
 // downloads plus a client-side "Download all" zip.
 //
-// Two steps: a form (recipient / date / mode / item review), then the delivery
-// view. Creating the package is the send event — it stamps the chosen date
-// column on every packaged submittal.
+// THREE steps:
+//   form     — recipient / date / mode / item review.
+//   cover    — the GATE. The actual cover is rendered and the two descriptive
+//              fields (description, spec-section title) are click-to-edit,
+//              writing straight back to the submittal row via the shared PATCH
+//              route. NOTHING is assembled, uploaded, stored, or date-stamped
+//              here. Cancel/close/Back on this step = nothing happened.
+//   delivery — the download view, shown only AFTER the user accepts. Creating
+//              the package is the send event; it stamps the chosen date column.
 
 const inputCls =
   "w-full h-9 px-3 rounded-md border border-[#E2E8F0] text-[14px] text-[#0F172A] bg-white " +
@@ -41,6 +49,33 @@ function todayISO(): string {
   return `${d.getFullYear()}-${m}-${day}`
 }
 
+// ─── Preview response shapes (from POST /api/submittal-packages/preview) ─────
+interface ReviewerDisplay {
+  company: string
+  reviewedBy: string
+  date: string
+  submittalNo: string
+}
+interface PerItemPreview {
+  submittalId: string
+  coversheet: SubmittalCoversheetProps
+  reviewer: ReviewerDisplay
+}
+interface PackageItemPreview {
+  submittalId: string
+  description: string
+}
+type PreviewData =
+  | { mode: "per_item"; items: PerItemPreview[] }
+  | { mode: "package"; pendingNumber: string; coverPdfBase64: string | null; items: PackageItemPreview[] }
+
+function base64ToPdfBlobUrl(b64: string): string {
+  const bin = atob(b64)
+  const bytes = new Uint8Array(bin.length)
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
+  return URL.createObjectURL(new Blob([bytes], { type: "application/pdf" }))
+}
+
 export default function PackageCreateModal({
   projectId, projectName, submittals, onClose, onDone,
 }: {
@@ -50,7 +85,7 @@ export default function PackageCreateModal({
   onClose: () => void
   onDone: () => void
 }) {
-  const [step, setStep] = useState<"form" | "preview">("form")
+  const [step, setStep] = useState<"form" | "cover" | "delivery">("form")
   const [recipientType, setRecipientType] = useState<RecipientType | null>(null)
   const [sendDate, setSendDate] = useState(todayISO())
   const [coversheetMode, setCoversheetMode] = useState<CoversheetMode | null>(null)
@@ -58,11 +93,32 @@ export default function PackageCreateModal({
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
+  // ── Cover-preview (gate) state ──
+  const [preview, setPreview] = useState<PreviewData | null>(null)
+  const [previewLoading, setPreviewLoading] = useState(false)
+  const [previewError, setPreviewError] = useState<string | null>(null)
+  const [pageIndex, setPageIndex] = useState(0)
+  const [coverUrl, setCoverUrl] = useState<string | null>(null)
+  const coverUrlRef = useRef<string | null>(null)
+
   // Set once the package + its first generation exist.
   const [pkg, setPkg] = useState<SubmittalPackage | null>(null)
   const [genFiles, setGenFiles] = useState<GenFile[]>([])
   const [genMode, setGenMode] = useState<CoversheetMode>("package")
   const [warnings, setWarnings] = useState<string[]>([])
+
+  // Revoke the package-mode cover blob URL on replacement / unmount.
+  useEffect(() => {
+    coverUrlRef.current = coverUrl
+    return () => { if (coverUrlRef.current) URL.revokeObjectURL(coverUrlRef.current) }
+  }, [coverUrl])
+
+  function setCoverBlob(b64: string | null) {
+    setCoverUrl(prev => {
+      if (prev) URL.revokeObjectURL(prev)
+      return b64 ? base64ToPdfBlobUrl(b64) : null
+    })
+  }
 
   function validate(): boolean {
     if (!recipientType) { setError("Choose who this package is being sent to."); return false }
@@ -72,7 +128,72 @@ export default function PackageCreateModal({
     return true
   }
 
-  /** Create the package. isDraft=false stamps the date + is the send event. */
+  /** Resolve the preview from the server (no writes). Sets state; never throws —
+   *  a failure is surfaced via previewError so a caller (including a post-edit
+   *  reload) can await it without unwinding the edit. */
+  async function loadPreview() {
+    setPreviewLoading(true)
+    setPreviewError(null)
+    try {
+      const res = await fetch("/api/submittal-packages/preview", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          project_id: projectId,
+          recipient_type: recipientType,
+          send_date: sendDate,
+          coversheet_mode: coversheetMode,
+          submittal_ids: submittals.map(s => s.id),
+        }),
+      })
+      const d = await res.json().catch(() => ({}))
+      if (!res.ok) { setPreviewError(d.error ?? "Could not build the preview."); return }
+      const data = d as PreviewData
+      setPreview(data)
+      if (data.mode === "package") setCoverBlob(data.coverPdfBase64)
+      else setCoverBlob(null)
+    } catch {
+      setPreviewError("Could not build the preview.")
+    } finally {
+      setPreviewLoading(false)
+    }
+  }
+
+  /** Form → gate. Validate, then move to the cover step and resolve the preview. */
+  async function goToPreview() {
+    setError(null)
+    if (!validate()) return
+    setPageIndex(0)
+    setStep("cover")
+    await loadPreview()
+  }
+
+  /** PATCH one field on a submittal row through the shared, RLS-scoped route.
+   *  Throws on failure so the inline field reverts + shows the error. */
+  async function patchRow(id: string, patch: Record<string, unknown>) {
+    const res = await fetch(`/api/submittals/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(patch),
+    })
+    const d = await res.json().catch(() => ({}))
+    if (!res.ok) throw new Error(d.error ?? "Could not save the change.")
+  }
+
+  // Inline savers. On success we reload the preview so the cover re-renders from
+  // the UPDATED row (the row is the source of truth) — the cover can't show a
+  // value the log doesn't have.
+  const saveDescription = (id: string) => async (value: string) => {
+    await patchRow(id, { file_name: value })
+    await loadPreview()
+  }
+  const saveSpecTitle = (id: string) => async (value: string) => {
+    await patchRow(id, { section_name: value })
+    await loadPreview()
+  }
+
+  /** Create the package. isDraft=false stamps the date + is the send event.
+   *  Only reachable from the cover gate. */
   async function createPackage(isDraft: boolean) {
     setError(null)
     if (!validate()) return
@@ -102,7 +223,7 @@ export default function PackageCreateModal({
       if (isDraft) {
         onDone()
       } else {
-        setStep("preview")
+        setStep("delivery")
       }
     } finally { setBusy(false) }
   }
@@ -120,16 +241,24 @@ export default function PackageCreateModal({
 
   const trackingRef = pkg ? `[${pkg.package_number}]` : "[TTQ-…]"
   const recipientLabel = RECIPIENTS.find(r => r.value === recipientType)?.label ?? "—"
+  const logLink = `/projects/${projectId}/submittals`
+
+  const total = preview?.mode === "per_item" ? preview.items.length : 0
+  const perItem = preview?.mode === "per_item" && total > 0 ? preview.items[Math.min(pageIndex, total - 1)] : null
 
   return (
     <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4"
       onClick={e => { if (e.target === e.currentTarget) onClose() }}>
-      <div className="bg-white rounded-xl border border-[#E2E8F0] shadow-2xl w-full sm:w-[680px] mx-4 sm:mx-0 flex flex-col max-h-[92vh]">
+      <div className={`bg-white rounded-xl border border-[#E2E8F0] shadow-2xl w-full mx-4 sm:mx-0 flex flex-col max-h-[92vh] ${
+        step === "cover" ? "sm:w-[900px]" : "sm:w-[680px]"
+      }`}>
         {/* Header */}
         <div className="flex items-center justify-between px-6 pt-5 pb-4 border-b border-[#E2E8F0] flex-shrink-0">
           <div className="min-w-0">
             <h2 className="text-[15px] font-bold text-[#0F172A]">
-              {step === "form" ? "New Transmittal Package" : "Package ready"}
+              {step === "form" ? "New Transmittal Package"
+                : step === "cover" ? "Review the cover"
+                : "Package ready"}
             </h2>
             <p className="text-[12px] text-[#64748B] mt-0.5">
               {submittals.length} submittal{submittals.length === 1 ? "" : "s"} · {projectName}
@@ -161,7 +290,7 @@ export default function PackageCreateModal({
                   ))}
                 </div>
                 <p className="text-[11px] text-[#94A3B8] mt-1 h-4">
-                  {recipientType ? RECIPIENTS.find(r => r.value === recipientType)?.hint : " "}
+                  {recipientType ? RECIPIENTS.find(r => r.value === recipientType)?.hint : " "}
                 </p>
               </div>
               <div className="sm:w-44">
@@ -234,8 +363,108 @@ export default function PackageCreateModal({
           </div>
         )}
 
-        {/* ── Step 2: preview + download ─────────────────────────────────── */}
-        {step === "preview" && (
+        {/* ── Step 2: cover preview (the gate) ───────────────────────────── */}
+        {step === "cover" && (
+          <div className="px-6 py-4 space-y-3 overflow-y-auto bg-[#F8FAFC]">
+            <div className="rounded-md bg-[#EFF4F9] border border-[#D6E2ED] px-3 py-2 text-[12px] text-[#334155]">
+              Click <span className="font-semibold">Submittal Description</span> or <span className="font-semibold">Spec Section Title</span> to edit — the change writes back to the submittal log, so this cover and every future one stay in sync. Nothing is generated or dated until you accept.
+            </div>
+
+            {previewLoading && <p className="text-[13px] text-[#64748B] py-8 text-center">Building the preview…</p>}
+            {previewError && (
+              <div className="rounded-md bg-red-50 border border-red-200 px-3 py-2 text-[12px] text-red-600">{previewError}</div>
+            )}
+
+            {/* per_item — page through one editable coversheet per submittal */}
+            {!previewLoading && preview?.mode === "per_item" && perItem && (
+              <>
+                <div className="flex items-center justify-between">
+                  <p className="text-[12px] font-semibold text-[#64748B]">
+                    Cover {Math.min(pageIndex + 1, total)} of {total}
+                  </p>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button" disabled={pageIndex === 0}
+                      onClick={() => setPageIndex(i => Math.max(0, i - 1))}
+                      className="h-8 px-3 rounded-md border border-[#E2E8F0] text-[12px] text-[#0F172A] bg-white hover:bg-[#0F172A]/[0.04] disabled:opacity-40"
+                    >← Prev</button>
+                    <button
+                      type="button" disabled={pageIndex >= total - 1}
+                      onClick={() => setPageIndex(i => Math.min(total - 1, i + 1))}
+                      className="h-8 px-3 rounded-md border border-[#E2E8F0] text-[12px] text-[#0F172A] bg-white hover:bg-[#0F172A]/[0.04] disabled:opacity-40"
+                    >Next →</button>
+                  </div>
+                </div>
+
+                {/* The ACTUAL coversheet (scaled to fit), fed by server-resolved
+                    props. Only the two descriptive fields are editable. */}
+                <div className="rounded-lg border border-[#E2E8F0] bg-[#f1f5f9] overflow-auto" style={{ maxHeight: 460 }}>
+                  <div style={{ transform: "scale(0.62)", transformOrigin: "top left", width: "161.3%" }}>
+                    <SubmittalCoversheet
+                      key={perItem.submittalId}
+                      {...perItem.coversheet}
+                      editSubmittalDescription={saveDescription(perItem.submittalId)}
+                      editSpecSectionTitle={saveSpecTitle(perItem.submittalId)}
+                    />
+                  </div>
+                </div>
+
+                {/* Read-only, server-resolved reviewer stamp — shown so the user
+                    can verify it, never editable. */}
+                <div className="rounded-md border border-[#E2E8F0] bg-white px-3 py-2">
+                  <p className="text-[10px] font-bold text-[#64748B] uppercase tracking-widest mb-1">
+                    Reviewer stamp · resolved server-side · not editable
+                  </p>
+                  <p className="text-[12px] text-[#0F172A]">
+                    {[perItem.reviewer.company, perItem.reviewer.reviewedBy, perItem.reviewer.date]
+                      .filter(Boolean).join(" · ") || "—"}
+                    {perItem.reviewer.submittalNo ? ` · No. ${perItem.reviewer.submittalNo}` : ""}
+                  </p>
+                </div>
+
+                <ReadOnlyNote logLink={logLink} />
+              </>
+            )}
+
+            {/* package — the actual summary cover + editable descriptions */}
+            {!previewLoading && preview?.mode === "package" && (
+              <>
+                <p className="text-[12px] text-[#64748B]">
+                  Tracking ref <span className="font-mono">[{preview.pendingNumber}]</span> — the final number is assigned when you send.
+                </p>
+                {coverUrl ? (
+                  <object data={coverUrl} type="application/pdf" className="w-full rounded-lg border border-[#E2E8F0] bg-white" style={{ height: 420 }}>
+                    <p className="p-4 text-[12px] text-[#64748B]">Preview unavailable in this browser — the summary cover will still generate on accept.</p>
+                  </object>
+                ) : (
+                  <p className="text-[13px] text-[#64748B]">No cover could be rendered for this package.</p>
+                )}
+
+                <div>
+                  <p className="text-[11px] font-semibold text-[#64748B] uppercase tracking-wider mb-1.5">
+                    Item descriptions (click to edit — the only editable field on this cover)
+                  </p>
+                  <div className="rounded-lg border border-[#E2E8F0] bg-white divide-y divide-[#E2E8F0]/70 overflow-clip">
+                    {preview.items.map((it) => (
+                      <PackageDescriptionRow
+                        key={it.submittalId}
+                        value={it.description}
+                        onSave={saveDescription(it.submittalId)}
+                      />
+                    ))}
+                  </div>
+                </div>
+
+                <ReadOnlyNote logLink={logLink} />
+              </>
+            )}
+
+            {error && <div className="rounded-md bg-red-50 border border-red-200 px-3 py-2 text-[12px] text-red-600">{error}</div>}
+          </div>
+        )}
+
+        {/* ── Step 3: delivery + download ────────────────────────────────── */}
+        {step === "delivery" && (
           <div className="px-6 py-4 space-y-4 overflow-y-auto">
             <div className="rounded-lg border border-[#E2E8F0] bg-[#F8F9FA] px-4 py-3 grid grid-cols-2 sm:grid-cols-4 gap-3">
               {[
@@ -287,14 +516,25 @@ export default function PackageCreateModal({
                 className="h-9 px-4 rounded-md border border-[#E2E8F0] text-[13px] text-[#64748B] hover:bg-[#0F172A]/[0.04] transition-colors disabled:opacity-50">
                 Cancel
               </button>
+              <button onClick={goToPreview} disabled={busy}
+                className="h-9 px-4 rounded-md bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors disabled:opacity-50">
+                Preview cover →
+              </button>
+            </>
+          ) : step === "cover" ? (
+            <>
+              <button onClick={() => { setStep("form"); setError(null) }} disabled={busy}
+                className="h-9 px-4 rounded-md border border-[#E2E8F0] text-[13px] text-[#64748B] hover:bg-[#0F172A]/[0.04] transition-colors disabled:opacity-50">
+                ← Back
+              </button>
               <div className="flex items-center gap-2">
-                <button onClick={() => createPackage(true)} disabled={busy}
+                <button onClick={() => createPackage(true)} disabled={busy || previewLoading}
                   className="h-9 px-4 rounded-md border border-[#E2E8F0] text-[13px] font-semibold text-[#0F172A] hover:bg-[#0F172A]/[0.04] transition-colors disabled:opacity-50">
                   Save as Draft
                 </button>
-                <button onClick={() => createPackage(false)} disabled={busy}
+                <button onClick={() => createPackage(false)} disabled={busy || previewLoading}
                   className="h-9 px-4 rounded-md bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors disabled:opacity-50">
-                  {busy ? "Working…" : "Create package"}
+                  {busy ? "Working…" : "Accept & send"}
                 </button>
               </div>
             </>
@@ -311,6 +551,75 @@ export default function PackageCreateModal({
           )}
         </div>
       </div>
+    </div>
+  )
+}
+
+/** The read-only-fields explainer + navigation links shown under a cover. */
+function ReadOnlyNote({ logLink }: { logLink: string }) {
+  return (
+    <p className="text-[11px] text-[#94A3B8] leading-relaxed">
+      Project location, spec/submittal numbers, revision, dates, and the reviewer stamp are read-only here.
+      {" "}
+      <a href="/settings" target="_blank" rel="noopener noreferrer" className="text-[#7B9BB5] font-semibold hover:underline">Edit location in Settings → Projects ↗</a>
+      {" · "}
+      <a href={logLink} target="_blank" rel="noopener noreferrer" className="text-[#7B9BB5] font-semibold hover:underline">Open this submittal in the log ↗</a>
+    </p>
+  )
+}
+
+/** One click-to-edit description row for the package-mode summary cover. Mirrors
+ *  the coversheet's inline edit (empty rejected, Enter/blur commits, Escape
+ *  cancels) but as a compact list row beside the rendered PDF. */
+function PackageDescriptionRow({ value, onSave }: { value: string; onSave: (v: string) => Promise<void> }) {
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState(value)
+  const [saving, setSaving] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
+  const ref = useRef<HTMLInputElement>(null)
+
+  useEffect(() => { if (!editing) setDraft(value) }, [value, editing])
+  useEffect(() => { if (editing) ref.current?.focus() }, [editing])
+
+  async function commit() {
+    if (saving) return
+    const next = draft.trim()
+    if (next.length === 0) { setErr("A description is required."); ref.current?.focus(); return }
+    if (next === value.trim()) { setEditing(false); setErr(null); return }
+    setSaving(true); setErr(null)
+    try { await onSave(next); setEditing(false) }
+    catch (e) { setErr(e instanceof Error ? e.message : "Could not save."); ref.current?.focus() }
+    finally { setSaving(false) }
+  }
+
+  return (
+    <div className="px-3 py-2">
+      {editing ? (
+        <>
+          <input
+            ref={ref}
+            className="w-full h-8 px-2 rounded border border-[#7B9BB5] text-[13px] text-[#0F172A] bg-[#fffdf5] focus:outline-none disabled:opacity-60"
+            value={draft}
+            disabled={saving}
+            onChange={e => setDraft(e.target.value)}
+            onBlur={commit}
+            onKeyDown={e => {
+              if (e.key === "Enter") { e.preventDefault(); commit() }
+              else if (e.key === "Escape") { e.preventDefault(); setDraft(value); setErr(null); setEditing(false) }
+            }}
+          />
+          {err && <p className="text-[11px] font-semibold text-red-600 mt-1" role="alert">{err}</p>}
+        </>
+      ) : (
+        <button
+          type="button"
+          onClick={() => setEditing(true)}
+          className="w-full text-left text-[13px] text-[#0F172A] hover:text-[#7B9BB5] truncate"
+          title="Click to edit — writes back to the submittal log"
+        >
+          {value || "—"}
+        </button>
+      )}
     </div>
   )
 }

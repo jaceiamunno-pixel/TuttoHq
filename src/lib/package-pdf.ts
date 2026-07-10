@@ -251,19 +251,38 @@ export interface GeneratedFileMeta {
   fileSize: number
 }
 
+/** Everything the transmittal composer needs, resolved with no writes. */
+export interface ResolvedPackage {
+  project: { name?: string | null; number?: string | null; location?: string | null; gc_name?: string | null; architect?: string | null }
+  gcName: string
+  logoBytes: ArrayBuffer | null
+  logoScalePct: number | null | undefined
+  items: ResolvedItem[]
+  warnings: string[]
+}
+
 /**
- * Compose a transmittal package's file(s), upload each to storage, and INSERT
- * one append-only submittal_package_files row per file under a fresh
- * generation_id. Returns the generation id + file metadata + per-item warnings.
+ * Resolve project + branding + per-item coversheet props + the SERVER-RESOLVED
+ * reviewer identity for a transmittal package. Performs NO writes and NO date
+ * stamping. This is the single source the cover data flows through, so the
+ * gated preview and the actual generation render from identical inputs — the
+ * cover can't drift from what the CM receives.
  *
- * Everything runs through the caller's AUTHED `supabase` client — reads,
- * document downloads, uploads (the submittals bucket's tenant RLS permits
- * writes under the company-first path), and the row inserts. No service-role.
+ *   withDocuments: true  — the generator: downloads each item's document so it
+ *                          can be merged behind the cover.
+ *   withDocuments: false — the preview: skips every document download (the
+ *                          preview only renders the COVER, never the merged
+ *                          product), so it is fast and touches no file bytes.
+ *
+ * The reviewer stamp (company + reviewedBy) is read from the CALLER'S OWN
+ * session rows (companies / user_profiles) — it is never accepted from client
+ * input, in either path.
  */
-export async function generateTransmittalPackage(
+export async function resolvePackageItems(
   supabase: AnySupabase,
-  args: GenerateTransmittalArgs,
-): Promise<{ generationId: string; files: GeneratedFileMeta[]; warnings: string[] }> {
+  args: { projectId: string; companyId: string; sendDate: string; submittalIds: string[] },
+  opts: { withDocuments: boolean },
+): Promise<ResolvedPackage> {
   const warnings: string[] = []
 
   // Project + branding + reviewer identity (for the per-item coversheets).
@@ -273,10 +292,7 @@ export async function generateTransmittalPackage(
     supabase.from("companies").select("name").eq("id", args.companyId).maybeSingle(),
     supabase.from("user_profiles").select("full_name").maybeSingle(),
   ])
-  const project = (projectRes.data ?? {}) as {
-    name?: string | null; number?: string | null; location?: string | null
-    gc_name?: string | null; architect?: string | null
-  }
+  const project = (projectRes.data ?? {}) as ResolvedPackage["project"]
   const reviewedByName = (profileRes.data?.full_name as string | undefined) ?? ""
   const stampCompanyName = (companyRes.data?.name as string | undefined) ?? ""
   const logoScalePct = settingsRes.data?.logo_scale_pct ?? undefined
@@ -288,9 +304,10 @@ export async function generateTransmittalPackage(
   }
 
   // Submittal rows for the requested ids (company-scoped by RLS, active only).
+  // section_name is fetched because it is the cover's spec-title source (below).
   const { data: subRows } = await supabase
     .from("submittals")
-    .select("id, submittal_seq, section_seq, csi_section, spec_section_id, file_name, submittal_type, storage_path, stripped_storage_path, mime_type, submittal_number, revision_number, due_date")
+    .select("id, submittal_seq, section_seq, csi_section, section_name, spec_section_id, file_name, submittal_type, storage_path, stripped_storage_path, mime_type, submittal_number, revision_number, due_date")
     .in("id", args.submittalIds)
     .eq("status", "active")
 
@@ -299,7 +316,7 @@ export async function generateTransmittalPackage(
   const byId = new Map(rows.map(r => [r.id as string, r]))
   const ordered = args.submittalIds.map(id => byId.get(id)).filter(Boolean)
 
-  // Resolve spec-section titles for the coversheets (best-effort).
+  // Resolve spec-section titles for the coversheets (best-effort fallback only).
   const sectionIds = [...new Set(ordered.map(r => r.spec_section_id).filter((v): v is string => !!v))]
   const titleById = new Map<string, string>()
   if (sectionIds.length > 0) {
@@ -316,20 +333,24 @@ export async function generateTransmittalPackage(
 
     // Document selection — mirror /api/generate-cover's "stripped" branch:
     //   stripped_storage_path (clean product) → storage_path (current file).
-    const documentPath = r.stripped_storage_path || r.storage_path
+    // Skipped entirely for a preview (opts.withDocuments = false): the preview
+    // renders the cover, not the merged product, so it downloads nothing.
     let documentBytes: ArrayBuffer | null = null
-    if (r.mime_type === "application/pdf" && documentPath) {
-      const { data: blob } = await supabase.storage.from(PKG_BUCKET).download(documentPath)
-      if (blob) {
-        documentBytes = await blob.arrayBuffer()
-        if (!r.stripped_storage_path) {
-          warnings.push(`${label}: no cover-stripped copy on file — used the original (any existing coversheet is retained).`)
+    if (opts.withDocuments) {
+      const documentPath = r.stripped_storage_path || r.storage_path
+      if (r.mime_type === "application/pdf" && documentPath) {
+        const { data: blob } = await supabase.storage.from(PKG_BUCKET).download(documentPath)
+        if (blob) {
+          documentBytes = await blob.arrayBuffer()
+          if (!r.stripped_storage_path) {
+            warnings.push(`${label}: no cover-stripped copy on file — used the original (any existing coversheet is retained).`)
+          }
+        } else {
+          warnings.push(`${label}: attachment file could not be read — skipped.`)
         }
       } else {
-        warnings.push(`${label}: attachment file could not be read — skipped.`)
+        warnings.push(`${label}: no current PDF attachment — skipped.`)
       }
-    } else {
-      warnings.push(`${label}: no current PDF attachment — skipped.`)
     }
 
     const specNumber = (r.csi_section as string | null) ?? ""
@@ -341,13 +362,20 @@ export async function generateTransmittalPackage(
       : ""
     const stampSubmittalNo = [specNumber.trim(), numPart].filter(Boolean).join("-")
 
+    // Cover spec-title: the SUBMITTAL ROW is the source of truth. Prefer the
+    // row's section_name (an inline cover edit writes there), and fall back to
+    // the spec-book title only when the row carries no section_name.
+    const rowSectionName = typeof r.section_name === "string" ? r.section_name.trim() : ""
+    const specSectionTitle = rowSectionName
+      || (r.spec_section_id ? (titleById.get(r.spec_section_id) ?? "") : "")
+
     const coversheet: SubmittalCoversheetProps = {
       gcName: project.gc_name ?? "",
       projectName: project.name ?? "",
       projectNumber: project.number ?? "",
       projectLocation: project.location ?? "",
       submittalDescription: description,
-      specSectionTitle: (r.spec_section_id && titleById.get(r.spec_section_id)) || "",
+      specSectionTitle,
       specSectionNumber: specNumber,
       submittalNumber: secSeq != null ? padSectionSeq(secSeq) : "",
       revisionNumber: String(parseInt(String(r.revision_number ?? "0"), 10) || 0).padStart(2, "0"),
@@ -375,16 +403,39 @@ export async function generateTransmittalPackage(
     })
   }
 
+  return { project, gcName: project.gc_name ?? "", logoBytes, logoScalePct, items, warnings }
+}
+
+/**
+ * Compose a transmittal package's file(s), upload each to storage, and INSERT
+ * one append-only submittal_package_files row per file under a fresh
+ * generation_id. Returns the generation id + file metadata + per-item warnings.
+ *
+ * Everything runs through the caller's AUTHED `supabase` client — reads,
+ * document downloads, uploads (the submittals bucket's tenant RLS permits
+ * writes under the company-first path), and the row inserts. No service-role.
+ */
+export async function generateTransmittalPackage(
+  supabase: AnySupabase,
+  args: GenerateTransmittalArgs,
+): Promise<{ generationId: string; files: GeneratedFileMeta[]; warnings: string[] }> {
+  const resolved = await resolvePackageItems(
+    supabase,
+    { projectId: args.projectId, companyId: args.companyId, sendDate: args.sendDate, submittalIds: args.submittalIds },
+    { withDocuments: true },
+  )
+  const warnings = resolved.warnings
+
   const built = await buildTransmittalPackageFiles({
     packageNumber: args.packageNumber,
     recipientType: args.recipientType,
     sendDate: args.sendDate,
     coversheetMode: args.coversheetMode,
-    project,
-    gcName: project.gc_name ?? "",
-    logoBytes,
-    logoScalePct,
-    items,
+    project: resolved.project,
+    gcName: resolved.gcName,
+    logoBytes: resolved.logoBytes,
+    logoScalePct: resolved.logoScalePct,
+    items: resolved.items,
   })
 
   if (built.length === 0) {
