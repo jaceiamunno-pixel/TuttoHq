@@ -1,6 +1,6 @@
 "use client";
 
-import React from "react";
+import React, { useEffect, useRef, useState } from "react";
 import "./submittal-coversheet.css";
 import { clampLogoScalePct } from "@/lib/logo-scale";
 
@@ -9,6 +9,14 @@ export type StampBox = {
   /** Optional rendered stamp content. Pass null/undefined for empty box. */
   content?: React.ReactNode;
 };
+
+/**
+ * Persist an inline cover edit. Resolves on success; REJECTS (throws) on
+ * failure so the field can revert and surface the error — a failed save must
+ * never look like it stuck. The caller writes through the authed, RLS-scoped
+ * PATCH /api/submittals/[id] route and re-renders from the updated row.
+ */
+export type CoverFieldSaver = (value: string) => Promise<void>;
 
 export type SubmittalCoversheetProps = {
   // Branding
@@ -39,6 +47,15 @@ export type SubmittalCoversheetProps = {
   // Stamps (always 4: GC, Architect, Engineer, Subcontractor)
   stamps?: [StampBox, StampBox, StampBox, StampBox];
 
+  // Inline click-to-edit. When a saver is supplied, that (and only that) field
+  // becomes editable in place; the value is written back to the submittal row
+  // by the saver. Omit both for a plain, read-only render (the default).
+  //   editSubmittalDescription → submittals.file_name  (empty rejected)
+  //   editSpecSectionTitle     → submittals.section_name
+  // Every other field stays read-only regardless.
+  editSubmittalDescription?: CoverFieldSaver;
+  editSpecSectionTitle?: CoverFieldSaver;
+
   // Footer
   page?: number;
   totalPages?: number;
@@ -59,6 +76,115 @@ const Field = ({
     <span className="tt-field__value">{value}</span>
   </div>
 );
+
+/**
+ * Click-to-edit variant of Field. Default state is the rendered value; clicking
+ * it turns the value into an input. On Enter/blur it commits via `onSave`; on
+ * Escape it cancels. An unchanged value is a no-op (no PATCH). When
+ * `allowEmpty` is false an empty value is rejected inline (never saved) —
+ * mirrors the file_name server guard so the client blocks it before the round
+ * trip. A rejected save reverts the draft and shows the error.
+ */
+const EditableField = ({
+  label,
+  value,
+  wide = false,
+  onSave,
+  allowEmpty = true,
+  emptyError = "This field cannot be empty.",
+}: {
+  label: string;
+  value: string;
+  wide?: boolean;
+  onSave: CoverFieldSaver;
+  allowEmpty?: boolean;
+  emptyError?: string;
+}) => {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(value);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  // Keep the draft in sync with the row value whenever we're not mid-edit
+  // (e.g. after a successful save re-renders the parent with fresh data).
+  useEffect(() => {
+    if (!editing) setDraft(value);
+  }, [value, editing]);
+
+  useEffect(() => {
+    if (editing) inputRef.current?.focus();
+  }, [editing]);
+
+  async function commit() {
+    if (saving) return;
+    const next = draft.trim();
+    if (!allowEmpty && next.length === 0) {
+      setError(emptyError);
+      inputRef.current?.focus();
+      return;
+    }
+    if (next === value.trim()) {
+      setEditing(false);
+      setError(null);
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      await onSave(next);
+      setEditing(false);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not save. Try again.");
+      inputRef.current?.focus();
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function cancel() {
+    setDraft(value);
+    setError(null);
+    setEditing(false);
+  }
+
+  return (
+    <div className={`tt-field ${wide ? "tt-field--wide" : ""}`}>
+      <span className="tt-field__label">
+        {label}
+        <span className="tt-field__edit-hint"> · click to edit</span>
+      </span>
+      {editing ? (
+        <>
+          <input
+            ref={inputRef}
+            className="tt-field__input"
+            value={draft}
+            disabled={saving}
+            onChange={(e) => setDraft(e.target.value)}
+            onBlur={commit}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") { e.preventDefault(); commit(); }
+              else if (e.key === "Escape") { e.preventDefault(); cancel(); }
+            }}
+            aria-label={label}
+            aria-invalid={error ? true : undefined}
+          />
+          {error && <span className="tt-field__error" role="alert">{error}</span>}
+        </>
+      ) : (
+        <button
+          type="button"
+          className="tt-field__value tt-field__value--editable"
+          onClick={() => setEditing(true)}
+          title="Click to edit — writes back to the submittal log"
+        >
+          {value || <span className="tt-field__placeholder">—</span>}
+        </button>
+      )}
+    </div>
+  );
+};
 
 const Checkbox = ({
   label,
@@ -103,6 +229,8 @@ export default function SubmittalCoversheet({
   submittalPartyRequired = false,
   copyTo = "",
   stamps,
+  editSubmittalDescription,
+  editSpecSectionTitle,
   page = 1,
   totalPages = 1,
   version = "1.0",
@@ -143,8 +271,28 @@ export default function SubmittalCoversheet({
 
       {/* Submittal block */}
       <section className="tt-block tt-block--submittal">
-        <Field label="Submittal Description" value={submittalDescription} wide />
-        <Field label="Spec Section Title" value={specSectionTitle} wide />
+        {editSubmittalDescription ? (
+          <EditableField
+            label="Submittal Description"
+            value={submittalDescription}
+            wide
+            onSave={editSubmittalDescription}
+            allowEmpty={false}
+            emptyError="A description is required."
+          />
+        ) : (
+          <Field label="Submittal Description" value={submittalDescription} wide />
+        )}
+        {editSpecSectionTitle ? (
+          <EditableField
+            label="Spec Section Title"
+            value={specSectionTitle}
+            wide
+            onSave={editSpecSectionTitle}
+          />
+        ) : (
+          <Field label="Spec Section Title" value={specSectionTitle} wide />
+        )}
 
         <div className="tt-row">
           <Field label="Spec Section No." value={specSectionNumber} />
