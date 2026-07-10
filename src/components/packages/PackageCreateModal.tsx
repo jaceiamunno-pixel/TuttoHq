@@ -7,6 +7,7 @@ import SubmittalCoversheet from "@/components/submittals/SubmittalCoversheet"
 import GenerationFiles, { type GenFile } from "./GenerationFiles"
 import { normalizeSubmittalTitle } from "@/lib/title-normalize"
 import { formatSectionNumber, padSectionSeq } from "@/lib/section-number"
+import { transmittalPackageBaseName } from "@/lib/package-name"
 
 // ─── Transmittal-package create modal ───────────────────────────────────────
 // A package = pick submittal log rows → choose who it's going to → choose a
@@ -496,6 +497,7 @@ export default function PackageCreateModal({
               {genFiles.length > 0 ? (
                 <GenerationFiles
                   packageNumber={pkg?.package_number ?? "package"}
+                  zipBaseName={transmittalPackageBaseName(recipientType, sendDate, pkg?.package_number ?? "package")}
                   coversheetMode={genMode}
                   files={genFiles}
                   preview

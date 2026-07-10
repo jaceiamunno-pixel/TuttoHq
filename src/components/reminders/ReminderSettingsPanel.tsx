@@ -10,6 +10,10 @@ import {
   MAX_REMINDER_COUNT,
   type ValidatedSettingsPatch,
 } from "@/lib/reminder-settings"
+// Single shared date formatter (fixed for date-only UTC-shift). last_sent_at /
+// next_due_at are both timestamptz today, so this is instant-accurate now AND
+// safe if either ever becomes a date-only string.
+import { fmtDate } from "@/app/dashboard/_shared/format"
 
 // ─── ReminderSettingsPanel (Session K2) ─────────────────────────────────────
 // Shared between PackagesView and CloseoutPackagesView. Inputs are nullable
@@ -32,13 +36,6 @@ interface Props {
   reminderSettings: PackageReminderSettings
   saveEndpoint: string                                // e.g. /api/submittal-packages/{id}/settings
   onSaved: () => void
-}
-
-function fmtDate(iso: string | null): string {
-  if (!iso) return "—"
-  const d = new Date(iso)
-  if (Number.isNaN(d.getTime())) return "—"
-  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
 }
 
 function fmtBool(v: boolean): string {
@@ -150,7 +147,7 @@ export default function ReminderSettingsPanel({ pkg, reminderSettings, saveEndpo
     if (reminderSettings.sent_count >= reminderSettings.effective_max_reminders) {
       return "No more reminders (max reached)"
     }
-    return fmtDate(reminderSettings.next_due_at)
+    return reminderSettings.next_due_at ? fmtDate(reminderSettings.next_due_at) : "—"
   })()
 
   const sentLabel = `${reminderSettings.sent_count} / ${reminderSettings.effective_max_reminders}`
@@ -313,7 +310,7 @@ export default function ReminderSettingsPanel({ pkg, reminderSettings, saveEndpo
               </li>
               <li>
                 <span className="text-[#64748B]">Last sent:</span>{" "}
-                <span className="font-semibold">{fmtDate(reminderSettings.last_sent_at)}</span>
+                <span className="font-semibold">{reminderSettings.last_sent_at ? fmtDate(reminderSettings.last_sent_at) : "—"}</span>
               </li>
               <li>
                 <span className="text-[#64748B]">Next due:</span>{" "}
