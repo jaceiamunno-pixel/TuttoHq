@@ -26,10 +26,14 @@
 // line directly above it) to intentionally suppress a match. Every use is
 // reported by --list-suppressions so a hatch can never hide silently.
 //
-// Scan scope is src/ + native/ (shipping code that can reach a log stream).
-// tools/ is deliberately OUT of scope: the guard does not scan itself (its own
-// watch-word list would otherwise self-flag) and other local tooling is not a
-// production log surface.
+// Scan scope is src/ + native/ + scripts/ + tools/. It covers scripts/ and
+// tools/ ON PURPOSE: those are exactly where diagnostics live, and "this isn't a
+// production log surface" is the reasoning that let b074c2a (a diagnostic) ship
+// a bearer token. The ONLY file excluded is this detector itself (SELF_PATH) —
+// one exact path, not a directory — because it defines the watch-word list and
+// would otherwise self-flag. A directory exclusion would fail silently for every
+// future file dropped into tools/; a one-path exclusion fails loudly (CI's
+// `test -f` step goes red if the detector is renamed or moved).
 //
 // Usage:
 //   node tools/check-secret-logs.mjs --all                # full scan of scope
@@ -52,8 +56,17 @@ const SECRET_WORD =
 const CONSOLE_METHODS = "log|debug|info|warn|error|trace|dir|table|group|groupCollapsed";
 const CONSOLE_RE = new RegExp(`console\\s*\\.\\s*(${CONSOLE_METHODS})\\s*\\(`, "g");
 
-// Directories to full-scan. tools/ is intentionally excluded (see header).
-const SCAN_DIRS = ["src", "native"];
+// Directories to full-scan — includes scripts/ and tools/ where diagnostics
+// live (see header). Paths are git-relative with forward slashes.
+const SCAN_DIRS = ["src", "native", "scripts", "tools"];
+
+// The one file scanning skips: this detector defines the credential watch-word
+// list, so it would always self-flag. Excluded by EXACT path — not by excluding
+// the tools/ directory — so every OTHER file in tools/ is still scanned. If the
+// detector is renamed, this stops matching (harmless) and CI's `test -f` step
+// goes red, so the miss is loud, not silent.
+const SELF_PATH = "tools/check-secret-logs.mjs";
+
 const SOURCE_EXT = /\.(ts|tsx|js|jsx|mjs|cjs)$/;
 const EXCLUDE = [
   /\.(test|spec)\.[cm]?tsx?$/, // test files legitimately assert on secret-ish names
@@ -233,7 +246,7 @@ function sh(cmd) {
 function listScanFiles() {
   const out = sh(`git ls-files -- ${SCAN_DIRS.join(" ")}`);
   return out.split("\n").filter(Boolean).filter(
-    (f) => SOURCE_EXT.test(f) && !EXCLUDE.some((re) => re.test(f)),
+    (f) => f !== SELF_PATH && SOURCE_EXT.test(f) && !EXCLUDE.some((re) => re.test(f)),
   );
 }
 
