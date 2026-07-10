@@ -18,13 +18,16 @@ export interface GenFile {
 }
 
 export default function GenerationFiles({
-  packageNumber, coversheetMode, files, preview = false,
+  packageNumber, coversheetMode, files, preview = false, zipBaseName,
 }: {
   packageNumber: string
   coversheetMode: "per_item" | "package"
   files: GenFile[]
   /** Show an inline iframe for the single 'package' PDF. */
   preview?: boolean
+  /** Human-readable base name for the "Download all" zip (no extension). Falls
+   *  back to the tracking-ref packageNumber when not supplied. */
+  zipBaseName?: string
 }) {
   const [zipping, setZipping] = useState(false)
   const [err, setErr] = useState<string | null>(null)
@@ -36,7 +39,7 @@ export default function GenerationFiles({
     if (ready.length === 0) return
     setZipping(true); setErr(null)
     try {
-      await downloadFilesAsZip(ready, `${packageNumber}.zip`)
+      await downloadFilesAsZip(ready, `${zipBaseName || packageNumber}.zip`)
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Could not build the zip")
     } finally { setZipping(false) }

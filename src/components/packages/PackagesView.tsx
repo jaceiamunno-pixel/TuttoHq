@@ -5,6 +5,7 @@ import type { SubmittalPackage, SubmittalPackageDetail, SubmittalRecord } from "
 import GenerationFiles, { type GenFile } from "./GenerationFiles"
 import { downloadFilesAsZip } from "@/lib/zip"
 import { formatSectionNumber, padSectionSeq } from "@/lib/section-number"
+import { transmittalPackageBaseName } from "@/lib/package-name"
 
 // ─── Packages tab ───────────────────────────────────────────────────────────
 // Lists a project's transmittal packages and a detail panel showing the
@@ -299,6 +300,7 @@ function PackageDetail({ packageId, onBack, onChanged }: {
                   </div>
                   <GenerationFiles
                     packageNumber={pkg.package_number}
+                    zipBaseName={transmittalPackageBaseName(pkg.recipient_type, pkg.send_date, pkg.package_number)}
                     coversheetMode={g.coversheetMode}
                     files={g.files}
                   />

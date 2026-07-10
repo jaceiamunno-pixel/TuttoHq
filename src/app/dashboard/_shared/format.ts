@@ -15,7 +15,14 @@ export function getDot(mime: string | null) {
 }
 
 export function fmtDate(iso: string) {
-  return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
+  // A date-only string ("YYYY-MM-DD") carries no time and no zone. `new Date(iso)`
+  // parses it as UTC midnight, which then renders one calendar day EARLY in any
+  // negative-offset zone (America/New_York → 8pm the prior day). Parse the
+  // components and build a LOCAL date so the calendar day is preserved. Full
+  // timestamps (they contain a "T") keep the instant-accurate `new Date` path.
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso)
+  const d = m ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])) : new Date(iso)
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
 }
 
 export function fmtDateOnly(d: string) {

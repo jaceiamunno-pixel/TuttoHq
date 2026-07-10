@@ -6,6 +6,7 @@ import { buildCoversheetPdf, type CoversheetReviewer } from "./coversheet-pdf"
 import type { SubmittalCoversheetProps } from "@/components/submittals/SubmittalCoversheet"
 import { normalizeSubmittalTitle } from "./title-normalize"
 import { formatSectionNumber, padSectionSeq } from "./section-number"
+import { transmittalItemFileName, transmittalPackageBaseName } from "./package-name"
 
 // ─── Transmittal-package PDF ────────────────────────────────────────────────
 // A package is an OUTBOUND TRANSMITTAL: the PM assembles the APPROVED submittal
@@ -52,15 +53,6 @@ function fmtDate(iso: string | null | undefined): string {
 
 function stripExt(name: string): string {
   return name.replace(/\.[^./\\]+$/, "")
-}
-
-/** Storage-safe, human-readable file-name fragment. */
-function sanitize(s: string, max = 48): string {
-  return (s || "")
-    .replace(/[^A-Za-z0-9._-]+/g, "_")
-    .replace(/_+/g, "_")
-    .replace(/^[_.-]+|[_.-]+$/g, "")
-    .slice(0, max) || "file"
 }
 
 // ─── Resolved per-item shape the pure composer consumes ─────────────────────
@@ -118,7 +110,6 @@ async function appendInto(merged: PDFDocument, bytes: ArrayBuffer | Uint8Array |
  */
 export async function buildTransmittalPackageFiles(input: TransmittalPdfInput): Promise<TransmittalFile[]> {
   const generationDate = new Date(`${input.sendDate}T00:00:00`)
-  const numBase = sanitize(input.packageNumber)
 
   if (input.coversheetMode === "package") {
     // ── MODE 'package': one cover, then every document in order → 1 PDF. ────
@@ -168,28 +159,29 @@ export async function buildTransmittalPackageFiles(input: TransmittalPdfInput): 
     await appendInto(merged, await pdf.save())
     for (const it of input.items) await appendInto(merged, it.documentBytes)
 
-    return [{ submittalId: null, bytes: await merged.save(), fileName: `${numBase}.pdf` }]
+    // Single-PDF name reads like the artifact it is, e.g.
+    // "Submittal Transmittal - Construction Manager - 2026-07-10.pdf".
+    const packageFileName = `${transmittalPackageBaseName(input.recipientType, input.sendDate, input.packageNumber)}.pdf`
+    return [{ submittalId: null, bytes: await merged.save(), fileName: packageFileName }]
   }
 
   // ── MODE 'per_item': one SEPARATE PDF per item (cover + that item's doc). ──
   const files: TransmittalFile[] = []
-  let ordinal = 0
   for (const it of input.items) {
     // Items with no resolvable document are skipped entirely (already warned in
     // the compose step). A lone cover with no document is not a useful artifact.
     if (!it.documentBytes) continue
-    ordinal++
     const doc = await PDFDocument.create()
     const coverBytes = await buildCoversheetPdf(
       it.coversheet, input.logoBytes, it.reviewer, input.logoScalePct ?? undefined,
     )
     await appendInto(doc, coverBytes)
     await appendInto(doc, it.documentBytes)
-    const tag = it.sectionSeq != null ? padSectionSeq(it.sectionSeq) : String(ordinal).padStart(2, "0")
     files.push({
       submittalId: it.submittalId,
       bytes: await doc.save(),
-      fileName: `${numBase}_${sanitize(tag, 8)}_${sanitize(it.description)}.pdf`,
+      // "{csi_section}-{seq:3} {title}.pdf" — agrees with the log + coversheet.
+      fileName: transmittalItemFileName(it.specNumber, it.sectionSeq, it.description),
     })
   }
   return files
