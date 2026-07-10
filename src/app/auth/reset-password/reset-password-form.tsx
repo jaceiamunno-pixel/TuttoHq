@@ -3,6 +3,7 @@
 import { useState } from "react"
 import { useRouter } from "next/navigation"
 import { createClient } from "@/lib/supabase/client"
+import { clearRecoveryMarker } from "../recovery-marker"
 
 /**
  * The password form for /auth/reset-password. The recovery session is already
@@ -32,6 +33,12 @@ export default function ResetPasswordForm() {
 
     const supabase = createClient()
     const { error: updateError } = await supabase.auth.updateUser({ password })
+
+    // Clear the recovery marker unconditionally — success OR failure — the
+    // moment the single password attempt is made. It authorizes nothing on its
+    // own, but it must not linger to be replayed.
+    clearRecoveryMarker()
+
     if (updateError) {
       setError(updateError.message)
       setLoading(false)

@@ -4,6 +4,7 @@ import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import Link from "next/link"
 import { createBrowserClient } from "@supabase/ssr"
+import { setRecoveryMarker } from "../recovery-marker"
 
 /**
  * `/auth/callback` — the landing route for every Supabase auth email link.
@@ -109,7 +110,15 @@ export default function AuthCallbackPage() {
       scrubUrl()
       if (cancelled) return
 
-      router.replace(type === "recovery" ? "/auth/reset-password" : "/dashboard")
+      if (type === "recovery") {
+        // Set the recovery marker HERE — at the one point we have proven a
+        // valid recovery link was just consumed. /auth/reset-password requires
+        // it (plus a live session) and clears it on the first password attempt.
+        setRecoveryMarker()
+        router.replace("/auth/reset-password")
+      } else {
+        router.replace("/dashboard")
+      }
     }
 
     void run()

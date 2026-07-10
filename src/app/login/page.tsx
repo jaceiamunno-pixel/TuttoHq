@@ -63,7 +63,11 @@ export default function LoginPage() {
     // user is already on (www in prod, post-redirect), so the code lands on the
     // same host that holds the PKCE verifier cookie — see /auth/callback.
     await createClient().auth.resetPasswordForEmail(email, {
-      redirectTo: `${window.location.origin}/auth/callback`,
+      // ?type=recovery so /auth/callback can gate into reset-password on the PKCE
+      // path: the ?code= link carries NO fragment `type` (unlike the implicit
+      // dashboard link), so the query is the only place to carry it. GoTrue
+      // appends &code=… and preserves this param.
+      redirectTo: `${window.location.origin}/auth/callback?type=recovery`,
     })
 
     // Deliberately UNIFORM: we ignore the result entirely and never branch on
