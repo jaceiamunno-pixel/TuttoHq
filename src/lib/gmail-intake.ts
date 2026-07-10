@@ -742,6 +742,13 @@ async function matchBackAttachment(ctx: MatchBackCtx): Promise<void> {
 
   if (candidates.length === 1) {
     const target = candidates[0]
+    // DELIBERATELY no file_name rename here — unlike bulk-import/commit's
+    // placeholder title sync. This row was already DISPATCHED to a CM/AE
+    // under its log title, so renaming it now would make the log disagree
+    // with a document sitting in someone's inbox; and inbound email
+    // attachment names are junk ("scan0001.pdf"). received_file_name below
+    // records the actual filename. Decision made with the attach-title-sync
+    // fix (PR #113, 2026-07-10) — do not "fix" this to match.
     const { error } = await supabase
       .from("submittals")
       .update({

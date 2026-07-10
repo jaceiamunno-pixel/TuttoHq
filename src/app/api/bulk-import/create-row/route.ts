@@ -129,8 +129,10 @@ export async function POST(req: NextRequest) {
       revision_number:  "R0",
       review_status:    "Received",
       title_locked:     false,
-      // Pre-attach placeholder title; the attachment sync trigger overwrites
-      // file_name with the committed PDF's name once the file lands.
+      // Pre-attach placeholder title. The attachment sync trigger deliberately
+      // does NOT touch file_name (sql/trigger-stop-renaming-rows.sql); the
+      // commit route's placeholder title sync replaces it with the committed
+      // PDF's name when it still matches the untouched spec-book title.
       file_name:        donor.material_name || donor.section_name || `${csiSection} ${submittalType}`,
       uploaded_by:      user.id,
     }),
