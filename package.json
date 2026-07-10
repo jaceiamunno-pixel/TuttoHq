@@ -10,6 +10,7 @@
     "start": "next start",
     "test": "vitest run",
     "test:watch": "vitest",
+    "check:secret-logs": "node tools/check-secret-logs.mjs --all",
     "fixture:pco-042": "node scripts/make-thp-pco-042-fixture.mjs",
     "verify:pco-import": "node --experimental-strip-types --import ./scripts/pco-import-register.mjs scripts/verify-pco-import.mjs"
   },
