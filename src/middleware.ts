@@ -150,7 +150,11 @@ export async function middleware(request: NextRequest) {
   // page; /api/invites/accept is the route that finalizes the link. Both
   // are token-gated, not session-gated — see accept_invite_link in
   // migrations.sql for the security model.
-const PUBLIC_PATHS = ["/", "/signup", "/login", "/demo", "/privacy", "/terms", "/articles", "/sitemap.xml", "/robots.txt"]
+// /auth/callback is public: at callback time the session lives in the URL
+// (fragment or ?code), not yet in a cookie, so getUser() sees no user — without
+// this it would be bounced to /login before it could consume the link.
+// /auth/reset-password is deliberately NOT here: it must stay session-gated.
+const PUBLIC_PATHS = ["/", "/signup", "/login", "/demo", "/privacy", "/terms", "/articles", "/sitemap.xml", "/robots.txt", "/auth/callback"]
   const isPublic =
     PUBLIC_PATHS.includes(path) ||
     path.startsWith("/api/auth") ||
