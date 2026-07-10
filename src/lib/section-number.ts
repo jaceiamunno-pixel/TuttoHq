@@ -27,3 +27,23 @@ export function formatSectionNumber(
 export function padSectionSeq(sectionSeq: number | null | undefined): string {
   return sectionSeq == null ? "—" : String(sectionSeq).padStart(3, "0")
 }
+
+/** Comparator for the section-grouped log order. Sorts by csi_section, then by
+ *  section_seq ASC so the displayed number and the row position agree
+ *  (001, 002, 003 top-to-bottom) — NOT by submittal_type, which scrambles the
+ *  numbers alphabetically. Unnumbered rows (section_seq NULL, rendered "—") sink
+ *  to the bottom of their section; submittal_seq is a stable final tiebreak.
+ *  Deliberately no canonical type ordering: a row created later (auto-split
+ *  sibling, create-row) takes the next section_seq and belongs below, not
+ *  re-slotted by type. Shared by the log table, the mobile list, and the
+ *  Excel/PDF exports so every section-ordered surface stays identical. */
+export function compareBySectionOrder(
+  a: { csi_section: string | null; section_seq: number | null; submittal_seq: number | null },
+  b: { csi_section: string | null; section_seq: number | null; submittal_seq: number | null },
+): number {
+  return (
+    (a.csi_section ?? "").localeCompare(b.csi_section ?? "") ||
+    ((a.section_seq ?? Infinity) - (b.section_seq ?? Infinity)) ||
+    ((a.submittal_seq ?? 0) - (b.submittal_seq ?? 0))
+  )
+}
