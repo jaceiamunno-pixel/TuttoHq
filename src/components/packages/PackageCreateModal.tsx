@@ -396,6 +396,19 @@ export default function PackageCreateModal({
                   </div>
                 </div>
 
+                {/* Fidelity note. This on-screen cover is the React component +
+                    submittal-coversheet.css; the generated PDF is drawn by pdf-lib
+                    (buildCoversheetPdf) from the SAME resolved props. So the layout
+                    can differ cosmetically (font/spacing), but the field VALUES are
+                    identical — that guarantee is the second sentence, which is why
+                    it carries the weight. */}
+                <div className="rounded-md border border-[#E2E8F0] bg-[#F8FAFC] px-3 py-2">
+                  <p className="text-[11px] text-[#64748B] leading-relaxed">
+                    Layout is approximate — the generated PDF is authoritative.{" "}
+                    <span className="font-semibold text-[#0F172A]">The values shown here are exactly what will print.</span>
+                  </p>
+                </div>
+
                 {/* The ACTUAL coversheet (scaled to fit), fed by server-resolved
                     props. Only the two descriptive fields are editable. */}
                 <div className="rounded-lg border border-[#E2E8F0] bg-[#f1f5f9] overflow-auto" style={{ maxHeight: 460 }}>
