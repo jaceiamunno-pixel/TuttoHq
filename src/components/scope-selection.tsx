@@ -1,7 +1,8 @@
 "use client"
 
 import { useState } from "react"
-import type { TocEntry, TocDivision } from "@/lib/scope-types"
+import type { TocEntry, TocDivision, ScopeDiagnosis } from "@/lib/scope-types"
+import { SCOPE_DIAGNOSIS_MESSAGE } from "@/lib/scope-types"
 
 // Presentational scope-selection UI. Kept free of page-specific state and data
 // fetching so it can be lifted into a shared module when the dashboard
@@ -65,6 +66,10 @@ interface SectionAccordionProps {
   checkedSections: Set<string>        // spec_numbers currently in scope
   onToggleSection: (specNumber: string) => void
   onSetDivision: (specNumbers: string[], checked: boolean) => void
+  // Per-section diagnosis from the last parse (spec_number → diagnosis). Only
+  // present for saved+parsed scope (the Edit-scope flow); empty during a fresh
+  // wizard. Rendered inline under a checked row — flag, don't block.
+  diagnosisBySection?: Record<string, ScopeDiagnosis>
 }
 
 export function SectionAccordion({
@@ -73,6 +78,7 @@ export function SectionAccordion({
   checkedSections,
   onToggleSection,
   onSetDivision,
+  diagnosisBySection,
 }: SectionAccordionProps) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
 
@@ -130,20 +136,30 @@ export function SectionAccordion({
               <div className="divide-y divide-[#E2E8F0]/60">
                 {divSections.map(s => {
                   const isChecked = checkedSections.has(s.specNumber)
+                  // Only flag sections the user actually has in scope — an
+                  // unchecked section carries no promise to chase.
+                  const diagnosis = isChecked ? diagnosisBySection?.[s.specNumber] : undefined
                   return (
-                    <label
-                      key={s.specNumber}
-                      className="flex items-center gap-2.5 px-3 py-1.5 hover:bg-[#F8F9FA] transition-colors cursor-pointer"
-                    >
-                      <input
-                        type="checkbox"
-                        checked={isChecked}
-                        onChange={() => onToggleSection(s.specNumber)}
-                        className="accent-[#7B9BB5]"
-                      />
-                      <span className="text-[11px] font-mono text-[#64748B] w-16 flex-shrink-0">{s.specNumber}</span>
-                      <span className={`text-[12px] truncate ${isChecked ? "text-[#0F172A]" : "text-[#64748B]"}`}>{s.specTitle}</span>
-                    </label>
+                    <div key={s.specNumber}>
+                      <label className="flex items-center gap-2.5 px-3 py-1.5 hover:bg-[#F8F9FA] transition-colors cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={isChecked}
+                          onChange={() => onToggleSection(s.specNumber)}
+                          className="accent-[#7B9BB5]"
+                        />
+                        <span className="text-[11px] font-mono text-[#64748B] w-16 flex-shrink-0">{s.specNumber}</span>
+                        <span className={`text-[12px] truncate ${isChecked ? "text-[#0F172A]" : "text-[#64748B]"}`}>{s.specTitle}</span>
+                      </label>
+                      {diagnosis && (
+                        <p className="flex items-start gap-1.5 pl-[2.15rem] pr-3 pb-1.5 text-[11px] text-amber-700">
+                          <svg className="w-3.5 h-3.5 flex-shrink-0 mt-px" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M4.93 19h14.14c1.54 0 2.5-1.67 1.73-3L13.73 4a2 2 0 00-3.46 0L3.2 16c-.77 1.33.19 3 1.73 3z" />
+                          </svg>
+                          <span>{SCOPE_DIAGNOSIS_MESSAGE[diagnosis]}</span>
+                        </p>
+                      )}
+                    </div>
                   )
                 })}
               </div>

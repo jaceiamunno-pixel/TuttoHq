@@ -15,7 +15,7 @@ import ProfileSignature from "@/components/profile-signature"
 import ProfilePoNumbering from "@/components/profile-po-numbering"
 import CompanyDetailsCard from "@/components/company-details-card"
 import VendorsDirectory from "@/components/vendors-directory"
-import type { TocEntry, TocDivision } from "@/lib/scope-types"
+import type { TocEntry, TocDivision, ScopeDiagnosis } from "@/lib/scope-types"
 import { uploadFileToSignedUrl, presignAndUpload } from "@/lib/storage-upload"
 import {
   formatCadence,
@@ -474,6 +474,10 @@ export default function SettingsPage() {
   const [scopedProjectIds, setScopedProjectIds]   = useState<Set<string>>(new Set())
   const [wizardEditScope, setWizardEditScope] = useState(false)   // editing scope already set on a project
   const [scopeClearing, setScopeClearing]     = useState(false)   // DELETE in flight on the clear path
+  // Per-section diagnosis from the last parse (spec_number → diagnosis), shown
+  // inline on scope rows. Only populated by loadSavedScope (Edit-scope flow);
+  // empty for a fresh wizard, where nothing has parsed yet.
+  const [scopeDiagnosis, setScopeDiagnosis]   = useState<Record<string, ScopeDiagnosis>>({})
 
   // Retained for the project-edit form's per-project assignment UI only; the
   // global Directory CRUD moved to <VendorsDirectory>.
@@ -1039,6 +1043,7 @@ export default function SettingsPage() {
     setTocSections([]); setTocDivisions([])
     setTocBusy(false); setTocError(null)
     setScopeDivisions(new Set()); setScopeSections(new Set())
+    setScopeDiagnosis({})
     setScopeSaving(false)
     setWizardScopeOnly(false); setWizardProjectName("")
     setScopeChecking(false); setScopeExistingDocIds([])
@@ -1080,7 +1085,7 @@ export default function SettingsPage() {
       const r = await fetch(`/api/projects/${projectId}/scope`)
       if (!r.ok) return false
       const d = await r.json()
-      const rows: { spec_number: string; spec_title: string; division_code: string; in_scope: boolean }[] = d.scope ?? []
+      const rows: { spec_number: string; spec_title: string; division_code: string; in_scope: boolean; diagnosis: ScopeDiagnosis | null }[] = d.scope ?? []
       if (rows.length === 0) return false
 
       const sections: TocEntry[] = rows
@@ -1110,10 +1115,14 @@ export default function SettingsPage() {
         }
       } catch { /* non-fatal: scope still saves without a re-parse */ }
 
+      const diag: Record<string, ScopeDiagnosis> = {}
+      for (const s of rows) if (s.diagnosis) diag[s.spec_number] = s.diagnosis
+
       setTocSections(sections)
       setTocDivisions(divisions)
       setScopeDivisions(inScopeDivisions)
       setScopeSections(inScopeSections)
+      setScopeDiagnosis(diag)
       // No in-scope divisions yet → start at division selection; otherwise jump
       // straight to section refinement where the current selections are visible.
       setWizardStep(inScopeDivisions.size > 0 ? 3 : 2)
@@ -2795,6 +2804,7 @@ export default function SettingsPage() {
                         checkedSections={scopeSections}
                         onToggleSection={toggleScopeSection}
                         onSetDivision={setScopeSectionsBulk}
+                        diagnosisBySection={scopeDiagnosis}
                       />
                       {tocError && (
                         <div className="rounded-md bg-red-50 border border-red-200 px-3 py-2 text-[12px] text-red-600">{tocError}</div>
