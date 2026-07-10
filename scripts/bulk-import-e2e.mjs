@@ -155,7 +155,7 @@ async function main() {
 
   console.log("[2/6] Minting a session JWT for the first user in auth.users via admin API…")
   const session = await mintSessionForFirstUser(admin)
-  console.log(`      Signed in as ${session.user.email}`)
+  console.log("      Signed in.")
 
   const cookie = buildSsrCookie(ref, session)
   const headers = { Cookie: cookie }
