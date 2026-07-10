@@ -4,6 +4,12 @@ import { useState, useEffect } from "react"
 import { uploadFileToSignedUrl } from "@/lib/storage-upload"
 import type { SpecBookDoc } from "@/app/dashboard/_shared/types"
 import { fmtDate } from "@/app/dashboard/_shared/format"
+import type { ScopeDiagnosis } from "@/lib/scope-types"
+import { SCOPE_DIAGNOSIS_LABEL } from "@/lib/scope-types"
+
+// A scoped section that produced no submittals, per GET .../scope. Project-level
+// (spans all volumes) — distinct from a single volume's per-doc parse_summary.
+type FlaggedSection = { spec_number: string; spec_title: string; diagnosis: ScopeDiagnosis }
 
 // Per-project spec book management — lives inside Settings → Projects as an
 // inline expandable panel on each project row. Spec book management is
@@ -32,6 +38,11 @@ export default function ProjectSpecBooks({ projectId, projectName, onCountChange
   const [pendingDelete, setPendingDelete] = useState<SpecBookDoc | null>(null)
   const [deleteCounts, setDeleteCounts]   = useState<{ sections: number; uncommitted: number; committed: number } | null>(null)
   const [deleting, setDeleting]           = useState(false)
+  // In-scope sections that produced no submittals (project-level). The server
+  // only returns a diagnosis once a parse has run, so a non-empty list already
+  // implies "parsed" — no separate gate needed here.
+  const [flagged, setFlagged]         = useState<FlaggedSection[]>([])
+  const [showFlagged, setShowFlagged] = useState(false)
 
   function load() {
     setLoading(true)
@@ -44,6 +55,19 @@ export default function ProjectSpecBooks({ projectId, projectName, onCountChange
       })
       .catch(() => setDocs([]))
       .finally(() => setLoading(false))
+
+    // Project-level scope diagnosis — which in-scope sections produced nothing,
+    // and why. Independent of the per-doc parse_summary below.
+    fetch(`/api/projects/${encodeURIComponent(projectId)}/scope`)
+      .then(r => r.json())
+      .then((d: { scope?: { spec_number: string; spec_title: string; diagnosis: ScopeDiagnosis | null }[] }) => {
+        setFlagged(
+          (d.scope ?? [])
+            .filter((r): r is FlaggedSection => r.diagnosis !== null)
+            .map(r => ({ spec_number: r.spec_number, spec_title: r.spec_title, diagnosis: r.diagnosis })),
+        )
+      })
+      .catch(() => setFlagged([]))
   }
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -177,6 +201,37 @@ export default function ProjectSpecBooks({ projectId, projectName, onCountChange
         </button>
       </div>
 
+      {/* ── Scoped-but-empty sections (project-level, flag-don't-block) ──── */}
+      {flagged.length > 0 && (
+        <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 overflow-hidden">
+          <button
+            onClick={() => setShowFlagged(v => !v)}
+            className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-amber-100/50 transition-colors"
+          >
+            <svg className="w-4 h-4 flex-shrink-0 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M4.93 19h14.14c1.54 0 2.5-1.67 1.73-3L13.73 4a2 2 0 00-3.46 0L3.2 16c-.77 1.33.19 3 1.73 3z" />
+            </svg>
+            <span className="text-[12px] font-semibold text-amber-800 flex-1">
+              {flagged.length} in-scope section{flagged.length === 1 ? "" : "s"} produced no submittals
+            </span>
+            <svg className={`w-3.5 h-3.5 text-amber-600 transition-transform ${showFlagged ? "rotate-90" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+            </svg>
+          </button>
+          {showFlagged && (
+            <ul className="divide-y divide-amber-200/60 border-t border-amber-200">
+              {flagged.map(f => (
+                <li key={f.spec_number} className="flex items-baseline gap-2.5 px-3 py-1.5">
+                  <span className="text-[11px] font-mono text-amber-700 w-16 flex-shrink-0">{f.spec_number}</span>
+                  <span className="text-[12px] text-amber-900 truncate flex-1" title={f.spec_title}>{f.spec_title}</span>
+                  <span className="text-[11px] text-amber-600 flex-shrink-0">{SCOPE_DIAGNOSIS_LABEL[f.diagnosis]}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+
       {loading ? (
         <p className="text-[12px] text-[#64748B] py-3">Loading…</p>
       ) : docs.length === 0 ? (
@@ -218,7 +273,7 @@ export default function ProjectSpecBooks({ projectId, projectName, onCountChange
                           <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-green-100 text-green-700">Parsed</span>
                           {ps && (
                             <p className="text-[11px] text-[#64748B] mt-1">
-                              {ps.staged} staged · {ps.sectionsWithSubmittals} of {ps.sectionsScoped} scoped section{ps.sectionsScoped === 1 ? "" : "s"} with submittals
+                              {ps.sectionsFound} of {ps.sectionsScoped} scoped section{ps.sectionsScoped === 1 ? "" : "s"} found in this volume · {ps.sectionsWithSubmittals} with submittals · {ps.staged} staged
                             </p>
                           )}
                         </>
