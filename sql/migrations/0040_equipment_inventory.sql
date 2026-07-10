@@ -18,13 +18,18 @@
 -- delete, SECURITY DEFINER soft-delete RPCs — NEVER a bare deleted_at UPDATE from a
 -- route (the 42501 PostgREST/RLS RETURNING trap; see ADR-007 / 0020 / 0022).
 --
--- RLS is SIX policies per table, matching manpower_assignments exactly:
+-- RLS is SIX policies per table (shape of manpower_assignments — 3 permissive +
+-- 3 restrictive, no permissive DELETE), all scoped `TO authenticated`:
 --   PERMISSIVE  SELECT / INSERT / UPDATE  scoped to company_id = get_my_company_id()
 --   RESTRICTIVE NOT is_demo_user()        on INSERT / UPDATE / DELETE
 -- There is NO permissive DELETE policy → hard DELETE is denied for everyone; deletion
--- is soft-only, through the SECURITY DEFINER RPCs below. The SELECT policy does NOT
--- include `deleted_at IS NULL` — that filter lives in the view and in queries, never
--- in the policy (adding it triggers the 42501 RETURNING error on soft-delete UPDATEs).
+-- is soft-only, through the SECURITY DEFINER RPCs below.
+--
+-- DELIBERATE DIVERGENCE from prod manpower_assignments: its live SELECT policy is
+--   USING ((company_id = get_my_company_id()) AND (deleted_at IS NULL))
+-- — the deleted_at-in-policy 42501 RETURNING trap, sitting in prod. We do NOT copy
+-- that. Our SELECT policies scope to company_id ONLY; deleted_at is filtered in the
+-- view and in queries, never in the policy.
 --
 -- NUMBERING: highest committed migration file is 0039 (prod is applied past that via
 -- the write connector; 0015–0021 were never committed as files). 0040 is next free.
@@ -119,6 +124,17 @@ CREATE INDEX idx_equipment_units_company        ON public.equipment_units (compa
 CREATE INDEX idx_equipment_units_item           ON public.equipment_units (item_id);
 CREATE INDEX idx_equipment_units_item_active    ON public.equipment_units (item_id) WHERE deleted_at IS NULL;
 
+-- A serial identifies one physical machine within a company. Enforce that: no two
+-- live units in the same company may claim the same serial. Company-scoped (two GCs
+-- can own the same manufacturer serial) and partial on serial IS NOT NULL so the
+-- NULL serials that back count-only mode are unconstrained. NOT (item_id, serial):
+-- a scanned barcode yields a bare serial with no item context and must resolve to
+-- exactly one unit company-wide (the deferred scan-out path). Cost: blocks the rare
+-- cross-manufacturer serial collision within one company — accepted (typo > genuine).
+CREATE UNIQUE INDEX equipment_units_serial_unique
+  ON public.equipment_units (company_id, serial)
+  WHERE serial IS NOT NULL AND deleted_at IS NULL;
+
 CREATE INDEX idx_equipment_assignments_company  ON public.equipment_assignments (company_id);
 CREATE INDEX idx_equipment_assignments_unit     ON public.equipment_assignments (unit_id);
 CREATE INDEX idx_equipment_assignments_project  ON public.equipment_assignments (project_id) WHERE project_id IS NOT NULL;
@@ -151,12 +167,12 @@ CREATE POLICY equipment_items_update ON public.equipment_items
   FOR UPDATE TO authenticated
   USING (company_id = get_my_company_id())
   WITH CHECK (company_id = get_my_company_id());
-CREATE POLICY equipment_items_demo_ins ON public.equipment_items
-  AS RESTRICTIVE FOR INSERT WITH CHECK (NOT is_demo_user());
-CREATE POLICY equipment_items_demo_upd ON public.equipment_items
-  AS RESTRICTIVE FOR UPDATE USING (NOT is_demo_user()) WITH CHECK (NOT is_demo_user());
-CREATE POLICY equipment_items_demo_del ON public.equipment_items
-  AS RESTRICTIVE FOR DELETE USING (NOT is_demo_user());
+CREATE POLICY demo_readonly_no_insert ON public.equipment_items
+  AS RESTRICTIVE FOR INSERT TO authenticated WITH CHECK (NOT is_demo_user());
+CREATE POLICY demo_readonly_no_update ON public.equipment_items
+  AS RESTRICTIVE FOR UPDATE TO authenticated USING (NOT is_demo_user()) WITH CHECK (NOT is_demo_user());
+CREATE POLICY demo_readonly_no_delete ON public.equipment_items
+  AS RESTRICTIVE FOR DELETE TO authenticated USING (NOT is_demo_user());
 
 -- ---- equipment_units -------------------------------------------------------
 CREATE POLICY equipment_units_select ON public.equipment_units
@@ -169,12 +185,12 @@ CREATE POLICY equipment_units_update ON public.equipment_units
   FOR UPDATE TO authenticated
   USING (company_id = get_my_company_id())
   WITH CHECK (company_id = get_my_company_id());
-CREATE POLICY equipment_units_demo_ins ON public.equipment_units
-  AS RESTRICTIVE FOR INSERT WITH CHECK (NOT is_demo_user());
-CREATE POLICY equipment_units_demo_upd ON public.equipment_units
-  AS RESTRICTIVE FOR UPDATE USING (NOT is_demo_user()) WITH CHECK (NOT is_demo_user());
-CREATE POLICY equipment_units_demo_del ON public.equipment_units
-  AS RESTRICTIVE FOR DELETE USING (NOT is_demo_user());
+CREATE POLICY demo_readonly_no_insert ON public.equipment_units
+  AS RESTRICTIVE FOR INSERT TO authenticated WITH CHECK (NOT is_demo_user());
+CREATE POLICY demo_readonly_no_update ON public.equipment_units
+  AS RESTRICTIVE FOR UPDATE TO authenticated USING (NOT is_demo_user()) WITH CHECK (NOT is_demo_user());
+CREATE POLICY demo_readonly_no_delete ON public.equipment_units
+  AS RESTRICTIVE FOR DELETE TO authenticated USING (NOT is_demo_user());
 
 -- ---- equipment_assignments -------------------------------------------------
 CREATE POLICY equipment_assignments_select ON public.equipment_assignments
@@ -187,12 +203,12 @@ CREATE POLICY equipment_assignments_update ON public.equipment_assignments
   FOR UPDATE TO authenticated
   USING (company_id = get_my_company_id())
   WITH CHECK (company_id = get_my_company_id());
-CREATE POLICY equipment_assignments_demo_ins ON public.equipment_assignments
-  AS RESTRICTIVE FOR INSERT WITH CHECK (NOT is_demo_user());
-CREATE POLICY equipment_assignments_demo_upd ON public.equipment_assignments
-  AS RESTRICTIVE FOR UPDATE USING (NOT is_demo_user()) WITH CHECK (NOT is_demo_user());
-CREATE POLICY equipment_assignments_demo_del ON public.equipment_assignments
-  AS RESTRICTIVE FOR DELETE USING (NOT is_demo_user());
+CREATE POLICY demo_readonly_no_insert ON public.equipment_assignments
+  AS RESTRICTIVE FOR INSERT TO authenticated WITH CHECK (NOT is_demo_user());
+CREATE POLICY demo_readonly_no_update ON public.equipment_assignments
+  AS RESTRICTIVE FOR UPDATE TO authenticated USING (NOT is_demo_user()) WITH CHECK (NOT is_demo_user());
+CREATE POLICY demo_readonly_no_delete ON public.equipment_assignments
+  AS RESTRICTIVE FOR DELETE TO authenticated USING (NOT is_demo_user());
 
 -- ============================================================================
 -- AVAILABILITY VIEW — derived, never stored.
