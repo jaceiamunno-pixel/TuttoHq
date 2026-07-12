@@ -203,7 +203,14 @@ export async function findStripPlan(buffer: Buffer): Promise<StripPlan | null> {
 
   const isCoverPage = (i: number): boolean => {
     const m = meta[i]
-    if (m.formWidgetCount > 0) return true
+    // AcroForm widgets alone are NOT sufficient — a fillable-form manufacturer
+    // DATASHEET (e.g. Div 10 44 00 fire-protection product data) carries form
+    // widgets on every page and would otherwise read as an all-cover document
+    // and get its leading product pages stripped. A real submitter coversheet
+    // is sparse (labels in the text stream, values in widgets); its extracted
+    // text is well under the threshold. Mirror the /Stamp test: widgets count
+    // as "cover" only when the page is otherwise light on text.
+    if (m.formWidgetCount > 0 && m.charCount < STAMP_PAGE_TEXT_MAX) return true
     if (m.charCount < BLANK_PAGE_CHAR_THRESHOLD && m.imageCount === 0) return true
     if (m.stampAnnotCount > 0 && m.charCount < STAMP_PAGE_TEXT_MAX) return true
     return COVER_VOCAB.test(pageTexts[i] ?? "")
