@@ -207,6 +207,7 @@ interface Project {
   location: string | null
   gc_name: string | null
   architect: string | null
+  cm_name: string | null
   created_at: string
   created_by: string | null
 }
@@ -447,7 +448,7 @@ export default function SettingsPage() {
   const [projectsLoaded, setProjectsLoaded]   = useState(false)
   const [showProjectForm, setShowProjectForm] = useState(false)
   const [editingProject, setEditingProject]   = useState<Project | null>(null)
-  const [projectForm, setProjectForm]   = useState({ name: "", number: "", location: "", gc_name: "", architect: "" })
+  const [projectForm, setProjectForm]   = useState({ name: "", number: "", location: "", gc_name: "", architect: "", cm_name: "" })
   const [savingProject, setSavingProject] = useState(false)
   const [projectMessage, setProjectMessage] = useState<{ text: string; ok: boolean } | null>(null)
   // Spec book management — inline expandable panel per project row.
@@ -1008,7 +1009,7 @@ export default function SettingsPage() {
 
   function openAddProject() {
     setEditingProject(null)
-    setProjectForm({ name: "", number: "", location: "", gc_name: "", architect: "" })
+    setProjectForm({ name: "", number: "", location: "", gc_name: "", architect: "", cm_name: "" })
     setProjectSubIds([])
     setProjectSupIds([])
     if (!subsLoaded) loadSubs()
@@ -1019,7 +1020,7 @@ export default function SettingsPage() {
 
   function openEditProject(p: Project) {
     setEditingProject(p)
-    setProjectForm({ name: p.name, number: p.number ?? "", location: p.location ?? "", gc_name: p.gc_name ?? "", architect: p.architect ?? "" })
+    setProjectForm({ name: p.name, number: p.number ?? "", location: p.location ?? "", gc_name: p.gc_name ?? "", architect: p.architect ?? "", cm_name: p.cm_name ?? "" })
     setProjectSubIds([]); setProjectSupIds([]); setProjectCmIds([])
     if (!subsLoaded) loadSubs()
     if (!supplLoaded) loadSuppliers()
@@ -1058,7 +1059,7 @@ export default function SettingsPage() {
   async function openScopeWizard(p: Project) {
     resetWizard()
     setEditingProject(null)
-    setProjectForm({ name: "", number: "", location: "", gc_name: "", architect: "" })
+    setProjectForm({ name: "", number: "", location: "", gc_name: "", architect: "", cm_name: "" })
     setProjectSubIds([]); setProjectSupIds([]); setProjectCmIds([])
     setWizardProjectId(p.id)
     setWizardProjectName(p.name)
@@ -1185,7 +1186,7 @@ export default function SettingsPage() {
   function cancelProjectForm() {
     setShowProjectForm(false)
     setEditingProject(null)
-    setProjectForm({ name: "", number: "", location: "", gc_name: "", architect: "" })
+    setProjectForm({ name: "", number: "", location: "", gc_name: "", architect: "", cm_name: "" })
     setProjectSubIds([]); setProjectSupIds([]); setProjectCmIds([])
     resetWizard()
   }
@@ -1384,6 +1385,7 @@ export default function SettingsPage() {
           location: projectForm.location.trim() || null,
           gc_name:  projectForm.gc_name.trim()  || null,
           architect: projectForm.architect.trim() || null,
+          cm_name: projectForm.cm_name.trim() || null,
         }),
       })
       const data = await res.json()
@@ -2566,6 +2568,19 @@ export default function SettingsPage() {
                           className={inputCls}
                         />
                       </div>
+                    </div>
+                    <div>
+                      <label className={labelCls}>Construction Manager (CM) Name</label>
+                      <input
+                        type="text"
+                        value={projectForm.cm_name}
+                        onChange={e => setProjectForm(p => ({ ...p, cm_name: e.target.value }))}
+                        placeholder="CM name printed on transmittal covers"
+                        className={inputCls}
+                      />
+                      <p className="text-[11px] text-[#94A3B8] mt-1">
+                        Auto-fills the “Sent To” field when you send a transmittal package; editable per package.
+                      </p>
                     </div>
                     {/* Subcontractors on this project */}
                     <div>

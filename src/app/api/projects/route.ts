@@ -6,7 +6,7 @@ export async function GET(req: NextRequest) {
 
   const { data, error } = await supabase
     .from("projects")
-    .select("id, name, number, location, gc_name, architect, created_at, created_by, base_contract_value")
+    .select("id, name, number, location, gc_name, architect, cm_name, created_at, created_by, base_contract_value")
     .order("created_at", { ascending: true })
 
   if (error) {
@@ -24,7 +24,7 @@ export async function POST(req: NextRequest) {
 
   const body = await req.json()
 
-  const { name, number, location, gc_name, architect } = body
+  const { name, number, location, gc_name, architect, cm_name } = body
 
   if (!name || typeof name !== "string" || !name.trim()) {
     return NextResponse.json({ error: "Name is required" }, { status: 400 })
@@ -38,8 +38,9 @@ export async function POST(req: NextRequest) {
       location: location?.trim() ?? null,
       gc_name: gc_name?.trim() ?? null,
       architect: architect?.trim() ?? null,
+      cm_name: cm_name?.trim() ?? null,
     })
-    .select("id, name, number, location, gc_name, architect, created_at")
+    .select("id, name, number, location, gc_name, architect, cm_name, created_at")
     .single()
 
   if (error) {

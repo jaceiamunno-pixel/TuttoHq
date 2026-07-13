@@ -78,10 +78,12 @@ function base64ToPdfBlobUrl(b64: string): string {
 }
 
 export default function PackageCreateModal({
-  projectId, projectName, submittals, onClose, onDone,
+  projectId, projectName, projectCmName, submittals, onClose, onDone,
 }: {
   projectId: string
   projectName: string
+  /** The project's saved CM name (projects.cm_name) — prefills "Sent To". */
+  projectCmName?: string | null
   submittals: SubmittalRecord[]
   onClose: () => void
   onDone: () => void
@@ -90,6 +92,9 @@ export default function PackageCreateModal({
   const [recipientType, setRecipientType] = useState<RecipientType | null>(null)
   const [sendDate, setSendDate] = useState(todayISO())
   const [coversheetMode, setCoversheetMode] = useState<CoversheetMode | null>(null)
+  // "Sent To" printed on the transmittal cover — prefilled from the project's
+  // saved CM name, editable per package. Blank → server uses the recipient type.
+  const [sentTo, setSentTo] = useState(projectCmName ?? "")
   const [notes, setNotes] = useState("")
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -145,6 +150,7 @@ export default function PackageCreateModal({
           send_date: sendDate,
           coversheet_mode: coversheetMode,
           submittal_ids: submittals.map(s => s.id),
+          sent_to: sentTo.trim() || null,
         }),
       })
       const d = await res.json().catch(() => ({}))
@@ -212,6 +218,7 @@ export default function PackageCreateModal({
           notes: notes.trim() || null,
           submittal_ids: submittals.map(s => s.id),
           is_draft: isDraft,
+          sent_to: sentTo.trim() || null,
         }),
       })
       const d = await res.json().catch(() => ({}))
@@ -299,6 +306,21 @@ export default function PackageCreateModal({
                 <input type="date" value={sendDate} onChange={e => setSendDate(e.target.value)} className={inputCls} />
                 <p className="text-[11px] text-[#94A3B8] mt-1 h-4">Defaults to today · editable</p>
               </div>
+            </div>
+
+            {/* Sent To — the recipient name printed on the transmittal cover */}
+            <div>
+              <label className={labelCls}>Sent To</label>
+              <input
+                type="text"
+                value={sentTo}
+                onChange={e => setSentTo(e.target.value)}
+                placeholder="Recipient name — e.g. Turner Construction"
+                className={inputCls}
+              />
+              <p className="text-[11px] text-[#94A3B8] mt-1">
+                Prints on the transmittal cover. Prefilled from the project’s saved CM name; editable per package. Leave blank to use the recipient type.
+              </p>
             </div>
 
             {/* Coversheet mode */}
@@ -470,7 +492,7 @@ export default function PackageCreateModal({
             <div className="rounded-lg border border-[#E2E8F0] bg-[#F8F9FA] px-4 py-3 grid grid-cols-2 sm:grid-cols-4 gap-3">
               {[
                 ["Package", trackingRef],
-                ["Sent To", recipientLabel],
+                ["Sent To", sentTo.trim() || recipientLabel],
                 ["Date", new Date(`${sendDate}T00:00:00`).toLocaleDateString("en-US")],
                 ["Items", String(submittals.length)],
               ].map(([label, value]) => (

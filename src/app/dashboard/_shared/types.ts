@@ -119,7 +119,7 @@ export interface BatchItemDupeMatch {
 // /api/generate-cover checks, NOT the filename extension.
 export interface BatchItem { id: string; file: File; status: BatchStatus; divNum: string; divName: string; secCode: string; secName: string; nameMatl: string; nameMfr: string; nameDims: string; customName: string; expanded: boolean; errorMsg?: string; storagePath?: string; fileSha256?: string; dupeMatch?: BatchItemDupeMatch; submittalId?: string; uploadedName?: string; uploadedMime?: string | null }
 
-export interface Project { id: string; name: string; number: string | null; location: string | null; gc_name: string | null; architect: string | null; short_id?: string | null; base_contract_value?: number | null }
+export interface Project { id: string; name: string; number: string | null; location: string | null; gc_name: string | null; architect: string | null; cm_name?: string | null; short_id?: string | null; base_contract_value?: number | null }
 export interface TeamMember { id: string; name: string; title: string | null; email: string | null }
 export interface RFI {
   id: string; rfi_number: string; subject: string; description: string | null;

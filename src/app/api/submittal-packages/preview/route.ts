@@ -36,13 +36,14 @@ export async function POST(req: NextRequest) {
 
   const body = await req.json().catch(() => ({}))
   const {
-    project_id, recipient_type, send_date, coversheet_mode, submittal_ids,
+    project_id, recipient_type, send_date, coversheet_mode, submittal_ids, sent_to,
   } = body as {
     project_id?: string
     recipient_type?: string
     send_date?: string
     coversheet_mode?: string
     submittal_ids?: string[]
+    sent_to?: string | null
   }
 
   // Validate the same shape as the real create (minus draft) — the preview must
@@ -111,6 +112,11 @@ export async function POST(req: NextRequest) {
   const shortId = projectRow?.short_id || project_id.replace(/-/g, "").slice(0, 4).toUpperCase()
   const pendingNumber = `TTQ-${shortId}-#`
 
+  // "Sent To": the per-package override wins, else the project's saved cm_name,
+  // else (in the composer) the recipient-type label. Same resolution the real
+  // generation uses, so the previewed cover matches what the CM receives.
+  const sentTo = (typeof sent_to === "string" && sent_to.trim()) || (resolved.project.cm_name?.trim() ?? null)
+
   const built = await buildTransmittalPackageFiles({
     packageNumber: pendingNumber,
     recipientType,
@@ -121,6 +127,8 @@ export async function POST(req: NextRequest) {
     logoBytes: resolved.logoBytes,
     logoScalePct: resolved.logoScalePct,
     items: resolved.items,
+    sentTo,
+    reviewer: resolved.reviewer,
   })
 
   const coverPdfBase64 = built[0] ? Buffer.from(built[0].bytes).toString("base64") : null

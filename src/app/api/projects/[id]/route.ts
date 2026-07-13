@@ -12,7 +12,7 @@ export async function PATCH(
   const { id } = await params
   const body = await req.json()
 
-  const { name, number, location, gc_name, architect, base_contract_value } = body
+  const { name, number, location, gc_name, architect, cm_name, base_contract_value } = body
 
   if (name !== undefined && (typeof name !== "string" || !name.trim())) {
     return NextResponse.json({ error: "Name cannot be empty" }, { status: 400 })
@@ -39,13 +39,14 @@ export async function PATCH(
   if (location !== undefined) updates.location = location?.trim() ?? null
   if (gc_name !== undefined) updates.gc_name = gc_name?.trim() ?? null
   if (architect !== undefined) updates.architect = architect?.trim() ?? null
+  if (cm_name !== undefined) updates.cm_name = cm_name?.trim() ?? null
   if (baseContract !== undefined) updates.base_contract_value = baseContract
 
   const { data, error } = await supabase
     .from("projects")
     .update(updates)
     .eq("id", id)
-    .select("id, name, number, location, gc_name, architect, created_at, base_contract_value")
+    .select("id, name, number, location, gc_name, architect, cm_name, created_at, base_contract_value")
     .single()
 
   if (error) {

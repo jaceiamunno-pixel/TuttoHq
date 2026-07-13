@@ -2,7 +2,7 @@ import { PDFDocument } from "pdf-lib"
 import { randomUUID } from "node:crypto"
 import { createClient as createServiceClient, type SupabaseClient } from "@supabase/supabase-js"
 import { PDFBuilder } from "./pdf-builder"
-import { buildCoversheetPdf, type CoversheetReviewer } from "./coversheet-pdf"
+import { buildCoversheetPdf, SUBMITTAL_REVIEW_LANGUAGE, type CoversheetReviewer } from "./coversheet-pdf"
 import type { SubmittalCoversheetProps } from "@/components/submittals/SubmittalCoversheet"
 import { normalizeSubmittalTitle } from "./title-normalize"
 import { formatSectionNumber, padSectionSeq } from "./section-number"
@@ -13,12 +13,14 @@ import { transmittalItemFileName, transmittalPackageBaseName } from "./package-n
 // documents and sends them upstream (to the CM / A/E) or to a subcontractor,
 // from their own email client. It is NOT a solicitation — no spec-book pages.
 //
-// Two coversheet modes, which now produce DIFFERENT NUMBERS OF FILES:
-//   MODE 'package'  — ONE PDF: a package cover listing every item, then all the
-//                     documents appended in order.
-//   MODE 'per_item' — N PDFs, one per submittal: that item's coversheet followed
-//                     by that item's document. A 'per_item' generation is a SET
-//                     of separate files, never a single merged PDF.
+// Two coversheet modes, which produce DIFFERENT NUMBERS OF FILES:
+//   MODE 'package'  — ONE PDF: a single transmittal list cover (carrying the
+//                     GC's reviewer stamp) then every document appended RAW, in
+//                     order. One stamp for the whole transmittal, no per-item
+//                     coversheets.
+//   MODE 'per_item' — N PDFs, one per submittal: that item's stamped coversheet
+//                     followed by that item's document. A 'per_item' generation
+//                     is a SET of separate files, never a single merged PDF.
 //
 // Generations are append-only: each call to generateTransmittalPackage writes a
 // fresh set of files under a new generation_id and inserts one
@@ -82,6 +84,14 @@ export interface TransmittalPdfInput {
   logoBytes: ArrayBuffer | null
   logoScalePct?: number | null
   items: ResolvedItem[]
+  /** Recipient printed in the list cover's "Sent To" field. Resolved by the
+   *  caller (per-package override → project.cm_name); when null/empty the cover
+   *  falls back to RECIPIENT_LABEL[recipientType]. 'package' mode only. */
+  sentTo?: string | null
+  /** The GC's reviewer stamp for the WHOLE transmittal, drawn on the list cover
+   *  ('package' mode). Same identity as the per-item stamps (one company, one
+   *  reviewer); submittalNo is blank (it's the whole transmittal). */
+  reviewer: CoversheetReviewer | null
 }
 
 /** One emitted PDF. submittalId is null for the whole-package file (mode
@@ -112,11 +122,15 @@ export async function buildTransmittalPackageFiles(input: TransmittalPdfInput): 
   const generationDate = new Date(`${input.sendDate}T00:00:00`)
 
   if (input.coversheetMode === "package") {
-    // ── MODE 'package': one list cover, then [stamped cover + document] per
-    //    item, all merged in order → 1 PDF. ────────────────────────────────
+    // ── MODE 'package': ONE transmittal list cover (carrying the GC's reviewer
+    //    stamp), then every document appended RAW, in order → 1 PDF:
+    //      [list cover w/ stamp] [doc 1] [doc 2] [doc 3] …
+    //    No per-item coversheets — one stamp for the whole transmittal. ───────
+    // The internal tracking ref ([TTQ-…]) is deliberately NOT printed on the
+    // cover (it survives only as the DB id + the file name); so no
+    // documentNumber in the header and no "Tracking Ref" field below.
     const pdf = await PDFBuilder.create({
       documentType: "Submittal Transmittal",
-      documentNumber: `[${input.packageNumber}]`,
       generationDate,
       logoBytes: input.logoBytes,
       logoScalePct: input.logoScalePct ?? undefined,
@@ -132,14 +146,16 @@ export async function buildTransmittalPackageFiles(input: TransmittalPdfInput): 
     })
 
     pdf.sectionDivider("Transmittal")
+    // "Sent To" is the real recipient (per-package override → project.cm_name),
+    // falling back to the generic recipient-type label when neither is set.
+    const sentTo = (input.sentTo && input.sentTo.trim()) || RECIPIENT_LABEL[input.recipientType]
     pdf.fieldGrid([
       [
-        { label: "Sent To", value: RECIPIENT_LABEL[input.recipientType] },
+        { label: "Sent To", value: sentTo },
         { label: "Date", value: fmtDate(input.sendDate) },
       ],
       [
         { label: "Items", value: String(input.items.length) },
-        { label: "Tracking Ref", value: `[${input.packageNumber}]` },
       ],
     ])
 
@@ -156,36 +172,21 @@ export async function buildTransmittalPackageFiles(input: TransmittalPdfInput): 
       listW,
     )
 
+    // The GC's reviewer stamp for the whole transmittal — the SAME red block the
+    // per-item coversheets render (drawReviewerStamp), drawn once here after the
+    // items table. Its identity is package-level (one company, one reviewer);
+    // submittalNo is blank because this stamps the transmittal, not one item.
+    if (input.reviewer) {
+      pdf.reviewerStampBox({ ...input.reviewer, reviewText: SUBMITTAL_REVIEW_LANGUAGE })
+    }
+
     const merged = await PDFDocument.create()
     await appendInto(merged, await pdf.save())
-    // Every document travels behind its own STAMPED per-item coversheet — the
-    // same buildCoversheetPdf(cover, reviewer) call per_item mode uses, so the
-    // reviewer stamp appears on every coversheet the app produces, in both
-    // modes. The single list cover above stays; this is additive behind it:
-    //   [list cover] [stamped cover 1][doc 1] [stamped cover 2][doc 2] …
-    for (const it of input.items) {
-      // No resolvable document → no stamped cover either (mirrors per_item:
-      // a lone cover with no document is not a useful artifact; the compose
-      // step already pushed a "skipped" warning for this item).
-      if (!it.documentBytes) continue
-      // Parse the document BEFORE appending its cover so an unreadable file
-      // drops the ITEM — cover and document together. Appending the cover
-      // first and letting appendInto's swallow-guard eat the document would
-      // hand the CM a stamped cover with nothing behind it.
-      let srcDoc: PDFDocument
-      try {
-        srcDoc = await PDFDocument.load(it.documentBytes)
-      } catch {
-        // One unreadable document must not fail the whole package.
-        continue
-      }
-      const coverBytes = await buildCoversheetPdf(
-        it.coversheet, input.logoBytes, it.reviewer, input.logoScalePct ?? undefined,
-      )
-      await appendInto(merged, coverBytes)
-      const pages = await merged.copyPages(srcDoc, srcDoc.getPageIndices())
-      pages.forEach(p => merged.addPage(p))
-    }
+    // Each document appended RAW behind the single cover. appendInto already
+    // skips null bytes (a missing document — already warned in the compose step)
+    // and swallows an unreadable file in a try/catch, so one bad document
+    // contributes nothing but never fails the whole package.
+    for (const it of input.items) await appendInto(merged, it.documentBytes)
 
     // Single-PDF name reads like the artifact it is, e.g.
     // "Submittal Transmittal - Construction Manager - 2026-07-10.pdf".
@@ -262,6 +263,9 @@ export interface GenerateTransmittalArgs {
   submittalIds: string[]
   /** auth.uid() of the generating user, recorded on each file row. */
   generatedBy: string
+  /** Per-package "Sent To" override for the list cover. When null/empty, the
+   *  cover uses project.cm_name, then falls back to RECIPIENT_LABEL. */
+  sentTo?: string | null
 }
 
 export interface GeneratedFileMeta {
@@ -273,11 +277,14 @@ export interface GeneratedFileMeta {
 
 /** Everything the transmittal composer needs, resolved with no writes. */
 export interface ResolvedPackage {
-  project: { name?: string | null; number?: string | null; location?: string | null; gc_name?: string | null; architect?: string | null }
+  project: { name?: string | null; number?: string | null; location?: string | null; gc_name?: string | null; architect?: string | null; cm_name?: string | null }
   gcName: string
   logoBytes: ArrayBuffer | null
   logoScalePct: number | null | undefined
   items: ResolvedItem[]
+  /** The GC's package-level reviewer stamp (one identity for the whole
+   *  transmittal; submittalNo blank). Drawn on the 'package' list cover. */
+  reviewer: CoversheetReviewer
   warnings: string[]
 }
 
@@ -316,7 +323,7 @@ export async function resolvePackageItems(
   // name as the reviewer where exactly one other row is visible. The stamp
   // is what a CM sees on the transmittal; it must name the generating user.
   const [projectRes, settingsRes, companyRes, profileRes] = await Promise.all([
-    supabase.from("projects").select("name, number, location, gc_name, architect").eq("id", args.projectId).maybeSingle(),
+    supabase.from("projects").select("name, number, location, gc_name, architect, cm_name").eq("id", args.projectId).maybeSingle(),
     supabase.from("company_settings").select("logo_path, logo_scale_pct").maybeSingle(),
     supabase.from("companies").select("name").eq("id", args.companyId).maybeSingle(),
     supabase.from("user_profiles").select("full_name").eq("user_id", args.userId).maybeSingle(),
@@ -432,7 +439,20 @@ export async function resolvePackageItems(
     })
   }
 
-  return { project, gcName: project.gc_name ?? "", logoBytes, logoScalePct, items, warnings }
+  // Package-level reviewer stamp for the 'package' list cover — the GC's stamp on
+  // the whole transmittal. Same company + reviewer as every per-item stamp (one
+  // caller, one company); submittalNo is blank (this stamps the transmittal, not
+  // one submittal, so drawReviewerStamp omits that row).
+  const reviewer: CoversheetReviewer = {
+    company: stampCompanyName,
+    projectName: project.name ?? "",
+    projectNumber: project.number ?? "",
+    submittalNo: "",
+    reviewedBy: reviewedByName,
+    date: new Date(`${args.sendDate}T00:00:00`).toLocaleDateString("en-US"),
+  }
+
+  return { project, gcName: project.gc_name ?? "", logoBytes, logoScalePct, items, reviewer, warnings }
 }
 
 /**
@@ -455,6 +475,10 @@ export async function generateTransmittalPackage(
   )
   const warnings = resolved.warnings
 
+  // "Sent To": the per-package override wins, else the project's saved cm_name,
+  // else (in the composer) the recipient-type label.
+  const sentTo = (args.sentTo && args.sentTo.trim()) || (resolved.project.cm_name?.trim() ?? null)
+
   const built = await buildTransmittalPackageFiles({
     packageNumber: args.packageNumber,
     recipientType: args.recipientType,
@@ -465,6 +489,8 @@ export async function generateTransmittalPackage(
     logoBytes: resolved.logoBytes,
     logoScalePct: resolved.logoScalePct,
     items: resolved.items,
+    sentTo,
+    reviewer: resolved.reviewer,
   })
 
   if (built.length === 0) {
