@@ -26,7 +26,7 @@ export async function GET() {
 
   // Own-row read is permitted by the "user_profiles: select own" RLS policy.
   const { data: profile } = await supabase
-    .from("user_profiles").select("po_prefix, po_next_seq").maybeSingle()
+    .from("user_profiles").select("po_prefix, po_next_seq").eq("user_id", user.id).maybeSingle()
 
   return NextResponse.json({
     po_prefix: profile?.po_prefix ?? null,
@@ -81,7 +81,7 @@ export async function PATCH(req: NextRequest) {
   // a soft warning, not a block: a user who over-set the seq and never issued
   // anything legitimately needs to lower it.
   const { data: before } = await supabase
-    .from("user_profiles").select("po_next_seq").maybeSingle()
+    .from("user_profiles").select("po_next_seq").eq("user_id", user.id).maybeSingle()
   const currentSeq = before?.po_next_seq ?? null
 
   // Service client bypasses RLS; scope to the caller's OWN row, pass ONLY the two

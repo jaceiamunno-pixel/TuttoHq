@@ -36,7 +36,7 @@ export async function POST(req: NextRequest) {
   // company_id derived from the caller's session via the SELECT-own RLS
   // policy on user_profiles. Never trust a client-supplied company id.
   const { data: profile } = await supabase
-    .from("user_profiles").select("company_id").maybeSingle()
+    .from("user_profiles").select("company_id").eq("user_id", user.id).maybeSingle()
   if (!profile?.company_id) {
     return NextResponse.json({ error: "No company association" }, { status: 500 })
   }

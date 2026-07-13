@@ -580,8 +580,9 @@ export default function SettingsPage() {
     (async () => {
       const sb = createClient()
       const { data: { user } } = await sb.auth.getUser()
-      if (user) setCurrentUserId(user.id)
-      const { data: profile } = await sb.from("user_profiles").select("role").maybeSingle()
+      if (!user) { setCurrentRole(null); return }
+      setCurrentUserId(user.id)
+      const { data: profile } = await sb.from("user_profiles").select("role").eq("user_id", user.id).maybeSingle()
       setCurrentRole(profile?.role ?? null)
     })()
   }, [])

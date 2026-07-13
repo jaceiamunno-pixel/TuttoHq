@@ -42,7 +42,7 @@ export async function POST(req: NextRequest) {
 
   if (!report_date) return NextResponse.json({ error: "report_date is required" }, { status: 400 })
 
-  const { data: profile } = await supabase.from("user_profiles").select("company_id").maybeSingle()
+  const { data: profile } = await supabase.from("user_profiles").select("company_id").eq("user_id", user.id).maybeSingle()
   const company_id = profile?.company_id ?? null
 
   const file_path = typeof fields.file_path === "string" ? fields.file_path.trim() || null : null

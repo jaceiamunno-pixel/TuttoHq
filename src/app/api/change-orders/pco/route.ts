@@ -40,7 +40,7 @@ export async function POST(req: NextRequest) {
   // Snapshot the SAVER's signature path (SELECT-own) so a later regeneration
   // embeds this signer's signature, not the regenerating user's. Looked up
   // server-side — never trusted from the client.
-  const { data: prof } = await supabase.from("user_profiles").select("signature_storage_path").maybeSingle()
+  const { data: prof } = await supabase.from("user_profiles").select("signature_storage_path").eq("user_id", user.id).maybeSingle()
 
   const { data, error } = await supabase.rpc("save_pco", {
     p_id:                    null,
