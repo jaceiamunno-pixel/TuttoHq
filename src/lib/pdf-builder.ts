@@ -1015,6 +1015,26 @@ export class PDFBuilder {
     this.y = top - 2 * cellH - gap
   }
 
+  /** Draw OUR reviewer stamp as a SINGLE standalone box (not the 2×2 grid) — the
+   *  GC's stamp on a whole transmittal list cover. Reuses the EXACT per-item
+   *  drawReviewerStamp rendering (no re-implementation). Width defaults to half
+   *  the content width so the block reads at the same scale as a per-item stamp
+   *  box; page-breaks if it won't fit above the footer. */
+  reviewerStampBox(reviewer: PDFReviewerStamp, opts?: { width?: number; height?: number }) {
+    const w = opts?.width ?? (this.CW - 13) / 2
+    const h = opts?.height ?? 190
+    this.spacer(12)
+    this.ensureSpace(h)
+    const x = this.M
+    const y = this.y - h
+    this.page.drawRectangle({
+      x, y, width: w, height: h,
+      color: PDF.color.white, borderColor: PDF.color.ruleStrong, borderWidth: 0.75,
+    })
+    this.drawReviewerStamp(x, y, w, h, reviewer)
+    this.y = y - 2
+  }
+
   /** Render OUR review stamp inside a stamp-grid box at (x,y,w,h). A red header
    *  bar (title + company), label rows, a full-width "REVIEWED" divider, then
    *  the small-print review language. Everything is sized against the box height

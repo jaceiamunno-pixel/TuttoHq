@@ -103,7 +103,7 @@ export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => ({}))
   const {
     project_id, recipient_type, send_date, coversheet_mode,
-    notes, submittal_ids, is_draft,
+    notes, submittal_ids, is_draft, sent_to,
   } = body as {
     project_id?: string
     recipient_type?: string
@@ -112,6 +112,7 @@ export async function POST(req: NextRequest) {
     notes?: string | null
     submittal_ids?: string[]
     is_draft?: boolean
+    sent_to?: string | null
   }
 
   if (!project_id) return NextResponse.json({ error: "project_id is required" }, { status: 400 })
@@ -219,6 +220,9 @@ export async function POST(req: NextRequest) {
       coversheetMode,
       submittalIds: validIds,
       generatedBy: user.id,
+      // Per-package "Sent To" override; generateTransmittalPackage falls back to
+      // project.cm_name, then the recipient-type label, when this is blank.
+      sentTo: typeof sent_to === "string" ? sent_to : null,
     })
     generationId = res.generationId
     files = res.files
