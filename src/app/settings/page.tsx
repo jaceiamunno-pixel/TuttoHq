@@ -25,6 +25,11 @@ import {
   MAX_REMINDER_COUNT,
 } from "@/lib/reminder-settings"
 import { LOGO_SCALE_MIN, LOGO_SCALE_MAX, LOGO_SCALE_DEFAULT, clampLogoScalePct } from "@/lib/logo-scale"
+import {
+  DEFAULT_TRANSMITTAL_EMAIL_SUBJECT,
+  DEFAULT_TRANSMITTAL_EMAIL_BODY,
+  TRANSMITTAL_MERGE_FIELDS,
+} from "@/lib/transmittal-email"
 
 // Live logo-size preview geometry (mirrors the PDF header so the on-screen
 // approximation matches generated output): the submittal coversheet's 42pt base
@@ -393,6 +398,13 @@ export default function SettingsPage() {
   const [logoScalePct, setLogoScalePct]           = useState<number>(LOGO_SCALE_DEFAULT)
   const [savedLogoScalePct, setSavedLogoScalePct] = useState<number>(LOGO_SCALE_DEFAULT)
   const [savingLogoScale, setSavingLogoScale]     = useState(false)
+
+  // ── Per-tenant transmittal "Send via Email" template ──────────────────────
+  const [emailSubjectTpl, setEmailSubjectTpl]           = useState(DEFAULT_TRANSMITTAL_EMAIL_SUBJECT)
+  const [savedEmailSubjectTpl, setSavedEmailSubjectTpl] = useState(DEFAULT_TRANSMITTAL_EMAIL_SUBJECT)
+  const [emailBodyTpl, setEmailBodyTpl]                 = useState(DEFAULT_TRANSMITTAL_EMAIL_BODY)
+  const [savedEmailBodyTpl, setSavedEmailBodyTpl]       = useState(DEFAULT_TRANSMITTAL_EMAIL_BODY)
+  const [savingEmailTpl, setSavingEmailTpl]             = useState(false)
   // Natural pixel dims of the uploaded logo — the live preview needs them to run
   // the exact PDF fit math (Math.min(maxH/h, 150/w, 1)). Captured on img load.
   const [logoNatural, setLogoNatural]   = useState<{ w: number; h: number } | null>(null)
@@ -536,6 +548,10 @@ export default function SettingsPage() {
         setDisplayName(d.display_name ?? ""); setSavedDisplayName(d.display_name ?? "")
         const pct = clampLogoScalePct(d.logo_scale_pct)
         setLogoScalePct(pct); setSavedLogoScalePct(pct)
+        const subj = d.transmittal_email_subject_template ?? DEFAULT_TRANSMITTAL_EMAIL_SUBJECT
+        const bodyTpl = d.transmittal_email_body_template ?? DEFAULT_TRANSMITTAL_EMAIL_BODY
+        setEmailSubjectTpl(subj); setSavedEmailSubjectTpl(subj)
+        setEmailBodyTpl(bodyTpl); setSavedEmailBodyTpl(bodyTpl)
       })
       .finally(() => setLoadingCompany(false))
 
@@ -764,6 +780,41 @@ export default function SettingsPage() {
     } catch { flashCompany("Could not save logo size", false); return false }
     finally { setSavingLogoScale(false) }
   }
+
+  // Persist the transmittal "Send via Email" template. Admin-gated server-side.
+  // Server stores trimmed text and NULLs an empty value (→ falls back to the
+  // built-in default); we snapshot the raw field values so the dirty check works.
+  async function saveEmailTemplate() {
+    setSavingEmailTpl(true)
+    try {
+      const res = await fetch("/api/settings", {
+        method: "PATCH", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          transmittal_email_subject_template: emailSubjectTpl,
+          transmittal_email_body_template: emailBodyTpl,
+        }),
+      })
+      if (res.ok) {
+        setSavedEmailSubjectTpl(emailSubjectTpl); setSavedEmailBodyTpl(emailBodyTpl)
+        flashCompany("Transmittal email template saved")
+      } else flashCompany("Could not save the email template", false)
+    } catch { flashCompany("Could not save the email template", false) }
+    finally { setSavingEmailTpl(false) }
+  }
+
+  // Repopulate the fields with the built-in default — the user still clicks Save
+  // to persist (which stores the default text; NULL and default text render the
+  // same).
+  function resetEmailTemplate() {
+    setEmailSubjectTpl(DEFAULT_TRANSMITTAL_EMAIL_SUBJECT)
+    setEmailBodyTpl(DEFAULT_TRANSMITTAL_EMAIL_BODY)
+  }
+
+  const emailTplDirty =
+    emailSubjectTpl !== savedEmailSubjectTpl || emailBodyTpl !== savedEmailBodyTpl
+  const emailTplIsDefault =
+    emailSubjectTpl === DEFAULT_TRANSMITTAL_EMAIL_SUBJECT &&
+    emailBodyTpl === DEFAULT_TRANSMITTAL_EMAIL_BODY
 
   // Render ONE real coversheet at the chosen size, on demand. Saves first when
   // the slider is dirty so the generated sheet (generate-cover reads the stored
@@ -1884,6 +1935,72 @@ export default function SettingsPage() {
                 </div>
 
                 <CompanyDetailsCard canEdit={currentRole === "admin"} />
+
+                {/* Transmittal "Send via Email" template — the prefilled message
+                    the download page opens in the user's mail client. */}
+                <div className="bg-white rounded-xl border border-[#E2E8F0] p-5">
+                  <h2 className="text-[14px] font-semibold text-[#0F172A] mb-0.5">Transmittal Email</h2>
+                  <p className="text-[12px] text-[#64748B] mb-4">
+                    The pre-written message for the “Send via Email” button on a transmittal package’s download page. It opens the sender’s own mail client — the app never sends. Use the merge fields below; they’re filled in from the package at send time.
+                  </p>
+
+                  <div className="space-y-3 max-w-[560px]">
+                    <div>
+                      <label className={labelCls}>Subject</label>
+                      <input
+                        type="text"
+                        value={emailSubjectTpl}
+                        onChange={e => setEmailSubjectTpl(e.target.value)}
+                        disabled={currentRole !== "admin"}
+                        className={`${inputCls} disabled:opacity-50`}
+                      />
+                    </div>
+                    <div>
+                      <label className={labelCls}>Body</label>
+                      <textarea
+                        value={emailBodyTpl}
+                        onChange={e => setEmailBodyTpl(e.target.value)}
+                        disabled={currentRole !== "admin"}
+                        rows={9}
+                        className="w-full px-3 py-2 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40 focus:border-[#7B9BB5]/50 resize-y placeholder:text-[#94A3B8] disabled:opacity-50"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Merge-field legend */}
+                  <div className="mt-3 rounded-lg border border-[#E2E8F0] bg-[#F8FAFC] px-3 py-2.5 max-w-[560px]">
+                    <p className="text-[11px] font-semibold text-[#64748B] uppercase tracking-wider mb-2">Merge fields</p>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1.5">
+                      {TRANSMITTAL_MERGE_FIELDS.map(f => (
+                        <div key={f.token} className="flex items-baseline gap-2 text-[12px]">
+                          <code className="font-mono text-[11px] text-[#0F172A] bg-white border border-[#E2E8F0] rounded px-1 py-0.5 flex-shrink-0">{f.token}</code>
+                          <span className="text-[#64748B]">{f.label}</span>
+                        </div>
+                      ))}
+                    </div>
+                    <p className="text-[11px] text-[#94A3B8] mt-2">Unknown fields are left as-is. Attachments are added by the sender — mailto can’t attach files.</p>
+                  </div>
+
+                  <div className="flex items-center gap-2 mt-4">
+                    <button
+                      onClick={saveEmailTemplate}
+                      disabled={currentRole !== "admin" || savingEmailTpl || !emailTplDirty}
+                      className="h-9 px-4 rounded-md bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors disabled:opacity-50"
+                    >
+                      {savingEmailTpl ? "Saving…" : "Save"}
+                    </button>
+                    <button
+                      onClick={resetEmailTemplate}
+                      disabled={currentRole !== "admin" || emailTplIsDefault}
+                      className="h-9 px-4 rounded-md border border-[#E2E8F0] text-[13px] font-semibold text-[#0F172A] hover:bg-[#0F172A]/[0.04] transition-colors disabled:opacity-50"
+                    >
+                      Reset to default
+                    </button>
+                  </div>
+                  {currentRole !== "admin" && (
+                    <p className="text-[11px] text-[#94A3B8] mt-2">Only company admins can edit the transmittal email template.</p>
+                  )}
+                </div>
               </>
             )}
 

@@ -32,6 +32,10 @@ export async function GET() {
     // Clamped on the way out so a stale/out-of-range stored value never reaches
     // the slider; missing row → the column default (130).
     logo_scale_pct: settings ? clampLogoScalePct(settings.logo_scale_pct) : LOGO_SCALE_DEFAULT,
+    // Transmittal "Send via Email" template. NULL → the client uses the built-in
+    // default (src/lib/transmittal-email.ts).
+    transmittal_email_subject_template: settings?.transmittal_email_subject_template ?? null,
+    transmittal_email_body_template: settings?.transmittal_email_body_template ?? null,
   })
 }
 
@@ -55,6 +59,18 @@ export async function PATCH(req: NextRequest) {
   for (const key of ["display_name", "address_line1", "address_line2", "phone"] as const) {
     if (body[key] === undefined) continue
     updates[key] = typeof body[key] === "string" && body[key].trim() ? body[key].trim() : null
+  }
+
+  // Transmittal email template (subject + body). Free text with {merge} tokens.
+  // Empty → NULL (falls back to the built-in default). Length-guarded so a client
+  // can't stuff arbitrary text into the row.
+  for (const key of ["transmittal_email_subject_template", "transmittal_email_body_template"] as const) {
+    if (body[key] === undefined) continue
+    const raw = typeof body[key] === "string" ? body[key] : ""
+    if (raw.length > 4000) {
+      return NextResponse.json({ error: "Email template is too long (4000 character max)." }, { status: 400 })
+    }
+    updates[key] = raw.trim() ? raw.trim() : null
   }
 
   if (body.default_oh_p_percent !== undefined) {
