@@ -12,6 +12,7 @@ import {
   DEFAULT_TRANSMITTAL_EMAIL_SUBJECT,
   DEFAULT_TRANSMITTAL_EMAIL_BODY,
   buildTransmittalMailto,
+  resolveTemplate,
   type TransmittalMergeFields,
 } from "@/lib/transmittal-email"
 
@@ -106,6 +107,9 @@ export default function PackageCreateModal({
   const [notes, setNotes] = useState("")
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  // Inline, non-blocking confirmation shown under the Send button after a click —
+  // covers the no-mailto-handler case (nothing opens) by pointing at the clipboard.
+  const [sendNote, setSendNote] = useState<string | null>(null)
 
   // ── Cover-preview (gate) state ──
   const [preview, setPreview] = useState<PreviewData | null>(null)
@@ -278,38 +282,61 @@ export default function PackageCreateModal({
   const recipientLabel = RECIPIENTS.find(r => r.value === recipientType)?.label ?? "—"
   const logLink = `/projects/${projectId}/submittals`
 
-  /** Open the sender's mail client with the templated draft. NO Gmail/send — the
-   *  app never sends. The mailto MUST fire synchronously here (no await before
-   *  window.location.href) or the browser drops the navigation. Attachments stay
-   *  manual (mailto can't attach) and the file download is a separate click. */
+  // Recipient email — shown as the "To:" line and used as the mailto To:. Only
+  // populated when the packaged rows share exactly one email (else ambiguous).
+  const recipientEmails = Array.from(new Set(submittals.map(s => s.send_to_email).filter(Boolean))) as string[]
+  const recipientEmail = recipientEmails.length === 1 ? recipientEmails[0] : ""
+  // Recipient firm — the "Sent To" name printed on the cover, else a single
+  // shared per-row company, else empty. Backs {vendor} + the fallback message.
+  const recipientFirms = Array.from(new Set(submittals.map(s => s.send_to_company).filter(Boolean))) as string[]
+  const recipientVendor = sentTo.trim() || (recipientFirms.length === 1 ? recipientFirms[0] : "")
+
+  /** Open the sender's mail client with the templated draft, and — additively —
+   *  copy the composed message to the clipboard as a fallback. On desktop Chrome
+   *  with no default mail app, window.location.href = 'mailto:' silently no-ops
+   *  (nothing opens); the clipboard copy + inline note keep the button from
+   *  appearing dead. NO Gmail/send — the app never sends. Attachments stay manual.
+   *
+   *  Ordering is load-bearing: the mailto MUST fire synchronously FIRST (no await
+   *  before window.location.href) or the browser drops the navigation (RFQ v1a
+   *  user-activation rule). The clipboard write runs AFTER it, fire-and-forget —
+   *  it is additive, never a replacement for the mailto. */
   function sendViaEmail() {
     // Unique CSI section codes, first-seen order.
     const sections = Array.from(new Set(submittals.map(s => s.csi_section).filter(Boolean))) as string[]
     const titles = submittals.map(s => normalizeSubmittalTitle(s.file_name) || s.file_name)
-    // Recipient firm: the "Sent To" name printed on the cover, else a single
-    // shared per-row company, else empty.
-    const firms = Array.from(new Set(submittals.map(s => s.send_to_company).filter(Boolean))) as string[]
-    const vendor = sentTo.trim() || (firms.length === 1 ? firms[0] : "")
-    // To: only when the packaged rows share exactly one recipient email.
-    const emails = Array.from(new Set(submittals.map(s => s.send_to_email).filter(Boolean))) as string[]
-    const to = emails.length === 1 ? emails[0] : ""
 
     const fields: TransmittalMergeFields = {
       project: projectName,
       package_name: pkg?.package_number ?? "",
       sections: sections.join(", "),
       submittals: titles.join(", "),
-      vendor,
+      vendor: recipientVendor,
       user_name: userName ?? "",
       date: new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }),
     }
 
     const mailto = buildTransmittalMailto({
-      to, subjectTemplate: emailSubjectTpl, bodyTemplate: emailBodyTpl, fields, submittalTitles: titles,
+      to: recipientEmail, subjectTemplate: emailSubjectTpl, bodyTemplate: emailBodyTpl, fields, submittalTitles: titles,
     })
 
     // Mail client first — synchronous, in-gesture. Nothing awaited before this.
     window.location.href = mailto
+
+    // Additive fallback (AFTER the mailto, never before): copy the composed
+    // subject+body so a user with no mailto handler can paste it into a new email.
+    // Full (untruncated) submittals list — the clipboard has no URL-length limit.
+    const who = recipientEmail || recipientVendor || "your sub"
+    const subject = resolveTemplate(emailSubjectTpl, { ...fields })
+    const body = resolveTemplate(emailBodyTpl, { ...fields })
+    const clip = typeof navigator !== "undefined" ? navigator.clipboard : undefined
+    if (clip?.writeText) {
+      clip.writeText(`Subject: ${subject}\n\n${body}`).catch(() => {})
+      setSendNote(`Opening your email app… if nothing opens, the message has been copied to your clipboard — paste it into a new email to ${who}.`)
+    } else {
+      // Clipboard API unavailable (old browser / insecure context) — don't claim a copy.
+      setSendNote(`Opening your email app… if nothing opens, copy the message text and email it to ${who}.`)
+    }
   }
 
   const total = preview?.mode === "per_item" ? preview.items.length : 0
@@ -594,10 +621,14 @@ export default function PackageCreateModal({
                 draft. Separate from the download above (combining them races the
                 click gesture); attachments are added by the sender. */}
             <div className="rounded-lg border border-[#E2E8F0] bg-[#F8FAFC] px-4 py-3">
+              <p className="text-[11px] text-[#64748B] mb-1.5">
+                {recipientEmail
+                  ? <>To: <span className="font-semibold text-[#0F172A]">{recipientEmail}</span></>
+                  : "To: (no email on file — add one on the vendor)"}
+              </p>
               <button
                 onClick={sendViaEmail}
-                disabled={!pkg}
-                className="h-9 px-4 rounded-md bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors disabled:opacity-50 inline-flex items-center gap-2"
+                className="h-9 px-4 rounded-md bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors inline-flex items-center gap-2"
               >
                 <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" /></svg>
                 Send via Email
@@ -605,6 +636,11 @@ export default function PackageCreateModal({
               <p className="text-[11px] text-[#94A3B8] mt-2">
                 Opens your email app with a pre-written message — attach the downloaded package files before sending.
               </p>
+              {sendNote && (
+                <p className="text-[12px] text-[#0F172A] bg-[#EFF4F9] border border-[#D6E2ED] rounded-md px-3 py-2 mt-2" role="status" aria-live="polite">
+                  {sendNote}
+                </p>
+              )}
             </div>
 
             {error && <div className="rounded-md bg-red-50 border border-red-200 px-3 py-2 text-[12px] text-red-600">{error}</div>}
