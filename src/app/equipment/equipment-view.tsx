@@ -199,6 +199,11 @@ function ItemDetail({ itemId, item, onBack, onCountsChanged }: {
   const [checkoutUnit, setCheckoutUnit] = useState<Unit | null>(null)
   const [busyUnit, setBusyUnit]       = useState<string | null>(null)
 
+  // Item-level delete (soft). The server blocks it (409) while any unit is out —
+  // surfaced inline rather than as a bare alert.
+  const [deleting, setDeleting]       = useState(false)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
+
   function loadUnits() {
     setLoading(true)
     setLoadError(null)
@@ -245,6 +250,24 @@ function ItemDetail({ itemId, item, onBack, onCountsChanged }: {
     refresh()
   }
 
+  // Delete the whole catalog entry (soft). On success we drop back to the catalog
+  // and let its reload remove the row. A 409 (units still out) is shown inline.
+  async function deleteItem() {
+    const name = item?.name ?? "this item"
+    if (!confirm(`Delete "${name}"? This can't be undone.`)) return
+    setDeleting(true)
+    setDeleteError(null)
+    const res = await fetch(`/api/equipment/items/${itemId}`, { method: "DELETE" })
+    if (res.ok) {
+      onCountsChanged()
+      onBack()
+      return // component is unmounting — don't touch state past here
+    }
+    const d = await res.json().catch(() => ({}))
+    setDeleting(false)
+    setDeleteError(d?.error ?? "Failed to delete item")
+  }
+
   return (
     <div className="flex-1 min-h-0 overflow-y-auto">
       <div className="max-w-[900px] mx-auto px-4 sm:px-6 py-8 sm:py-10">
@@ -261,13 +284,28 @@ function ItemDetail({ itemId, item, onBack, onCountsChanged }: {
               <div className="mt-2"><AvailabilityPill available={item.available} owned={item.owned} /></div>
             )}
           </div>
-          <button
-            onClick={() => setAddUnitOpen(true)}
-            className="h-9 px-4 rounded-md bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors whitespace-nowrap self-start sm:self-auto"
-          >
-            Add unit
-          </button>
+          <div className="flex items-center gap-2 self-start sm:self-auto">
+            <button
+              onClick={deleteItem}
+              disabled={deleting}
+              className="h-9 px-3 rounded-md border border-[#E2E8F0] text-[13px] font-semibold text-red-500 hover:text-red-600 hover:border-red-200 disabled:opacity-50 transition-colors whitespace-nowrap"
+            >
+              {deleting ? "Deleting…" : "Delete item"}
+            </button>
+            <button
+              onClick={() => setAddUnitOpen(true)}
+              className="h-9 px-4 rounded-md bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors whitespace-nowrap"
+            >
+              Add unit
+            </button>
+          </div>
         </div>
+
+        {deleteError && (
+          <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-2.5">
+            <p className="text-[13px] text-amber-800">{deleteError}</p>
+          </div>
+        )}
 
         {loadError ? (
           <div className="bg-white rounded-xl border border-red-200 px-6 py-8 text-center">
