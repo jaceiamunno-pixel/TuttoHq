@@ -2698,6 +2698,7 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
           projectId={globalProjectId}
           projectName={appProjects.find(p => p.id === globalProjectId)?.name ?? "Project"}
           projectCmName={appProjects.find(p => p.id === globalProjectId)?.cm_name ?? null}
+          userName={myFullName || (teamMembers.find(m => m.email === userEmail)?.name ?? userEmail ?? "")}
           submittals={selectedSubmittals}
           onClose={() => setShowPackageModal(false)}
           onDone={() => {

@@ -8,6 +8,12 @@ import GenerationFiles, { type GenFile } from "./GenerationFiles"
 import { normalizeSubmittalTitle } from "@/lib/title-normalize"
 import { formatSectionNumber, padSectionSeq } from "@/lib/section-number"
 import { transmittalPackageBaseName } from "@/lib/package-name"
+import {
+  DEFAULT_TRANSMITTAL_EMAIL_SUBJECT,
+  DEFAULT_TRANSMITTAL_EMAIL_BODY,
+  buildTransmittalMailto,
+  type TransmittalMergeFields,
+} from "@/lib/transmittal-email"
 
 // ─── Transmittal-package create modal ───────────────────────────────────────
 // A package = pick submittal log rows → choose who it's going to → choose a
@@ -78,12 +84,14 @@ function base64ToPdfBlobUrl(b64: string): string {
 }
 
 export default function PackageCreateModal({
-  projectId, projectName, projectCmName, submittals, onClose, onDone,
+  projectId, projectName, projectCmName, userName, submittals, onClose, onDone,
 }: {
   projectId: string
   projectName: string
   /** The project's saved CM name (projects.cm_name) — prefills "Sent To". */
   projectCmName?: string | null
+  /** The sending user's display name — resolves the {user_name} merge field. */
+  userName?: string
   submittals: SubmittalRecord[]
   onClose: () => void
   onDone: () => void
@@ -112,6 +120,25 @@ export default function PackageCreateModal({
   const [genFiles, setGenFiles] = useState<GenFile[]>([])
   const [genMode, setGenMode] = useState<CoversheetMode>("package")
   const [warnings, setWarnings] = useState<string[]>([])
+
+  // Tenant's transmittal "Send via Email" template. Fetched on mount so the
+  // handoff can resolve merge fields + fire the mailto SYNCHRONOUSLY in the click
+  // gesture (an await before window.location.href drops the navigation). Falls
+  // back to the built-in defaults.
+  const [emailSubjectTpl, setEmailSubjectTpl] = useState(DEFAULT_TRANSMITTAL_EMAIL_SUBJECT)
+  const [emailBodyTpl, setEmailBodyTpl] = useState(DEFAULT_TRANSMITTAL_EMAIL_BODY)
+  useEffect(() => {
+    let cancelled = false
+    fetch("/api/settings")
+      .then(r => r.json())
+      .then(d => {
+        if (cancelled) return
+        if (d?.transmittal_email_subject_template) setEmailSubjectTpl(d.transmittal_email_subject_template)
+        if (d?.transmittal_email_body_template) setEmailBodyTpl(d.transmittal_email_body_template)
+      })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [])
 
   // Revoke the package-mode cover blob URL on replacement / unmount.
   useEffect(() => {
@@ -250,6 +277,40 @@ export default function PackageCreateModal({
   const trackingRef = pkg ? `[${pkg.package_number}]` : "[TTQ-…]"
   const recipientLabel = RECIPIENTS.find(r => r.value === recipientType)?.label ?? "—"
   const logLink = `/projects/${projectId}/submittals`
+
+  /** Open the sender's mail client with the templated draft. NO Gmail/send — the
+   *  app never sends. The mailto MUST fire synchronously here (no await before
+   *  window.location.href) or the browser drops the navigation. Attachments stay
+   *  manual (mailto can't attach) and the file download is a separate click. */
+  function sendViaEmail() {
+    // Unique CSI section codes, first-seen order.
+    const sections = Array.from(new Set(submittals.map(s => s.csi_section).filter(Boolean))) as string[]
+    const titles = submittals.map(s => normalizeSubmittalTitle(s.file_name) || s.file_name)
+    // Recipient firm: the "Sent To" name printed on the cover, else a single
+    // shared per-row company, else empty.
+    const firms = Array.from(new Set(submittals.map(s => s.send_to_company).filter(Boolean))) as string[]
+    const vendor = sentTo.trim() || (firms.length === 1 ? firms[0] : "")
+    // To: only when the packaged rows share exactly one recipient email.
+    const emails = Array.from(new Set(submittals.map(s => s.send_to_email).filter(Boolean))) as string[]
+    const to = emails.length === 1 ? emails[0] : ""
+
+    const fields: TransmittalMergeFields = {
+      project: projectName,
+      package_name: pkg?.package_number ?? "",
+      sections: sections.join(", "),
+      submittals: titles.join(", "),
+      vendor,
+      user_name: userName ?? "",
+      date: new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }),
+    }
+
+    const mailto = buildTransmittalMailto({
+      to, subjectTemplate: emailSubjectTpl, bodyTemplate: emailBodyTpl, fields, submittalTitles: titles,
+    })
+
+    // Mail client first — synchronous, in-gesture. Nothing awaited before this.
+    window.location.href = mailto
+  }
 
   const total = preview?.mode === "per_item" ? preview.items.length : 0
   const perItem = preview?.mode === "per_item" && total > 0 ? preview.items[Math.min(pageIndex, total - 1)] : null
@@ -528,6 +589,24 @@ export default function PackageCreateModal({
                 <p className="text-[13px] text-[#64748B]">No files were produced.</p>
               )}
             </div>
+
+            {/* Email handoff — opens the sender's mail client with a templated
+                draft. Separate from the download above (combining them races the
+                click gesture); attachments are added by the sender. */}
+            <div className="rounded-lg border border-[#E2E8F0] bg-[#F8FAFC] px-4 py-3">
+              <button
+                onClick={sendViaEmail}
+                disabled={!pkg}
+                className="h-9 px-4 rounded-md bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors disabled:opacity-50 inline-flex items-center gap-2"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" /></svg>
+                Send via Email
+              </button>
+              <p className="text-[11px] text-[#94A3B8] mt-2">
+                Opens your email app with a pre-written message — attach the downloaded package files before sending.
+              </p>
+            </div>
+
             {error && <div className="rounded-md bg-red-50 border border-red-200 px-3 py-2 text-[12px] text-red-600">{error}</div>}
           </div>
         )}
