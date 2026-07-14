@@ -176,8 +176,14 @@ export async function buildTransmittalPackageFiles(input: TransmittalPdfInput): 
     // per-item coversheets render (drawReviewerStamp), drawn once here after the
     // items table. Its identity is package-level (one company, one reviewer);
     // submittalNo is blank because this stamps the transmittal, not one item.
+    // Alongside it, a mirrored column of empty bordered boxes gives the downstream
+    // reviewers (Architect / Engineer / Subcontractor) a designated region to apply
+    // their own stamp + disposition markings — OUR stamp block is unchanged.
     if (input.reviewer) {
-      pdf.reviewerStampBox({ ...input.reviewer, reviewText: SUBMITTAL_REVIEW_LANGUAGE })
+      pdf.reviewerStampBox(
+        { ...input.reviewer, reviewText: SUBMITTAL_REVIEW_LANGUAGE },
+        { parties: ["Architect", "Engineer", "Subcontractor"] },
+      )
     }
 
     const merged = await PDFDocument.create()
