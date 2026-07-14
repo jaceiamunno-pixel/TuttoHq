@@ -19,7 +19,8 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   )
   safe.updated_at = new Date().toISOString()
 
-  const { error } = await supabase.from("rfis").update(safe).eq("id", id)
+  // Guard against editing a soft-deleted RFI (deleted rows aren't surfaced in the UI).
+  const { error } = await supabase.from("rfis").update(safe).eq("id", id).is("deleted_at", null)
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
   return NextResponse.json({ ok: true })
@@ -31,12 +32,14 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
   const { id } = await params
-  const { data: row, error: selErr } = await supabase
-    .from("rfis").select("id").eq("id", id).maybeSingle()
-  if (selErr) return NextResponse.json({ error: "Database error" }, { status: 500 })
-  if (!row) return NextResponse.json({ error: "Not found" }, { status: 404 })
-
-  const { error } = await supabase.from("rfis").delete().eq("id", id)
+  // Soft-delete: set deleted_at on a still-live row. A re-delete matches zero
+  // rows → clean 404. (SELECT policy is company_id-only, so this UPDATE ...
+  // RETURNING is safe — no 42501.)
+  const { data, error } = await supabase.from("rfis")
+    .update({ deleted_at: new Date().toISOString() })
+    .eq("id", id).is("deleted_at", null)
+    .select("id")
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  if (!data || data.length === 0) return NextResponse.json({ error: "Not found" }, { status: 404 })
   return NextResponse.json({ ok: true })
 }

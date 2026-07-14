@@ -13,10 +13,12 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   // insert (only import_pco sets it). A manual→imported write would be an
   // irreversible freeze of a legitimate row, so no PATCH/PUT path accepts it.
   //
-  // `co_number` (the PCO number) is NOT in this base list — it is added below
-  // only for builder PCOs (has_pco_detail = true), where the partial unique
-  // index uq_change_orders_project_pco_number guards it. A non-PCO change
-  // order's number stays immutable on this path.
+  // `co_number` (the PCO/CO number) is NOT in this base list — it is added below
+  // for renameable rows. Both builder PCOs (guarded by the partial unique index
+  // uq_change_orders_project_pco_number) and plain COs (guarded by
+  // uq_change_orders_project_plain_number, 0046) may be renumbered here; imported
+  // PCOs still can't (the freeze guard below rejects co_number since it isn't a
+  // WORKFLOW_FIELD).
   const allowed = [
     "assigned_co_number", "date", "proposal", "qualifications", "pricing_sum", "realized_amount",
     "schedule_impact", "schedule_impact_days", "file_path", "file_name",
@@ -29,13 +31,14 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   // backstop. DELETE is unaffected.
   const WORKFLOW_FIELDS = ["status", "assigned_co_number", "realized_amount", "assigned_to"]
   // Re-resolve the row server-side (RLS-scoped) to read has_pco_detail/origin —
-  // the client never tells us either, nor which project the row belongs to.
-  const { data: existing } = await supabase.from("change_orders").select("origin, has_pco_detail").eq("id", id).maybeSingle()
+  // the client never tells us either, nor which project the row belongs to. A
+  // soft-deleted row is treated as absent (existing → undefined).
+  const { data: existing } = await supabase.from("change_orders").select("origin, has_pco_detail").eq("id", id).is("deleted_at", null).maybeSingle()
 
-  // Only builder PCOs may rename their PCO number. (Imported PCOs are also
-  // has_pco_detail = true, but the freeze guard below still rejects co_number
-  // for them since it isn't a WORKFLOW_FIELD — co_number stays frozen there.)
-  if (existing?.has_pco_detail === true) allowed.push("co_number")
+  // Both builder PCOs and plain COs may edit their number after creation; the
+  // relevant partial unique index arbitrates collisions (→ 409 below). Imported
+  // PCOs are excluded by the WORKFLOW_FIELDS freeze check that follows.
+  allowed.push("co_number")
 
   if (existing?.origin === "imported") {
     const offending = Object.keys(updates).filter(k => allowed.includes(k) && !WORKFLOW_FIELDS.includes(k))
@@ -74,13 +77,15 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   }
   safe.updated_at = new Date().toISOString()
 
-  const { error } = await supabase.from("change_orders").update(safe).eq("id", id)
+  const { error } = await supabase.from("change_orders").update(safe).eq("id", id).is("deleted_at", null)
   if (error) {
-    // Partial unique index uq_change_orders_project_pco_number → the new PCO
-    // number is already taken by another builder PCO in this project. Surface a
-    // clean 409 instead of letting the unique violation fall through as a 500.
+    // Partial unique index (builder uq_change_orders_project_pco_number, or plain
+    // uq_change_orders_project_plain_number) → the new number is already taken by
+    // another live row in this project. Surface a clean 409 instead of letting
+    // the unique violation fall through as a 500. Label by row type.
     if (error.code === "23505") {
-      return NextResponse.json({ error: "PCO number already in use on this project" }, { status: 409 })
+      const label = existing?.has_pco_detail === true ? "PCO" : "CO"
+      return NextResponse.json({ error: `${label} number already in use on this project` }, { status: 409 })
     }
     return NextResponse.json({ error: error.message }, { status: 500 })
   }
@@ -96,12 +101,15 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
   const { id } = await params
-  const { data: row, error: selErr } = await supabase
-    .from("change_orders").select("id").eq("id", id).maybeSingle()
-  if (selErr) return NextResponse.json({ error: "Database error" }, { status: 500 })
-  if (!row) return NextResponse.json({ error: "Not found" }, { status: 404 })
-
-  const { error } = await supabase.from("change_orders").delete().eq("id", id)
+  // Soft-delete: set deleted_at on a still-live row. A re-delete matches zero
+  // rows → clean 404. For imported PCOs this UPDATE is permitted by the freeze
+  // trigger only once 0045b (deleted_at added to the allow-list) is applied.
+  // (SELECT policy is company_id-only, so UPDATE ... RETURNING is safe — no 42501.)
+  const { data, error } = await supabase.from("change_orders")
+    .update({ deleted_at: new Date().toISOString() })
+    .eq("id", id).is("deleted_at", null)
+    .select("id")
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  if (!data || data.length === 0) return NextResponse.json({ error: "Not found" }, { status: 404 })
   return NextResponse.json({ ok: true })
 }

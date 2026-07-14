@@ -16,7 +16,7 @@ export async function GET(
   const { data: co } = await supabase
     .from("change_orders")
     .select("id, co_number, project_id, date, proposal, description_of_work, pricing_sum, schedule_impact_days, oh_p_percent, fee_percent, has_pco_detail, submitted_by, signer_title")
-    .eq("id", id).maybeSingle()
+    .eq("id", id).is("deleted_at", null).maybeSingle()
   if (!co) return NextResponse.json({ error: "Not found" }, { status: 404 })
 
   const { data: items } = await supabase
@@ -60,8 +60,11 @@ export async function PUT(
 
   // Imported PCOs are frozen — the builder must never re-save one. Clean 403
   // (the save_pco UPDATE would also be rejected by the DB freeze trigger).
-  const { data: existing } = await supabase.from("change_orders").select("origin").eq("id", id).maybeSingle()
-  if (existing?.origin === "imported") {
+  // A soft-deleted row reads as absent → 404 (guards against resurrecting a
+  // deleted PCO through save_pco, whose UPDATE does not itself filter deleted_at).
+  const { data: existing } = await supabase.from("change_orders").select("origin").eq("id", id).is("deleted_at", null).maybeSingle()
+  if (!existing) return NextResponse.json({ error: "PCO not found" }, { status: 404 })
+  if (existing.origin === "imported") {
     return NextResponse.json({ error: "This PCO was imported and is frozen; it cannot be edited." }, { status: 403 })
   }
 

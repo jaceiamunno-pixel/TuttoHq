@@ -36,7 +36,7 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
   // (migration 0007) has not been applied yet — a missing column is simply absent.
   const { data: co } = await supabase.from("change_orders")
     .select("*")
-    .eq("id", id).maybeSingle()
+    .eq("id", id).is("deleted_at", null).maybeSingle()
   if (!co) return NextResponse.json({ error: "Change order not found" }, { status: 404 })
   if (!co.has_pco_detail) return NextResponse.json({ error: "Not a builder PCO" }, { status: 409 })
 

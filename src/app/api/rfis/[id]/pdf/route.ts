@@ -11,7 +11,7 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
 
   const { id } = await params
 
-  const { data: rfi, error: rfiErr } = await supabase.from("rfis").select("*").eq("id", id).single()
+  const { data: rfi, error: rfiErr } = await supabase.from("rfis").select("*").eq("id", id).is("deleted_at", null).maybeSingle()
   if (rfiErr || !rfi) return NextResponse.json({ error: "RFI not found" }, { status: 404 })
 
   let project: Record<string, string | null> = {}

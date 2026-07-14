@@ -16,7 +16,7 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
 
   const { id } = await params
 
-  const { data: co, error: coErr } = await supabase.from("change_orders").select("*").eq("id", id).single()
+  const { data: co, error: coErr } = await supabase.from("change_orders").select("*").eq("id", id).is("deleted_at", null).maybeSingle()
   if (coErr || !co) return NextResponse.json({ error: "Change order not found" }, { status: 404 })
 
   let project: Record<string, string | null> = {}
