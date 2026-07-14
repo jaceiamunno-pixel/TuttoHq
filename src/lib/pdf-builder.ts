@@ -989,6 +989,17 @@ export class PDFBuilder {
     this.spacer(10)
     const gap = 13
     const cellW = (this.CW - gap) / 2
+    // The grid fills the remaining height down to the footer (cellH is derived
+    // from the space left, so the boxes can never overlap the items table or the
+    // footer — the bottom row always stops at bottomLimit). The only risk is the
+    // cells getting too SHORT to hold a legible stamp when a long items table has
+    // pushed the cursor near the bottom of the transmittal list cover. In that
+    // case move the WHOLE grid onto a fresh page, where it renders full-size.
+    // 90pt keeps a typical transmittal (incl. ~6 items) on one page with a
+    // readable stamp; on the per-item coversheet the room is always ~205pt, so
+    // this never fires and that page is unchanged.
+    const MIN_CELL_H = 90
+    if ((this.y - this.bottomLimit - gap) / 2 < MIN_CELL_H) this.pageBreak()
     const top = this.y
     const cellH = (top - this.bottomLimit - gap) / 2
     resolved.forEach((stamp, i) => {
@@ -1015,22 +1026,12 @@ export class PDFBuilder {
     this.y = top - 2 * cellH - gap
   }
 
-  /** Draw OUR reviewer stamp as a SINGLE standalone box — the GC's stamp on a
-   *  whole transmittal list cover. Reuses the EXACT per-item drawReviewerStamp
-   *  rendering (no re-implementation). Width defaults to half the content width so
-   *  the block reads at the same scale as a per-item stamp box; page-breaks if it
-   *  won't fit above the footer.
-   *
-   *  When `opts.parties` is supplied, a mirrored column of EMPTY bordered stamp
-   *  boxes (one per party — e.g. Architect / Engineer / Subcontractor) is drawn in
-   *  the right half at the same top and height as OUR stamp: the designated region
-   *  where the downstream reviewers apply their own stamp + disposition markings.
-   *  OUR stamp's box geometry is IDENTICAL whether or not parties are drawn — the
-   *  party column is purely additive and never overlaps or resizes OUR stamp. */
-  reviewerStampBox(
-    reviewer: PDFReviewerStamp,
-    opts?: { width?: number; height?: number; parties?: string[] },
-  ) {
+  /** Draw OUR reviewer stamp as a SINGLE standalone box (not the 2×2 grid) — the
+   *  GC's stamp on a whole transmittal list cover. Reuses the EXACT per-item
+   *  drawReviewerStamp rendering (no re-implementation). Width defaults to half
+   *  the content width so the block reads at the same scale as a per-item stamp
+   *  box; page-breaks if it won't fit above the footer. */
+  reviewerStampBox(reviewer: PDFReviewerStamp, opts?: { width?: number; height?: number }) {
     const w = opts?.width ?? (this.CW - 13) / 2
     const h = opts?.height ?? 190
     this.spacer(12)
@@ -1042,33 +1043,6 @@ export class PDFBuilder {
       color: PDF.color.white, borderColor: PDF.color.ruleStrong, borderWidth: 0.75,
     })
     this.drawReviewerStamp(x, y, w, h, reviewer)
-
-    // Designated stamp region for the downstream reviewers: a mirrored column of
-    // empty bordered boxes filling the right half at the same vertical band as OUR
-    // stamp, so the A/E (and any other party) has a defined place to stamp + mark a
-    // disposition. Right edge lands exactly on the content margin (px + pw = M + CW);
-    // ensureSpace(h) above already guaranteed the whole band fits, so nothing clips.
-    const parties = opts?.parties ?? []
-    if (parties.length) {
-      const gap = 13
-      const px = x + w + gap
-      const pw = this.CW - w - gap
-      const vGap = 10
-      const boxH = (h - vGap * (parties.length - 1)) / parties.length
-      parties.forEach((role, i) => {
-        const py = y + h - i * (boxH + vGap) - boxH
-        this.page.drawRectangle({
-          x: px, y: py, width: pw, height: boxH,
-          color: PDF.color.white, borderColor: PDF.color.ruleStrong, borderWidth: 0.75,
-        })
-        const label = `${role} Stamp`
-        const lw = this.reg.widthOfTextAtSize(label, 8)
-        this.page.drawText(label, {
-          x: px + pw - lw - 8, y: py + 8, size: 8, font: this.reg, color: PDF.color.muted,
-        })
-      })
-    }
-
     this.y = y - 2
   }
 

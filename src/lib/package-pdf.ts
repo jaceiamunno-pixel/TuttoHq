@@ -172,18 +172,17 @@ export async function buildTransmittalPackageFiles(input: TransmittalPdfInput): 
       listW,
     )
 
-    // The GC's reviewer stamp for the whole transmittal — the SAME red block the
-    // per-item coversheets render (drawReviewerStamp), drawn once here after the
-    // items table. Its identity is package-level (one company, one reviewer);
-    // submittalNo is blank because this stamps the transmittal, not one item.
-    // Alongside it, a mirrored column of empty bordered boxes gives the downstream
-    // reviewers (Architect / Engineer / Subcontractor) a designated region to apply
-    // their own stamp + disposition markings — OUR stamp block is unchanged.
+    // The GC's reviewer stamp for the whole transmittal — drawn in the SAME 2×2
+    // stamp grid the per-item library coversheet uses (stampGrid): OUR reviewer
+    // stamp fills the first cell, with empty bordered "Architect / Engineer /
+    // Subcontractor" placeholder cells for the downstream reviewers to stamp +
+    // mark a disposition. Passing no `stamps` yields stampGrid's default four
+    // roles (GC → Architect → Engineer → Subcontractor); the package-level
+    // reviewer identity has submittalNo blank (it stamps the whole transmittal).
+    // stampGrid page-breaks the whole grid onto a fresh page if a long items
+    // table left too little room, so it never overlaps the table or footer.
     if (input.reviewer) {
-      pdf.reviewerStampBox(
-        { ...input.reviewer, reviewText: SUBMITTAL_REVIEW_LANGUAGE },
-        { parties: ["Architect", "Engineer", "Subcontractor"] },
-      )
+      pdf.stampGrid(undefined, { ...input.reviewer, reviewText: SUBMITTAL_REVIEW_LANGUAGE })
     }
 
     const merged = await PDFDocument.create()
