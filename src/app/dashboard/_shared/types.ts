@@ -97,6 +97,12 @@ export interface SubmittalRecord {
   // Inline title edit. When true, normalizer / spec-book re-parse must NOT
   // overwrite file_name — the row carries a human-set label.
   title_locked: boolean | null
+  // Migration 0043. True when this spec requirement is satisfied by ANOTHER
+  // submittal on the same project (e.g. the Product Data submittal already
+  // carries the warranty). The row is RETAINED in the log/export; its
+  // description renders "Fulfilled by other submittal" (display-only — the
+  // stored file_name/title is never overwritten, so unmark restores it).
+  fulfilled_by_other: boolean
 }
 
 export type BatchStatus = "pending" | "classifying" | "ready" | "error" | "uploading" | "done" | "upload-error"

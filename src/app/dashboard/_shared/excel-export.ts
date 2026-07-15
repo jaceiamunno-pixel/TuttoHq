@@ -222,7 +222,10 @@ export async function exportSubmittalLogToExcel(args: ExportSubmittalLogArgs): P
     // csi_section. Blank (not "—") when unnumbered so the cell reads clean.
     row.getCell(COL_SUBM).value    = s.section_seq != null ? padSectionSeq(s.section_seq) : ""
     row.getCell(COL_SPEC).value    = s.csi_section   ?? ""
-    row.getCell(3).value           = s.file_name
+    // Fulfilled-by-other rows keep their number/section/status/vendor but their
+    // DESCRIPTION exports the literal substitution (bold via col C's cell style
+    // below). The stored file_name is never mutated — display/export only.
+    row.getCell(3).value           = s.fulfilled_by_other ? "Fulfilled by other submittal" : s.file_name
     row.getCell(COL_TYPE).value    = s.submittal_type ?? ""
     row.getCell(5).value           = vendor
     row.getCell(COL_REC).value     = parseDate(s.received_date)
