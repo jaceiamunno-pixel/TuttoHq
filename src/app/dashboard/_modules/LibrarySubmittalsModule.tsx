@@ -284,6 +284,11 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
   const [selectMode, setSelectMode]             = useState(false)
   const [selectedIds, setSelectedIds]           = useState<Set<string>>(new Set())
   const [showPackageModal, setShowPackageModal] = useState(false)
+  // "Mark fulfilled by other submittal" bulk action (migration 0043). In-flight
+  // guard + monotonic key source for the undo toast (so back-to-back marks stack
+  // their own undoable toast instead of clobbering each other).
+  const [markingFulfilled, setMarkingFulfilled] = useState(false)
+  const fulfilledUndoSeq = useRef(0)
   const saveTimers     = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
   const pendingPatches = useRef<Map<string, Record<string, unknown>>>(new Map())
   // Monotonic id so an out-of-order Submittal Log response can't clobber a newer one.
@@ -987,6 +992,79 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
   function patchLogRowLocal(id: string, updates: Partial<SubmittalRecord>) {
     setLogSubmittals(prev => prev.map(s => s.id === id ? { ...s, ...updates } as SubmittalRecord : s))
     setSearchResults(prev => prev ? prev.map(s => s.id === id ? { ...s, ...updates } as SubmittalRecord : s) : prev)
+  }
+
+  // ── "Fulfilled by other submittal" bulk mark (migration 0043) ────────────────
+  // Some spec requirements are satisfied by ANOTHER line item (e.g. the Product
+  // Data submittal already carries the warranty + certificate). Those rows must
+  // NOT be deleted — they're real spec requirements the log must still show as
+  // addressed. This flips fulfilled_by_other on the current selection.
+  //
+  // Non-destructive (display-only substitution, stored title untouched), so the
+  // model is commit-then-reverse: the POST fires now (optimistic, reconciled
+  // against the server's actual `updated` set), then the shared pending-action
+  // toast offers an exact Undo that posts the reverse value. Mixed selection →
+  // mark all true; an all-already-fulfilled selection → unmark (value false).
+  async function bulkMarkFulfilled() {
+    const subs = selectedSubmittals
+    if (subs.length === 0 || markingFulfilled) return
+    const allFulfilled = subs.every(s => s.fulfilled_by_other === true)
+    const value = !allFulfilled
+    const ids = subs.map(s => s.id)
+    const prior = new Map(subs.map(s => [s.id, s.fulfilled_by_other === true]))
+
+    setMarkingFulfilled(true)
+    // Optimistic flip of every selected row.
+    ids.forEach(id => patchLogRowLocal(id, { fulfilled_by_other: value }))
+
+    let updated: string[]
+    try {
+      const res = await fetch("/api/submittals/bulk-fulfilled", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids, value }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data?.error ?? `Failed (HTTP ${res.status})`)
+      updated = Array.isArray(data.updated) ? data.updated : []
+    } catch {
+      // Revert every optimistic flip to its captured prior value.
+      ids.forEach(id => patchLogRowLocal(id, { fulfilled_by_other: prior.get(id) ?? false }))
+      setMarkingFulfilled(false)
+      return
+    } finally {
+      setMarkingFulfilled(false)
+    }
+
+    // Reconcile: any id the server did NOT report as changed reverts to its prior
+    // stored value (RLS skipped it, or it was already at `value`). Never assume
+    // the request set equals the updated set.
+    const updatedSet = new Set(updated)
+    ids.forEach(id => {
+      if (!updatedSet.has(id)) patchLogRowLocal(id, { fulfilled_by_other: prior.get(id) ?? false })
+    })
+
+    const n = updated.length
+    if (n === 0) return
+
+    // Undo toast — the SAME pending-action affordance the module already uses for
+    // deletes. The mark already committed, so onCommit is a no-op (the toast just
+    // auto-dismisses after the standard window); Undo posts the exact reverse.
+    const changed = [...updated]
+    fulfilledUndoSeq.current += 1
+    pendingDelete.schedule({
+      key: `fulfilled:${fulfilledUndoSeq.current}`,
+      label: value
+        ? `${n} row${n === 1 ? "" : "s"} marked fulfilled by other`
+        : `${n} row${n === 1 ? "" : "s"} unmarked fulfilled by other`,
+      onCommit: async () => {},
+      onUndo: () => {
+        changed.forEach(id => patchLogRowLocal(id, { fulfilled_by_other: !value }))
+        fetch("/api/submittals/bulk-fulfilled", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ids: changed, value: !value }),
+        }).catch(() => { /* optimistic reverse — reconciles on next load */ })
+      },
+    })
   }
 
   // Optimistic local update + 500ms-debounced PATCH, coalescing several field
@@ -2336,6 +2414,20 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                   Clear
                 </button>
                 <div className="flex-1 min-w-[8px]" />
+                {(() => {
+                  // All-fulfilled selection → the button unmarks; any other
+                  // selection (mixed or none-fulfilled) → it marks all true.
+                  const allFulfilled = selectedSubmittals.length > 0
+                    && selectedSubmittals.every(s => s.fulfilled_by_other === true)
+                  return (
+                    <button disabled={selectedIds.size === 0 || markingFulfilled} onClick={bulkMarkFulfilled}
+                      title="Mark the selected rows as satisfied by another submittal — the rows stay in the log; their description shows &quot;Fulfilled by other submittal&quot;."
+                      className="h-8 px-3 rounded-md border border-[#7B9BB5] text-[#5A7A94] text-[12px] font-semibold hover:bg-[#7B9BB5]/[0.08] transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5 whitespace-nowrap">
+                      {markingFulfilled ? <SpinnerIcon className="h-3.5 w-3.5" /> : null}
+                      {allFulfilled ? "Unmark fulfilled" : "Mark fulfilled by other"}
+                    </button>
+                  )
+                })()}
                 <button disabled={selectedIds.size === 0} onClick={() => setShowPackageModal(true)}
                   className="h-8 px-4 rounded-md bg-[#7B9BB5] text-white text-[12px] font-semibold hover:bg-[#6A8AA4] transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5 whitespace-nowrap">
                   <PlusIcon /> Create Package
@@ -2401,6 +2493,11 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                       <span className={`inline-block px-1.5 py-0.5 rounded font-mono text-[11px] font-semibold ${c.chip}`}>{s.csi_section ?? "—"}</span>
                     </td>
                     <td className="px-3 py-1.5">
+                      {s.fulfilled_by_other ? (
+                        // Display-only substitution — the stored file_name/title is
+                        // never overwritten, so unmarking restores it with zero loss.
+                        <span className="font-bold">Fulfilled by other submittal</span>
+                      ) : (
                       <div className="flex items-center gap-1.5 max-w-[520px]">
                         {hasAttachment ? (
                           <svg className="h-3.5 w-3.5 flex-shrink-0 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-label="Attached">
@@ -2458,6 +2555,7 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                           </button>
                         )}
                       </div>
+                      )}
                     </td>
                     <td className="px-3 py-1.5 whitespace-nowrap">
                       {(() => {
@@ -2587,13 +2685,19 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                           className="accent-[#7B9BB5] flex-shrink-0" />
                       )}
                       <span className="text-[11px] font-bold tabular-nums text-[#64748B] flex-shrink-0" title={formatSectionNumber(s.csi_section, s.section_seq)}>{padSectionSeq(s.section_seq)}</span>
-                      <button
-                        type="button"
-                        onClick={() => openDetailModal(s)}
-                        title={s.file_name}
-                        className="flex-1 min-w-0 text-left text-[13px] font-medium text-[#0F172A] leading-tight truncate hover:underline focus:outline-none">
-                        {s.file_name}
-                      </button>
+                      {s.fulfilled_by_other ? (
+                        // Display-only substitution (stored title untouched) — mirrors
+                        // the desktop table's description cell.
+                        <span className="flex-1 min-w-0 text-[13px] font-bold text-[#0F172A] leading-tight truncate">Fulfilled by other submittal</span>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => openDetailModal(s)}
+                          title={s.file_name}
+                          className="flex-1 min-w-0 text-left text-[13px] font-medium text-[#0F172A] leading-tight truncate hover:underline focus:outline-none">
+                          {s.file_name}
+                        </button>
+                      )}
                       {s.title_locked && (
                         <span title="Title was set manually — automated re-process will not overwrite it"
                           className="flex-shrink-0 text-[#94A3B8]">

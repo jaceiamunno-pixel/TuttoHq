@@ -21,8 +21,17 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     // Inline title edit. file_name updates implicitly lock the row so the
     // normalizer / spec-book re-parse never overwrites a human's choice.
     "file_name",
+    // Requirement satisfied by another submittal (migration 0043). Display-only
+    // flag — never touches description/title.
+    "fulfilled_by_other",
   ]
   const safe = Object.fromEntries(Object.entries(updates).filter(([k]) => allowed.includes(k)))
+
+  // fulfilled_by_other is a strict boolean — reject anything else so a bad
+  // client can't write a truthy string / number into the column.
+  if ("fulfilled_by_other" in safe && typeof safe.fulfilled_by_other !== "boolean") {
+    return NextResponse.json({ error: "fulfilled_by_other must be a boolean" }, { status: 400 })
+  }
 
   // Auto-flag when a user manually changes the CSI classification
   if ("csi_division" in safe || "csi_section" in safe) {

@@ -199,10 +199,14 @@ export async function exportSubmittalLogToPdf(args: ExportSubmittalLogPdfArgs): 
     ...header,
   })
 
-  // Columns mirror the on-screen log header set (Actions dropped). Description
-  // absorbs the remaining width after the fixed columns.
+  // Columns mirror the on-screen log header set (Actions dropped). The trailing
+  // "Source" column is intentionally NOT exported to the PDF (it stays in the
+  // Excel export + on-screen table). Description absorbs the remaining width
+  // after the fixed columns — so dropping Source hands its 36pt to Description,
+  // the table still spans the full content width (no right-edge gap), the widths
+  // still sum to cw, and no other column's width (or wrap behavior) changes.
   const cw = doc.CW
-  const fixed = 28 + 46 + 56 + 84 + 44 + 44 + 46 + 46 + 34 + 72 + 40 + 36
+  const fixed = 28 + 46 + 56 + 84 + 44 + 44 + 46 + 46 + 34 + 72 + 40
   const cols: { header: string; width: number; align?: "left" | "right" }[] = [
     { header: "Subm. #", width: 28, align: "right" },
     { header: "Spec #", width: 46 },
@@ -216,7 +220,6 @@ export async function exportSubmittalLogToPdf(args: ExportSubmittalLogPdfArgs): 
     { header: "Appr. (d)", width: 34, align: "right" },
     { header: "Status", width: 72 },
     { header: "Late", width: 40 },
-    { header: "Source", width: 36 },
   ]
 
   const rows: string[][] = args.rows.map(s => {
@@ -225,7 +228,9 @@ export async function exportSubmittalLogToPdf(args: ExportSubmittalLogPdfArgs): 
       // Compact section number ("004"); the Spec # column beside it has the section.
       padSectionSeq(s.section_seq),
       s.csi_section ?? "—",
-      s.file_name,
+      // Fulfilled-by-other rows export the literal substitution; stored title
+      // is never mutated (display/export only).
+      s.fulfilled_by_other ? "Fulfilled by other submittal" : s.file_name,
       s.submittal_type ?? "—",
       vendorLabel(s, args.vendors, args.vendorPeople),
       fmtDateShort(s.received_date),
@@ -235,10 +240,9 @@ export async function exportSubmittalLogToPdf(args: ExportSubmittalLogPdfArgs): 
       appr != null ? String(appr) : "—",
       s.review_status ?? "Received",
       lateLabel(s),
-      s.source === "spec_ingestion" && s.spec_section_id ? "Spec book" : "",
     ]
   })
-  if (rows.length === 0) rows.push(["—", "", "No submittals", "", "", "", "", "", "", "", "", "", ""])
+  if (rows.length === 0) rows.push(["—", "", "No submittals", "", "", "", "", "", "", "", "", ""])
 
   doc.logTable(cols, rows)
 
