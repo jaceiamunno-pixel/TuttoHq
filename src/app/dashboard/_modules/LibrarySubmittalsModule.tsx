@@ -148,6 +148,17 @@ function submittalMatchesQuery(s: SubmittalRecord, q: string): boolean {
   return hay.includes(q)
 }
 
+// Suggested next revision label after the current one: bump the last number,
+// keep whatever surrounds it ("R0" → "R1", "Rev 2" → "Rev 3"). No digits (or
+// no current label) suggests "R1" — every revision-uploadable row has a
+// current attachment (the 0044 floor guarantees R0), and an unparseable label
+// just means the user types their own. Suggestion only; the input is editable.
+function nextRevisionLabel(current: string | null | undefined): string {
+  const m = (current ?? "").match(/^(.*?)(\d+)(\D*)$/)
+  if (!m) return "R1"
+  return `${m[1]}${Number(m[2]) + 1}${m[3]}`
+}
+
 export default function LibrarySubmittalsModule({ activeModule, globalProjectId, appProjects, teamMembers, userEmail, submittalsView, setSubmittalsView, onNavigate }: {
   activeModule: string
   globalProjectId: string
@@ -323,6 +334,17 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
   }> | null>(null)
   const [revHistoryLoading, setRevHistoryLoading] = useState(false)
   const [revHistoryError,   setRevHistoryError]   = useState<string | null>(null)
+  // Per-row "Upload Rev" modal — file + user-editable revision label. The
+  // label defaults to the next number after the row's current revision
+  // (revision_number is trigger-synced from the current attachment).
+  const [revUploadSub,   setRevUploadSub]   = useState<SubmittalRecord | null>(null)
+  const [revUploadFile,  setRevUploadFile]  = useState<File | null>(null)
+  const [revUploadLabel, setRevUploadLabel] = useState("")
+  const [revUploadBusy,  setRevUploadBusy]  = useState(false)
+  const [revUploadError, setRevUploadError] = useState<string | null>(null)
+  // Post-submit outcome — kept on screen (modal stays open) because a
+  // non-current or duplicate result is the whole point of the message.
+  const [revUploadDone, setRevUploadDone] = useState<null | { tone: "ok" | "warn" | "info"; message: string }>(null)
   // Deferred-with-undo mechanism for destructive actions. Wired here to the
   // per-attachment delete in the slide-out (the DELETE fires only after the 8s
   // undo window closes; Undo cancels it before it ever runs).
@@ -905,6 +927,65 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
         setRevHistoryError(e instanceof Error ? e.message : "Failed to delete revision")
       },
     })
+  }
+
+  // ── Per-row "Upload Rev" (revision upload) ──────────────────────────────────
+  // File → storage via the standard presign flow ({company_id}/uploads/…), then
+  // POST /api/submittals/[id]/attachments records it through the
+  // add_submittal_attachment RPC. The route computes sha256 server-side and
+  // reports the outcome honestly: current / superseded (older revision than
+  // what's on file) / duplicate (same bytes + label already recorded). The
+  // modal shows the server's message verbatim — never write review_status or
+  // any status from here.
+  function openRevUpload(s: SubmittalRecord) {
+    setRevUploadSub(s)
+    setRevUploadFile(null)
+    setRevUploadLabel(nextRevisionLabel(s.revision_number))
+    setRevUploadError(null)
+    setRevUploadDone(null)
+  }
+  function closeRevUpload() {
+    if (revUploadBusy) return
+    setRevUploadSub(null)
+    setRevUploadFile(null)
+    setRevUploadLabel("")
+    setRevUploadError(null)
+    setRevUploadDone(null)
+  }
+  async function submitRevUpload() {
+    if (!revUploadSub || !revUploadFile || revUploadBusy) return
+    const label = revUploadLabel.trim()
+    if (!label) { setRevUploadError("Enter a revision label."); return }
+    if (label.length > 24) { setRevUploadError("Revision label is 24 characters max."); return }
+    setRevUploadBusy(true)
+    setRevUploadError(null)
+    try {
+      const { path } = await presignAndUpload("submittals", "uploads", revUploadFile)
+      const res = await fetch(`/api/submittals/${encodeURIComponent(revUploadSub.id)}/attachments`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          storage_path: path,
+          file_name: revUploadFile.name,
+          revision_label: label,
+        }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data?.error ?? `Failed (HTTP ${res.status})`)
+      setRevUploadDone({
+        tone: data.outcome === "current" ? "ok" : data.outcome === "superseded" ? "warn" : "info",
+        message: typeof data.message === "string" ? data.message : "Uploaded.",
+      })
+      // Reflect the server-derived post-state (new current revision or
+      // unchanged row) without the skeleton swap; also refreshes the
+      // revision-count badges. Re-pull the slide-out if it's open on this row.
+      loadSubmittals(activeProjectId, { silent: true })
+      if (revHistorySub?.id === revUploadSub.id) void openRevHistory(revUploadSub)
+    } catch (e) {
+      setRevUploadError(e instanceof Error ? e.message : "Upload failed")
+    } finally {
+      setRevUploadBusy(false)
+    }
   }
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2632,6 +2713,12 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                               className="text-[10px] text-[#94A3B8] hover:text-[#475569] px-1 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors">
                               Original (w/ stamp)
                             </button>
+                            <button
+                              onClick={() => openRevUpload(s)}
+                              title="Upload a new revision of this document — it is added to the revision history; the file on record stays intact."
+                              className="text-[11px] text-[#7B9BB5] hover:text-[#5A7A94] px-1.5 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors">
+                              Upload Rev
+                            </button>
                           </>
                         )}
                         <button onClick={() => openEditModal(s)} className="text-[11px] text-[#64748B] hover:text-[#0F172A] px-1.5 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors">Edit</button>
@@ -4302,6 +4389,90 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                 </ul>
               )}
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Upload-revision modal (per-row "Upload Rev") ─────────────────────
+          File picker + editable revision label (defaults to the next number
+          after the row's current revision). After submit the modal STAYS OPEN
+          showing the server's outcome message — "became current", "older than
+          what's on file", or "exact file already recorded" are the signal this
+          feature exists to deliver. z-[70]: above the revision slide-out so
+          both can be read together when the slide-out is open. */}
+      {revUploadSub && (
+        <div
+          className="fixed inset-0 bg-black/60 z-[70] flex items-center justify-center"
+          onClick={e => { if (e.target === e.currentTarget) closeRevUpload() }}
+        >
+          <div className="bg-white rounded-xl border border-[#E2E8F0] shadow-2xl w-full sm:w-[420px] mx-4 sm:mx-0 p-5">
+            <div className="flex items-center justify-between mb-1">
+              <h2 className="text-[15px] font-bold text-[#0F172A]">Upload revision</h2>
+              <button onClick={closeRevUpload} disabled={revUploadBusy}
+                className="text-[#64748B] hover:text-[#0F172A] transition-colors disabled:opacity-50" aria-label="Close">
+                <XIcon className="h-4 w-4" />
+              </button>
+            </div>
+            <p className="text-[12px] text-[#64748B] truncate" title={revUploadSub.file_name}>
+              {revUploadSub.csi_section ?? "—"} · {truncateForDisplay(revUploadSub.file_name, { maxLength: 48 })}
+            </p>
+            <p className="text-[11px] text-[#94A3B8] mt-0.5 mb-3">
+              Current on file: Rev {revUploadSub.revision_number ?? "R0"} · the new file is added to the
+              history; nothing is deleted or overwritten.
+            </p>
+
+            {revUploadDone ? (
+              <>
+                <p className={`text-[12px] rounded-md px-3 py-2.5 ${
+                  revUploadDone.tone === "ok" ? "bg-emerald-50 text-emerald-800"
+                  : revUploadDone.tone === "warn" ? "bg-amber-50 text-amber-800"
+                  : "bg-[#F1F5F9] text-[#334155]"}`}>
+                  {revUploadDone.message}
+                </p>
+                <div className="flex justify-end mt-4">
+                  <button onClick={closeRevUpload}
+                    className="h-8 px-4 rounded-md bg-[#0F172A] text-white text-[12px] font-semibold hover:bg-[#1E293B] transition-colors">
+                    Done
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <label className="block text-[11px] font-semibold text-[#475569] mb-1">Revised document</label>
+                <input
+                  type="file"
+                  onChange={e => setRevUploadFile(e.target.files?.[0] ?? null)}
+                  disabled={revUploadBusy}
+                  className="block w-full text-[12px] text-[#334155] file:mr-3 file:h-8 file:px-3 file:rounded-md file:border-0 file:bg-[#F1F5F9] file:text-[12px] file:font-semibold file:text-[#334155] hover:file:bg-[#E2E8F0] file:transition-colors mb-3"
+                />
+                <label className="block text-[11px] font-semibold text-[#475569] mb-1">Revision label</label>
+                <input
+                  type="text"
+                  value={revUploadLabel}
+                  onChange={e => setRevUploadLabel(e.target.value)}
+                  disabled={revUploadBusy}
+                  maxLength={24}
+                  placeholder="R1"
+                  className="h-8 w-28 px-2 rounded border border-[#E2E8F0] text-[12px] text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40"
+                />
+                <p className="text-[11px] text-[#94A3B8] mt-1">
+                  Suggested from the current revision — change it if the architect numbered this one differently.
+                </p>
+                {revUploadError && <p className="text-[12px] text-red-700 mt-2">{revUploadError}</p>}
+                <div className="flex justify-end gap-2 mt-4">
+                  <button onClick={closeRevUpload} disabled={revUploadBusy}
+                    className="h-8 px-3 rounded-md text-[12px] font-semibold text-[#64748B] hover:bg-[#0F172A]/[0.04] transition-colors disabled:opacity-50">
+                    Cancel
+                  </button>
+                  <button
+                    onClick={() => void submitRevUpload()}
+                    disabled={revUploadBusy || !revUploadFile || !revUploadLabel.trim()}
+                    className="h-8 px-4 rounded-md bg-[#0F172A] text-white text-[12px] font-semibold hover:bg-[#1E293B] transition-colors disabled:opacity-40">
+                    {revUploadBusy ? "Uploading…" : "Upload revision"}
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}
