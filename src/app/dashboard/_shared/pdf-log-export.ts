@@ -272,7 +272,16 @@ export async function buildSubmittalLogPdf(
   })
   if (rows.length === 0) rows.push(["—", "", "No submittals", "", "", "", "", "", "", "", "", ""])
 
-  doc.logTable(cols, rows)
+  doc.logTable(cols, rows, {
+    // Shade rows that have a real submitted document so the printed log
+    // separates them at a glance from still-empty spec placeholders. The
+    // predicate is parent-level storage_path (kept in sync from the current
+    // attachment by trigger) — NOT review_status, and NOT the attachments
+    // table. Index-keyed: rows[] above is built 1:1 from args.rows (the
+    // empty-log placeholder row indexes past args.rows and stays unshaded).
+    shade: (_r, i) => args.rows[i]?.storage_path != null,
+    shadeLegend: "Shaded rows have a submitted document on file.",
+  })
   return doc.save()
 }
 
