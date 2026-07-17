@@ -28,6 +28,11 @@ export const PDF = {
     green:      rgb(0.06, 0.46, 0.18),
     greenLight: rgb(0.88, 0.96, 0.90),
     highlight:  rgb(1, 0.965, 0.55),       // THP-style yellow for subtotal/total cells
+    // logTable row shade — ~5% tint of the steel-blue family. Deliberately far
+    // lighter than fieldFill so the header band keeps its weight, and light
+    // enough that print/photocopy shows a whisper of gray without smearing the
+    // 7.5pt row text.
+    shade:      rgb(0.933, 0.953, 0.973),  // #eef3f8
   },
 
   size: {
@@ -791,11 +796,20 @@ export class PDFBuilder {
    *  per-column alignment is honored, and full cell borders give it a log look.
    *  Cells are PDFLogCell — a plain string, or `{ text, note }` to render a
    *  distinct muted-italic note element below the text. `cols` widths should sum
-   *  to ~this.CW; pass `highlight` to bold + tint summary rows (e.g. totals). */
+   *  to ~this.CW; pass `highlight` to bold + tint summary rows (e.g. totals).
+   *  Pass `shade` to tint matching data rows with the very light PDF.color.shade
+   *  — the fill spans the full row width and the full COMPUTED row height
+   *  (wrapped lines + note element included), and `highlight` wins where both
+   *  match. `shadeLegend` draws a one-line swatch + caption key above the table
+   *  (page 1) so the tint is self-explanatory on paper. */
   logTable(
     cols: { header: string; width: number; align?: "left" | "right" }[],
     rows: PDFLogCell[][],
-    opts: { highlight?: (r: PDFLogCell[]) => boolean } = {},
+    opts: {
+      highlight?: (r: PDFLogCell[]) => boolean
+      shade?: (r: PDFLogCell[], index: number) => boolean
+      shadeLegend?: string
+    } = {},
   ) {
     const PADX = 5, PADY = 4
     const headerSize = 7, bodySize = 7.5, lineH = bodySize + 2.5
@@ -839,10 +853,27 @@ export class PDFBuilder {
       this.y -= headerH
     }
 
+    // One-line key for the shade tint — drawn once, above the table on page 1,
+    // so a reader who was never told what the tint means can decode it.
+    if (opts.shadeLegend) {
+      this.ensureSpace(13 + headerH + 30)
+      const baseline = this.y - 8
+      this.page.drawRectangle({
+        x: this.M, y: baseline - 1.5, width: 14, height: 8,
+        color: PDF.color.shade, borderColor: PDF.color.rule, borderWidth: 0.5,
+      })
+      this.page.drawText(sanitizeWinAnsi(opts.shadeLegend), {
+        x: this.M + 19, y: baseline, size: 7, font: this.reg, color: PDF.color.label,
+      })
+      this.y -= 13
+    }
+
     this.ensureSpace(headerH + 30)   // keep the header off the very bottom of a page
     drawHeaderRow()
-    for (const r of rows) {
+    rows.forEach((r, ri) => {
       const hl = opts.highlight?.(r) ?? false
+      // highlight (summary tint + bold) outranks the data-row shade.
+      const shaded = !hl && (opts.shade?.(r, ri) ?? false)
       const font = hl ? this.bold : this.reg
       const wrapped = cols.map((c, i) => {
         const cell = r[i]
@@ -860,7 +891,14 @@ export class PDFBuilder {
         w.main.length * lineH + (w.note.length ? noteGap + w.note.length * noteLineH : 0)))
       if (this.y - h < this.bottomLimit) { this.pageBreak(); drawHeaderRow() }
       const fy = this.y - h
-      if (hl) this.page.drawRectangle({ x: this.M, y: fy, width: totalW, height: h, color: PDF.color.fieldFill })
+      // Fill the row's WHOLE computed box (same fy/h the border uses) so a
+      // wrapped title or note element is shaded to its last line.
+      if (hl || shaded) {
+        this.page.drawRectangle({
+          x: this.M, y: fy, width: totalW, height: h,
+          color: hl ? PDF.color.fieldFill : PDF.color.shade,
+        })
+      }
       let cx = this.M
       cols.forEach((c, i) => {
         let ly = fy + h - PADY - bodySize
@@ -882,7 +920,7 @@ export class PDFBuilder {
       })
       box(fy, h)
       this.y -= h
-    }
+    })
     this.spacer(6)
   }
 
