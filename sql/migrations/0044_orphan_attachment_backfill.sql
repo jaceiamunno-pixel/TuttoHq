@@ -1,5 +1,7 @@
 -- ─────────────────────────────────────────────────────────────────────────
--- 0043: orphan-attachment R0 backfill
+-- 0044: orphan-attachment R0 backfill
+--   (renumbered from 0043 — that number was already taken by
+--    0043_fulfilled_by_other.sql, merged in #126 and run in prod)
 -- ─────────────────────────────────────────────────────────────────────────
 --
 -- WHY THIS EXISTS
