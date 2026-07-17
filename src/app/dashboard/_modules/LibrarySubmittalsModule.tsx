@@ -28,7 +28,7 @@ import { useNavRegion, useFocusTrap } from "@/components/keyboard-nav"
 import { SkeletonTable } from "@/components/skeleton"
 import { usePendingAction } from "@/hooks/usePendingAction"
 import { PendingActionToasts } from "@/components/pending-action-toasts"
-import { REVIEW_STATUSES } from "@/lib/review-status"
+import { REVIEW_STATUSES, isReviewStatus, type ReviewStatus } from "@/lib/review-status"
 
 // Status options for the inline Status dropdown in the submittal log — the
 // canonical vocabulary (0046 CHECK), in lifecycle order. 'Sent to Sub' and
@@ -300,6 +300,10 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
   // their own undoable toast instead of clobbering each other).
   const [markingFulfilled, setMarkingFulfilled] = useState(false)
   const fulfilledUndoSeq = useRef(0)
+  // "Set status" bulk action — same in-flight guard + monotonic undo-key
+  // pattern as the fulfilled mark above.
+  const [settingStatus, setSettingStatus] = useState(false)
+  const statusUndoSeq = useRef(0)
   const saveTimers     = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
   const pendingPatches = useRef<Map<string, Record<string, unknown>>>(new Map())
   // Monotonic id so an out-of-order Submittal Log response can't clobber a newer one.
@@ -1144,6 +1148,89 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
           method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ ids: changed, value: !value }),
         }).catch(() => { /* optimistic reverse — reconciles on next load */ })
+      },
+    })
+  }
+
+  // ── "Set status" bulk action ─────────────────────────────────────────────────
+  // Sets review_status on the current selection in one POST. Same
+  // commit-then-reverse model as bulkMarkFulfilled above: optimistic patch,
+  // reconcile against the server's actual `updated` set, then an undo toast.
+  //
+  // Undo is PER-ROW: a mixed selection carries mixed prior statuses, so the
+  // reverse groups the changed ids by their captured prior value and posts one
+  // bulk-status call per distinct prior (≤ 8 groups) — never a blanket revert
+  // to a single status.
+  //
+  // review_status ONLY — the date chain (received/sent/returned) that
+  // Ball-in-Court derives from is deliberately never written here.
+  async function bulkSetStatus(status: ReviewStatus) {
+    const subs = selectedSubmittals
+    if (subs.length === 0 || settingStatus) return
+    const ids = subs.map(s => s.id)
+    // Prior per-row status (local state = last server fetch; prod has 0 nulls,
+    // so the "Not Started" fallback is the DB default, not a guess).
+    const prior = new Map<string, ReviewStatus>(
+      subs.map(s => [s.id, isReviewStatus(s.review_status) ? s.review_status : "Not Started"]))
+
+    setSettingStatus(true)
+    // Optimistic set of every selected row.
+    ids.forEach(id => patchLogRowLocal(id, { review_status: status }))
+
+    let updated: string[]
+    try {
+      const res = await fetch("/api/submittals/bulk-status", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids, status }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data?.error ?? `Failed (HTTP ${res.status})`)
+      updated = Array.isArray(data.updated) ? data.updated : []
+    } catch {
+      // Revert every optimistic set to its captured prior value.
+      ids.forEach(id => patchLogRowLocal(id, { review_status: prior.get(id) ?? "Not Started" }))
+      setSettingStatus(false)
+      return
+    } finally {
+      setSettingStatus(false)
+    }
+
+    // Reconcile: any id the server did NOT report as updated reverts to its
+    // prior stored value (RLS or the active-only gate skipped it). Never assume
+    // the request set equals the updated set.
+    const updatedSet = new Set(updated)
+    ids.forEach(id => {
+      if (!updatedSet.has(id)) patchLogRowLocal(id, { review_status: prior.get(id) ?? "Not Started" })
+    })
+
+    const n = updated.length
+    if (n === 0) return
+
+    // Undo toast — the SAME pending-action affordance as the fulfilled mark.
+    // The set already committed, so onCommit is a no-op; Undo restores each
+    // row's own prior status (grouped by prior value → one POST per group).
+    const changed = [...updated]
+    statusUndoSeq.current += 1
+    pendingDelete.schedule({
+      key: `bulkstatus:${statusUndoSeq.current}`,
+      label: `${n} row${n === 1 ? "" : "s"} set to ${status}`,
+      onCommit: async () => {},
+      onUndo: () => {
+        const groups = new Map<ReviewStatus, string[]>()
+        for (const id of changed) {
+          const p = prior.get(id) ?? "Not Started"
+          patchLogRowLocal(id, { review_status: p })
+          const g = groups.get(p) ?? []
+          g.push(id)
+          groups.set(p, g)
+        }
+        for (const [p, groupIds] of groups) {
+          if (p === status) continue // already at the target — nothing to reverse
+          fetch("/api/submittals/bulk-status", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ ids: groupIds, status: p }),
+          }).catch(() => { /* optimistic reverse — reconciles on next load */ })
+        }
       },
     })
   }
@@ -2499,6 +2586,16 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                   Clear
                 </button>
                 <div className="flex-1 min-w-[8px]" />
+                {/* Bulk status set — command-select (value stays ""), one action
+                    per pick. Options = the canonical vocabulary in lifecycle
+                    order (REVIEW_STATUSES, same list as the per-row dropdown). */}
+                <select value="" disabled={selectedIds.size === 0 || settingStatus}
+                  onChange={e => { const v = e.target.value; if (isReviewStatus(v)) bulkSetStatus(v) }}
+                  title="Set the review status of all selected rows in one action. Dates are not changed."
+                  className="h-8 px-2 rounded-md border border-[#7B9BB5] text-[12px] font-semibold text-[#5A7A94] bg-white hover:bg-[#7B9BB5]/[0.08] transition-colors focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40 disabled:opacity-50 disabled:cursor-not-allowed">
+                  <option value="">{settingStatus ? "Setting…" : "Set status…"}</option>
+                  {LOG_STATUS_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
+                </select>
                 {(() => {
                   // All-fulfilled selection → the button unmarks; any other
                   // selection (mixed or none-fulfilled) → it marks all true.
