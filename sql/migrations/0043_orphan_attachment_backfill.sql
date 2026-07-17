@@ -48,9 +48,16 @@
 --     R1+ correctly wins.
 --   * source is 'backfill_r0' (distinguishable from bulk_import / manual in
 --     any later audit).
---   * file_sha256 stays NULL — we are not hashing existing storage objects in
---     a migration; the RPC's same-bytes idempotency guard only fires when
---     p_file_sha256 IS NOT NULL, so a NULL floor is safe.
+--   * file_sha256 is copied from the parent (submittals.file_sha256). The R0
+--     floor therefore carries the original file's real hash, which arms
+--     add_submittal_attachment's same-bytes idempotency guard (keyed
+--     submittal_id + file_sha256 + revision_label): a later re-upload of the
+--     identical original returns the existing R0 row rather than stacking a
+--     redundant revision. Verified against prod: 73 of the 74 orphans carry a
+--     real file_sha256. The single null-sha row degrades safely — the guard is
+--     gated on p_file_sha256 IS NOT NULL and simply won't fire for it, which is
+--     today's behavior anyway. (We still do not HASH storage objects in this
+--     migration; we only copy the hash the upload route already recorded.)
 --
 -- IDEMPOTENT: the WHERE NOT EXISTS guard in the SELECT means a second run
 -- inserts 0 rows and the assertion below still passes. Re-running changes
@@ -93,7 +100,7 @@ SELECT
   s.uploaded_by,
   COALESCE(s.received_at, s.created_at),    -- -> uploaded_at (truthful chronology)
   'backfill_r0',
-  NULL                                      -- file_sha256: intentionally not hashed here
+  s.file_sha256                             -- -> file_sha256 (real parent hash; arms the idempotency guard)
 FROM submittals s
 WHERE s.storage_path IS NOT NULL
   AND s.status IS DISTINCT FROM 'deleted'
