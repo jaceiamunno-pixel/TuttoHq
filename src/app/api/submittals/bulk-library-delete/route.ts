@@ -1,24 +1,33 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
-import { libraryDeleteOne } from "@/lib/library-delete-core"
+import { libraryDeleteOne, type LibraryDeleteAction } from "@/lib/library-delete-core"
 
-// POST /api/submittals/bulk-library-delete — { ids: string[] }
+// POST /api/submittals/bulk-library-delete — { ids: string[], action: "clear" | "delete" }
 //
-// The Submittal Log's bulk Clear/Delete selection action. Runs the SAME
-// per-row logic as POST /api/submittals/[id]/library-delete (shared
-// libraryDeleteOne core — spec rows detach, manual/gmail rows soft-delete,
-// storage objects removed orphan-checked) over a bounded id list, and reports
-// a per-row outcome instead of all-or-nothing:
+// The Submittal Log's bulk selection action. Runs the SAME per-row logic as
+// POST /api/submittals/[id]/library-delete (shared libraryDeleteOne core,
+// storage objects removed orphan-checked) over a bounded id list under ONE
+// EXPLICIT action — the destructive verb the user confirmed travels in the
+// body and is never inferred from selection shape — and reports a per-row
+// outcome instead of all-or-nothing.
 //
-//   cleared  — spec row: attachments + storage gone, row kept as placeholder
-//   deleted  — manual/gmail row: soft-deleted, attachments + storage gone
-//   skipped  — no action taken; `reason` is a machine code:
-//                nothing_to_clear — spec placeholder (no file). NEVER
-//                  actionable: running detach on it would clobber
-//                  review_status for no benefit, and spec rows are never
-//                  deleted — whatever the client sends.
-//                not_found        — no such row visible to this user (RLS)
-//                already_deleted  — status='deleted' (e.g. another tab)
+// action "clear" (spec rows only — detach the document, keep the row):
+//   cleared  — spec row with a file: attachments + storage gone, row kept
+//   skipped(nothing_to_clear) — spec placeholder: no file; running detach
+//              would clobber review_status for no benefit
+//   skipped(clear_not_valid)  — manual/gmail row: clear NEVER deletes a
+//              manual row; there is no placeholder worth keeping
+//
+// action "delete" (ANY row kind — the 2026-07-17 reversal: spec rows,
+// placeholders included, ARE deletable):
+//   deleted  — soft-deleted (status='deleted'; deleted_at never written),
+//              attachments + storage gone; section_seq kept so the retired
+//              CM number is never reused and survivors' numbers never shift
+//
+// Both actions:
+//   skipped(not_found)        — no such row visible to this user (RLS)
+//   skipped(already_deleted)  — status='deleted' (e.g. another tab)
+//   failed(not_in_company)    — explicit company mismatch
 //   failed   — the row's delete/detach errored mid-flight; `reason` is the
 //              error text. Rows that already succeeded are NOT rolled back —
 //              their storage objects are already gone, so pretending the
@@ -63,6 +72,16 @@ export async function POST(req: NextRequest) {
   if (!companyId) return NextResponse.json({ error: "No company association" }, { status: 500 })
 
   const body = await req.json().catch(() => null)
+  // Explicit action, required — same contract as the per-row route. Never
+  // inferred from the rows: a spec row supports both.
+  const actionRaw = body?.action as unknown
+  if (actionRaw !== "clear" && actionRaw !== "delete") {
+    return NextResponse.json(
+      { error: 'action is required: "clear" (remove files, keep spec rows) or "delete" (soft-delete rows)' },
+      { status: 400 },
+    )
+  }
+  const action: LibraryDeleteAction = actionRaw
   const rawIds = body?.ids
   if (!Array.isArray(rawIds) || rawIds.length === 0) {
     return NextResponse.json({ error: "ids must be a non-empty array" }, { status: 400 })
@@ -95,8 +114,12 @@ export async function POST(req: NextRequest) {
       results.push({ id, outcome: "failed", reason: "not_in_company" })
     } else if (row.status === "deleted") {
       results.push({ id, outcome: "skipped", reason: "already_deleted" })
-    } else if (row.spec_section_id != null && !row.storage_path) {
-      // Spec placeholder — nothing to clear, and NEVER deletable.
+    } else if (action === "clear" && row.spec_section_id == null) {
+      // Clear never touches a manual/gmail row — no placeholder to keep.
+      results.push({ id, outcome: "skipped", reason: "clear_not_valid" })
+    } else if (action === "clear" && !row.storage_path) {
+      // Spec placeholder — nothing to clear. (Under "delete" the same row IS
+      // actionable: placeholders are deletable since the 2026-07-17 reversal.)
       results.push({ id, outcome: "skipped", reason: "nothing_to_clear" })
     } else {
       actionable.push(row)
@@ -111,7 +134,7 @@ export async function POST(req: NextRequest) {
     while (next < actionable.length) {
       const row = actionable[next++]
       try {
-        const r = await libraryDeleteOne(supabase, row)
+        const r = await libraryDeleteOne(supabase, row, action)
         if (r.ok) {
           results.push({
             id: row.id,

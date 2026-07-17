@@ -1,20 +1,26 @@
 import type { createClient } from "@/lib/supabase/server"
 
-// The operational core of "library delete" — moved VERBATIM from
-// /api/submittals/[id]/library-delete (#136) so the bulk selection action can
-// run the exact same per-row logic without duplicating it. The caller decides
-// WHETHER a row is actionable (auth, company match, active status, and — for
-// the bulk route — skipping spec placeholders); this function only performs
-// the delete/detach, branched server-side on the row the CALLER loaded from
-// the DB (never on client input):
+// The operational core of "library delete" — extracted from
+// /api/submittals/[id]/library-delete (#136 via #137) so the per-row and bulk
+// selection routes run the exact same per-row logic without duplicating it.
+// The caller decides WHETHER a row is actionable (auth, company match, active
+// status) and WHICH action the user explicitly confirmed — the action is a
+// REQUIRED parameter, never inferred from row shape, because a spec row
+// supports both (product decision, Jace 2026-07-17: spec rows are deletable;
+// the old never-delete gate is reversed):
 //
-//   spec_ingestion (spec_section_id NOT NULL) → DETACH. Remove the
-//     attachment rows + their storage objects, clear the parent's
+//   action "clear" → DETACH (spec rows ONLY — spec_section_id != null).
+//     Remove the attachment rows + their storage objects, clear the parent's
 //     file-derived fields back to the parser's placeholder defaults, and
-//     KEEP the row. NEVER delete a spec-built log row.
+//     KEEP the row. On a manual/gmail row this returns
+//     { ok:false, error:"clear_not_valid_on_manual_row" } BEFORE any
+//     mutation — there is no spec placeholder worth keeping; delete instead.
 //
-//   manual / gmail (spec_section_id NULL) → DELETE. Soft-delete the row
-//     (status='deleted') AND remove its attachment rows + storage objects.
+//   action "delete" → any row kind. Soft-delete the row (status='deleted' —
+//     the one soft-delete gate for submittals; deleted_at is never written)
+//     AND remove its attachment rows + storage objects. A spec row being
+//     deleted is NOT detach-reset — it's being removed, not kept; its
+//     section_seq stays so the retired CM number is never reused.
 //
 // Storage objects are removed only after an orphan check — no remaining
 // attachment row and no OTHER live submittal references the path. Best-
@@ -55,12 +61,21 @@ export type LibraryDeleteResult =
   | { ok: true; mode: "detach" | "delete"; storage_removed: number; storage_kept: number }
   | { ok: false; error: string }
 
+export type LibraryDeleteAction = "clear" | "delete"
+
 export async function libraryDeleteOne(
   supabase: ServerSupabase,
   row: LibraryDeleteRow,
+  action: LibraryDeleteAction,
 ): Promise<LibraryDeleteResult> {
   const id = row.id
   const isSpec = row.spec_section_id != null  // ⟺ source === 'spec_ingestion'
+
+  // Clear only exists for spec rows — validated BEFORE any mutation so a
+  // mis-aimed clear can never destroy a manual row's attachments.
+  if (action === "clear" && !isSpec) {
+    return { ok: false, error: "clear_not_valid_on_manual_row" }
+  }
 
   // Gather every storage object this row references (each attachment's path
   // plus the parent's denormalized path — deduped; they usually coincide).
@@ -82,13 +97,15 @@ export async function libraryDeleteOne(
     return { ok: false, error: `attachment delete failed: ${delAttErr.message}` }
   }
 
-  // 2. Branch the parent row.
-  if (isSpec) {
+  // 2. Apply the requested action to the parent row.
+  if (action === "clear") {
     const { error: updErr } = await supabase.from("submittals").update(DETACH_RESET).eq("id", id)
     if (updErr) return { ok: false, error: `detach update failed: ${updErr.message}` }
   } else {
-    // Soft-delete + null the file pointer so the deleted row carries no
-    // dangling storage_path once its object is removed.
+    // Soft-delete (NEVER hard-delete; status is the one soft-delete gate,
+    // deleted_at untouched) + null the file pointer so the deleted row
+    // carries no dangling storage_path once its object is removed.
+    // section_seq/submittal_seq are kept — the number retires with the row.
     const { error: updErr } = await supabase
       .from("submittals")
       .update({ status: "deleted", storage_path: null, file_sha256: null })
@@ -119,5 +136,5 @@ export async function libraryDeleteOne(
     }
   }
 
-  return { ok: true, mode: isSpec ? "detach" : "delete", storage_removed: storageRemoved, storage_kept: storageKept }
+  return { ok: true, mode: action === "clear" ? "detach" : "delete", storage_removed: storageRemoved, storage_kept: storageKept }
 }
