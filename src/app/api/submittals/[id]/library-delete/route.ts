@@ -32,11 +32,13 @@ import { createClient } from "@/lib/supabase/server"
 // already consistent; a leftover object is a reclaimable orphan).
 
 // DETACH field reset. These are the file-derived / trigger-managed columns;
-// resetting them returns the row to a fresh spec-ingestion placeholder.
-// review_status + revision_number use the parser's TRUE creation defaults
-// (staged-submittals/commit sets review_status:"Received"; the DB default
-// for revision_number is '00') so a detached row is indistinguishable from
-// a never-attached one.
+// resetting them returns the row to an empty spec-ingestion placeholder.
+// review_status stays "Received" DELIBERATELY — it matches what the
+// remove_submittal_attachment RPC's placeholder-reset branch writes
+// (sql/migrations/0035), so both clear paths agree. A FRESH placeholder
+// seeds "Not Started" (staged-submittals/commit); aligning cleared rows to
+// "Not Started" too needs a 0035-RPC follow-up migration — do both then.
+// revision_number's DB default is '00'.
 const DETACH_RESET = {
   storage_path:          null,
   file_size:             null,

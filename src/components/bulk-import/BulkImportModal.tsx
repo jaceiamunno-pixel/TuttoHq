@@ -5,6 +5,7 @@ import { presignAndUpload } from "@/lib/storage-upload"
 import { SUBMITTAL_TYPES, type SubmittalType, type BulkImportAnalysis } from "@/lib/bulk-import-detect"
 import type { MatchOutcome, MatchedRow, ScoredCandidate } from "@/lib/bulk-import-match"
 import { formatSectionNumber } from "@/lib/section-number"
+import { REVIEW_OUTCOMES, type ReviewOutcome } from "@/lib/review-status"
 
 // Bulk Import — Stage 2a modal. Drop many signed PDFs (or one — same engine,
 // per the design's single-upload-is-batch-of-one decision). Each file is
@@ -47,7 +48,7 @@ interface Row {
   /** Pre-filled from the coversheet "Submittal No." AcroForm field when
    *  present; user confirms or overrides. */
   submittalNo: string
-  reviewStatus: "Approved" | "Approved with Comments" | "Rejected" | "Revise and Resubmit"
+  reviewStatus: ReviewOutcome
   // ── Stage 2a state ──────────────────────────────────────────────────────
   /** Result of /api/bulk-import/match — auto / ambiguous / no-match / error. */
   match?: MatchOutcome
@@ -1258,10 +1259,7 @@ export default function BulkImportModal({
                           disabled={r.status !== "ready"}
                           className="w-full h-7 px-1.5 rounded border border-[#E2E8F0] text-[12px] disabled:opacity-50"
                         >
-                          <option>Approved</option>
-                          <option>Approved with Comments</option>
-                          <option>Rejected</option>
-                          <option>Revise and Resubmit</option>
+                          {REVIEW_OUTCOMES.map(o => <option key={o}>{o}</option>)}
                         </select>
                       </td>
 

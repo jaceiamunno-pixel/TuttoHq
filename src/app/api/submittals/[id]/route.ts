@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import { maxSectionSeq, isSectionSeqConflict } from "@/lib/section-seq"
+import { REVIEW_STATUSES, isReviewStatus } from "@/lib/review-status"
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const supabase = await createClient()
@@ -26,6 +27,16 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     "fulfilled_by_other",
   ]
   const safe = Object.fromEntries(Object.entries(updates).filter(([k]) => allowed.includes(k)))
+
+  // review_status is a closed vocabulary (mirrored by 0046's DB CHECK).
+  // This route accepting free text is exactly how 'Pending' / 'Review'
+  // drifted into prod — reject out-of-vocab values server-side.
+  if ("review_status" in safe && !isReviewStatus(safe.review_status)) {
+    return NextResponse.json(
+      { error: `review_status must be one of: ${REVIEW_STATUSES.join(", ")}` },
+      { status: 400 },
+    )
+  }
 
   // fulfilled_by_other is a strict boolean — reject anything else so a bad
   // client can't write a truthy string / number into the column.

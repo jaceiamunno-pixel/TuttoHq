@@ -109,7 +109,9 @@ export async function POST(req: NextRequest) {
     section_name:    titleById.get(s.spec_section_id) ?? s.project_item_name,
     material_name:   s.project_item_name,
     submittal_type:  s.submittal_type,
-    review_status:   "Received",
+    // Spec-ingestion placeholder: no file, no dates — nothing has happened
+    // yet. 'Not Started' from every seeder (unified with bulk-import/create-row).
+    review_status:   "Not Started",
     project_id:      s.project_id,
     status:          "active",
     source:          "spec_ingestion",

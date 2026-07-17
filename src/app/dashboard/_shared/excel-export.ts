@@ -29,16 +29,17 @@ const THIN_BORDER = {
 }
 
 const STATUS_FALLBACK = { bg: "FFF3F4F6", fg: "FF6B7280" }  // gray-100 / gray-500
+// Keys = the canonical review_status vocabulary (src/lib/review-status.ts,
+// 0046 CHECK); colours mirror badges.tsx STATUS_STYLES.
 const STATUS_FILL: Record<string, { bg: string; fg: string }> = {
-  "Received":               { bg: "FFDBEAFE", fg: "FF1D4ED8" },
-  "Sent to Sub":            STATUS_FALLBACK,
-  "Under Review":           { bg: "FFFEF3C7", fg: "FFB45309" },
-  "Approved":               { bg: "FFDCFCE7", fg: "FF15803D" },
-  "Approved with Comments": { bg: "FFDBEAFE", fg: "FF1D4ED8" },
-  "Rejected":               { bg: "FFFEE2E2", fg: "FFB91C1C" },
-  "Revise and Resubmit":    { bg: "FFFEF3C7", fg: "FFB45309" },
-  "Needs Review":           { bg: "FFFEF3C7", fg: "FFB45309" },
-  "Transmitted":            { bg: "FFF3E8FF", fg: "FF7E22CE" },
+  "Not Started":       STATUS_FALLBACK,
+  "Received":          { bg: "FFDBEAFE", fg: "FF1D4ED8" },
+  "Sent to A/E":       { bg: "FFFEF3C7", fg: "FFB45309" },
+  "Approved":          { bg: "FFDCFCE7", fg: "FF15803D" },
+  "Approved as Noted": { bg: "FFDBEAFE", fg: "FF1D4ED8" },
+  "Revise & Resubmit": { bg: "FFFEF3C7", fg: "FFB45309" },
+  "Rejected":          { bg: "FFFEE2E2", fg: "FFB91C1C" },
+  "Closed":            { bg: "FFDCFCE7", fg: "FF15803D" },
 }
 
 // Column widths copied from the THP template (A-L), plus sensible widths for
@@ -215,7 +216,7 @@ export async function exportSubmittalLogToExcel(args: ExportSubmittalLogArgs): P
     const r = firstDataRow + i
     const row = ws.getRow(r)
     const vendor = vendorLabel(s, args.vendors, args.vendorPeople)
-    const status = s.review_status ?? "Received"
+    const status = s.review_status ?? "Not Started"
     const rowBg  = rowBgFor(s.csi_section)
 
     // Compact section number ("004") — the Spec column beside it carries the
@@ -236,9 +237,9 @@ export async function exportSubmittalLogToExcel(args: ExportSubmittalLogArgs): P
     row.getCell(COL_APPR).value    = { formula: `IF(H${r}>0,H${r}-G${r}," ")` }
     row.getCell(COL_STATUS).value  = status
     // Late / On-Time formula — same shape as template, but checks our app's
-    // status labels ("Under Review" instead of THP's "A/E Review").
+    // status labels ("Sent to A/E" instead of THP's "A/E Review").
     row.getCell(COL_LATE).value = {
-      formula: `IF(AND(G${r}<${HELPER_CUTOFF_REF},G${r}>1,OR(K${r}="Under Review",K${r}="Revise and Resubmit")),"Late","Not Late")`,
+      formula: `IF(AND(G${r}<${HELPER_CUTOFF_REF},G${r}>1,OR(K${r}="Sent to A/E",K${r}="Revise & Resubmit")),"Late","Not Late")`,
     }
     row.getCell(COL_SOURCE).value = s.source === "spec_ingestion" && s.spec_section_id ? "Spec book" : ""
 
@@ -290,7 +291,7 @@ export async function exportSubmittalLogToExcel(args: ExportSubmittalLogArgs): P
     const row = ws.getRow(r)
     row.getCell(COL_APPR).value = { formula: `IF(H${r}>0,H${r}-G${r}," ")` }
     row.getCell(COL_LATE).value = {
-      formula: `IF(AND(G${r}<${HELPER_CUTOFF_REF},G${r}>1,OR(K${r}="Under Review",K${r}="Revise and Resubmit")),"Late","Not Late")`,
+      formula: `IF(AND(G${r}<${HELPER_CUTOFF_REF},G${r}>1,OR(K${r}="Sent to A/E",K${r}="Revise & Resubmit")),"Late","Not Late")`,
     }
     row.height = 17.4
     row.font = { name: "Calibri", size: 12 }

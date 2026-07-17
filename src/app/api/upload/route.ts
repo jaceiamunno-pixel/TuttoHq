@@ -63,7 +63,10 @@ export async function POST(req: NextRequest) {
   // a missing/invalid hash is a non-fatal "we don't have it yet" state,
   // not an upload failure; the backfill script will fill it in later.
   const fileSha256    = isValidSha256(body.file_sha256) ? body.file_sha256 : null
-  const reviewStatus  = (aiConfidence !== null && aiConfidence < 70) ? "Needs Review" : "Received"
+  // A row created by this route always carries a file, so it is 'Received'.
+  // Low classification confidence is signalled by ai_confidence, not by a
+  // status value ('Needs Review' was dropped from the vocabulary — 0046).
+  const reviewStatus  = "Received"
 
   if (!filePath || !fileName || !divisionNum || !divisionName) {
     return NextResponse.json(

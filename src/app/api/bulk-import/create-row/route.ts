@@ -127,7 +127,9 @@ export async function POST(req: NextRequest) {
       section_seq:      sectionSeq,
       submittal_number: null,
       revision_number:  "R0",
-      review_status:    "Received",
+      // Empty spec placeholder — 'Not Started' from every seeder (unified
+      // with staged-submittals/commit).
+      review_status:    "Not Started",
       title_locked:     false,
       // Pre-attach placeholder title. The attachment sync trigger deliberately
       // does NOT touch file_name (sql/trigger-stop-renaming-rows.sql); the

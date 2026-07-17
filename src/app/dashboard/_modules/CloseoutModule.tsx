@@ -484,7 +484,7 @@ export default function CloseoutModule({ globalProjectId, appProjects, teamMembe
                                     <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: done ? "#10b981" : "#ef4444" }} />
                                     <span className="text-[11px] text-[#64748B] font-mono flex-shrink-0 w-16 truncate">{s.csi_section ?? s.csi_division ?? "—"}</span>
                                     <span className={`flex-1 text-[12px] truncate ${done ? "text-[#64748B] line-through" : "text-[#0F172A]"}`}>{s.file_name}</span>
-                                    <span className={`text-[11px] font-semibold flex-shrink-0 ${done ? "text-emerald-400" : "text-amber-400"}`}>{s.review_status ?? "Pending"}</span>
+                                    <span className={`text-[11px] font-semibold flex-shrink-0 ${done ? "text-emerald-400" : "text-amber-400"}`}>{s.review_status ?? "Not Started"}</span>
                                   </div>
                                 )
                               })}

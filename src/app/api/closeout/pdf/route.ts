@@ -108,7 +108,7 @@ export async function POST(req: NextRequest) {
     pdf.sectionDivider("Submittals")
     pdf.table(
       ["Submittal", "CSI Section", "Review Status"],
-      subs.map(s => [s.file_name ?? "—", s.csi_section ?? "—", s.review_status ?? "Pending"]),
+      subs.map(s => [s.file_name ?? "—", s.csi_section ?? "—", s.review_status ?? "Not Started"]),
       [310, 116, 100],
       r => r[2] === "Approved",
     )
