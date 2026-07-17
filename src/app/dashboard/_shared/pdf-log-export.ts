@@ -12,7 +12,7 @@
 // Parallels excel-export.ts (same call sites, same args) — the PDF is the
 // print-friendly counterpart to the .xlsx download.
 
-import { PDFBuilder } from "@/lib/pdf-builder"
+import { PDFBuilder, type PDFLogCell } from "@/lib/pdf-builder"
 import { createClient } from "@/lib/supabase/client"
 import { computeCoTotals } from "./co-math"
 import { padSectionSeq } from "@/lib/section-number"
@@ -31,11 +31,13 @@ import type {
 // company_id is ever passed from the client and a user can never pull another
 // tenant's mark. Every field is nullable and degrades cleanly: no logo →
 // brandName text fallback (see PDFBuilder.drawHeader), neither → a clean header.
-async function loadTenantPdfHeader(): Promise<{
+export interface TenantPdfHeaderIdentity {
   logoBytes: ArrayBuffer | null
   brandName: string | null
   logoScalePct: number | undefined
-}> {
+}
+
+async function loadTenantPdfHeader(): Promise<TenantPdfHeaderIdentity> {
   try {
     const sb = createClient()
     const { data: settings } = await sb.from("company_settings").select("*").maybeSingle()
@@ -189,48 +191,74 @@ export interface ExportSubmittalLogPdfArgs {
   vendorPeople: VendorPersonRow[]
 }
 
-export async function exportSubmittalLogToPdf(args: ExportSubmittalLogPdfArgs): Promise<void> {
+// The row's display title — COALESCE(NULLIF(title,''), NULLIF(file_name,''),
+// section_name). `title` is NULL BY DESIGN on spec-ingestion placeholder rows
+// (their stored fields just echo the spec section), so those rows fall back
+// down the chain instead of rendering the section name twice. `file_name`
+// stays in the chain — it is still the de-facto title for every row created
+// before the real title column existed.
+function submittalDisplayTitle(s: SubmittalRecord): string {
+  if (s.title != null && s.title !== "") return s.title
+  if (s.file_name != null && s.file_name !== "") return s.file_name
+  return s.section_name ?? "—"
+}
+
+/** Build the submittal-log PDF and return its bytes. Pure with respect to the
+ *  environment — no supabase, no DOM — so a Node harness can exercise the exact
+ *  production render path; the browser wrapper below resolves the tenant header
+ *  and triggers the download. */
+export async function buildSubmittalLogPdf(
+  args: ExportSubmittalLogPdfArgs & TenantPdfHeaderIdentity,
+): Promise<Uint8Array> {
   const company = (args.gcName ?? "").trim() || args.projectName.trim()
-  const header = await loadTenantPdfHeader()
   const doc = await PDFBuilder.create({
     documentType: "Submittal Log",
     documentNumber: company || null,
     orientation: "landscape",
-    ...header,
+    logoBytes: args.logoBytes,
+    brandName: args.brandName,
+    logoScalePct: args.logoScalePct,
   })
 
-  // Columns mirror the on-screen log header set (Actions dropped). The trailing
-  // "Source" column is intentionally NOT exported to the PDF (it stays in the
-  // Excel export + on-screen table). Description absorbs the remaining width
-  // after the fixed columns — so dropping Source hands its 36pt to Description,
-  // the table still spans the full content width (no right-edge gap), the widths
-  // still sum to cw, and no other column's width (or wrap behavior) changes.
+  // Columns mirror the on-screen log header set (Ball-in-Court / Source /
+  // Actions stay off the PDF — interactive or Excel-only). Headers are FULL
+  // names: logTable wraps a long header onto a second line instead of
+  // truncating, so each width below only needs to clear the longest single
+  // header word — and the widest data token where that matters ("Shop
+  // Drawing" must stay one line in Type of Submittal). Description absorbs the
+  // remaining width, so the widths still sum to cw.
   const cw = doc.CW
-  const fixed = 28 + 46 + 56 + 84 + 44 + 44 + 46 + 46 + 34 + 72 + 40
+  const fixed = 52 + 46 + 62 + 72 + 48 + 44 + 50 + 50 + 52 + 62 + 42
   const cols: { header: string; width: number; align?: "left" | "right" }[] = [
-    { header: "Subm. #", width: 28, align: "right" },
+    { header: "Submittal #", width: 52, align: "right" },
     { header: "Spec #", width: 46 },
-    { header: "Description", width: Math.max(120, cw - fixed) },
-    { header: "Type", width: 56 },
-    { header: "Vendor", width: 84 },
-    { header: "Received", width: 44 },
+    { header: "Description", width: Math.max(126, cw - fixed) },
+    { header: "Type of Submittal", width: 62 },
+    { header: "Vendor", width: 72 },
+    { header: "Received", width: 48 },
     { header: "To A/E", width: 44 },
-    { header: "Ret. A/E", width: 46 },
-    { header: "Ret. Sub", width: 46 },
-    { header: "Appr. (d)", width: 34, align: "right" },
-    { header: "Status", width: 72 },
-    { header: "Late", width: 40 },
+    { header: "Returned from A/E", width: 50 },
+    { header: "Returned to Sub", width: 50 },
+    { header: "Approval (Days)", width: 52, align: "right" },
+    { header: "Status", width: 62 },
+    { header: "Late / On Time", width: 42 },
   ]
 
-  const rows: string[][] = args.rows.map(s => {
+  const rows: PDFLogCell[][] = args.rows.map(s => {
     const appr = approvalDays(s)
+    const description = (s.description ?? "").trim()
     return [
       // Compact section number ("004"); the Spec # column beside it has the section.
       padSectionSeq(s.section_seq),
       s.csi_section ?? "—",
-      // Fulfilled-by-other rows export the literal substitution; stored title
-      // is never mutated (display/export only).
-      s.fulfilled_by_other ? "Fulfilled by other submittal" : s.file_name,
+      // Fulfilled-by-other rows export the literal substitution (stored title
+      // is never mutated; display/export only). Every other row renders the
+      // real display title, and — when the row has one — the free-text
+      // description as its own distinct note element under the title (never
+      // concatenated; rows without one render nothing extra).
+      s.fulfilled_by_other
+        ? "Fulfilled by other submittal"
+        : { text: submittalDisplayTitle(s), note: description || undefined },
       s.submittal_type ?? "—",
       vendorLabel(s, args.vendors, args.vendorPeople),
       fmtDateShort(s.received_date),
@@ -245,8 +273,12 @@ export async function exportSubmittalLogToPdf(args: ExportSubmittalLogPdfArgs): 
   if (rows.length === 0) rows.push(["—", "", "No submittals", "", "", "", "", "", "", "", "", ""])
 
   doc.logTable(cols, rows)
+  return doc.save()
+}
 
-  const bytes = await doc.save()
+export async function exportSubmittalLogToPdf(args: ExportSubmittalLogPdfArgs): Promise<void> {
+  const header = await loadTenantPdfHeader()
+  const bytes = await buildSubmittalLogPdf({ ...args, ...header })
   const date = new Date().toISOString().slice(0, 10)
   downloadPdf(bytes, `${sanitizeFileName(args.projectName)}_submittal_log_${date}.pdf`)
 }

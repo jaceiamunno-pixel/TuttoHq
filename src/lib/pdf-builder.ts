@@ -142,6 +142,13 @@ export interface PDFReviewerStamp {
   reviewText: string
 }
 
+/** One cell of a PDFBuilder.logTable row — plain text, or text plus a `note`
+ *  that renders as its OWN distinct element (smaller, muted, italic) on the
+ *  line(s) below the wrapped main text within the same cell. The note is never
+ *  concatenated into the text; a missing/empty note renders nothing (no blank
+ *  line). */
+export type PDFLogCell = string | { text: string; note?: string | null }
+
 /** One task chip placed in a START-day cell of a PDFBuilder.monthCalendar grid. */
 export interface CalendarChip {
   /** Task name — the chip's primary label. */
@@ -177,6 +184,7 @@ export class PDFBuilder {
   doc!: PDFDocument
   bold!: PDFFont
   reg!: PDFFont
+  italic!: PDFFont
 
   private pages: PDFPage[] = []
   private page!: PDFPage
@@ -207,6 +215,7 @@ export class PDFBuilder {
     builder.doc = await PDFDocument.create()
     builder.bold = await builder.doc.embedFont(StandardFonts.HelveticaBold)
     builder.reg = await builder.doc.embedFont(StandardFonts.Helvetica)
+    builder.italic = await builder.doc.embedFont(StandardFonts.HelveticaOblique)
     builder.meta = {
       ...meta,
       // Sanitize user/tenant-supplied header text once here so the title, meta
@@ -775,17 +784,24 @@ export class PDFBuilder {
   // ── Log table — wide, spreadsheet-style list (Submittal / Change-Order logs) ──
   /** Render a column-defined table where every cell WRAPS — long descriptions,
    *  file names and vendor names never clip (long unspaced tokens hard-break via
-   *  the shared wrap). Rows auto-grow to their tallest cell, the column header
-   *  repeats after every page break, per-column alignment is honored, and full
-   *  cell borders give it a log look. `cols` widths should sum to ~this.CW; pass
-   *  `highlight` to bold + tint summary rows (e.g. totals). */
+   *  the shared wrap). Column HEADERS wrap too (never truncate): a header longer
+   *  than its column reflows onto extra lines and the header row grows to fit,
+   *  so widths only need to clear the longest single header word. Rows auto-grow
+   *  to their tallest cell, the column header repeats after every page break,
+   *  per-column alignment is honored, and full cell borders give it a log look.
+   *  Cells are PDFLogCell — a plain string, or `{ text, note }` to render a
+   *  distinct muted-italic note element below the text. `cols` widths should sum
+   *  to ~this.CW; pass `highlight` to bold + tint summary rows (e.g. totals). */
   logTable(
     cols: { header: string; width: number; align?: "left" | "right" }[],
-    rows: string[][],
-    opts: { highlight?: (r: string[]) => boolean } = {},
+    rows: PDFLogCell[][],
+    opts: { highlight?: (r: PDFLogCell[]) => boolean } = {},
   ) {
     const PADX = 5, PADY = 4
     const headerSize = 7, bodySize = 7.5, lineH = bodySize + 2.5
+    // Note element (PDFLogCell.note) — a step smaller, italic, muted. The
+    // distinction from the main text is size + slant + color, never a joiner.
+    const noteSize = 7, noteLineH = noteSize + 2, noteGap = 1.5
     const totalW = cols.reduce((s, c) => s + c.width, 0)
 
     const vline = (x: number, fy: number, h: number) =>
@@ -798,42 +814,68 @@ export class PDFBuilder {
       for (const [x1, y1, x2, y2] of edges) this.page.drawLine({ start: { x: x1, y: y1 }, end: { x: x2, y: y2 }, thickness: 0.5, color: PDF.color.rule })
     }
 
+    const headerLineH = headerSize + 2
+    const wrappedHeaders = cols.map(c =>
+      this.wrapTextWith(this.bold, c.header.toUpperCase(), headerSize, c.width - PADX * 2))
+    const headerLines = Math.max(1, ...wrappedHeaders.map(w => w.length))
+    const headerH = 18 + (headerLines - 1) * headerLineH   // single-line headers keep the old 18pt band
     const drawHeaderRow = () => {
-      const h = 18
-      const fy = this.y - h
-      this.page.drawRectangle({ x: this.M, y: fy, width: totalW, height: h, color: PDF.color.fieldFill })
+      const fy = this.y - headerH
+      this.page.drawRectangle({ x: this.M, y: fy, width: totalW, height: headerH, color: PDF.color.fieldFill })
       let cx = this.M
       cols.forEach((c, i) => {
-        const t = clip(this.bold, c.header.toUpperCase(), c.width - PADX * 2, headerSize)
-        const tw = this.bold.widthOfTextAtSize(t, headerSize)
-        const tx = c.align === "right" ? cx + c.width - PADX - tw : cx + PADX
-        this.page.drawText(t, { x: tx, y: fy + (h - headerSize) / 2 + 0.5, size: headerSize, font: this.bold, color: PDF.color.ruleStrong })
-        if (i > 0) vline(cx, fy, h)
+        // Center this column's wrapped block vertically within the band.
+        let ly = fy + (headerH + wrappedHeaders[i].length * headerLineH) / 2 - headerSize
+        for (const line of wrappedHeaders[i]) {
+          const tw = this.bold.widthOfTextAtSize(line, headerSize)
+          const tx = c.align === "right" ? cx + c.width - PADX - tw : cx + PADX
+          this.page.drawText(line, { x: tx, y: ly, size: headerSize, font: this.bold, color: PDF.color.ruleStrong })
+          ly -= headerLineH
+        }
+        if (i > 0) vline(cx, fy, headerH)
         cx += c.width
       })
-      box(fy, h)
-      this.y -= h
+      box(fy, headerH)
+      this.y -= headerH
     }
 
-    this.ensureSpace(18 + 30)   // keep the header off the very bottom of a page
+    this.ensureSpace(headerH + 30)   // keep the header off the very bottom of a page
     drawHeaderRow()
     for (const r of rows) {
       const hl = opts.highlight?.(r) ?? false
       const font = hl ? this.bold : this.reg
-      const wrapped = cols.map((c, i) => this.wrapTextWith(font, r[i] ?? "", bodySize, c.width - PADX * 2))
-      const maxLines = Math.max(1, ...wrapped.map(w => w.length))
-      const h = PADY * 2 + maxLines * lineH
+      const wrapped = cols.map((c, i) => {
+        const cell = r[i]
+        const text = typeof cell === "object" && cell !== null ? cell.text : cell ?? ""
+        const note = typeof cell === "object" && cell !== null ? cell.note : null
+        return {
+          main: this.wrapTextWith(font, text, bodySize, c.width - PADX * 2),
+          // Empty/whitespace notes render NOTHING — no blank line, no placeholder.
+          note: note && note.trim() !== ""
+            ? this.wrapTextWith(this.italic, note, noteSize, c.width - PADX * 2)
+            : [],
+        }
+      })
+      const h = PADY * 2 + Math.max(lineH, ...wrapped.map(w =>
+        w.main.length * lineH + (w.note.length ? noteGap + w.note.length * noteLineH : 0)))
       if (this.y - h < this.bottomLimit) { this.pageBreak(); drawHeaderRow() }
       const fy = this.y - h
       if (hl) this.page.drawRectangle({ x: this.M, y: fy, width: totalW, height: h, color: PDF.color.fieldFill })
       let cx = this.M
       cols.forEach((c, i) => {
         let ly = fy + h - PADY - bodySize
-        for (const line of wrapped[i]) {
+        for (const line of wrapped[i].main) {
           const lw = font.widthOfTextAtSize(line, bodySize)
           const tx = c.align === "right" ? cx + c.width - PADX - lw : cx + PADX
           this.page.drawText(line, { x: tx, y: ly, size: bodySize, font, color: PDF.color.ink })
           ly -= lineH
+        }
+        let ny = fy + h - PADY - wrapped[i].main.length * lineH - noteGap - noteSize
+        for (const line of wrapped[i].note) {
+          const lw = this.italic.widthOfTextAtSize(line, noteSize)
+          const tx = c.align === "right" ? cx + c.width - PADX - lw : cx + PADX
+          this.page.drawText(line, { x: tx, y: ny, size: noteSize, font: this.italic, color: PDF.color.muted })
+          ny -= noteLineH
         }
         if (i > 0) vline(cx, fy, h)
         cx += c.width
