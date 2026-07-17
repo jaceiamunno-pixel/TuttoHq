@@ -2843,15 +2843,20 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                           className="text-[11px] text-emerald-700 hover:text-emerald-800 px-1.5 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors disabled:opacity-50 flex items-center gap-1">
                           {transmittalLoading && transmittalSub?.id === s.id ? <SpinnerIcon className="h-3 w-3" /> : null}Transmit
                         </button>
-                        {s.source === "spec_ingestion" ? (
+                        {s.spec_section_id != null ? (
                           // Spec rows are STRUCTURE — never delete the placeholder.
                           // Offer Clear (remove the file, keep the row) only when
                           // there's a file to clear; an empty placeholder has no
-                          // destructive action.
+                          // destructive action. Branched on spec_section_id — the
+                          // SAME key the confirm dialog and the library-delete
+                          // server both use — so button, dialog copy, and server
+                          // behavior can never disagree on a row.
                           s.storage_path && (
                             <button onClick={() => openRowDelete(s)} className="text-[11px] text-[#64748B] hover:text-amber-600 px-1.5 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors" title="Clear the document — the spec log row stays">Clear</button>
                           )
                         ) : (
+                          // Manual/gmail rows are user-created content — always
+                          // deletable, with or without a document attached.
                           <button onClick={() => openRowDelete(s)} className="text-[11px] text-[#64748B] hover:text-red-400 px-1.5 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors" title="Delete this submittal from the log">Delete</button>
                         )}
                       </div>
@@ -2946,7 +2951,9 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                       {transmittalLoading && transmittalSub?.id === s.id ? <SpinnerIcon className="h-3 w-3" /> : null}
                       Transmit
                     </button>
-                    {s.source === "spec_ingestion" ? (
+                    {s.spec_section_id != null ? (
+                      // Same gate as the desktop table: spec_section_id (the
+                      // server's branch key), Clear only when a file exists.
                       s.storage_path && (
                         <button onClick={() => openRowDelete(s)} className="text-[11px] text-amber-600 px-2 py-1 rounded border border-[#E2E8F0] bg-white transition-colors" title="Clear the document — the spec log row stays">Clear</button>
                       )
