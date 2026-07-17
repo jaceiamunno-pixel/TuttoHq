@@ -2758,7 +2758,17 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                         )
                       })()}
                     </td>
-                    <td className="px-3 py-1.5 text-[#64748B] whitespace-nowrap">{s.submittal_type ?? "—"}</td>
+                    <td className="px-2 py-1.5 whitespace-nowrap">
+                      {/* Inline type edit — same idiom as the review-status select below.
+                          "" ⇄ NULL: untyped rows stay untyped, and a typed row can be
+                          cleared back to untyped (the column is nullable by design). */}
+                      <select value={s.submittal_type ?? ""}
+                        onChange={e => patchSubmittal(s.id, { submittal_type: e.target.value || null })}
+                        className="h-7 px-1.5 rounded border border-[#E2E8F0] text-[12px] text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40">
+                        <option value="">—</option>
+                        {SUBMITTAL_TYPE_OPTIONS.map(t => <option key={t} value={t}>{t}</option>)}
+                      </select>
+                    </td>
                     <td className="px-2 py-1.5">
                       <VendorCell
                         vendorId={s.vendor_id} personId={s.vendor_person_id}
