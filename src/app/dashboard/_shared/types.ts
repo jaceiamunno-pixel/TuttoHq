@@ -97,6 +97,15 @@ export interface SubmittalRecord {
   // Inline title edit. When true, normalizer / spec-book re-parse must NOT
   // overwrite file_name — the row carries a human-set label.
   title_locked: boolean | null
+  // Real item title + free-text note (live columns, recorded in sql 0045; both
+  // nullable). `title` is NULL BY DESIGN on spec-ingestion placeholder rows —
+  // readers fall back title → file_name → section_name (file_name stays the
+  // de-facto title for every pre-title row; never drop it from the chain).
+  // `description` is a separate note and must render as its own element, never
+  // concatenated into the title. Optional (`?`) because narrow SELECT lists
+  // (e.g. /api/search) predate the columns and omit them.
+  title?: string | null
+  description?: string | null
   // Migration 0043. True when this spec requirement is satisfied by ANOTHER
   // submittal on the same project (e.g. the Product Data submittal already
   // carries the warranty). The row is RETAINED in the log/export; its
