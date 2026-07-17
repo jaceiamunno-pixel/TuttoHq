@@ -1,14 +1,16 @@
 // Status/priority badge components lifted verbatim from dashboard/page.tsx during the module split (Step 0).
 
+// Keys = the canonical review_status vocabulary (src/lib/review-status.ts,
+// enforced by migration 0046's CHECK). Unknown/legacy values fall back gray.
 const STATUS_STYLES: Record<string, string> = {
-  "Received":               "bg-blue-100 text-blue-700",
-  "Under Review":           "bg-amber-100 text-amber-700",
-  "Approved":               "bg-green-100 text-green-700",
-  "Approved with Comments": "bg-blue-100 text-blue-700",
-  "Rejected":               "bg-red-100 text-red-700",
-  "Revise and Resubmit":    "bg-amber-100 text-amber-700",
-  "Needs Review":           "bg-amber-100 text-amber-700",
-  "Transmitted":            "bg-purple-100 text-purple-700",
+  "Not Started":       "bg-gray-100 text-gray-500",
+  "Received":          "bg-blue-100 text-blue-700",
+  "Sent to A/E":       "bg-amber-100 text-amber-700",
+  "Approved":          "bg-green-100 text-green-700",
+  "Approved as Noted": "bg-blue-100 text-blue-700",
+  "Revise & Resubmit": "bg-amber-100 text-amber-700",
+  "Rejected":          "bg-red-100 text-red-700",
+  "Closed":            "bg-green-100 text-green-700",
 }
 export function StatusBadge({ status }: { status: string }) {
   const cls = STATUS_STYLES[status] ?? "bg-gray-100 text-gray-500"

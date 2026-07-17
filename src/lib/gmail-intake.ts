@@ -647,7 +647,10 @@ async function processAttachment(ctx: AttachmentCtx): Promise<void> {
   }
 
   // ── Insert database record ─────────────────────────────────────────────────
-  const reviewStatus = (classification.confidence_score ?? 0) >= 70 ? "Received" : "Needs Review"
+  // An inbound attachment always carries a file → 'Received'. Low classification
+  // confidence is signalled by ai_confidence, not by a status value
+  // ('Needs Review' was dropped from the vocabulary — 0046).
+  const reviewStatus = "Received"
 
   // Gmail attachment filenames are often ALL CAPS or quoted — run through the
   // shared title normalizer so the Library row label matches every other
@@ -783,7 +786,9 @@ async function matchBackAttachment(ctx: MatchBackCtx): Promise<void> {
     division_name:           classification.division_name,
     csi_section:             classification.section_number,
     section_name:            classification.section_name,
-    review_status:           "Needs Review",
+    // Orphan replies still surface for PM review via received_via_package_id
+    // (package detail view) — the status only says the file is here.
+    review_status:           "Received",
     ai_confidence:           classification.confidence_score,
     ai_reasoning:            classification.reasoning,
     sender_email:            senderEmail,

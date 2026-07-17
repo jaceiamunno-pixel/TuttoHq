@@ -266,7 +266,7 @@ export async function buildSubmittalLogPdf(
       fmtDateShort(s.returned_from_ae_date),
       fmtDateShort(s.returned_to_sub_date),
       appr != null ? String(appr) : "—",
-      s.review_status ?? "Received",
+      s.review_status ?? "Not Started",
       lateLabel(s),
     ]
   })

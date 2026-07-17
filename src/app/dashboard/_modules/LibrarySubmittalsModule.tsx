@@ -28,13 +28,13 @@ import { useNavRegion, useFocusTrap } from "@/components/keyboard-nav"
 import { SkeletonTable } from "@/components/skeleton"
 import { usePendingAction } from "@/hooks/usePendingAction"
 import { PendingActionToasts } from "@/components/pending-action-toasts"
+import { REVIEW_STATUSES } from "@/lib/review-status"
 
-// Status options for the inline Status dropdown in the submittal log.
-// "Sent to Sub" is the outbound-dispatch milestone (Session I).
-const LOG_STATUS_OPTIONS = [
-  "Sent to Sub", "Received", "Under Review", "Approved", "Approved with Comments",
-  "Rejected", "Revise and Resubmit", "Needs Review", "Transmitted",
-] as const
+// Status options for the inline Status dropdown in the submittal log — the
+// canonical vocabulary (0046 CHECK), in lifecycle order. 'Sent to Sub' and
+// 'Transmitted' were retired (one word per state: 'Sent to A/E'); the
+// sub-return leg is tracked by returned_to_sub_date, not a status.
+const LOG_STATUS_OPTIONS = REVIEW_STATUSES
 
 // ─── Submittal-log calculated columns ────────────────────────────────────────
 function daysBetween(a: string, b: string): number | null {
@@ -1340,7 +1340,7 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
 
   function openEditModal(s: SubmittalRecord) {
     setEditSubmittal(s)
-    setEditStatus(s.review_status ?? "Received")
+    setEditStatus(s.review_status ?? "Not Started")
     setEditDiv(s.csi_division ?? "")
     setEditDivName(s.division_name ?? "")
     setEditSec(s.csi_section ?? "")
@@ -1496,7 +1496,9 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
     const div = CSI_DIVISIONS.find(d => d.num === editDiv)
     const sec = (CSI_SECTIONS[editDiv] ?? []).find(s => s.code === editSec)
     const updates: Record<string, string | null> = {
-      review_status: editStatus || null,
+      // Always a concrete vocabulary value — the PATCH route 400s on
+      // anything outside REVIEW_STATUSES (including null).
+      review_status: editStatus,
       csi_division:  editDiv || null,
       division_name: (div?.name ?? editDivName) || null,
       csi_section:   editSec || null,
@@ -1605,7 +1607,9 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        review_status: "Transmitted",
+        // Status only — sent_to_ae_date itself is written by the package
+        // send path; this single-transmittal flow just moves the label.
+        review_status: "Sent to A/E",
         transmittal_sent_at: new Date().toISOString(),
         transmittal_recipient: transmittalSub.send_to_email ?? transmittalSub.send_to_contact ?? "",
       }),
@@ -2674,7 +2678,7 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                     <td className="px-2 py-1.5"><DateCell value={s.returned_to_sub_date} onChange={v => patchSubmittal(s.id, { returned_to_sub_date: v })} /></td>
                     <td className="px-3 py-1.5 text-center tabular-nums text-[#64748B]">{appr ?? "—"}</td>
                     <td className="px-2 py-1.5">
-                      <select value={s.review_status ?? "Received"}
+                      <select value={s.review_status ?? "Not Started"}
                         onChange={e => patchSubmittal(s.id, { review_status: e.target.value })}
                         className="h-7 px-1.5 rounded border border-[#E2E8F0] text-[12px] text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40">
                         {LOG_STATUS_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
@@ -2792,7 +2796,7 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                         </span>
                       )}
                     </div>
-                    <StatusBadge status={s.review_status ?? "Received"} />
+                    <StatusBadge status={s.review_status ?? "Not Started"} />
                   </div>
                   <div className="mb-1.5">
                     <span
@@ -2950,7 +2954,7 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
             )}
             {!transmittalSub?.send_to_email && <div className="mb-4" />}
             <p className="text-[13px] text-[#64748B] mb-5">
-              Clicking <strong>Yes</strong> will mark this submittal as <span className="text-purple-700 font-semibold">Transmitted</span> and log the date and recipient.
+              Clicking <strong>Yes</strong> will mark this submittal as <span className="text-amber-700 font-semibold">Sent to A/E</span> and log the date and recipient.
             </p>
             <div className="flex gap-3 justify-end">
               <button
@@ -2961,7 +2965,7 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
               <button
                 onClick={markTransmitted}
                 className="h-9 px-5 rounded-md bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors">
-                Yes, mark as Transmitted
+                Yes, mark as Sent to A/E
               </button>
             </div>
           </div>
@@ -3757,7 +3761,7 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                 <label className="block text-[12px] font-medium text-[#64748B] mb-1">Status</label>
                 <select value={editStatus} onChange={e => setEditStatus(e.target.value)}
                   className="w-full h-9 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40">
-                  {["Received","Under Review","Approved","Approved with Comments","Rejected","Revise and Resubmit","Needs Review"].map(s => (
+                  {REVIEW_STATUSES.map(s => (
                     <option key={s} value={s}>{s}</option>
                   ))}
                 </select>

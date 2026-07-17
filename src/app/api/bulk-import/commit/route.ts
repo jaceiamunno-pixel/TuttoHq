@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server"
 import { isValidSha256 } from "@/lib/file-hash"
 import { allocateSectionSeqAndInsert } from "@/lib/section-seq"
 import { normalizeSubmittalTitle } from "@/lib/title-normalize"
+import { REVIEW_STATUSES, isReviewStatus } from "@/lib/review-status"
 
 // POST /api/bulk-import/commit — Stage 2a write path. Attach each Bulk
 // Import row to a spec-built submittals row. Model A never fabricates spec
@@ -91,7 +92,9 @@ interface RowIn {
    *  submittal_number for visibility; NOT a join key. */
   submittal_number: string | null
   revision_number: string | null
-  /** "Approved" / "Approved with Comments" / "Rejected" / "Revise and Resubmit". */
+  /** A REVIEW_OUTCOMES value — "Approved" / "Approved as Noted" /
+   *  "Revise & Resubmit" / "Rejected". Validated per row against the
+   *  canonical vocabulary before any write. */
   review_status: string
   /** SHA-256 of the file bytes (lowercase hex). Computed by /analyze and
    *  passed through verbatim. Optional — a missing/invalid value is
@@ -346,6 +349,16 @@ export async function POST(req: NextRequest) {
     }
     if (!r.file_name || typeof r.file_name !== "string") {
       results.push({ client_row_id: cid, status: "error", error: "file_name missing" })
+      continue
+    }
+    // review_status flows into both the attachment RPC (→ trigger → parent
+    // row) and spawned-sibling inserts; the 0046 CHECK would reject an
+    // out-of-vocab value at the DB anyway — fail fast with a clear error.
+    if (r.review_status && !isReviewStatus(r.review_status)) {
+      results.push({
+        client_row_id: cid, status: "error",
+        error: `review_status must be one of: ${REVIEW_STATUSES.join(", ")}`,
+      })
       continue
     }
 
