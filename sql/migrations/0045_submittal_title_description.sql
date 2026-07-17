@@ -22,10 +22,29 @@
 -- IT IS ADD-ONLY AND A NO-OP AGAINST CURRENT PROD. Verified live prod state
 -- across 626 live rows (status <> 'deleted' AND deleted_at IS NULL):
 --     title NOT NULL        = 351
---     description NOT NULL  = 3     (ALL title_locked = true)
---     title NULL            = 275   (spec placeholders; UI falls back to section_name)
+--     description NOT NULL  = 3     (all title_locked = true)
+--     title_locked = true   = 14    (3 with a description, 11 without)
+--     title NULL            = 275   (ALL spec_ingestion; UI falls back to section_name)
 --     title ending '.pdf'   = 0
 --     mangled / dangling-paren descriptions = 0
+--
+--   By source:
+--     spec_ingestion : 538 rows — 263 titled, 275 untitled; 538 have
+--                      material_name, 533 of which are an ECHO of section_name.
+--     manual         :  88 rows —  88 titled,   0 untitled; 88 have
+--                      material_name, 0 an echo of section_name.
+--
+--   THE GATE IS NOT "has a structured source" (an earlier draft's mistake —
+--   it would have fired on 273 echo placeholders and INVENTED titles prod
+--   deliberately omits). On spec-ingestion placeholder rows material_name is a
+--   redundant COPY of section_name (documented in the 0040 postmortem:
+--   "material_name is a redundant copy only on spec-ingestion placeholder
+--   rows"). Prod left title NULL exactly on those echo rows so the UI shows
+--   section_name once, not twice. Every one of the 275 untitled rows is an echo
+--   row (a non-echo row always got a real title), so the correct gate is
+--   material_name IS DISTINCT FROM section_name — it fires only where a REAL
+--   parsed material differs from the section name.
+--
 -- The columns already exist and are already populated, so section 1's ADD
 -- COLUMN IF NOT EXISTS is a no-op and section 2's guarded UPDATEs change 0
 -- rows. Run the dry-run SELECT that ships with this change FIRST — it must
@@ -52,16 +71,22 @@
 --     the em-dashes, and over-fired on 21 of 24 rows leaving dangling parens.
 --   * UNLOCKED rows: title = the structured render itself (em-dash join of the
 --     parsed columns), trailing '.pdf' stripped. NO paren-split — so there is
---     no em-dash to straddle. description stays NULL.
+--     no em-dash to straddle. description stays NULL. Fires ONLY where
+--     material_name IS DISTINCT FROM section_name, so echo placeholders (where
+--     material_name is a copy of section_name) are left title NULL and the UI
+--     keeps showing section_name once.
 --   * LOCKED rows (title_locked = true — the ONLY reliable marker of a
 --     human-authored parenthetical note; all 3 correct splits were locked, all
 --     21 broken ones were unlocked): the human title lives in file_name. Split
 --     a SINGLE trailing "(…)" — anchored at end-of-string, no nested parens —
 --     into title + description. A locked human title has no material—mfr—dims
---     em-dash structure, so an end-anchored split is safe.
+--     em-dash structure, so an end-anchored split is safe. The SAME echo gate
+--     applies: the 2 locked rows prod leaves title NULL are locked echo
+--     placeholders (material_name = section_name), so material_name IS DISTINCT
+--     FROM section_name keeps 2b a no-op on them (see deliverable (d)).
 --   * Every UPDATE is guarded so it is a no-op on already-correct rows
---     (title IS NULL / description IS NULL + a real source), making a re-run
---     change 0 rows.
+--     (title IS NULL / description IS NULL + a non-echo material), making a
+--     re-run change 0 rows.
 --   * Both UPDATEs are scoped to LIVE rows (status <> 'deleted' AND
 --     deleted_at IS NULL) — the exact population the verified counts came from,
 --     so "dry-run returns 0" is provable against those 626 live rows and
@@ -83,9 +108,14 @@ ALTER TABLE submittals ADD COLUMN IF NOT EXISTS description text;
 -- 2a. UNLOCKED rows — title = the structured render, trailing '.pdf' stripped.
 --     Source = the parsed columns joined with ' — ' (U+2014), exactly as
 --     file_name is composed. concat_ws skips NULLs, so a row with only
---     material_name renders just that. Rows with NO structured columns at all
---     (spec placeholders) produce '' → NULLIF leaves title NULL, so the UI's
---     section_name fallback is preserved. NO paren-split on unlocked rows.
+--     material_name renders just that. NO paren-split on unlocked rows.
+--
+--     ECHO GATE: fire ONLY where material_name IS DISTINCT FROM section_name.
+--     On spec-ingestion placeholder rows material_name is a redundant copy of
+--     section_name; prod leaves those title NULL so the UI falls back to
+--     section_name (rendering it twice would be the bug). All 275 untitled rows
+--     are echo rows, so this gate excludes every one of them — the earlier
+--     "has a structured source" predicate wrongly fired on 273 of them.
 UPDATE submittals AS s
 SET title = NULLIF(
       regexp_replace(
@@ -96,9 +126,7 @@ SET title = NULLIF(
     )
 WHERE s.title IS NULL
   AND s.title_locked = false
-  AND ( s.material_name IS NOT NULL
-     OR s.manufacturer  IS NOT NULL
-     OR s.dimensions    IS NOT NULL )
+  AND s.material_name IS DISTINCT FROM s.section_name  -- exclude echo placeholders
   AND s.status <> 'deleted'          -- live-row scope: matches the verified
   AND s.deleted_at IS NULL;          -- baseline population (626 live rows)
 
@@ -108,6 +136,12 @@ WHERE s.title IS NULL
 --     cannot disturb rows prod already populated. The regex is END-ANCHORED
 --     and forbids nested parens ([^()]*), so it matches only a terminal note
 --     and never straddles the em-dashes of a structured render.
+--
+--     SAME ECHO GATE as 2a: the 2 locked rows prod leaves title NULL are locked
+--     echo placeholders (material_name = section_name). material_name IS
+--     DISTINCT FROM section_name excludes them, so 2b changes 0 rows on current
+--     prod. Without it 2b would fire on those 2 (bad_locked = 2) — inventing a
+--     section-name title on a placeholder a human deliberately locked.
 UPDATE submittals AS s
 SET
   title = NULLIF(
@@ -123,14 +157,16 @@ SET
   )
 WHERE s.title_locked = true
   AND s.title IS NULL
+  AND s.material_name IS DISTINCT FROM s.section_name  -- exclude locked echo placeholders
   AND s.status <> 'deleted'          -- live-row scope (see 2a)
   AND s.deleted_at IS NULL;
 
 -- ── 3. Parity assertion ────────────────────────────────────────────────────
--- After the guarded backfill, NO row that still lacks a title may have had a
--- title source available, and NO locked row with a trailing parenthetical may
--- still lack a description. If either holds, the reconstruction diverged from
--- what prod already did — RAISE to roll back rather than land a partial state.
+-- After the guarded backfill, NO row with a NON-ECHO material may still lack a
+-- title (whether locked or not). Echo placeholders are EXCLUDED here exactly as
+-- they are in 2a/2b — they are meant to stay title NULL. If either count is
+-- nonzero, the reconstruction diverged from what prod already did — RAISE to
+-- roll back rather than land a partial state. On current prod both are 0.
 DO $$
 DECLARE
   bad_unlocked integer;
@@ -140,9 +176,7 @@ BEGIN
   FROM submittals s
   WHERE s.title IS NULL
     AND s.title_locked = false
-    AND ( s.material_name IS NOT NULL
-       OR s.manufacturer  IS NOT NULL
-       OR s.dimensions    IS NOT NULL )
+    AND s.material_name IS DISTINCT FROM s.section_name
     AND s.status <> 'deleted'
     AND s.deleted_at IS NULL;
 
@@ -150,12 +184,13 @@ BEGIN
   FROM submittals s
   WHERE s.title_locked = true
     AND s.title IS NULL
+    AND s.material_name IS DISTINCT FROM s.section_name
     AND s.status <> 'deleted'
     AND s.deleted_at IS NULL;
 
   IF bad_unlocked <> 0 OR bad_locked <> 0 THEN
     RAISE EXCEPTION
-      'title/description backfill incomplete: % unlocked with a source but no title, % locked with no title — rolling back',
+      'title/description backfill incomplete: % unlocked non-echo without title, % locked non-echo without title — rolling back',
       bad_unlocked, bad_locked;
   END IF;
 END $$;
