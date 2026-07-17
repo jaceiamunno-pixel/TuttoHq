@@ -187,6 +187,14 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
   const [libDeleteTarget, setLibDeleteTarget] = useState<{ file: SubmittalFile; secCode: string } | null>(null)
   const [libDeleting, setLibDeleting]         = useState(false)
 
+  // Per-row Clear/Delete on the Submittal Log. Both go through
+  // POST /library-delete — the server decides detach-vs-delete from the DB
+  // row; this state only drives the dialog copy (branched on the row's own
+  // spec_section_id / storage_path) and the local post-state.
+  const [rowDeleteTarget, setRowDeleteTarget] = useState<SubmittalRecord | null>(null)
+  const [rowDeleteBusy, setRowDeleteBusy]     = useState(false)
+  const [rowDeleteError, setRowDeleteError]   = useState<string | null>(null)
+
   // Project lookup for Library row badges. The cross-project Library stacks
   // rows from every project under the same CSI section; without a project
   // chip on each row two rows that share a title (e.g. a cover sheet of the
@@ -1483,87 +1491,92 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
     }
   }
 
-  async function deleteSubmittal(s: SubmittalRecord) {
-    if (!window.confirm(`Delete "${s.file_name}"? This cannot be undone.`)) return
-    const res = await fetch(`/api/submittals/${s.id}`, { method: "DELETE" })
-    if (res.ok) {
-      // Optimistically remove from all local caches
-      setLogSubmittals(prev => prev.filter(x => x.id !== s.id))
-      setSectionFiles(prev => {
-        const next = { ...prev }
-        // Clear the section cache entirely so next toggle re-fetches fresh from DB
-        if (s.csi_section) delete next[s.csi_section]
-        return next
-      })
-      loadTree()
-      loadSubmittals()
+  // Per-row Clear/Delete on the Submittal Log — one flow, wired to
+  // POST /library-delete, which already implements the correct split
+  // server-side (decided from the DB row, never trusted from the client):
+  //
+  //   spec_ingestion (spec_section_id NOT NULL) → DETACH. Attachments +
+  //     storage objects removed, row KEPT as an empty placeholder. A spec row
+  //     is STRUCTURE (the spec book says "this section requires this
+  //     submittal") — deleting it destroys the slot future imports land on
+  //     (the incident: two cleared-by-delete rows → a Product Data PDF got
+  //     misrouted onto Certification). So spec rows are cleared, never
+  //     deleted; empty spec placeholders get NO control at all.
+  //
+  //   manual / gmail (spec_section_id NULL) → soft-delete the row
+  //     (status='deleted') AND remove attachments + storage objects. (The
+  //     older DELETE /api/submittals/[id] soft-deletes the row but leaves the
+  //     file behind — that route stays for other callers; the log uses
+  //     library-delete so no orphaned storage objects accumulate.)
+  //
+  // NO undo affordance: the row-half is recoverable in principle, but the
+  // STORAGE OBJECTS ARE GONE — an "Undo" chip would promise a restore we
+  // can't deliver. The truthful confirm dialog is the guard.
+  function openRowDelete(s: SubmittalRecord) {
+    // Spec placeholder with no file: nothing to clear. The buttons aren't
+    // rendered for this case; guard anyway so no path can show a dialog that
+    // "succeeds" as a no-op.
+    if (s.spec_section_id && !s.storage_path) return
+    setRowDeleteError(null)
+    setRowDeleteTarget(s)
+  }
+
+  // Map library-delete's error statuses to copy a CM can act on.
+  function rowDeleteErrorMessage(status: number, serverError?: string): string {
+    switch (status) {
+      case 400: return "This row was already deleted — likely from another tab. Refresh the log to catch up."
+      case 401: return "You're signed out. Sign in again, then retry."
+      case 403: return "This submittal belongs to a different company, so it can't be changed from here."
+      case 404: return "This submittal no longer exists. Refresh the log to catch up."
+      case 409: return serverError || "This row can't be deleted — clear the file instead."
+      default:  return serverError || `Something went wrong (HTTP ${status}). Nothing was changed — try again.`
     }
   }
 
-  // Clear a spec-ingestion row: remove its file(s) but KEEP the log row as an
-  // empty placeholder. A spec row is STRUCTURE (the spec book says "this section
-  // requires this submittal") — the attached PDF is CONTENT. Deleting the row
-  // destroys the placeholder and the next import has nowhere to land (the
-  // incident: two cleared-by-delete rows → a Product Data PDF got misrouted onto
-  // Certification). So spec rows are cleared, never deleted.
-  //
-  // Removes EVERY attachment through the existing per-attachment delete path
-  // (remove_submittal_attachment via DELETE /attachments/[id]); the RPC's
-  // last-attachment branch resets the parent to the empty placeholder shape and
-  // orphan-checks each storage object before removal. We do NOT hand-roll a
-  // second deletion path. Legacy rows whose file lives only on
-  // submittals.storage_path (no attachment row) fall back to the Library detach
-  // route, which does the SAME placeholder reset for spec rows — so Clear is
-  // never a silent no-op.
-  async function clearSubmittal(s: SubmittalRecord) {
-    if (!window.confirm("Remove the file from this submittal? The log row stays.")) return
+  async function confirmRowDelete() {
+    if (!rowDeleteTarget) return
+    const s = rowDeleteTarget
+    const isSpec = s.spec_section_id != null // ⟺ source === 'spec_ingestion', same rule the server uses
+    setRowDeleteBusy(true)
+    setRowDeleteError(null)
     try {
-      const listRes = await fetch(`/api/submittals/${encodeURIComponent(s.id)}/attachments`)
-      const listData = await listRes.json().catch(() => ({}))
-      if (!listRes.ok) throw new Error(listData?.error ?? `Failed (HTTP ${listRes.status})`)
-      const atts: Array<{ id: string }> = Array.isArray(listData?.attachments) ? listData.attachments : []
-      if (atts.length > 0) {
-        // Delete each revision through the reviewed per-attachment path. The
-        // final deletion trips the RPC's placeholder-reset branch (row kept).
-        for (const a of atts) {
-          const dr = await fetch(
-            `/api/submittals/${encodeURIComponent(s.id)}/attachments/${encodeURIComponent(a.id)}`,
-            { method: "DELETE" },
-          )
-          if (!dr.ok) {
-            const de = await dr.json().catch(() => ({}))
-            throw new Error(de?.error ?? `Failed to remove a revision (HTTP ${dr.status})`)
-          }
-        }
-      } else if (s.storage_path) {
-        // Legacy: file on the parent row with no attachment rows. library-delete
-        // resets spec rows to the placeholder (keeps the row) — same shape.
-        const dr = await fetch(`/api/submittals/${encodeURIComponent(s.id)}/library-delete`, { method: "POST" })
-        if (!dr.ok) {
-          const de = await dr.json().catch(() => ({}))
-          throw new Error(de?.error ?? `Failed to remove the file (HTTP ${dr.status})`)
-        }
+      const res = await fetch(`/api/submittals/${encodeURIComponent(s.id)}/library-delete`, { method: "POST" })
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}))
+        setRowDeleteError(rowDeleteErrorMessage(res.status, typeof d?.error === "string" ? d.error : undefined))
+        return
       }
-      // The row survives as an empty placeholder. Patch it IN PLACE — the end
-      // state is deterministic (the RPC's placeholder-reset shape) — instead of a
-      // full reload, so the user's scroll on a long log is preserved. KEEP
-      // section_seq (the number identifies the spec SLOT, not the file) and every
-      // identity field; null only the file-derived columns.
-      patchLogRowLocal(s.id, {
-        storage_path: null,
-        file_size: null,
-        mime_type: null,
-        received_file_name: null,
-        review_status: "Received",
-        revision_number: "00",
-      })
-      // Drop the row's revision badge (it now has zero attachments).
-      setAttachmentCounts(prev => {
-        if (!(s.id in prev)) return prev
-        const next = { ...prev }
-        delete next[s.id]
-        return next
-      })
+      setRowDeleteTarget(null)
+      if (isSpec) {
+        // The row survives as an empty placeholder. Patch it IN PLACE — the end
+        // state is deterministic (the route's DETACH_RESET shape) — instead of a
+        // full reload, so the user's scroll on a long log is preserved. KEEP
+        // section_seq (the number identifies the spec SLOT, not the file) and
+        // every identity field; null only the file-derived columns.
+        patchLogRowLocal(s.id, {
+          storage_path: null,
+          file_size: null,
+          mime_type: null,
+          received_file_name: null,
+          returned_from_ae_date: null,
+          sent_to_ae_date: null,
+          received_at: null,
+          submittal_number: null,
+          review_status: "Received",
+          revision_number: "00",
+        })
+        // Drop the row's revision badge (it now has zero attachments).
+        setAttachmentCounts(prev => {
+          if (!(s.id in prev)) return prev
+          const next = { ...prev }
+          delete next[s.id]
+          return next
+        })
+      } else {
+        // Row is gone from the log. Drop it from both live views.
+        setLogSubmittals(prev => prev.filter(x => x.id !== s.id))
+        setSearchResults(prev => prev ? prev.filter(x => x.id !== s.id) : prev)
+      }
       // Clear the section cache so a section-view toggle re-fetches fresh, and
       // refresh the sidebar tree (neither touches the log table's scroll).
       setSectionFiles(prev => {
@@ -1573,7 +1586,9 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
       })
       loadTree()
     } catch (err) {
-      alert(err instanceof Error ? err.message : "Failed to clear the file")
+      setRowDeleteError(err instanceof Error ? err.message : "Network error — nothing was changed. Try again.")
+    } finally {
+      setRowDeleteBusy(false)
     }
   }
 
@@ -2834,10 +2849,10 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                           // there's a file to clear; an empty placeholder has no
                           // destructive action.
                           s.storage_path && (
-                            <button onClick={() => clearSubmittal(s)} className="text-[11px] text-[#64748B] hover:text-amber-600 px-1.5 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors" title="Remove the file — keeps the spec log row">Clear</button>
+                            <button onClick={() => openRowDelete(s)} className="text-[11px] text-[#64748B] hover:text-amber-600 px-1.5 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors" title="Clear the document — the spec log row stays">Clear</button>
                           )
                         ) : (
-                          <button onClick={() => deleteSubmittal(s)} className="text-[11px] text-[#64748B] hover:text-red-400 px-1.5 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors" title="Delete submittal">Delete</button>
+                          <button onClick={() => openRowDelete(s)} className="text-[11px] text-[#64748B] hover:text-red-400 px-1.5 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors" title="Delete this submittal from the log">Delete</button>
                         )}
                       </div>
                     </td>
@@ -2933,10 +2948,10 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                     </button>
                     {s.source === "spec_ingestion" ? (
                       s.storage_path && (
-                        <button onClick={() => clearSubmittal(s)} className="text-[11px] text-amber-600 px-2 py-1 rounded border border-[#E2E8F0] bg-white transition-colors" title="Remove the file — keeps the spec log row">Clear</button>
+                        <button onClick={() => openRowDelete(s)} className="text-[11px] text-amber-600 px-2 py-1 rounded border border-[#E2E8F0] bg-white transition-colors" title="Clear the document — the spec log row stays">Clear</button>
                       )
                     ) : (
-                      <button onClick={() => deleteSubmittal(s)} className="text-[11px] text-red-400 px-2 py-1 rounded border border-[#E2E8F0] bg-white transition-colors">Delete</button>
+                      <button onClick={() => openRowDelete(s)} className="text-[11px] text-red-400 px-2 py-1 rounded border border-[#E2E8F0] bg-white transition-colors">Delete</button>
                     )}
                   </div>
                 </div>
@@ -3068,6 +3083,62 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
           </div>
         </div>
       )}
+
+      {/* ── Per-row Clear/Delete confirm (Submittal Log → library-delete) ──
+          The copy branches on the row's own spec_section_id/storage_path and
+          must tell the truth: spec rows keep the log entry (only the file
+          goes); manual rows leave the log entirely. In BOTH cases the stored
+          document is unrecoverable — no undo is offered anywhere. */}
+      {rowDeleteTarget && (() => {
+        const s = rowDeleteTarget
+        const isSpec = s.spec_section_id != null
+        const name = truncateForDisplay(s.file_name)
+        return (
+          <div
+            className="fixed inset-0 bg-black/60 z-[60] flex items-center justify-center p-4"
+            onClick={e => { if (e.target === e.currentTarget && !rowDeleteBusy) setRowDeleteTarget(null) }}
+          >
+            <div className="bg-white rounded-xl shadow-2xl max-w-md w-full p-5">
+              <h2 className="text-[15px] font-bold text-[#0F172A] mb-2">
+                {isSpec ? "Clear the document from this row?" : "Delete this submittal?"}
+              </h2>
+              <p className="text-[13px] text-[#475569] mb-4 leading-relaxed">
+                {isSpec ? (
+                  <>The row stays — it&apos;s a spec-book requirement. The document attached to{" "}
+                  <span className="font-semibold text-[#0F172A]">{name}</span> is permanently removed from
+                  storage and cannot be recovered. The log entry keeps its section, number, title and type
+                  as an empty placeholder, ready for the next import.</>
+                ) : s.storage_path ? (
+                  <>This removes <span className="font-semibold text-[#0F172A]">{name}</span> from the log.
+                  {" "}Its attached document is also permanently removed from storage and cannot be recovered.</>
+                ) : (
+                  <>This removes <span className="font-semibold text-[#0F172A]">{name}</span> from the log.</>
+                )}
+              </p>
+              {rowDeleteError && (
+                <p className="text-[12px] text-red-700 bg-red-50 border border-red-200 rounded-md px-3 py-2 mb-4 leading-relaxed">
+                  {rowDeleteError}
+                </p>
+              )}
+              <div className="flex gap-2 justify-end">
+                <button
+                  disabled={rowDeleteBusy}
+                  onClick={() => setRowDeleteTarget(null)}
+                  className="h-9 px-4 rounded-md border border-[#E2E8F0] text-[13px] text-[#64748B] hover:bg-[#0F172A]/[0.04] transition-colors disabled:opacity-50">
+                  Cancel
+                </button>
+                <button
+                  disabled={rowDeleteBusy}
+                  onClick={confirmRowDelete}
+                  className={`h-9 px-4 rounded-md text-white text-[13px] font-semibold transition-colors disabled:opacity-50 flex items-center gap-1.5 ${isSpec ? "bg-amber-600 hover:bg-amber-700" : "bg-red-600 hover:bg-red-700"}`}>
+                  {rowDeleteBusy ? <SpinnerIcon className="h-3.5 w-3.5" /> : null}
+                  {isSpec ? "Clear document" : "Delete submittal"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )
+      })()}
 
       {/* ── Library delete confirm (detach-or-delete) ─────────────────────── */}
       {libDeleteTarget && (() => {
