@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import { maxSectionSeq, isSectionSeqConflict } from "@/lib/section-seq"
 import { REVIEW_STATUSES, isReviewStatus } from "@/lib/review-status"
+import { SUBMITTAL_TYPES, isSubmittalType } from "@/lib/bulk-import-detect"
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const supabase = await createClient()
@@ -25,6 +26,8 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     // Requirement satisfied by another submittal (migration 0043). Display-only
     // flag — never touches description/title.
     "fulfilled_by_other",
+    // Inline type edit on the log. Nullable — null means "untyped".
+    "submittal_type",
   ]
   const safe = Object.fromEntries(Object.entries(updates).filter(([k]) => allowed.includes(k)))
 
@@ -34,6 +37,16 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   if ("review_status" in safe && !isReviewStatus(safe.review_status)) {
     return NextResponse.json(
       { error: `review_status must be one of: ${REVIEW_STATUSES.join(", ")}` },
+      { status: 400 },
+    )
+  }
+
+  // submittal_type is a closed vocabulary + null (column is nullable, no DB
+  // CHECK — this route is the only guard). null clears the type; free text is
+  // rejected so the column can't drift the way review_status once did.
+  if ("submittal_type" in safe && safe.submittal_type !== null && !isSubmittalType(safe.submittal_type)) {
+    return NextResponse.json(
+      { error: `submittal_type must be null or one of: ${SUBMITTAL_TYPES.join(", ")}` },
       { status: 400 },
     )
   }
