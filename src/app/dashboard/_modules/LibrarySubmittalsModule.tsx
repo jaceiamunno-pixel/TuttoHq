@@ -159,6 +159,36 @@ function nextRevisionLabel(current: string | null | undefined): string {
   return `${m[1]}${Number(m[2]) + 1}${m[3]}`
 }
 
+// ── Bulk Clear/Delete on the log selection ──────────────────────────────────
+// Client-side mirror of the server's classification — used ONLY to render the
+// itemized confirm dialog and to decide which ids are worth sending. The
+// server (/api/submittals/bulk-library-delete) re-derives the same split from
+// freshly-loaded DB rows and its verdict wins; the client reconciles against
+// the per-row outcomes it returns, never against this prediction.
+//   spec row (spec_section_id != null) with a file → "clear"  (detach; row stays)
+//   spec placeholder (no file)                     → "skip"   (nothing to clear)
+//   manual/gmail row (spec_section_id == null)     → "delete" (row + any file)
+type BulkDeleteKind = "clear" | "delete" | "skip"
+function bulkDeleteKind(s: SubmittalRecord): BulkDeleteKind {
+  if (s.spec_section_id != null) return s.storage_path ? "clear" : "skip"
+  return "delete"
+}
+
+type BulkDeleteOutcome = "cleared" | "deleted" | "skipped" | "failed"
+type BulkDeleteRowResult = { id: string; outcome: BulkDeleteOutcome; reason?: string }
+
+// Human copy for the bulk route's machine reason codes (skipped/failed rows).
+function bulkDeleteReasonCopy(reason: string | undefined): string {
+  switch (reason) {
+    case "nothing_to_clear": return "spec placeholder — no document to clear"
+    case "not_found":        return "not found — removed elsewhere; refresh the log to catch up"
+    case "already_deleted":  return "already deleted — likely from another tab"
+    case "not_in_company":   return "belongs to a different company"
+    case undefined:          return "no reason returned"
+    default:                 return reason
+  }
+}
+
 export default function LibrarySubmittalsModule({ activeModule, globalProjectId, appProjects, teamMembers, userEmail, submittalsView, setSubmittalsView, onNavigate }: {
   activeModule: string
   globalProjectId: string
@@ -312,6 +342,22 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
   // pattern as the fulfilled mark above.
   const [settingStatus, setSettingStatus] = useState(false)
   const statusUndoSeq = useRef(0)
+  // Bulk Clear/Delete on the selection — one dialog, three phases (confirm →
+  // working → done). `targets` snapshots the selection at open time so the
+  // itemized counts can't shift under the dialog. NO undo anywhere in this
+  // flow — storage objects are destroyed, and an "Undo" that restores rows
+  // but not files would be a lie (same rule as the per-row #136 flow).
+  const [bulkDelete, setBulkDelete] = useState<null | {
+    phase: "confirm" | "working" | "done"
+    targets: SubmittalRecord[]
+    done: number    // actionable rows whose server outcome has been received
+    total: number   // actionable rows being sent
+    results: BulkDeleteRowResult[]
+  }>(null)
+  // Re-entry guard for confirmBulkDelete: a double-click lands twice in the
+  // same tick, before the phase state flips to "working" — the ref blocks the
+  // second run so the fan-out can never fire twice.
+  const bulkDeleteRunning = useRef(false)
   const saveTimers     = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
   const pendingPatches = useRef<Map<string, Record<string, unknown>>>(new Map())
   // Monotonic id so an out-of-order Submittal Log response can't clobber a newer one.
@@ -1592,6 +1638,128 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
     }
   }
 
+  // ── Bulk Clear/Delete on the selection ───────────────────────────────────
+  // Same server split as the per-row flow (#136), extended over the selection
+  // via POST /api/submittals/bulk-library-delete. The dialog itemizes what
+  // will happen BY KIND before confirming; spec placeholders are skipped, not
+  // errored; and the result phase reports every row's ACTUAL outcome
+  // (cleared / deleted / skipped / failed) — local state reconciles against
+  // that, never against the request set. Successful rows are never rolled
+  // back on a later failure: their storage objects are already gone.
+  function openBulkDelete() {
+    const targets = selectedSubmittals
+    if (targets.length === 0 || bulkDelete) return
+    // Entirely non-actionable selections never reach here — the toolbar
+    // button is disabled with a reason. Guard anyway.
+    if (!targets.some(s => bulkDeleteKind(s) !== "skip")) return
+    setBulkDelete({ phase: "confirm", targets, done: 0, total: 0, results: [] })
+  }
+
+  async function confirmBulkDelete() {
+    if (!bulkDelete || bulkDelete.phase !== "confirm") return
+    if (bulkDeleteRunning.current) return
+    bulkDeleteRunning.current = true
+    try {
+      await runBulkDelete(bulkDelete.targets)
+    } finally {
+      bulkDeleteRunning.current = false
+    }
+  }
+
+  async function runBulkDelete(targets: SubmittalRecord[]) {
+    // Placeholders are excluded from the request entirely — even a stale
+    // client can't ask the server to touch them (and the server would skip
+    // them anyway). They're reported as skipped in the result phase.
+    const actionable = targets.filter(s => bulkDeleteKind(s) !== "skip")
+    const results: BulkDeleteRowResult[] = targets
+      .filter(s => bulkDeleteKind(s) === "skip")
+      .map(s => ({ id: s.id, outcome: "skipped" as const, reason: "nothing_to_clear" }))
+
+    setBulkDelete(prev => prev ? { ...prev, phase: "working", done: 0, total: actionable.length } : prev)
+
+    // 50 ids per request keeps each POST well under the function timeout —
+    // every row does real storage work server-side. Chunks run sequentially
+    // so progress is honest; a transport failure marks that chunk failed and
+    // aborts the REST (not attempted), but rows already processed stay
+    // processed — their storage is already gone.
+    const CHUNK = 50
+    const touchedSections = new Set<string>()
+    let aborted = false
+    for (let i = 0; i < actionable.length; i += CHUNK) {
+      const chunk = actionable.slice(i, i + CHUNK)
+      if (aborted) {
+        chunk.forEach(s => results.push({ id: s.id, outcome: "failed", reason: "not attempted — an earlier batch failed" }))
+        continue
+      }
+      try {
+        const res = await fetch("/api/submittals/bulk-library-delete", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ids: chunk.map(s => s.id) }),
+        })
+        const data = await res.json().catch(() => ({}))
+        if (!res.ok) throw new Error(typeof data?.error === "string" ? data.error : `Failed (HTTP ${res.status})`)
+        const serverResults: BulkDeleteRowResult[] = Array.isArray(data.results) ? data.results : []
+        const byId = new Map(serverResults.map(r => [r.id, r]))
+        for (const s of chunk) {
+          const r = byId.get(s.id)
+          const outcome: BulkDeleteOutcome =
+            r && (["cleared", "deleted", "skipped", "failed"] as const).includes(r.outcome)
+              ? r.outcome : "failed"
+          results.push({ id: s.id, outcome, reason: r?.reason ?? (r ? undefined : "no result returned") })
+          // Reconcile local state from the ACTUAL outcome only.
+          if (outcome === "deleted") {
+            setLogSubmittals(prev => prev.filter(x => x.id !== s.id))
+            setSearchResults(prev => prev ? prev.filter(x => x.id !== s.id) : prev)
+            if (s.csi_section) touchedSections.add(s.csi_section)
+          } else if (outcome === "cleared") {
+            // Deterministic end state = the route's DETACH_RESET shape (same
+            // in-place patch as the per-row flow — preserves scroll).
+            patchLogRowLocal(s.id, {
+              storage_path: null,
+              file_size: null,
+              mime_type: null,
+              received_file_name: null,
+              returned_from_ae_date: null,
+              sent_to_ae_date: null,
+              received_at: null,
+              submittal_number: null,
+              review_status: "Received",
+              revision_number: "00",
+            })
+            setAttachmentCounts(prev => {
+              if (!(s.id in prev)) return prev
+              const next = { ...prev }
+              delete next[s.id]
+              return next
+            })
+            if (s.csi_section) touchedSections.add(s.csi_section)
+          }
+          // skipped / failed → local row untouched; the result phase says why.
+        }
+        setBulkDelete(prev => prev ? { ...prev, done: Math.min(i + chunk.length, actionable.length) } : prev)
+      } catch (err) {
+        const reason = err instanceof Error ? err.message : "network error"
+        chunk.forEach(s => results.push({ id: s.id, outcome: "failed", reason }))
+        aborted = true
+      }
+    }
+
+    // Section caches for changed rows re-fetch fresh; sidebar tree refreshes.
+    if (touchedSections.size > 0) {
+      setSectionFiles(prev => {
+        const next = { ...prev }
+        touchedSections.forEach(sec => delete next[sec])
+        return next
+      })
+      loadTree()
+    }
+    // Selection becomes the failed rows only — natural retry set. Cleared and
+    // deleted rows are done; skipped placeholders shouldn't linger selected
+    // under a destructive button.
+    setSelectedIds(new Set(results.filter(r => r.outcome === "failed").map(r => r.id)))
+    setBulkDelete(prev => prev ? { ...prev, phase: "done", results } : prev)
+  }
+
   async function saveEdit() {
     if (!editSubmittal) return
     setEditSaving(true)
@@ -2625,6 +2793,23 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                     </button>
                   )
                 })()}
+                {(() => {
+                  // Bulk Clear/Delete — disabled with a reason when the whole
+                  // selection is spec placeholders (nothing to clear, and spec
+                  // rows are never deleted). Confirmation itemizes by kind.
+                  const anyActionable = selectedSubmittals.some(s => bulkDeleteKind(s) !== "skip")
+                  const noneActionable = selectedIds.size > 0 && !anyActionable
+                  return (
+                    <button disabled={selectedIds.size === 0 || !anyActionable || !!bulkDelete}
+                      onClick={openBulkDelete}
+                      title={noneActionable
+                        ? "Nothing to clear or delete — every selected row is a spec placeholder with no document attached."
+                        : "Clear the documents from selected spec rows and delete the selected manual submittals. You'll see an itemized breakdown before anything happens. Documents are permanently removed — there is no undo."}
+                      className="h-8 px-3 rounded-md border border-red-300 text-red-700 text-[12px] font-semibold hover:bg-red-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap">
+                      Clear / Delete…
+                    </button>
+                  )
+                })()}
                 <button disabled={selectedIds.size === 0} onClick={() => setShowPackageModal(true)}
                   className="h-8 px-4 rounded-md bg-[#7B9BB5] text-white text-[12px] font-semibold hover:bg-[#6A8AA4] transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5 whitespace-nowrap">
                   <PlusIcon /> Create Package
@@ -3145,6 +3330,146 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                   {isSpec ? "Clear document" : "Delete submittal"}
                 </button>
               </div>
+            </div>
+          </div>
+        )
+      })()}
+
+      {/* ── Bulk Clear/Delete confirm + result (Submittal Log selection) ────
+          Three phases. CONFIRM itemizes what will happen BY KIND — the user
+          sees the exact breakdown (cleared / deleted / skipped) with counts
+          before anything runs, plus one prominent irreversibility warning.
+          WORKING shows chunk progress and can't be dismissed. DONE reports
+          every row's ACTUAL server outcome — including per-row failures with
+          reasons — and never pretends the request set equals the result set.
+          NO undo anywhere: storage objects are destroyed. */}
+      {bulkDelete && (() => {
+        const b = bulkDelete
+        const specWithFile  = b.targets.filter(s => bulkDeleteKind(s) === "clear")
+        const placeholders  = b.targets.filter(s => bulkDeleteKind(s) === "skip")
+        const manualRows    = b.targets.filter(s => bulkDeleteKind(s) === "delete")
+        const manualWithFile = manualRows.filter(s => !!s.storage_path)
+        const manualNoFile   = manualRows.filter(s => !s.storage_path)
+        const targetById = new Map(b.targets.map(s => [s.id, s]))
+        const n = (x: number, word: string) => `${x} ${word}${x === 1 ? "" : "s"}`
+        const counts = { cleared: 0, deleted: 0, skipped: 0, failed: 0 }
+        for (const r of b.results) counts[r.outcome]++
+        const problemRows = b.results.filter(r => r.outcome === "failed" || r.outcome === "skipped")
+        const busy = b.phase === "working"
+        return (
+          <div
+            className="fixed inset-0 bg-black/60 z-[60] flex items-center justify-center p-4"
+            onClick={e => { if (e.target === e.currentTarget && !busy) setBulkDelete(null) }}
+          >
+            <div className="bg-white rounded-xl shadow-2xl max-w-lg w-full p-5">
+              {b.phase === "confirm" && (
+                <>
+                  <h2 className="text-[15px] font-bold text-[#0F172A] mb-3">
+                    Clear / delete {n(b.targets.length, "selected row")}?
+                  </h2>
+                  <ul className="text-[13px] text-[#475569] mb-4 space-y-2 leading-relaxed">
+                    {specWithFile.length > 0 && (
+                      <li className="flex gap-2">
+                        <span className="text-amber-600 font-bold shrink-0">•</span>
+                        <span><span className="font-semibold text-[#0F172A]">{n(specWithFile.length, "spec-book row")}</span> — the
+                        attached document is cleared; the row stays in the log as an empty placeholder
+                        (section, number, title and type keep their place, ready for the next import).</span>
+                      </li>
+                    )}
+                    {manualWithFile.length > 0 && (
+                      <li className="flex gap-2">
+                        <span className="text-red-600 font-bold shrink-0">•</span>
+                        <span><span className="font-semibold text-[#0F172A]">{n(manualWithFile.length, "submittal")}</span> — removed
+                        from the log together with their attached documents.</span>
+                      </li>
+                    )}
+                    {manualNoFile.length > 0 && (
+                      <li className="flex gap-2">
+                        <span className="text-red-600 font-bold shrink-0">•</span>
+                        <span><span className="font-semibold text-[#0F172A]">{n(manualNoFile.length, "submittal")}</span> with
+                        no document — removed from the log.</span>
+                      </li>
+                    )}
+                    {placeholders.length > 0 && (
+                      <li className="flex gap-2">
+                        <span className="text-[#94A3B8] font-bold shrink-0">•</span>
+                        <span><span className="font-semibold text-[#0F172A]">{n(placeholders.length, "spec placeholder")}</span> — skipped:
+                        there is no document to clear, and spec rows are never deleted. Nothing changes.</span>
+                      </li>
+                    )}
+                  </ul>
+                  <p className="text-[12px] font-semibold text-red-800 bg-red-50 border border-red-200 rounded-md px-3 py-2 mb-4 leading-relaxed">
+                    Documents are permanently removed from storage and cannot be recovered. There is no undo.
+                  </p>
+                  <div className="flex gap-2 justify-end">
+                    <button onClick={() => setBulkDelete(null)}
+                      className="h-9 px-4 rounded-md border border-[#E2E8F0] text-[13px] text-[#64748B] hover:bg-[#0F172A]/[0.04] transition-colors">
+                      Cancel
+                    </button>
+                    <button onClick={confirmBulkDelete}
+                      className="h-9 px-4 rounded-md bg-red-600 text-white text-[13px] font-semibold hover:bg-red-700 transition-colors">
+                      {specWithFile.length > 0 && manualRows.length > 0
+                        ? `Clear ${specWithFile.length} · Delete ${manualRows.length}`
+                        : specWithFile.length > 0
+                          ? `Clear ${n(specWithFile.length, "document")}`
+                          : `Delete ${n(manualRows.length, "submittal")}`}
+                    </button>
+                  </div>
+                </>
+              )}
+              {b.phase === "working" && (
+                <>
+                  <h2 className="text-[15px] font-bold text-[#0F172A] mb-2">Working…</h2>
+                  <p className="text-[13px] text-[#475569] mb-4 leading-relaxed flex items-center gap-2">
+                    <SpinnerIcon className="h-4 w-4 shrink-0" />
+                    {b.done} of {b.total} rows processed. Don&apos;t close this tab — rows already
+                    processed are final either way.
+                  </p>
+                </>
+              )}
+              {b.phase === "done" && (
+                <>
+                  <h2 className="text-[15px] font-bold text-[#0F172A] mb-2">
+                    {counts.failed > 0 ? "Finished — with failures" : "Done"}
+                  </h2>
+                  <p className="text-[13px] text-[#475569] mb-3 leading-relaxed">
+                    {[
+                      counts.cleared > 0 ? `${n(counts.cleared, "document")} cleared (rows kept)` : null,
+                      counts.deleted > 0 ? `${n(counts.deleted, "submittal")} deleted` : null,
+                      counts.skipped > 0 ? `${n(counts.skipped, "row")} skipped` : null,
+                      counts.failed  > 0 ? `${n(counts.failed, "row")} FAILED` : null,
+                    ].filter(Boolean).join(" · ") || "Nothing was changed."}
+                  </p>
+                  {problemRows.length > 0 && (
+                    <ul className="text-[12px] text-[#475569] mb-3 max-h-48 overflow-y-auto border border-[#E2E8F0] rounded-md divide-y divide-[#E2E8F0]/60">
+                      {problemRows.map(r => {
+                        const s = targetById.get(r.id)
+                        return (
+                          <li key={r.id} className="px-3 py-1.5 leading-relaxed">
+                            <span className={`font-semibold ${r.outcome === "failed" ? "text-red-700" : "text-[#64748B]"}`}>
+                              {r.outcome === "failed" ? "Failed" : "Skipped"}:
+                            </span>{" "}
+                            <span className="text-[#0F172A]">{truncateForDisplay(s?.file_name ?? r.id)}</span>
+                            {" — "}{bulkDeleteReasonCopy(r.reason)}
+                          </li>
+                        )
+                      })}
+                    </ul>
+                  )}
+                  {counts.failed > 0 && (
+                    <p className="text-[12px] text-[#475569] mb-4 leading-relaxed">
+                      The failed rows are still selected — fix the cause (or refresh the log) and run
+                      Clear / Delete again on just those. Rows that cleared or deleted are final.
+                    </p>
+                  )}
+                  <div className="flex gap-2 justify-end">
+                    <button onClick={() => setBulkDelete(null)}
+                      className="h-9 px-4 rounded-md bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors">
+                      Done
+                    </button>
+                  </div>
+                </>
+              )}
             </div>
           </div>
         )
