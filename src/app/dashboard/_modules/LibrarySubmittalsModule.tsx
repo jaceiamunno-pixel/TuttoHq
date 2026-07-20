@@ -160,18 +160,22 @@ function nextRevisionLabel(current: string | null | undefined): string {
 }
 
 // ── Bulk Clear/Delete on the log selection ──────────────────────────────────
-// Client-side mirror of the server's classification — used ONLY to render the
-// itemized confirm dialog and to decide which ids are worth sending. The
-// server (/api/submittals/bulk-library-delete) re-derives the same split from
+// Client-side mirror of the server's ACTION-BRANCHED classification — used
+// ONLY to render the itemized confirm dialog and to decide which ids are
+// worth sending under the chosen action. The server
+// (/api/submittals/bulk-library-delete) re-derives the same split from
 // freshly-loaded DB rows and its verdict wins; the client reconciles against
 // the per-row outcomes it returns, never against this prediction.
-//   spec row (spec_section_id != null) with a file → "clear"  (detach; row stays)
-//   spec placeholder (no file)                     → "skip"   (nothing to clear)
-//   manual/gmail row (spec_section_id == null)     → "delete" (row + any file)
+//   action "clear":  spec row with a file → "clear" (detach; row stays);
+//                    spec placeholder / manual row → "skip"
+//   action "delete": EVERY row kind → "delete" (soft-delete; the 2026-07-17
+//                    reversal makes spec rows, placeholders included,
+//                    deletable — number retired, never reused)
+type BulkDeleteAction = "clear" | "delete"
 type BulkDeleteKind = "clear" | "delete" | "skip"
-function bulkDeleteKind(s: SubmittalRecord): BulkDeleteKind {
-  if (s.spec_section_id != null) return s.storage_path ? "clear" : "skip"
-  return "delete"
+function bulkDeleteKind(s: SubmittalRecord, action: BulkDeleteAction): BulkDeleteKind {
+  if (action === "delete") return "delete"
+  return s.spec_section_id != null && s.storage_path ? "clear" : "skip"
 }
 
 type BulkDeleteOutcome = "cleared" | "deleted" | "skipped" | "failed"
@@ -181,6 +185,7 @@ type BulkDeleteRowResult = { id: string; outcome: BulkDeleteOutcome; reason?: st
 function bulkDeleteReasonCopy(reason: string | undefined): string {
   switch (reason) {
     case "nothing_to_clear": return "spec placeholder — no document to clear"
+    case "clear_not_valid":  return "not a spec-book row — Clear only detaches spec documents; use Delete"
     case "not_found":        return "not found — removed elsewhere; refresh the log to catch up"
     case "already_deleted":  return "already deleted — likely from another tab"
     case "not_in_company":   return "belongs to a different company"
@@ -218,10 +223,11 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
   const [libDeleting, setLibDeleting]         = useState(false)
 
   // Per-row Clear/Delete on the Submittal Log. Both go through
-  // POST /library-delete — the server decides detach-vs-delete from the DB
-  // row; this state only drives the dialog copy (branched on the row's own
-  // spec_section_id / storage_path) and the local post-state.
-  const [rowDeleteTarget, setRowDeleteTarget] = useState<SubmittalRecord | null>(null)
+  // POST /library-delete with an EXPLICIT action — a spec row supports both
+  // (clear = detach file keep row; delete = soft-delete row), so the user's
+  // choice travels with the target. State drives the dialog copy and the
+  // local post-state.
+  const [rowDeleteTarget, setRowDeleteTarget] = useState<{ s: SubmittalRecord; action: "clear" | "delete" } | null>(null)
   const [rowDeleteBusy, setRowDeleteBusy]     = useState(false)
   const [rowDeleteError, setRowDeleteError]   = useState<string | null>(null)
 
@@ -344,12 +350,17 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
   const statusUndoSeq = useRef(0)
   // Bulk Clear/Delete on the selection — one dialog, three phases (confirm →
   // working → done). `targets` snapshots the selection at open time so the
-  // itemized counts can't shift under the dialog. NO undo anywhere in this
-  // flow — storage objects are destroyed, and an "Undo" that restores rows
-  // but not files would be a lie (same rule as the per-row #136 flow).
+  // itemized counts can't shift under the dialog. `action` starts null and
+  // the user must EXPLICITLY pick Clear or Delete in the dialog — the
+  // destructive verb is never inferred from selection shape; the itemization
+  // and the named-count confirm button render for the picked action only.
+  // NO undo anywhere in this flow — storage objects are destroyed, and an
+  // "Undo" that restores rows but not files would be a lie (same rule as the
+  // per-row flow).
   const [bulkDelete, setBulkDelete] = useState<null | {
     phase: "confirm" | "working" | "done"
     targets: SubmittalRecord[]
+    action: BulkDeleteAction | null   // null until the user picks in the dialog
     done: number    // actionable rows whose server outcome has been received
     total: number   // actionable rows being sent
     results: BulkDeleteRowResult[]
@@ -859,15 +870,21 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
       .finally(() => setLoadingSections(prev => { const n = new Set(prev); n.delete(code); return n }))
   }
 
-  // Library delete. The server branches: spec_ingestion rows DETACH (file
-  // removed, log row kept as an empty placeholder); manual/gmail rows are
-  // soft-deleted entirely. On success we refetch the affected section + the
-  // folder tree so counts update.
+  // Library delete. The action is EXPLICIT (the route requires it) and must
+  // match this view's confirm copy: spec_ingestion rows → "clear" (file
+  // removed, log row kept as an empty placeholder); manual/gmail rows →
+  // "delete" (soft-delete the whole record). On success we refetch the
+  // affected section + the folder tree so counts update.
   async function confirmLibraryDelete() {
     if (!libDeleteTarget) return
     setLibDeleting(true)
     try {
-      const res = await fetch(`/api/submittals/${libDeleteTarget.file.id}/library-delete`, { method: "POST" })
+      const action = libDeleteTarget.file.source === "spec_ingestion" ? "clear" : "delete"
+      const res = await fetch(`/api/submittals/${libDeleteTarget.file.id}/library-delete`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action }),
+      })
       if (!res.ok) {
         const d = await res.json().catch(() => ({}))
         throw new Error(d.error ?? "Delete failed")
@@ -1537,63 +1554,69 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
     }
   }
 
-  // Per-row Clear/Delete on the Submittal Log — one flow, wired to
-  // POST /library-delete, which already implements the correct split
-  // server-side (decided from the DB row, never trusted from the client):
+  // Per-row Clear / Delete on the Submittal Log — one flow, wired to
+  // POST /library-delete with an EXPLICIT action (the server validates it
+  // against the row; nothing is inferred from row shape, because a spec row
+  // now supports BOTH actions):
   //
-  //   spec_ingestion (spec_section_id NOT NULL) → DETACH. Attachments +
-  //     storage objects removed, row KEPT as an empty placeholder. A spec row
-  //     is STRUCTURE (the spec book says "this section requires this
-  //     submittal") — deleting it destroys the slot future imports land on
-  //     (the incident: two cleared-by-delete rows → a Product Data PDF got
-  //     misrouted onto Certification). So spec rows are cleared, never
-  //     deleted; empty spec placeholders get NO control at all.
+  //   "clear" — spec row with a file: attachments + storage objects removed,
+  //     row KEPT as an empty placeholder (section, number, title, type
+  //     intact, ready for re-import).
   //
-  //   manual / gmail (spec_section_id NULL) → soft-delete the row
-  //     (status='deleted') AND remove attachments + storage objects. (The
-  //     older DELETE /api/submittals/[id] soft-deletes the row but leaves the
-  //     file behind — that route stays for other callers; the log uses
-  //     library-delete so no orphaned storage objects accumulate.)
+  //   "delete" — ANY row: soft-delete (status='deleted') AND remove
+  //     attachments + storage objects. Spec rows included — product decision
+  //     (Jace, 2026-07-17) REVERSING the old "spec rows can never be
+  //     deleted" gate: the parser over-extracts, junk rows land in the log,
+  //     and removing them must be a click, not a SQL remediation. The
+  //     deleted row keeps its section_seq, so its CM number is retired
+  //     (never reused — maxSectionSeq counts soft-deleted rows) and the
+  //     surviving rows' numbers never shift. A spec re-parse links by spec
+  //     section number TEXT, not row identity — if the parser still
+  //     produces this requirement, the row comes back.
   //
   // NO undo affordance: the row-half is recoverable in principle, but the
   // STORAGE OBJECTS ARE GONE — an "Undo" chip would promise a restore we
   // can't deliver. The truthful confirm dialog is the guard.
-  function openRowDelete(s: SubmittalRecord) {
-    // Spec placeholder with no file: nothing to clear. The buttons aren't
-    // rendered for this case; guard anyway so no path can show a dialog that
-    // "succeeds" as a no-op.
-    if (s.spec_section_id && !s.storage_path) return
+  function openRowDelete(s: SubmittalRecord, action: "clear" | "delete") {
+    // Clear only exists on a spec row that actually has a file — the button
+    // isn't rendered otherwise; guard anyway so no path can show a dialog
+    // that "succeeds" as a no-op. Delete is legal on every row kind.
+    if (action === "clear" && (!s.spec_section_id || !s.storage_path)) return
     setRowDeleteError(null)
-    setRowDeleteTarget(s)
+    setRowDeleteTarget({ s, action })
   }
 
   // Map library-delete's error statuses to copy a CM can act on.
   function rowDeleteErrorMessage(status: number, serverError?: string): string {
     switch (status) {
-      case 400: return "This row was already deleted — likely from another tab. Refresh the log to catch up."
+      case 400: return serverError && serverError !== "Already deleted"
+        ? serverError
+        : "This row was already deleted — likely from another tab. Refresh the log to catch up."
       case 401: return "You're signed out. Sign in again, then retry."
       case 403: return "This submittal belongs to a different company, so it can't be changed from here."
       case 404: return "This submittal no longer exists. Refresh the log to catch up."
-      case 409: return serverError || "This row can't be deleted — clear the file instead."
       default:  return serverError || `Something went wrong (HTTP ${status}). Nothing was changed — try again.`
     }
   }
 
   async function confirmRowDelete() {
     if (!rowDeleteTarget) return
-    const s = rowDeleteTarget
-    const isSpec = s.spec_section_id != null // ⟺ source === 'spec_ingestion', same rule the server uses
+    const { s, action } = rowDeleteTarget
     setRowDeleteBusy(true)
     setRowDeleteError(null)
     try {
-      const res = await fetch(`/api/submittals/${encodeURIComponent(s.id)}/library-delete`, { method: "POST" })
+      const res = await fetch(`/api/submittals/${encodeURIComponent(s.id)}/library-delete`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action }),
+      })
       if (!res.ok) {
         const d = await res.json().catch(() => ({}))
         setRowDeleteError(rowDeleteErrorMessage(res.status, typeof d?.error === "string" ? d.error : undefined))
         return
       }
       setRowDeleteTarget(null)
-      if (isSpec) {
+      if (action === "clear") {
         // The row survives as an empty placeholder. Patch it IN PLACE — the end
         // state is deterministic (the route's DETACH_RESET shape) — instead of a
         // full reload, so the user's scroll on a long log is preserved. KEEP
@@ -1619,9 +1642,16 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
           return next
         })
       } else {
-        // Row is gone from the log. Drop it from both live views.
+        // Soft-deleted (spec or manual alike): the row leaves the log and the
+        // export. Drop it from both live views + its revision badge entry.
         setLogSubmittals(prev => prev.filter(x => x.id !== s.id))
         setSearchResults(prev => prev ? prev.filter(x => x.id !== s.id) : prev)
+        setAttachmentCounts(prev => {
+          if (!(s.id in prev)) return prev
+          const next = { ...prev }
+          delete next[s.id]
+          return next
+        })
       }
       // Clear the section cache so a section-view toggle re-fetches fresh, and
       // refresh the sidebar tree (neither touches the log table's scroll).
@@ -1639,41 +1669,44 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
   }
 
   // ── Bulk Clear/Delete on the selection ───────────────────────────────────
-  // Same server split as the per-row flow (#136), extended over the selection
-  // via POST /api/submittals/bulk-library-delete. The dialog itemizes what
-  // will happen BY KIND before confirming; spec placeholders are skipped, not
-  // errored; and the result phase reports every row's ACTUAL outcome
-  // (cleared / deleted / skipped / failed) — local state reconciles against
-  // that, never against the request set. Successful rows are never rolled
-  // back on a later failure: their storage objects are already gone.
+  // Same explicit-action model as the per-row flow, extended over the
+  // selection via POST /api/submittals/bulk-library-delete. The user picks
+  // the verb (Clear or Delete) IN the dialog — never inferred — and the
+  // dialog itemizes what that action does BY KIND before confirming; under
+  // "clear", placeholders and manual rows are skipped, not errored. The
+  // result phase reports every row's ACTUAL outcome (cleared / deleted /
+  // skipped / failed) — local state reconciles against that, never against
+  // the request set. Successful rows are never rolled back on a later
+  // failure: their storage objects are already gone.
   function openBulkDelete() {
     const targets = selectedSubmittals
     if (targets.length === 0 || bulkDelete) return
-    // Entirely non-actionable selections never reach here — the toolbar
-    // button is disabled with a reason. Guard anyway.
-    if (!targets.some(s => bulkDeleteKind(s) !== "skip")) return
-    setBulkDelete({ phase: "confirm", targets, done: 0, total: 0, results: [] })
+    setBulkDelete({ phase: "confirm", targets, action: null, done: 0, total: 0, results: [] })
   }
 
   async function confirmBulkDelete() {
-    if (!bulkDelete || bulkDelete.phase !== "confirm") return
+    if (!bulkDelete || bulkDelete.phase !== "confirm" || !bulkDelete.action) return
     if (bulkDeleteRunning.current) return
     bulkDeleteRunning.current = true
     try {
-      await runBulkDelete(bulkDelete.targets)
+      await runBulkDelete(bulkDelete.targets, bulkDelete.action)
     } finally {
       bulkDeleteRunning.current = false
     }
   }
 
-  async function runBulkDelete(targets: SubmittalRecord[]) {
-    // Placeholders are excluded from the request entirely — even a stale
-    // client can't ask the server to touch them (and the server would skip
-    // them anyway). They're reported as skipped in the result phase.
-    const actionable = targets.filter(s => bulkDeleteKind(s) !== "skip")
+  async function runBulkDelete(targets: SubmittalRecord[], action: BulkDeleteAction) {
+    // Rows this action can't touch are excluded from the request entirely —
+    // even a stale client can't ask the server to act on them (and the
+    // server would skip them anyway). They're reported as skipped in the
+    // result phase. Under "delete" every row is actionable.
+    const actionable = targets.filter(s => bulkDeleteKind(s, action) !== "skip")
     const results: BulkDeleteRowResult[] = targets
-      .filter(s => bulkDeleteKind(s) === "skip")
-      .map(s => ({ id: s.id, outcome: "skipped" as const, reason: "nothing_to_clear" }))
+      .filter(s => bulkDeleteKind(s, action) === "skip")
+      .map(s => ({
+        id: s.id, outcome: "skipped" as const,
+        reason: s.spec_section_id != null ? "nothing_to_clear" : "clear_not_valid",
+      }))
 
     setBulkDelete(prev => prev ? { ...prev, phase: "working", done: 0, total: actionable.length } : prev)
 
@@ -1694,7 +1727,7 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
       try {
         const res = await fetch("/api/submittals/bulk-library-delete", {
           method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ ids: chunk.map(s => s.id) }),
+          body: JSON.stringify({ ids: chunk.map(s => s.id), action }),
         })
         const data = await res.json().catch(() => ({}))
         if (!res.ok) throw new Error(typeof data?.error === "string" ? data.error : `Failed (HTTP ${res.status})`)
@@ -1710,6 +1743,12 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
           if (outcome === "deleted") {
             setLogSubmittals(prev => prev.filter(x => x.id !== s.id))
             setSearchResults(prev => prev ? prev.filter(x => x.id !== s.id) : prev)
+            setAttachmentCounts(prev => {
+              if (!(s.id in prev)) return prev
+              const next = { ...prev }
+              delete next[s.id]
+              return next
+            })
             if (s.csi_section) touchedSections.add(s.csi_section)
           } else if (outcome === "cleared") {
             // Deterministic end state = the route's DETACH_RESET shape (same
@@ -2793,23 +2832,16 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                     </button>
                   )
                 })()}
-                {(() => {
-                  // Bulk Clear/Delete — disabled with a reason when the whole
-                  // selection is spec placeholders (nothing to clear, and spec
-                  // rows are never deleted). Confirmation itemizes by kind.
-                  const anyActionable = selectedSubmittals.some(s => bulkDeleteKind(s) !== "skip")
-                  const noneActionable = selectedIds.size > 0 && !anyActionable
-                  return (
-                    <button disabled={selectedIds.size === 0 || !anyActionable || !!bulkDelete}
-                      onClick={openBulkDelete}
-                      title={noneActionable
-                        ? "Nothing to clear or delete — every selected row is a spec placeholder with no document attached."
-                        : "Clear the documents from selected spec rows and delete the selected manual submittals. You'll see an itemized breakdown before anything happens. Documents are permanently removed — there is no undo."}
-                      className="h-8 px-3 rounded-md border border-red-300 text-red-700 text-[12px] font-semibold hover:bg-red-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap">
-                      Clear / Delete…
-                    </button>
-                  )
-                })()}
+                {/* Bulk Clear/Delete — every row kind is deletable (2026-07-17
+                    reversal), so the button is live whenever anything is
+                    selected. The dialog makes the user pick the verb (Clear
+                    vs Delete) explicitly, then itemizes by kind. */}
+                <button disabled={selectedIds.size === 0 || !!bulkDelete}
+                  onClick={openBulkDelete}
+                  title="Clear documents from spec rows, or delete the selected rows entirely — you pick which, then see an itemized breakdown before anything happens. Documents are permanently removed — there is no undo."
+                  className="h-8 px-3 rounded-md border border-red-300 text-red-700 text-[12px] font-semibold hover:bg-red-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap">
+                  Clear / Delete…
+                </button>
                 <button disabled={selectedIds.size === 0} onClick={() => setShowPackageModal(true)}
                   className="h-8 px-4 rounded-md bg-[#7B9BB5] text-white text-[12px] font-semibold hover:bg-[#6A8AA4] transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5 whitespace-nowrap">
                   <PlusIcon /> Create Package
@@ -3038,17 +3070,14 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                           className="text-[11px] text-emerald-700 hover:text-emerald-800 px-1.5 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors disabled:opacity-50 flex items-center gap-1">
                           {transmittalLoading && transmittalSub?.id === s.id ? <SpinnerIcon className="h-3 w-3" /> : null}Transmit
                         </button>
-                        {s.source === "spec_ingestion" ? (
-                          // Spec rows are STRUCTURE — never delete the placeholder.
-                          // Offer Clear (remove the file, keep the row) only when
-                          // there's a file to clear; an empty placeholder has no
-                          // destructive action.
-                          s.storage_path && (
-                            <button onClick={() => openRowDelete(s)} className="text-[11px] text-[#64748B] hover:text-amber-600 px-1.5 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors" title="Clear the document — the spec log row stays">Clear</button>
-                          )
-                        ) : (
-                          <button onClick={() => openRowDelete(s)} className="text-[11px] text-[#64748B] hover:text-red-400 px-1.5 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors" title="Delete this submittal from the log">Delete</button>
+                        {/* Clear = spec rows with a file only (detach the doc,
+                            keep the placeholder). Delete = EVERY row kind —
+                            spec rows are deletable since the 2026-07-17
+                            reversal; the confirm dialog carries the truth. */}
+                        {s.spec_section_id != null && s.storage_path && (
+                          <button onClick={() => openRowDelete(s, "clear")} className="text-[11px] text-[#64748B] hover:text-amber-600 px-1.5 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors" title="Clear the document — the spec log row stays">Clear</button>
                         )}
+                        <button onClick={() => openRowDelete(s, "delete")} className="text-[11px] text-[#64748B] hover:text-red-400 px-1.5 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors" title={s.spec_section_id != null ? "Delete this row — removes the spec requirement from the log" : "Delete this submittal from the log"}>Delete</button>
                       </div>
                     </td>
                   </tr>
@@ -3141,13 +3170,12 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                       {transmittalLoading && transmittalSub?.id === s.id ? <SpinnerIcon className="h-3 w-3" /> : null}
                       Transmit
                     </button>
-                    {s.source === "spec_ingestion" ? (
-                      s.storage_path && (
-                        <button onClick={() => openRowDelete(s)} className="text-[11px] text-amber-600 px-2 py-1 rounded border border-[#E2E8F0] bg-white transition-colors" title="Clear the document — the spec log row stays">Clear</button>
-                      )
-                    ) : (
-                      <button onClick={() => openRowDelete(s)} className="text-[11px] text-red-400 px-2 py-1 rounded border border-[#E2E8F0] bg-white transition-colors">Delete</button>
+                    {/* Same gate as the desktop table: Clear on spec-with-file,
+                        Delete on every row kind (2026-07-17 reversal). */}
+                    {s.spec_section_id != null && s.storage_path && (
+                      <button onClick={() => openRowDelete(s, "clear")} className="text-[11px] text-amber-600 px-2 py-1 rounded border border-[#E2E8F0] bg-white transition-colors" title="Clear the document — the spec log row stays">Clear</button>
                     )}
+                    <button onClick={() => openRowDelete(s, "delete")} className="text-[11px] text-red-400 px-2 py-1 rounded border border-[#E2E8F0] bg-white transition-colors">Delete</button>
                   </div>
                 </div>
                 )
@@ -3280,13 +3308,17 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
       )}
 
       {/* ── Per-row Clear/Delete confirm (Submittal Log → library-delete) ──
-          The copy branches on the row's own spec_section_id/storage_path and
-          must tell the truth: spec rows keep the log entry (only the file
-          goes); manual rows leave the log entirely. In BOTH cases the stored
-          document is unrecoverable — no undo is offered anywhere. */}
+          The copy branches on the CHOSEN action + the row's own
+          spec_section_id/storage_path and must tell the truth: clear keeps
+          the log entry (only the file goes); delete removes the row from the
+          log and the export — and a deleted SPEC row can be recreated by a
+          future re-parse (linkage is by spec section number text, not row
+          identity). Any stored document is unrecoverable — no undo is
+          offered anywhere. */}
       {rowDeleteTarget && (() => {
-        const s = rowDeleteTarget
+        const { s, action } = rowDeleteTarget
         const isSpec = s.spec_section_id != null
+        const isClear = action === "clear"
         const name = truncateForDisplay(s.file_name)
         return (
           <div
@@ -3295,19 +3327,30 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
           >
             <div className="bg-white rounded-xl shadow-2xl max-w-md w-full p-5">
               <h2 className="text-[15px] font-bold text-[#0F172A] mb-2">
-                {isSpec ? "Clear the document from this row?" : "Delete this submittal?"}
+                {isClear ? "Clear the document from this row?" : isSpec ? "Delete this spec row?" : "Delete this submittal?"}
               </h2>
               <p className="text-[13px] text-[#475569] mb-4 leading-relaxed">
-                {isSpec ? (
+                {isClear ? (
                   <>The row stays — it&apos;s a spec-book requirement. The document attached to{" "}
                   <span className="font-semibold text-[#0F172A]">{name}</span> is permanently removed from
                   storage and cannot be recovered. The log entry keeps its section, number, title and type
                   as an empty placeholder, ready for the next import.</>
+                ) : isSpec ? (
+                  <>This removes <span className="font-semibold text-[#0F172A]">{name}</span> from the log
+                  and from the log export.
+                  {s.storage_path ? <>{" "}Its attached document is permanently removed from storage and
+                  cannot be recovered.</> : null}
+                  {" "}Its number ({formatSectionNumber(s.csi_section, s.section_seq)}) is retired — the
+                  remaining rows keep their numbers. Because this requirement came from the spec book, a
+                  future re-parse can recreate the row (matching is by spec section number, not this exact
+                  row) — if the parser keeps producing it, it will come back.</>
                 ) : s.storage_path ? (
-                  <>This removes <span className="font-semibold text-[#0F172A]">{name}</span> from the log.
-                  {" "}Its attached document is also permanently removed from storage and cannot be recovered.</>
+                  <>This removes <span className="font-semibold text-[#0F172A]">{name}</span> from the log
+                  and from the log export. Its attached document is also permanently removed from storage
+                  and cannot be recovered.</>
                 ) : (
-                  <>This removes <span className="font-semibold text-[#0F172A]">{name}</span> from the log.</>
+                  <>This removes <span className="font-semibold text-[#0F172A]">{name}</span> from the log
+                  and from the log export.</>
                 )}
               </p>
               {rowDeleteError && (
@@ -3325,9 +3368,9 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                 <button
                   disabled={rowDeleteBusy}
                   onClick={confirmRowDelete}
-                  className={`h-9 px-4 rounded-md text-white text-[13px] font-semibold transition-colors disabled:opacity-50 flex items-center gap-1.5 ${isSpec ? "bg-amber-600 hover:bg-amber-700" : "bg-red-600 hover:bg-red-700"}`}>
+                  className={`h-9 px-4 rounded-md text-white text-[13px] font-semibold transition-colors disabled:opacity-50 flex items-center gap-1.5 ${isClear ? "bg-amber-600 hover:bg-amber-700" : "bg-red-600 hover:bg-red-700"}`}>
                   {rowDeleteBusy ? <SpinnerIcon className="h-3.5 w-3.5" /> : null}
-                  {isSpec ? "Clear document" : "Delete submittal"}
+                  {isClear ? "Clear document" : isSpec ? "Delete row" : "Delete submittal"}
                 </button>
               </div>
             </div>
@@ -3336,20 +3379,23 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
       })()}
 
       {/* ── Bulk Clear/Delete confirm + result (Submittal Log selection) ────
-          Three phases. CONFIRM itemizes what will happen BY KIND — the user
-          sees the exact breakdown (cleared / deleted / skipped) with counts
-          before anything runs, plus one prominent irreversibility warning.
-          WORKING shows chunk progress and can't be dismissed. DONE reports
-          every row's ACTUAL server outcome — including per-row failures with
-          reasons — and never pretends the request set equals the result set.
-          NO undo anywhere: storage objects are destroyed. */}
+          Three phases. CONFIRM makes the user PICK the verb first — Clear or
+          Delete, never inferred from selection shape — then itemizes what
+          that action does BY KIND with counts, plus one prominent
+          irreversibility warning; the confirm button names the exact count
+          and stays disabled until an action is picked. WORKING shows chunk
+          progress and can't be dismissed. DONE reports every row's ACTUAL
+          server outcome — including per-row failures with reasons — and
+          never pretends the request set equals the result set. NO undo
+          anywhere: storage objects are destroyed. */}
       {bulkDelete && (() => {
         const b = bulkDelete
-        const specWithFile  = b.targets.filter(s => bulkDeleteKind(s) === "clear")
-        const placeholders  = b.targets.filter(s => bulkDeleteKind(s) === "skip")
-        const manualRows    = b.targets.filter(s => bulkDeleteKind(s) === "delete")
-        const manualWithFile = manualRows.filter(s => !!s.storage_path)
-        const manualNoFile   = manualRows.filter(s => !s.storage_path)
+        const specWithFile     = b.targets.filter(s => s.spec_section_id != null && !!s.storage_path)
+        const specPlaceholders = b.targets.filter(s => s.spec_section_id != null && !s.storage_path)
+        const manualRows       = b.targets.filter(s => s.spec_section_id == null)
+        const manualWithFile   = manualRows.filter(s => !!s.storage_path)
+        const manualNoFile     = manualRows.filter(s => !s.storage_path)
+        const anyDocs          = b.targets.some(s => !!s.storage_path)
         const targetById = new Map(b.targets.map(s => [s.id, s]))
         const n = (x: number, word: string) => `${x} ${word}${x === 1 ? "" : "s"}`
         const counts = { cleared: 0, deleted: 0, skipped: 0, failed: 0 }
@@ -3365,54 +3411,105 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
               {b.phase === "confirm" && (
                 <>
                   <h2 className="text-[15px] font-bold text-[#0F172A] mb-3">
-                    Clear / delete {n(b.targets.length, "selected row")}?
+                    {n(b.targets.length, "row")} selected — what do you want to do?
                   </h2>
-                  <ul className="text-[13px] text-[#475569] mb-4 space-y-2 leading-relaxed">
-                    {specWithFile.length > 0 && (
+                  {/* Explicit action pick. Neither is preselected. */}
+                  <div className="grid grid-cols-2 gap-2 mb-4">
+                    <button
+                      disabled={specWithFile.length === 0}
+                      onClick={() => setBulkDelete(prev => prev ? { ...prev, action: "clear" } : prev)}
+                      title={specWithFile.length === 0 ? "No spec-book row in this selection has a document to clear." : undefined}
+                      className={`text-left rounded-lg border p-3 transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${b.action === "clear" ? "border-amber-600 ring-1 ring-amber-600 bg-amber-50/50" : "border-[#E2E8F0] hover:border-amber-400"}`}>
+                      <span className="block text-[13px] font-semibold text-[#0F172A]">Clear documents</span>
+                      <span className="block text-[11px] text-[#64748B] mt-0.5">
+                        Spec rows only — the rows stay. {n(specWithFile.length, "row")} affected.
+                      </span>
+                    </button>
+                    <button
+                      onClick={() => setBulkDelete(prev => prev ? { ...prev, action: "delete" } : prev)}
+                      className={`text-left rounded-lg border p-3 transition-colors ${b.action === "delete" ? "border-red-600 ring-1 ring-red-600 bg-red-50/50" : "border-[#E2E8F0] hover:border-red-400"}`}>
+                      <span className="block text-[13px] font-semibold text-[#0F172A]">Delete rows</span>
+                      <span className="block text-[11px] text-[#64748B] mt-0.5">
+                        Any row kind — leaves the log. {n(b.targets.length, "row")} affected.
+                      </span>
+                    </button>
+                  </div>
+                  {b.action === "clear" && (
+                    <ul className="text-[13px] text-[#475569] mb-4 space-y-2 leading-relaxed">
                       <li className="flex gap-2">
                         <span className="text-amber-600 font-bold shrink-0">•</span>
                         <span><span className="font-semibold text-[#0F172A]">{n(specWithFile.length, "spec-book row")}</span> — the
                         attached document is cleared; the row stays in the log as an empty placeholder
                         (section, number, title and type keep their place, ready for the next import).</span>
                       </li>
-                    )}
-                    {manualWithFile.length > 0 && (
-                      <li className="flex gap-2">
-                        <span className="text-red-600 font-bold shrink-0">•</span>
-                        <span><span className="font-semibold text-[#0F172A]">{n(manualWithFile.length, "submittal")}</span> — removed
-                        from the log together with their attached documents.</span>
-                      </li>
-                    )}
-                    {manualNoFile.length > 0 && (
-                      <li className="flex gap-2">
-                        <span className="text-red-600 font-bold shrink-0">•</span>
-                        <span><span className="font-semibold text-[#0F172A]">{n(manualNoFile.length, "submittal")}</span> with
-                        no document — removed from the log.</span>
-                      </li>
-                    )}
-                    {placeholders.length > 0 && (
-                      <li className="flex gap-2">
-                        <span className="text-[#94A3B8] font-bold shrink-0">•</span>
-                        <span><span className="font-semibold text-[#0F172A]">{n(placeholders.length, "spec placeholder")}</span> — skipped:
-                        there is no document to clear, and spec rows are never deleted. Nothing changes.</span>
-                      </li>
-                    )}
-                  </ul>
-                  <p className="text-[12px] font-semibold text-red-800 bg-red-50 border border-red-200 rounded-md px-3 py-2 mb-4 leading-relaxed">
-                    Documents are permanently removed from storage and cannot be recovered. There is no undo.
-                  </p>
+                      {specPlaceholders.length > 0 && (
+                        <li className="flex gap-2">
+                          <span className="text-[#94A3B8] font-bold shrink-0">•</span>
+                          <span><span className="font-semibold text-[#0F172A]">{n(specPlaceholders.length, "spec placeholder")}</span> — skipped:
+                          there is no document to clear. Nothing changes.</span>
+                        </li>
+                      )}
+                      {manualRows.length > 0 && (
+                        <li className="flex gap-2">
+                          <span className="text-[#94A3B8] font-bold shrink-0">•</span>
+                          <span><span className="font-semibold text-[#0F172A]">{n(manualRows.length, "submittal")}</span> — skipped:
+                          Clear only detaches spec-book documents. Use Delete to remove them.</span>
+                        </li>
+                      )}
+                    </ul>
+                  )}
+                  {b.action === "delete" && (
+                    <ul className="text-[13px] text-[#475569] mb-4 space-y-2 leading-relaxed">
+                      {specWithFile.length > 0 && (
+                        <li className="flex gap-2">
+                          <span className="text-red-600 font-bold shrink-0">•</span>
+                          <span><span className="font-semibold text-[#0F172A]">{n(specWithFile.length, "spec-book row")}</span> — removed
+                          from the log and the export together with their attached documents. Their numbers are
+                          retired (never reused); a future spec re-parse can recreate the requirement.</span>
+                        </li>
+                      )}
+                      {specPlaceholders.length > 0 && (
+                        <li className="flex gap-2">
+                          <span className="text-red-600 font-bold shrink-0">•</span>
+                          <span><span className="font-semibold text-[#0F172A]">{n(specPlaceholders.length, "spec placeholder")}</span> — removed
+                          from the log and the export. Numbers retired; a future re-parse can recreate them.</span>
+                        </li>
+                      )}
+                      {manualWithFile.length > 0 && (
+                        <li className="flex gap-2">
+                          <span className="text-red-600 font-bold shrink-0">•</span>
+                          <span><span className="font-semibold text-[#0F172A]">{n(manualWithFile.length, "submittal")}</span> — removed
+                          from the log together with their attached documents.</span>
+                        </li>
+                      )}
+                      {manualNoFile.length > 0 && (
+                        <li className="flex gap-2">
+                          <span className="text-red-600 font-bold shrink-0">•</span>
+                          <span><span className="font-semibold text-[#0F172A]">{n(manualNoFile.length, "submittal")}</span> with
+                          no document — removed from the log.</span>
+                        </li>
+                      )}
+                    </ul>
+                  )}
+                  {b.action && (
+                    <p className="text-[12px] font-semibold text-red-800 bg-red-50 border border-red-200 rounded-md px-3 py-2 mb-4 leading-relaxed">
+                      {b.action === "clear" || anyDocs
+                        ? "Documents are permanently removed from storage and cannot be recovered. There is no undo."
+                        : "Deleted rows leave the log and the log export. There is no undo."}
+                    </p>
+                  )}
                   <div className="flex gap-2 justify-end">
                     <button onClick={() => setBulkDelete(null)}
                       className="h-9 px-4 rounded-md border border-[#E2E8F0] text-[13px] text-[#64748B] hover:bg-[#0F172A]/[0.04] transition-colors">
                       Cancel
                     </button>
-                    <button onClick={confirmBulkDelete}
-                      className="h-9 px-4 rounded-md bg-red-600 text-white text-[13px] font-semibold hover:bg-red-700 transition-colors">
-                      {specWithFile.length > 0 && manualRows.length > 0
-                        ? `Clear ${specWithFile.length} · Delete ${manualRows.length}`
-                        : specWithFile.length > 0
-                          ? `Clear ${n(specWithFile.length, "document")}`
-                          : `Delete ${n(manualRows.length, "submittal")}`}
+                    <button onClick={confirmBulkDelete} disabled={!b.action}
+                      className={`h-9 px-4 rounded-md text-white text-[13px] font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${b.action === "clear" ? "bg-amber-600 hover:bg-amber-700" : "bg-red-600 hover:bg-red-700"}`}>
+                      {b.action === "clear"
+                        ? `Clear ${n(specWithFile.length, "document")}`
+                        : b.action === "delete"
+                          ? `Delete ${n(b.targets.length, "row")}`
+                          : "Pick an action"}
                     </button>
                   </div>
                 </>
@@ -3435,7 +3532,7 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                   <p className="text-[13px] text-[#475569] mb-3 leading-relaxed">
                     {[
                       counts.cleared > 0 ? `${n(counts.cleared, "document")} cleared (rows kept)` : null,
-                      counts.deleted > 0 ? `${n(counts.deleted, "submittal")} deleted` : null,
+                      counts.deleted > 0 ? `${n(counts.deleted, "row")} deleted` : null,
                       counts.skipped > 0 ? `${n(counts.skipped, "row")} skipped` : null,
                       counts.failed  > 0 ? `${n(counts.failed, "row")} FAILED` : null,
                     ].filter(Boolean).join(" · ") || "Nothing was changed."}
