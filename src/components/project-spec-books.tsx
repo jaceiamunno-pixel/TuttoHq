@@ -34,6 +34,11 @@ export default function ProjectSpecBooks({ projectId, projectName, onCountChange
   const [uploadProgress, setUploadProgress] = useState(0)
   const [parsingId, setParsingId]     = useState<string | null>(null)
   const [parseProgress, setParseProgress] = useState(0)
+  // Incremental "fill missing" run state — for parsed docs the old "Re-parse"
+  // button was a silent no-op (/parse early-returns alreadyParsed); it now
+  // ingests newly-scoped sections additively and reports what it did.
+  const [fillingId, setFillingId]     = useState<string | null>(null)
+  const [fillResult, setFillResult]   = useState<{ docId: string; message: string; isError: boolean } | null>(null)
   // Delete confirmation — the targeted doc, plus a count of what it cascades to.
   const [pendingDelete, setPendingDelete] = useState<SpecBookDoc | null>(null)
   const [deleteCounts, setDeleteCounts]   = useState<{ sections: number; uncommitted: number; committed: number } | null>(null)
@@ -148,6 +153,41 @@ export default function ProjectSpecBooks({ projectId, projectName, onCountChange
     load()
   }
 
+  // Incremental ingestion for an already-parsed doc: sections scoped IN after
+  // the parse get their spec_sections row + staged submittals created —
+  // additively, touching nothing that already exists. Honest reporting: the
+  // result line says exactly how many sections were filled (0 is a real,
+  // truthful outcome, not a silent no-op).
+  async function runFillMissing(docId: string) {
+    setFillingId(docId)
+    setFillResult(null)
+    try {
+      const r = await fetch(`/api/spec-books/${docId}/fill-missing`, { method: "POST" })
+      const d = await r.json().catch(() => ({}))
+      if (!r.ok) throw new Error(typeof d?.error === "string" ? d.error : `Failed (HTTP ${r.status})`)
+      const filled: number = d.filled ?? 0
+      const names = (d.sections ?? [])
+        .map((s: { spec_number: string; spec_title: string }) => `${s.spec_number} ${s.spec_title}`)
+        .join(", ")
+      setFillResult({
+        docId,
+        message: filled === 0
+          ? "Nothing to ingest — every in-scope section in this volume is already parsed."
+          : `Ingested ${filled} newly-scoped section${filled === 1 ? "" : "s"} (${names}); ${d.staged ?? 0} submittal${(d.staged ?? 0) === 1 ? "" : "s"} staged for review.`,
+        isError: false,
+      })
+      load()
+    } catch (err) {
+      setFillResult({
+        docId,
+        message: err instanceof Error ? err.message : "Ingest failed — nothing was changed.",
+        isError: true,
+      })
+    } finally {
+      setFillingId(null)
+    }
+  }
+
   // Open the delete confirmation, fetching what the cascade will affect:
   // spec sections + uncommitted staged rows are removed; committed submittals
   // survive in the log (their spec_section_id is nulled by the FK).
@@ -252,6 +292,7 @@ export default function ProjectSpecBooks({ projectId, projectName, onCountChange
             <tbody>
               {docs.map(doc => {
                 const isParsing = parsingId === doc.id || doc.parse_status === "extracting" || doc.parse_status === "classifying"
+                const isFilling = fillingId === doc.id
                 const ps = doc.parse_summary
                 return (
                   <tr key={doc.id} className="border-b border-[#E2E8F0]/60 last:border-0 hover:bg-[#F8F9FA] transition-colors">
@@ -276,6 +317,11 @@ export default function ProjectSpecBooks({ projectId, projectName, onCountChange
                               {ps.sectionsFound} of {ps.sectionsScoped} scoped section{ps.sectionsScoped === 1 ? "" : "s"} found in this volume · {ps.sectionsWithSubmittals} with submittals · {ps.staged} staged
                             </p>
                           )}
+                          {fillResult?.docId === doc.id && (
+                            <p className={`text-[11px] mt-1 ${fillResult.isError ? "text-red-500" : "text-[#5A7A94]"}`}>
+                              {fillResult.message}
+                            </p>
+                          )}
                         </>
                       ) : doc.parse_status === "failed" ? (
                         <>
@@ -297,9 +343,19 @@ export default function ProjectSpecBooks({ projectId, projectName, onCountChange
                           className="text-[11px] font-semibold text-[#64748B] hover:text-[#0F172A] px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors">
                           View PDF
                         </button>
-                        {!isParsing && (
+                        {/* Parsed docs get the ADDITIVE ingest (the old
+                            "Re-parse" hit /parse, which early-returns
+                            alreadyParsed — a silent no-op). Unparsed/failed
+                            docs keep the full /parse path. */}
+                        {!isParsing && doc.parse_status === "parsed" ? (
+                          <button onClick={() => runFillMissing(doc.id)} disabled={isFilling}
+                            title="Parse the volume again and ingest ONLY in-scope sections that have no parsed section yet (e.g. sections scoped in after the original parse). Nothing already ingested is touched."
+                            className="text-[11px] font-semibold text-[#7B9BB5] hover:text-[#5A7A94] px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors disabled:opacity-50 whitespace-nowrap">
+                            {isFilling ? "Ingesting…" : "Ingest newly scoped"}
+                          </button>
+                        ) : !isParsing && (
                           <button onClick={() => runParse(doc.id)} className="text-[11px] font-semibold text-[#7B9BB5] hover:text-[#5A7A94] px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors">
-                            {doc.parse_status === "parsed" ? "Re-parse" : doc.parse_status === "failed" ? "Retry" : "Parse"}
+                            {doc.parse_status === "failed" ? "Retry" : "Parse"}
                           </button>
                         )}
                         <button onClick={() => requestDelete(doc)} className="text-[11px] text-red-400/70 hover:text-red-500 px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors">Delete</button>
