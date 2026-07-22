@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect, useMemo, useRef } from "react"
+import { createPortal } from "react-dom"
 import SubmittalCoversheet from "@/components/submittals/SubmittalCoversheet"
 import type {
   Division, SubmittalFile, SubmittalRecord, AiResult, NameOptions, UploadStep,
@@ -5110,9 +5111,11 @@ function DateCell({ value, onChange }: {
  * vendor FIRM (one list — each row is flagged sub/supplier, so no type filter);
  * step 2 picks/creates a PERSON under that firm (or "firm only", person null).
  * Commit writes vendor_id + vendor_person_id. New firms/people persist
- * (reusable) via the parent's create handlers. The dropdown is fixed-positioned
- * (anchored via getBoundingClientRect) so it is never clipped by the
- * horizontally-scrolling table.
+ * (reusable) via the parent's create handlers. The dropdown is portaled to
+ * <body> and fixed-positioned (anchored via getBoundingClientRect) so neither
+ * the horizontally-scrolling table nor the viewport bottom can clip it: it
+ * flips above the trigger when there's more room there, caps its height, and
+ * re-anchors on scroll/resize.
  */
 function VendorCell({
   vendorId, personId, vendors, people,
@@ -5127,7 +5130,13 @@ function VendorCell({
   onCreatePerson: (vendorId: string, d: { name: string; email: string; phone: string; role: string }) => Promise<VendorPersonRow | null>
 }) {
   const [open, setOpen] = useState(false)
-  const [pos, setPos]   = useState<{ top: number; left: number } | null>(null)
+  // Viewport-aware placement: `top` set = panel opens downward from the
+  // trigger; `bottom` set (distance from the viewport's bottom edge) = flipped
+  // above it — the bottom anchor lets the panel grow upward as its content
+  // changes without re-measuring. maxHeight caps the panel at
+  // min(320, available space) so the list scrolls internally instead of
+  // running past the viewport edge.
+  const [pos, setPos] = useState<{ top: number | null; bottom: number | null; left: number; maxHeight: number } | null>(null)
   const [step, setStep] = useState<"firm" | "person">("firm")
   const [pendFirmId, setPendFirmId] = useState<string | null>(null)
   const [q, setQ] = useState("")
@@ -5144,11 +5153,16 @@ function VendorCell({
   const [busy, setBusy]     = useState(false)
   const ref    = useRef<HTMLDivElement>(null)
   const btnRef = useRef<HTMLButtonElement>(null)
+  const popRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     if (!open) return
     function onDown(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+      // The panel is portaled to <body>, so "outside" means outside BOTH the
+      // trigger wrapper and the panel.
+      const t = e.target as Node
+      if (ref.current?.contains(t) || popRef.current?.contains(t)) return
+      setOpen(false)
     }
     document.addEventListener("mousedown", onDown)
     return () => document.removeEventListener("mousedown", onDown)
@@ -5159,10 +5173,25 @@ function VendorCell({
     setAddingPerson(false); setPName(""); setPEmail(""); setPPhone(""); setPRole(""); setBusy(false)
   }
 
+  // w-[260px] panel, capped at 320px tall, kept 8px off the viewport edges.
+  const POP_W = 260, POP_MAX_H = 320, EDGE = 8
+
+  function placeFromTrigger() {
+    const r = btnRef.current?.getBoundingClientRect()
+    if (!r) return
+    const spaceBelow = window.innerHeight - r.bottom - 4 - EDGE
+    const spaceAbove = r.top - 4 - EDGE
+    const left = Math.max(EDGE, Math.min(r.left, window.innerWidth - POP_W - EDGE))
+    if (spaceBelow >= POP_MAX_H || spaceBelow >= spaceAbove) {
+      setPos({ top: r.bottom + 4, bottom: null, left, maxHeight: Math.max(120, Math.min(POP_MAX_H, spaceBelow)) })
+    } else {
+      setPos({ top: null, bottom: window.innerHeight - r.top + 4, left, maxHeight: Math.max(120, Math.min(POP_MAX_H, spaceAbove)) })
+    }
+  }
+
   function toggle() {
     if (open) { setOpen(false); return }
-    const r = btnRef.current?.getBoundingClientRect()
-    if (r) setPos({ top: r.bottom + 4, left: r.left })
+    placeFromTrigger()
     resetTransient()
     // Jump straight to person editing when a firm is already chosen; the back
     // arrow returns to firm selection.
@@ -5170,6 +5199,20 @@ function VendorCell({
     else          { setPendFirmId(null); setStep("firm") }
     setOpen(true)
   }
+
+  // A fixed-positioned panel doesn't move with its trigger: re-anchor on any
+  // scroll (capture phase, so the table's own scrollers count — not just the
+  // window) and on resize while open.
+  useEffect(() => {
+    if (!open) return
+    const onMove = () => placeFromTrigger()
+    window.addEventListener("scroll", onMove, true)
+    window.addEventListener("resize", onMove)
+    return () => {
+      window.removeEventListener("scroll", onMove, true)
+      window.removeEventListener("resize", onMove)
+    }
+  }, [open]) // eslint-disable-line react-hooks/exhaustive-deps
 
   function commit(firmId: string, pid: string | null) {
     onChange({ vendorId: firmId, personId: pid })
@@ -5225,22 +5268,31 @@ function VendorCell({
       >
         {label ?? "Set vendor…"}
       </button>
-      {open && pos && (
+      {open && pos && createPortal(
         <div
+          ref={popRef}
           // data-nav-yield: the global arrow-key layer stands down while this
           // picker is open, so typing/searching and option movement behave
-          // natively instead of being hijacked for row navigation.
+          // natively instead of being hijacked for row navigation. The
+          // attribute rides on this panel root, so it keeps working from the
+          // <body> portal (the yield check is closest() on the event target).
           data-nav-yield
-          style={{ position: "fixed", top: pos.top, left: pos.left }}
-          className="z-50 w-[260px] bg-white border border-[#E2E8F0] rounded-lg shadow-xl"
+          style={{
+            position: "fixed",
+            left: pos.left,
+            top: pos.top ?? undefined,
+            bottom: pos.bottom ?? undefined,
+            maxHeight: pos.maxHeight,
+          }}
+          className="z-50 w-[260px] bg-white border border-[#E2E8F0] rounded-lg shadow-xl flex flex-col overflow-hidden"
         >
           {/* ── Step 1: firm ───────────────────────────────────────────── */}
           {step === "firm" && (
             <>
-              <div className="p-1.5 border-b border-[#E2E8F0]">
+              <div className="flex-shrink-0 p-1.5 border-b border-[#E2E8F0]">
                 <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder="Search vendors…" className={fieldCls} />
               </div>
-              <div className="max-h-64 overflow-y-auto py-1">
+              <div className="min-h-0 overflow-y-auto py-1">
                 {hasVendor && (
                   <button onClick={() => { onChange({ vendorId: null, personId: null }); setOpen(false) }}
                     className="w-full text-left px-2.5 py-1.5 text-[12px] text-[#94A3B8] hover:bg-[#F8F9FA]">
@@ -5286,7 +5338,7 @@ function VendorCell({
           {/* ── Step 2: person ─────────────────────────────────────────── */}
           {step === "person" && (
             <>
-              <div className="p-1.5 border-b border-[#E2E8F0] flex items-center gap-1.5">
+              <div className="flex-shrink-0 p-1.5 border-b border-[#E2E8F0] flex items-center gap-1.5">
                 <button onClick={() => { resetTransient(); setStep("firm") }} title="Back to vendors"
                   className="h-7 w-7 flex items-center justify-center rounded border border-[#E2E8F0] text-[#64748B] hover:border-[#7B9BB5] flex-shrink-0">←</button>
                 <span className="min-w-0 flex-1 text-[12px] font-semibold text-[#0F172A] truncate">{pendFirm?.company_name ?? "Firm"}</span>
@@ -5298,10 +5350,10 @@ function VendorCell({
                     className="flex-shrink-0 h-7 px-2 rounded border border-[#E2E8F0] text-[11px] text-[#94A3B8] hover:border-[#EF4444] hover:text-[#EF4444]">Clear</button>
                 )}
               </div>
-              <div className="p-1.5 border-b border-[#E2E8F0]">
+              <div className="flex-shrink-0 p-1.5 border-b border-[#E2E8F0]">
                 <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder="Search people…" className={fieldCls} />
               </div>
-              <div className="max-h-60 overflow-y-auto py-1">
+              <div className="min-h-0 overflow-y-auto py-1">
                 <button onClick={() => pendFirmId && commit(pendFirmId, null)}
                   className="w-full text-left px-2.5 py-1.5 text-[12px] text-[#64748B] hover:bg-[#F8F9FA]">
                   Use firm only (no person)
@@ -5338,7 +5390,8 @@ function VendorCell({
               </div>
             </>
           )}
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   )
