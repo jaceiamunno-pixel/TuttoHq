@@ -15,7 +15,7 @@ export async function GET(req: NextRequest) {
 
   const { data, error } = await supabase
     .from("submittals")
-    .select("id, file_name, storage_path, mime_type, file_size, created_at, submittal_type, source, project_id")
+    .select("id, file_name, storage_path, mime_type, file_size, created_at, submittal_type, lead_time, source, project_id")
     .eq("csi_section", code)
     .eq("status", "active")
     .not("storage_path", "is", null)
@@ -54,6 +54,7 @@ export async function GET(req: NextRequest) {
     file_size:      r.file_size,
     created_at:     r.created_at,
     submittal_type: r.submittal_type ?? null,
+    lead_time:      r.lead_time ?? null,
     source:         r.source ?? null,
     project_id:     r.project_id ?? null,
   }))

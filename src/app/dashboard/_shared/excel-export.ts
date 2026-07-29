@@ -43,7 +43,9 @@ const STATUS_FILL: Record<string, { bg: string; fg: string }> = {
 }
 
 // Column widths copied from the THP template (A-L), plus sensible widths for
-// our two added columns (M Source, N Actions).
+// our three added columns (M Lead Time, N Source, O Actions). Lead Time is
+// APPENDED after the template block — inserting it inside A-L would shift the
+// G/H/K cells the Approval + Late formulas and the A1:L2 title merge depend on.
 interface ColDef { header: string; width: number }
 function buildColumns(companyShort: string): ColDef[] {
   return [
@@ -59,6 +61,7 @@ function buildColumns(companyShort: string): ColDef[] {
     { header: "APPROVAL TIME (DAYS)",       width: 25.7 },
     { header: "STATUS",                     width: 26.0 },
     { header: "LATE / ON TIME",             width: 23.4 },
+    { header: "LEAD TIME",                  width: 16   },
     { header: "SOURCE",                     width: 12   },
     { header: "ACTIONS",                    width: 10   },
   ]
@@ -75,8 +78,9 @@ const COL_RET_SUB = 9
 const COL_APPR   = 10
 const COL_STATUS = 11
 const COL_LATE   = 12
-const COL_SOURCE = 13
-const COL_OPEN   = 14
+const COL_LEAD   = 13
+const COL_SOURCE = 14
+const COL_OPEN   = 15
 
 // Helper cell layout — parks the NOW() / today-minus-14 cells in the wasted
 // space past the merged A1:L2 title (cols P/R/S, rows 1-2) so they can never
@@ -241,6 +245,7 @@ export async function exportSubmittalLogToExcel(args: ExportSubmittalLogArgs): P
     row.getCell(COL_LATE).value = {
       formula: `IF(AND(G${r}<${HELPER_CUTOFF_REF},G${r}>1,OR(K${r}="Sent to A/E",K${r}="Revise & Resubmit")),"Late","Not Late")`,
     }
+    row.getCell(COL_LEAD).value = s.lead_time ?? ""
     row.getCell(COL_SOURCE).value = s.source === "spec_ingestion" && s.spec_section_id ? "Spec book" : ""
 
     row.height = 17.4
