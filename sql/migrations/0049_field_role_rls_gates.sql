@@ -46,18 +46,22 @@
 --   unattached) and retried by the queue until the report lands — a slightly
 --   stricter, self-healing ordering, not a breakage.
 --
--- RUN-TIME CAVEAT: item_photos.entity_id's declared type is not in the repo
--- (out-of-band table). The policy compares daily_reports.id (uuid) = entity_id;
--- if entity_id is text, CREATE POLICY fails loudly at run — then change the
--- comparison to `dr.id = ip.entity_id::uuid` and re-run. Values are always
--- UUIDs (they are daily_reports/punch_items ids).
+-- PROD-VERIFIED (Claude's prod review; this file matches what actually ran):
+--   * item_photos.entity_id is uuid — the dr.id = entity_id comparison is
+--     type-clean, no cast needed.
+--   * equipment_availability AND commitment_balances are both views with
+--     security_invoker=true — the base-table lockouts propagate through them.
+--   * RLS is enabled on every public table — none of the policies below are
+--     inert.
+--   * daily_reports / rfis / drawing_log carry TEXT project_id in prod (see
+--     Part 0) — the module-gate calls on those tables resolve to the text
+--     overload.
 --
--- ENUMERATION SOURCE: prod introspection was unavailable this session
--- (Supabase MCP unauthenticated), so the lockout list below is the union of
--- repo DDL + every table the app queries (.from() sweep). The DO blocks
--- RAISE NOTICE and SKIP any name that doesn't exist in prod, and NOTICE any
--- table whose RLS is disabled (policy would be inert) — watch the NOTICE
--- output when running.
+-- ENUMERATION SOURCE: repo DDL + app .from() sweep, then reconciled against a
+-- prod enumeration — which added commitment_changes and submittal_reviews to
+-- the Part 4 lockout (the repo sweep missed them). The DO blocks still
+-- RAISE NOTICE and SKIP any name that doesn't exist, and NOTICE any table
+-- whose RLS is disabled — watch the NOTICE output when running.
 --
 -- POST-RUN VERIFICATION:
 --   SELECT tablename, count(*) FROM pg_policies
@@ -66,6 +70,38 @@
 --   --         3 per write-locked table.
 
 BEGIN;
+
+-- ============================================================================
+-- PART 0 — TEXT overload of has_project_module_access.
+-- daily_reports, rfis, and drawing_log carry TEXT project_id in prod (legacy
+-- typing; the uuid-typed tables are drawing_sheets / schedule_* / projects),
+-- and prod holds 4 live demo-seed rows with NON-UUID project_id values
+-- ('LMOB'). A bare p_project::uuid in a policy would 22P02 on those rows for
+-- EVERY role. So: same shape as the uuid original (0047); admin/member/demo
+-- short-circuit true; for 'field' the value is regex-validated as a UUID
+-- FIRST and only then delegated to the uuid version — non-uuid values (the
+-- demo seeds) are simply not field-visible. Postgres overload resolution
+-- routes each Part 1 call to the matching signature by the column's type.
+-- ============================================================================
+CREATE OR REPLACE FUNCTION public.has_project_module_access(p_project text, p_module text, p_write boolean)
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT CASE
+    WHEN get_my_role() IN ('admin','member','demo') THEN true
+    WHEN get_my_role() = 'field' THEN
+      p_project ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+      AND has_project_module_access(p_project::uuid, p_module, p_write)
+    ELSE false
+  END;
+$$;
+
+revoke all on function public.has_project_module_access(text, text, boolean) from public;
+revoke all on function public.has_project_module_access(text, text, boolean) from anon;
+grant execute on function public.has_project_module_access(text, text, boolean) to authenticated;
 
 -- ============================================================================
 -- PART 1 — MODULE GATES on the project-scoped tables.
@@ -398,16 +434,19 @@ DO $$
 DECLARE
   t text;
   tables text[] := ARRAY[
-    -- submittals surface (incl. packages, spec/intake plumbing, counters)
-    'submittals', 'submittal_attachments', 'submittal_packages',
+    -- submittals surface (incl. packages, spec/intake plumbing, counters;
+    -- submittal_reviews: prod enumeration, repo sweep missed it)
+    'submittals', 'submittal_attachments', 'submittal_reviews',
+    'submittal_packages',
     'submittal_package_items', 'submittal_package_files',
     'submittal_package_reminders', 'staged_submittals', 'spec_sections',
     'project_scope_sections', 'project_submittal_counters',
     'project_package_counters',
     -- change orders
     'change_orders', 'change_order_line_items',
-    -- commitments / POs
+    -- commitments / POs (commitment_changes: prod enumeration, repo sweep missed it)
     'commitments', 'commitment_scope', 'commitment_invoices', 'po_line_items',
+    'commitment_changes',
     -- estimation
     'estimates', 'estimate_lines', 'labor_rates', 'company_bid_defaults',
     'gc_template_items',
@@ -452,15 +491,10 @@ BEGIN
   END LOOP;
 END $$;
 
--- NOT POLICY-CAPABLE (views — verify separately):
+-- NOT POLICY-CAPABLE (views — PROD-VERIFIED, nothing to do):
 --   * equipment_availability — security_invoker=true (0040): the equipment
---     lockout above propagates through it. Nothing to do.
---   * commitment_balances — definition is NOT in the repo (out-of-band). If it
---     is a view WITHOUT security_invoker, it runs as its owner and would leak
---     around the commitments lockout. VERIFY after running:
---       SELECT viewname, viewowner FROM pg_views WHERE viewname = 'commitment_balances';
---       SELECT relname, reloptions FROM pg_class WHERE relname = 'commitment_balances';
---     reloptions must contain 'security_invoker=true' (or it must be a table,
---     in which case tell Claude and it gets added to the lockout list).
+--     lockout above propagates through it.
+--   * commitment_balances — confirmed security_invoker=true in prod: the
+--     commitments lockout propagates through it.
 
 COMMIT;
