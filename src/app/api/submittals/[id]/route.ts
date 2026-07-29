@@ -28,6 +28,9 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     "fulfilled_by_other",
     // Inline type edit on the log. Nullable — null means "untyped".
     "submittal_type",
+    // Inline lead-time edit on the log (migration 0048). Free text — vendors
+    // quote "6-8 weeks", "12 wks ARO", etc., so no vocabulary to enforce.
+    "lead_time",
   ]
   const safe = Object.fromEntries(Object.entries(updates).filter(([k]) => allowed.includes(k)))
 
@@ -49,6 +52,16 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       { error: `submittal_type must be null or one of: ${SUBMITTAL_TYPES.join(", ")}` },
       { status: 400 },
     )
+  }
+
+  // lead_time is free text, but only text — reject non-strings so a bad client
+  // can't write objects/numbers. Trimmed; empty clears to null.
+  if ("lead_time" in safe) {
+    if (safe.lead_time !== null && typeof safe.lead_time !== "string") {
+      return NextResponse.json({ error: "lead_time must be a string or null" }, { status: 400 })
+    }
+    const v = typeof safe.lead_time === "string" ? safe.lead_time.trim() : null
+    safe.lead_time = v && v.length > 0 ? v : null
   }
 
   // fulfilled_by_other is a strict boolean — reject anything else so a bad

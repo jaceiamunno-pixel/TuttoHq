@@ -2161,6 +2161,9 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
         {file.source === "spec_ingestion" && file.submittal_type && (
           <span className="flex-shrink-0 text-[10px] text-[#64748B] bg-[#F1F5F9] px-1.5 py-0.5 rounded font-medium">· {file.submittal_type}</span>
         )}
+        {file.lead_time && (
+          <span title="Lead time" className="flex-shrink-0 text-[10px] text-[#64748B] bg-[#F1F5F9] px-1.5 py-0.5 rounded font-medium">{file.lead_time}</span>
+        )}
         {projLabel && (
           <span className="flex-shrink-0 text-[10px] text-[#7B9BB5] bg-[#7B9BB5]/10 px-1.5 py-0.5 rounded font-medium" title={proj?.name ?? ""}>{projLabel}</span>
         )}
@@ -2451,6 +2454,9 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                                     <span className="flex-1 min-w-0 text-[12px] text-[#0F172A] truncate" title={file.file_name}>{file.file_name}</span>
                                     {file.source === "spec_ingestion" && file.submittal_type && (
                                       <span className="flex-shrink-0 text-[10px] text-[#64748B] bg-[#F1F5F9] px-1.5 py-0.5 rounded font-medium">· {file.submittal_type}</span>
+                                    )}
+                                    {file.lead_time && (
+                                      <span title="Lead time" className="flex-shrink-0 text-[10px] text-[#64748B] bg-[#F1F5F9] px-1.5 py-0.5 rounded font-medium">{file.lead_time}</span>
                                     )}
                                     {projLabel && (
                                       <span
@@ -2747,7 +2753,7 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
             const colorFor = (sec: string | null) => SECTION_PALETTE[colorIdx.get(sec ?? "—") ?? 0]
             const HEADERS = ["Subm. #", "Spec #", "Description", "Ball-in-Court", "Type of Subm.", "Vendor",
               "Received", "To A/E", "Returned A/E", "Returned to Sub", "Approval (Days)",
-              "Status", "Late / On Time", "Source", "Actions"]
+              "Status", "Late / On Time", "Lead Time", "Source", "Actions"]
             // Select mode (Session I) — adds a leading checkbox column + the
             // package-selection toolbar. Off during search to avoid ambiguity.
             const showSelect = selectMode && !isSearchMode
@@ -3030,6 +3036,10 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                         : late === "ontime"
                         ? <span className="inline-flex px-2 py-0.5 rounded-full text-[11px] font-semibold bg-green-100 text-green-700">On Time</span>
                         : <span className="text-[#94A3B8]">—</span>}
+                    </td>
+                    <td className="px-2 py-1.5">
+                      <LeadTimeCell value={s.lead_time ?? null}
+                        onChange={v => patchSubmittal(s.id, { lead_time: v })} />
                     </td>
                     <td className="px-3 py-1.5 text-center">
                       {hasSource ? (
@@ -4503,6 +4513,10 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                     <p className="text-[13px] text-[#0F172A]">{fmt(s.submittal_type)}</p>
                   </div>
                   <div>
+                    <p className="text-[10px] font-bold text-[#64748B] uppercase tracking-widest mb-1">Lead Time</p>
+                    <p className="text-[13px] text-[#0F172A]">{fmt(s.lead_time)}</p>
+                  </div>
+                  <div>
                     <p className="text-[10px] font-bold text-[#64748B] uppercase tracking-widest mb-1">Status</p>
                     <p className="text-[13px] text-[#0F172A]">{fmt(s.review_status)}</p>
                   </div>
@@ -5092,6 +5106,40 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
 // ─── Inline submittal-log cell editors ───────────────────────────────────────
 
 /** A bare date input — emits null when cleared. */
+/** Free-text lead-time cell ("6-8 weeks", "12 wks ARO"). Local draft state,
+ *  committed on blur / Enter — a controlled input writing patchSubmittal per
+ *  keystroke would re-render the whole log on every character (the select /
+ *  date cells fire once per pick, so they can be controlled directly). Escape
+ *  restores the saved value. Empty commits null (server also treats "" as
+ *  null). */
+function LeadTimeCell({ value, onChange }: {
+  value: string | null
+  onChange: (v: string | null) => void
+}) {
+  const [draft, setDraft] = useState(value ?? "")
+  // Re-sync when the row's saved value changes underneath (e.g. refetch).
+  useEffect(() => { setDraft(value ?? "") }, [value])
+  function commit() {
+    const next = draft.trim()
+    if (next === (value ?? "")) return
+    onChange(next.length > 0 ? next : null)
+  }
+  return (
+    <input
+      type="text"
+      value={draft}
+      placeholder="—"
+      onChange={e => setDraft(e.target.value)}
+      onBlur={commit}
+      onKeyDown={e => {
+        if (e.key === "Enter") (e.target as HTMLInputElement).blur()
+        if (e.key === "Escape") setDraft(value ?? "")
+      }}
+      className="w-[88px] h-7 px-1.5 rounded border border-[#E2E8F0] text-[12px] text-[#0F172A] bg-white placeholder:text-[#94A3B8] focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40"
+    />
+  )
+}
+
 function DateCell({ value, onChange }: {
   value: string | null
   onChange: (v: string | null) => void

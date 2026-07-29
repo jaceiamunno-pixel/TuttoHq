@@ -16,6 +16,7 @@ export interface SubmittalFile {
   // surface their project + spec_ingestion rows can show submittal_type.
   // Optional because the type is also constructed locally for non-library flows.
   submittal_type?: string | null
+  lead_time?: string | null
   source?: string | null
   project_id?: string | null
 }
@@ -80,6 +81,10 @@ export interface SubmittalRecord {
   returned_from_ae_date: string | null
   returned_to_sub_date: string | null
   submittal_type: string | null
+  // Vendor-quoted lead time (migration 0048). Free text — "6-8 weeks",
+  // "12 wks ARO" — inline-edited on the log. Optional (`?`) because narrow
+  // SELECT lists (e.g. /api/search) predate the column and omit it.
+  lead_time?: string | null
   // Unified vendor link — the picker writes these (vendors master + vendor_people).
   vendor_id: string | null
   vendor_person_id: string | null

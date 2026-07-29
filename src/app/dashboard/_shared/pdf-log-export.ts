@@ -227,21 +227,30 @@ export async function buildSubmittalLogPdf(
   // header word — and the widest data token where that matters ("Shop
   // Drawing" must stay one line in Type of Submittal). Description absorbs the
   // remaining width, so the widths still sum to cw.
+  // Lead Time (44pt, free text — logTable wraps it) is paid for by shaving
+  // Vendor/Status/Approval/date columns a few points each and lowering the
+  // Description floor 126 → 110: every trimmed width still clears its longest
+  // single header word at the 7pt header size, and Vendor/Status/Description
+  // are wrapping columns anyway. Net: long titles wrap to an extra line a
+  // little sooner; nothing clips.
   const cw = doc.CW
-  const fixed = 52 + 46 + 62 + 72 + 48 + 44 + 50 + 50 + 52 + 62 + 42
+  const fixed = 52 + 46 + 62 + 60 + 46 + 44 + 50 + 50 + 48 + 52 + 42 + 44
   const cols: { header: string; width: number; align?: "left" | "right" }[] = [
     { header: "Submittal #", width: 52, align: "right" },
     { header: "Spec #", width: 46 },
-    { header: "Description", width: Math.max(126, cw - fixed) },
+    { header: "Description", width: Math.max(110, cw - fixed) },
     { header: "Type of Submittal", width: 62 },
-    { header: "Vendor", width: 72 },
-    { header: "Received", width: 48 },
+    { header: "Vendor", width: 60 },
+    { header: "Received", width: 46 },
     { header: "To A/E", width: 44 },
+    // "RETURNED" mid-word-breaks below 50pt at the 7pt header size — don't
+    // shave these two.
     { header: "Returned from A/E", width: 50 },
     { header: "Returned to Sub", width: 50 },
-    { header: "Approval (Days)", width: 52, align: "right" },
-    { header: "Status", width: 62 },
+    { header: "Approval (Days)", width: 48, align: "right" },
+    { header: "Status", width: 52 },
     { header: "Late / On Time", width: 42 },
+    { header: "Lead Time", width: 44 },
   ]
 
   const rows: PDFLogCell[][] = args.rows.map(s => {
@@ -268,9 +277,12 @@ export async function buildSubmittalLogPdf(
       appr != null ? String(appr) : "—",
       s.review_status ?? "Not Started",
       lateLabel(s),
+      // Free text ("12 wks ARO") — logTable wraps long values within the
+      // narrow column; the row grows instead of clipping.
+      s.lead_time?.trim() || "—",
     ]
   })
-  if (rows.length === 0) rows.push(["—", "", "No submittals", "", "", "", "", "", "", "", "", ""])
+  if (rows.length === 0) rows.push(["—", "", "No submittals", "", "", "", "", "", "", "", "", "", ""])
 
   doc.logTable(cols, rows, {
     // Shade rows that have a real submitted document so the printed log
