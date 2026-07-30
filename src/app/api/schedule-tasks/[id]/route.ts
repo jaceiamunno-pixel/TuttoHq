@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
+import { forbidFieldWithoutEdit } from "@/lib/field-access"
 import { deriveDurationDays, scheduleTaskCheckMessage } from "@/lib/schedule/api"
 
 // ── Schedule task — edit + soft-delete (Phase 3, Slice 2) ────────────────────
@@ -218,6 +219,15 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
 
   const { id } = await params
   if (!id) return NextResponse.json({ error: "id required" }, { status: 400 })
+
+  // ADR-020: the soft-delete RPC is SECURITY DEFINER (bypasses the field RLS
+  // gates) — require a schedule can_edit grant on the task's project first.
+  // The task read is session/RLS-gated, so an invisible task 404s here.
+  const fieldDenied = await forbidFieldWithoutEdit(supabase, user.id, "schedule", async () => {
+    const { data: task } = await supabase.from("schedule_tasks").select("project_id").eq("id", id).maybeSingle()
+    return task?.project_id ?? null
+  })
+  if (fieldDenied) return fieldDenied
 
   const { data: deletedId, error } = await supabase.rpc("soft_delete_schedule_task", { p_id: id })
   if (error) {

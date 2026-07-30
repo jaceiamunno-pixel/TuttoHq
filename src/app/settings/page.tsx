@@ -15,6 +15,8 @@ import ProfileSignature from "@/components/profile-signature"
 import ProfilePoNumbering from "@/components/profile-po-numbering"
 import CompanyDetailsCard from "@/components/company-details-card"
 import VendorsDirectory from "@/components/vendors-directory"
+import FieldAccessGrid from "@/components/field-access-grid"
+import type { FieldGrant } from "@/lib/field-access-shared"
 import type { TocEntry, TocDivision, ScopeDiagnosis } from "@/lib/scope-types"
 import { uploadFileToSignedUrl, presignAndUpload } from "@/lib/storage-upload"
 import {
@@ -111,14 +113,14 @@ interface AccountMember {
   user_id:   string
   email:     string | null
   full_name: string | null
-  role:      "admin" | "member"
+  role:      "admin" | "member" | "field"
   joined_at: string
   is_self:   boolean
 }
 interface PendingInvite {
   id:         string
   email:      string
-  role:       "admin" | "member"
+  role:       "admin" | "member" | "field"
   expires_at: string
   created_at: string
   invite_url: string
@@ -439,7 +441,15 @@ export default function SettingsPage() {
   const [accountsLoading, setAccountsLoading]   = useState(false)
   const [inviteFormOpen, setInviteFormOpen]     = useState(false)
   const [inviteEmail, setInviteEmail]           = useState("")
-  const [inviteRole, setInviteRole]             = useState<"admin" | "member">("member")
+  const [inviteRole, setInviteRole]             = useState<"admin" | "member" | "field">("member")
+  // ADR-020: invite-time per-project module grants (role = field only).
+  const [inviteGrants, setInviteGrants]         = useState<FieldGrant[]>([])
+  // ADR-020: per-member "Manage access" editor (field members only).
+  const [accessEditorUserId, setAccessEditorUserId] = useState<string | null>(null)
+  const [accessEditorGrants, setAccessEditorGrants] = useState<FieldGrant[]>([])
+  const [accessEditorLoading, setAccessEditorLoading] = useState(false)
+  const [accessEditorSaving, setAccessEditorSaving]   = useState(false)
+  const [accessEditorError, setAccessEditorError]     = useState<string | null>(null)
   const [inviting, setInviting]                 = useState(false)
   const [inviteError, setInviteError]           = useState<string | null>(null)
   const [lastInvite, setLastInvite]             = useState<InviteResult | null>(null)
@@ -601,6 +611,10 @@ export default function SettingsPage() {
       setCurrentUserId(user.id)
       const { data: profile } = await sb.from("user_profiles").select("role").eq("user_id", user.id).maybeSingle()
       setCurrentRole(profile?.role ?? null)
+      // ADR-020: field users get only the Account (profile) section. Deep
+      // links to any other view snap back. Server routes behind the hidden
+      // tabs are admin-gated / RLS-locked regardless.
+      if (profile?.role === "field") setActiveView("account")
     })()
   }, [])
 
@@ -640,25 +654,75 @@ export default function SettingsPage() {
 
   async function handleInvite(e: React.FormEvent) {
     e.preventDefault()
+    if (inviteRole === "field" && inviteGrants.length === 0) {
+      setInviteError("A field invite needs at least one project/module grant.")
+      return
+    }
     setInviting(true)
     setInviteError(null)
     try {
       const res = await fetch("/api/invites", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: inviteEmail, role: inviteRole }),
+        body: JSON.stringify({
+          email: inviteEmail,
+          role: inviteRole,
+          ...(inviteRole === "field" ? { project_grants: inviteGrants } : {}),
+        }),
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error ?? "Failed to send invite")
       setLastInvite({ email: inviteEmail, invite_url: data.invite_url, gmail_sent: data.gmail_sent })
       setInviteEmail("")
       setInviteRole("member")
+      setInviteGrants([])
       setInviteFormOpen(false)
       await loadAccounts()
     } catch (err) {
       setInviteError(err instanceof Error ? err.message : "Failed to send invite")
     } finally {
       setInviting(false)
+    }
+  }
+
+  // ADR-020 — per-member access editor (field members). Reads/writes
+  // project_access through the admin session; RLS enforces admin-only writes.
+  async function openAccessEditor(userId: string) {
+    setAccessEditorUserId(userId)
+    setAccessEditorError(null)
+    setAccessEditorLoading(true)
+    if (!projectsLoaded) loadProjects()
+    try {
+      const res = await fetch(`/api/team/members/${userId}/access`)
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.error ?? "Failed to load access")
+      setAccessEditorGrants(data.grants ?? [])
+    } catch (err) {
+      setAccessEditorError(err instanceof Error ? err.message : "Failed to load access")
+      setAccessEditorGrants([])
+    } finally {
+      setAccessEditorLoading(false)
+    }
+  }
+
+  async function saveAccessEditor() {
+    if (!accessEditorUserId) return
+    if (accessEditorGrants.length === 0 && !confirm("No grants selected — this field user will lose access to every project. Save anyway?")) return
+    setAccessEditorSaving(true)
+    setAccessEditorError(null)
+    try {
+      const res = await fetch(`/api/team/members/${accessEditorUserId}/access`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ grants: accessEditorGrants }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.error ?? "Failed to save access")
+      setAccessEditorUserId(null)
+    } catch (err) {
+      setAccessEditorError(err instanceof Error ? err.message : "Failed to save access")
+    } finally {
+      setAccessEditorSaving(false)
     }
   }
 
@@ -1711,7 +1775,7 @@ export default function SettingsPage() {
               sections become a horizontal strip with sub-pages as pills below. */}
           <nav className="md:w-52 md:flex-shrink-0" {...settingsNavProps}>
             <div className="flex md:flex-col gap-1 overflow-x-auto scrollbar-none -mx-4 px-4 md:mx-0 md:px-0 md:overflow-visible">
-              {SETTINGS_NAV.map(section => {
+              {SETTINGS_NAV.filter(s => currentRole !== "field" || s.id === "account").map(section => {
                 const isActiveSection = activeSection === section.id
                 return (
                   <div key={section.id} className="md:contents">
@@ -2181,33 +2245,59 @@ export default function SettingsPage() {
               </div>
 
               {inviteFormOpen && (
-                <form onSubmit={handleInvite} className="px-5 py-4 border-b border-[#E2E8F0] bg-[#F8FAFC] flex flex-col gap-3 sm:flex-row sm:items-end">
-                  <div className="flex-1">
-                    <label className={labelCls}>Email</label>
-                    <input
-                      type="email" required value={inviteEmail}
-                      onChange={e => setInviteEmail(e.target.value)}
-                      placeholder="person@company.com"
-                      className={inputCls}
-                    />
-                  </div>
-                  <div className="w-full sm:w-40">
-                    <label className={labelCls}>Role</label>
-                    <select
-                      value={inviteRole}
-                      onChange={e => setInviteRole(e.target.value as "admin" | "member")}
-                      className={inputCls}
+                <form onSubmit={handleInvite} className="px-5 py-4 border-b border-[#E2E8F0] bg-[#F8FAFC] flex flex-col gap-3">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+                    <div className="flex-1">
+                      <label className={labelCls}>Email</label>
+                      <input
+                        type="email" required value={inviteEmail}
+                        onChange={e => setInviteEmail(e.target.value)}
+                        placeholder="person@company.com"
+                        className={inputCls}
+                      />
+                    </div>
+                    <div className="w-full sm:w-48">
+                      <label className={labelCls}>Role</label>
+                      <select
+                        value={inviteRole}
+                        onChange={e => {
+                          const r = e.target.value as "admin" | "member" | "field"
+                          setInviteRole(r)
+                          // The grants grid needs the project list; lazy-load on
+                          // first Field selection (same loader the Projects tab uses).
+                          if (r === "field" && !projectsLoaded) loadProjects()
+                        }}
+                        className={inputCls}
+                      >
+                        <option value="member">Member</option>
+                        <option value="admin">Admin</option>
+                        <option value="field">Field (foreman/super)</option>
+                      </select>
+                    </div>
+                    <button
+                      type="submit" disabled={inviting}
+                      className="h-9 px-4 rounded-md bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors disabled:opacity-50"
                     >
-                      <option value="member">Member</option>
-                      <option value="admin">Admin</option>
-                    </select>
+                      {inviting ? "Sending…" : "Send invite"}
+                    </button>
                   </div>
-                  <button
-                    type="submit" disabled={inviting}
-                    className="h-9 px-4 rounded-md bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors disabled:opacity-50"
-                  >
-                    {inviting ? "Sending…" : "Send invite"}
-                  </button>
+                  {inviteRole === "field" && (
+                    <div className="space-y-2">
+                      <p className="text-[12px] text-[#64748B]">
+                        Field users see only the projects and modules granted below. Edit implies view. At least one grant is required.
+                      </p>
+                      {projectsLoading ? (
+                        <p className="text-[12px] text-[#64748B]">Loading projects…</p>
+                      ) : (
+                        <FieldAccessGrid
+                          projects={projects}
+                          value={inviteGrants}
+                          onChange={setInviteGrants}
+                          disabled={inviting}
+                        />
+                      )}
+                    </div>
+                  )}
                 </form>
               )}
 
@@ -2280,6 +2370,22 @@ export default function SettingsPage() {
                               </td>
                               <td className="py-2 text-[#0F172A]">{m.email ?? "—"}</td>
                               <td className="py-2">
+                                {m.role === "field" ? (
+                                  // ADR-020: field is invite-time only — the
+                                  // set_user_role RPC accepts admin/member, so
+                                  // converting to/from field is not offered.
+                                  // Access is managed per-project instead.
+                                  <div className="flex items-center gap-2">
+                                    <span className="inline-flex h-7 items-center px-2 rounded border border-[#E2E8F0] bg-[#F4F5F7] text-[12px] text-[#64748B]">field</span>
+                                    <button
+                                      onClick={() => openAccessEditor(m.user_id)}
+                                      className="text-[12px] text-[#456A88] hover:underline"
+                                    >
+                                      Manage access
+                                    </button>
+                                  </div>
+                                ) : (
+                                <>
                                 <select
                                   value={m.role}
                                   disabled={isOnlyAdmin || busy}
@@ -2291,6 +2397,8 @@ export default function SettingsPage() {
                                 </select>
                                 {isOnlyAdmin && (
                                   <div className="text-[10px] text-[#94A3B8] mt-1">Last admin — promote another member first</div>
+                                )}
+                                </>
                                 )}
                               </td>
                               <td className="py-2 text-[#64748B]">{new Date(m.joined_at).toLocaleDateString()}</td>
@@ -2313,6 +2421,54 @@ export default function SettingsPage() {
                   </>
                 )}
               </div>
+
+              {accessEditorUserId && (
+                <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={() => !accessEditorSaving && setAccessEditorUserId(null)}>
+                  <div className="bg-white rounded-xl shadow-xl max-w-3xl w-full max-h-[85vh] overflow-y-auto p-5 space-y-3" onClick={e => e.stopPropagation()}>
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <h3 className="text-[14px] font-semibold text-[#0F172A]">Manage access</h3>
+                        <p className="text-[12px] text-[#64748B] mt-0.5">
+                          {(() => {
+                            const m = accountMembers.find(x => x.user_id === accessEditorUserId)
+                            return m ? (m.full_name ?? m.email ?? "Field member") : "Field member"
+                          })()} — project &amp; module grants. Edit implies view.
+                        </p>
+                      </div>
+                      <button onClick={() => setAccessEditorUserId(null)} disabled={accessEditorSaving} className="text-[13px] text-[#64748B] hover:text-[#0F172A]">Close</button>
+                    </div>
+                    {accessEditorError && (
+                      <div className="px-3 py-2 bg-red-50 border border-red-200 rounded text-[12px] text-red-700">{accessEditorError}</div>
+                    )}
+                    {accessEditorLoading || projectsLoading ? (
+                      <p className="text-[13px] text-[#64748B]">Loading…</p>
+                    ) : (
+                      <FieldAccessGrid
+                        projects={projects}
+                        value={accessEditorGrants}
+                        onChange={setAccessEditorGrants}
+                        disabled={accessEditorSaving}
+                      />
+                    )}
+                    <div className="flex justify-end gap-2 pt-1">
+                      <button
+                        onClick={() => setAccessEditorUserId(null)}
+                        disabled={accessEditorSaving}
+                        className="h-8 px-3 rounded-md border border-[#E2E8F0] text-[13px] text-[#64748B] hover:text-[#0F172A]"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        onClick={saveAccessEditor}
+                        disabled={accessEditorSaving || accessEditorLoading}
+                        className="h-8 px-4 rounded-md bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] disabled:opacity-50"
+                      >
+                        {accessEditorSaving ? "Saving…" : "Save access"}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               <div className="px-5 py-4 border-t border-[#E2E8F0]">
                 <h3 className="text-[12px] font-semibold uppercase tracking-wider text-[#64748B] mb-2">Pending invites</h3>

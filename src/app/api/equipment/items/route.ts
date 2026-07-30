@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
+import { forbidFieldRole } from "@/lib/field-access"
 
 // Equipment Inventory — catalog API (ADR-018; tables live via migration 0040).
 // Standard cookie-based server client per the workers/projects convention. RLS
@@ -24,6 +25,11 @@ export async function GET() {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
+
+  // ADR-020: locked surface for field accounts (route reaches SECURITY
+  // DEFINER RPCs / service paths RLS cannot gate).
+  const fieldDenied = await forbidFieldRole(supabase)
+  if (fieldDenied) return fieldDenied
   const [availRes, itemsRes] = await Promise.all([
     supabase
       .from("equipment_availability")
@@ -76,6 +82,11 @@ export async function POST(req: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
+
+  // ADR-020: locked surface for field accounts (route reaches SECURITY
+  // DEFINER RPCs / service paths RLS cannot gate).
+  const fieldDenied = await forbidFieldRole(supabase)
+  if (fieldDenied) return fieldDenied
   const body = await req.json().catch(() => null)
   if (!body || typeof body !== "object") {
     return NextResponse.json({ error: "Invalid body" }, { status: 400 })

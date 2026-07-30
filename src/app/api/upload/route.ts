@@ -5,6 +5,7 @@ import { normalizeSubmittalTitle } from "@/lib/title-normalize"
 import { isValidSha256 } from "@/lib/file-hash"
 import { stripAndStore } from "@/lib/strip-and-store"
 import { allocateSectionSeqAndInsert } from "@/lib/section-seq"
+import { forbidFieldRole } from "@/lib/field-access"
 
 // Give after() room to download + strip + store a Library copy post-response.
 export const maxDuration = 60
@@ -39,6 +40,12 @@ export async function POST(req: NextRequest) {
   } catch {
     // is_demo_user() lookup failed — treat as NOT demo and fall through.
   }
+
+  // ADR-020: submittal intake is not a field surface. The submittals insert
+  // would fail under the RLS lockout anyway; deny up front (and before the
+  // SECURITY DEFINER seq-allocation RPC) with a clean 403.
+  const fieldDenied = await forbidFieldRole(supabase)
+  if (fieldDenied) return fieldDenied
 
   const body = await req.json().catch(() => null)
   if (!body) return NextResponse.json({ error: "Invalid request body" }, { status: 400 })

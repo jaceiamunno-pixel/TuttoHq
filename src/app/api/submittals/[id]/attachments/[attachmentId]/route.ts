@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
+import { forbidFieldRole } from "@/lib/field-access"
 
 // DELETE /api/submittals/[id]/attachments/[attachmentId]
 //
@@ -34,6 +35,11 @@ export async function DELETE(
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
+
+  // ADR-020: locked surface for field accounts (route reaches SECURITY
+  // DEFINER RPCs / service paths RLS cannot gate).
+  const fieldDenied = await forbidFieldRole(supabase)
+  if (fieldDenied) return fieldDenied
   // Demo immutability gate. The demo tenant (role='demo') is already RLS-
   // blocked on delete, but we 403 here for parity with other destructive
   // routes and a clean message. Fail-open in try/catch — a failed

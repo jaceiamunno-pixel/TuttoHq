@@ -1,5 +1,6 @@
 import { notFound, redirect } from "next/navigation"
 import { createClient } from "@/lib/supabase/server"
+import { getFieldProjectAccess } from "@/lib/field-access"
 import ProjectChrome from "./project-chrome"
 
 // ── Project-ownership route guard (careful-lane, ADR-006 Phase 2) ───────────
@@ -35,5 +36,11 @@ export default async function ProjectLayout({
 
   if (!project) notFound()
 
-  return <ProjectChrome project={project}>{children}</ProjectChrome>
+  // ADR-020: field users see only their granted modules. null = not a field
+  // user (admin/member/demo — chrome renders unchanged). For field, the
+  // project is only visible at all because ≥1 grant exists (RLS visibility
+  // gate), so the map is non-empty in practice.
+  const fieldModules = await getFieldProjectAccess(supabase, user.id, id)
+
+  return <ProjectChrome project={project} fieldModules={fieldModules}>{children}</ProjectChrome>
 }

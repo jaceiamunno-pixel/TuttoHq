@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
+import { forbidFieldRole } from "@/lib/field-access"
 
 // POST /api/drawings/sheets/[id]/revisions/[revId]/restore — undo a revision
 // soft-delete via the restore_drawing_revision SECURITY DEFINER function
@@ -19,6 +20,11 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
 
   const { id: sheetId, revId } = await params
   if (!sheetId || !revId) return NextResponse.json({ error: "id and revId required" }, { status: 400 })
+
+  // ADR-020: recycle-bin recovery is not a field surface (the RPC is SECURITY
+  // DEFINER and the deleted target is invisible to session reads).
+  const fieldDenied = await forbidFieldRole(supabase)
+  if (fieldDenied) return fieldDenied
 
   const { data: restoredId, error } = await supabase.rpc("restore_drawing_revision", { p_id: revId })
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })

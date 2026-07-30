@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createHash } from "crypto"
 import { createClient } from "@/lib/supabase/server"
+import { forbidFieldRole } from "@/lib/field-access"
 
 // Downloading + hashing a large revision PDF can take a while (storage cap is
 // 50 MB project-wide) — give POST the same headroom the other file routes get.
@@ -27,6 +28,11 @@ export async function GET(
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
+
+  // ADR-020: locked surface for field accounts (route reaches SECURITY
+  // DEFINER RPCs / service paths RLS cannot gate).
+  const fieldDenied = await forbidFieldRole(supabase)
+  if (fieldDenied) return fieldDenied
   // Confirm the parent submittal is accessible (RLS-filtered) — returns
   // 404 rather than an empty array when the row is in a different company.
   const { data: parent, error: pErr } = await supabase
@@ -109,6 +115,11 @@ export async function POST(
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
+
+  // ADR-020: locked surface for field accounts (route reaches SECURITY
+  // DEFINER RPCs / service paths RLS cannot gate).
+  const fieldDenied = await forbidFieldRole(supabase)
+  if (fieldDenied) return fieldDenied
   const body = await req.json().catch(() => null)
   if (!body) return NextResponse.json({ error: "Invalid request body" }, { status: 400 })
 

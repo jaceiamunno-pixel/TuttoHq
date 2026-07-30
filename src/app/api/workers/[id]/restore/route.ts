@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
+import { forbidFieldRole } from "@/lib/field-access"
 
 // POST /api/workers/[id]/restore — undo a soft delete via the restore_worker
 // SECURITY DEFINER function (migration 0021), company-scoped internally via
@@ -11,6 +12,11 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
+
+  // ADR-020: locked surface for field accounts (route reaches SECURITY
+  // DEFINER RPCs / service paths RLS cannot gate).
+  const fieldDenied = await forbidFieldRole(supabase)
+  if (fieldDenied) return fieldDenied
   const { id } = await params
   if (!id) return NextResponse.json({ error: "id required" }, { status: 400 })
 

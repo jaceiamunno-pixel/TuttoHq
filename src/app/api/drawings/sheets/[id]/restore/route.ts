@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
+import { forbidFieldRole } from "@/lib/field-access"
 
 // POST /api/drawings/sheets/[id]/restore — undo a soft delete (ADR-005
 // Subsystem 2) via the restore_drawing_sheet SECURITY DEFINER function (migration
@@ -16,6 +17,12 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
 
   const { id } = await params
   if (!id) return NextResponse.json({ error: "id required" }, { status: 400 })
+
+  // ADR-020: the target is soft-deleted, so no session read can resolve its
+  // project for a grant check — and the RPC is SECURITY DEFINER. Recycle-bin
+  // recovery is not a field surface; deny field outright.
+  const fieldDenied = await forbidFieldRole(supabase)
+  if (fieldDenied) return fieldDenied
 
   const { data: restoredId, error } = await supabase.rpc("restore_drawing_sheet", { p_id: id })
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })

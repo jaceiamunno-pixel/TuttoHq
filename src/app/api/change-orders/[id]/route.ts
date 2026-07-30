@@ -1,11 +1,17 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
+import { forbidFieldRole } from "@/lib/field-access"
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
+
+  // ADR-020: locked surface for field accounts (route reaches SECURITY
+  // DEFINER RPCs / service paths RLS cannot gate).
+  const fieldDenied = await forbidFieldRole(supabase)
+  if (fieldDenied) return fieldDenied
   const { id } = await params
   const updates = await req.json()
 
@@ -95,6 +101,11 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
+
+  // ADR-020: locked surface for field accounts (route reaches SECURITY
+  // DEFINER RPCs / service paths RLS cannot gate).
+  const fieldDenied = await forbidFieldRole(supabase)
+  if (fieldDenied) return fieldDenied
   const { id } = await params
   const { data: row, error: selErr } = await supabase
     .from("change_orders").select("id").eq("id", id).maybeSingle()

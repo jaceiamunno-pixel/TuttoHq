@@ -24,7 +24,7 @@ export default async function InviteAcceptPage(
   const invite = data[0] as {
     company_name: string
     email:        string
-    role:         "admin" | "member"
+    role:         "admin" | "member" | "field"
     status:       "pending" | "accepted" | "revoked" | "expired"
     expired:      boolean
   }

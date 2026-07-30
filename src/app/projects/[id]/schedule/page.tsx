@@ -11,6 +11,8 @@ import { useProjectShell } from "../project-chrome"
 // browser. RLS company-scope + the project_id filter pin every read/write to this
 // one project.
 export default function ProjectSchedulePage() {
-  const { projectId, project } = useProjectShell()
-  return <ProjectSchedule projectId={projectId} projectName={project.name} />
+  const { projectId, project, fieldModules } = useProjectShell()
+  // ADR-020: field users with a view-only grant get no mutation affordances.
+  const readOnly = fieldModules ? fieldModules.schedule !== true : false
+  return <ProjectSchedule projectId={projectId} projectName={project.name} readOnly={readOnly} />
 }

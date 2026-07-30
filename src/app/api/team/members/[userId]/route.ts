@@ -99,5 +99,13 @@ export async function DELETE(
     const m = mapError(result?.error_code)
     return NextResponse.json({ error: m.msg }, { status: m.status })
   }
+
+  // ADR-020: clear any field-role project grants for the removed user. Their
+  // user_id FKs auth.users (which survives removal), so without this the rows
+  // would linger as stale grants. Best-effort — a removed profile already
+  // means has_project_module_access() returns false for them regardless.
+  const { error: paErr } = await supabase.from("project_access").delete().eq("user_id", userId)
+  if (paErr) console.warn("[team/members DELETE] project_access cleanup failed", paErr)
+
   return NextResponse.json({ ok: true })
 }

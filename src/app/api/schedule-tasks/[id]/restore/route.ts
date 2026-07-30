@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
+import { forbidFieldRole } from "@/lib/field-access"
 
 // POST /api/schedule-tasks/[id]/restore — undo a soft delete via the
 // restore_schedule_task SECURITY DEFINER RPC (migration 0022), company-scoped
@@ -13,6 +14,13 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
 
   const { id } = await params
   if (!id) return NextResponse.json({ error: "id required" }, { status: 400 })
+
+  // ADR-020: restore targets a soft-deleted row no session read can see (the
+  // deleted_at IS NULL SELECT policy), so a per-project grant check is
+  // impossible here — and the restore RPC is SECURITY DEFINER. Recycle-bin
+  // recovery is not a field surface; deny field outright.
+  const fieldDenied = await forbidFieldRole(supabase)
+  if (fieldDenied) return fieldDenied
 
   const { data: restoredId, error } = await supabase.rpc("restore_schedule_task", { p_id: id })
   if (error) {

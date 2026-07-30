@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import { getValidToken } from "@/lib/gmail"
 import { sendGmailMessage } from "@/lib/gmail-send"
+import { parseGrants } from "@/lib/field-access-shared"
 import crypto from "crypto"
 
 // Phase 3 — invite generation. Admin-only. Sends the invite via the admin's
@@ -23,14 +24,14 @@ export async function POST(req: NextRequest) {
 
   const body = await req.json().catch(() => ({}))
   const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : ""
-  const inviteRole: "admin" | "member" | null =
-    body.role === "admin" || body.role === "member" ? body.role : null
+  const inviteRole: "admin" | "member" | "field" | null =
+    body.role === "admin" || body.role === "member" || body.role === "field" ? body.role : null
 
   if (!email || !EMAIL_RX.test(email)) {
     return NextResponse.json({ error: "Valid email is required" }, { status: 400 })
   }
   if (!inviteRole) {
-    return NextResponse.json({ error: "Role must be 'admin' or 'member'" }, { status: 400 })
+    return NextResponse.json({ error: "Role must be 'admin', 'member' or 'field'" }, { status: 400 })
   }
 
   // company_id derived from the caller's session via the SELECT-own RLS
@@ -41,6 +42,30 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "No company association" }, { status: 500 })
   }
   const companyId = profile.company_id
+
+  // ADR-020: a field invite carries the per-project module grants that the
+  // accept flow materializes into project_access. Validate shape AND that
+  // every project belongs to the caller's company (the RLS-scoped SELECT is
+  // the ownership check — foreign/unknown ids simply don't come back).
+  let projectGrants: ReturnType<typeof parseGrants>["grants"] | null = null
+  if (inviteRole === "field") {
+    const { grants, invalid } = parseGrants(body.project_grants)
+    if (invalid > 0) {
+      return NextResponse.json({ error: "project_grants contains malformed entries" }, { status: 400 })
+    }
+    if (grants.length === 0) {
+      return NextResponse.json({ error: "A field invite requires at least one project grant" }, { status: 400 })
+    }
+    const projectIds = [...new Set(grants.map(g => g.project_id))]
+    const { data: owned } = await supabase
+      .from("projects").select("id").in("id", projectIds)
+    const ownedIds = new Set((owned ?? []).map(p => p.id))
+    const foreign = projectIds.filter(id => !ownedIds.has(id))
+    if (foreign.length > 0) {
+      return NextResponse.json({ error: "project_grants references unknown projects" }, { status: 400 })
+    }
+    projectGrants = grants
+  }
 
   // 32 random bytes → ~43-char URL-safe base64 (~256 bits of entropy).
   const token = crypto.randomBytes(32).toString("base64url")
@@ -55,6 +80,7 @@ export async function POST(req: NextRequest) {
       token,
       invited_by: user.id,
       expires_at: expiresAt,
+      ...(projectGrants ? { project_grants: projectGrants } : {}),
     })
     .select("id")
     .single()

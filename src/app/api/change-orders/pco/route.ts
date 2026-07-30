@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
+import { forbidFieldRole } from "@/lib/field-access"
 import { computePcoPricingSum, buildLineItemRows, newLaborRoleRows, type PcoSaveBody } from "@/lib/pco-save"
 
 // POST /api/change-orders/pco — create a builder PCO (has_pco_detail = true).
@@ -18,6 +19,11 @@ export async function POST(req: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
+
+  // ADR-020: locked surface for field accounts (route reaches SECURITY
+  // DEFINER RPCs / service paths RLS cannot gate).
+  const fieldDenied = await forbidFieldRole(supabase)
+  if (fieldDenied) return fieldDenied
   const body = (await req.json().catch(() => null)) as (PcoSaveBody & {
     project_id?: string; date?: string; title?: string; description_of_work?: string
     schedule_impact_days?: number | string; oh_p_percent?: number | null; fee_percent?: number | null

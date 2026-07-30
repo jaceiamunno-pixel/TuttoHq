@@ -68,9 +68,12 @@ type SheetMarkup = NonNullable<ImportedSheet["markups"]>[number]
 // difference is the load effect keys on globalProjectId (the module mounts only
 // when the Drawing Log is active, so the activeModule guard is no longer needed).
 
-export default function DrawingsModule({ globalProjectId, appProjects }: {
+export default function DrawingsModule({ globalProjectId, appProjects, readOnly = false }: {
   globalProjectId: string
   appProjects: Project[]
+  // ADR-020: view-only rendering for field users without can_edit. Hides the
+  // import/add/edit/delete affordances; the DB write gates are the enforcement.
+  readOnly?: boolean
 }) {
   // Drawing log
   const [drawings, setDrawings]                       = useState<DrawingRecord[]>([])
@@ -488,6 +491,9 @@ export default function DrawingsModule({ globalProjectId, appProjects }: {
       {/* Drawing log action bar */}
       <div className="flex-shrink-0 border-b border-[#E2E8F0] bg-white flex items-center justify-between px-4 py-2.5">
         <p className="text-[13px] font-semibold text-[#0F172A]">Drawing Log <span className="text-[#64748B] font-normal ml-1">({importedSheets.length + drawings.filter(d => d.is_current).length} sheets)</span></p>
+        {readOnly ? (
+          <span className="text-[11px] font-semibold text-[#64748B] bg-[#F4F5F7] border border-[#E2E8F0] px-2 py-1 rounded-full">View only</span>
+        ) : (
         <div className="flex items-center gap-2">
           {globalProjectId && (
             <button onClick={() => setShowImportSet(true)} className="h-8 px-4 rounded-md border border-[#7B9BB5] text-[#5A7A94] text-[13px] font-semibold hover:bg-[#7B9BB5]/10 transition-colors flex items-center gap-1.5">
@@ -498,6 +504,7 @@ export default function DrawingsModule({ globalProjectId, appProjects }: {
             <PlusIcon /> Add Drawing
           </button>
         </div>
+        )}
       </div>
 
       {/* Drawing log */}
@@ -625,11 +632,15 @@ export default function DrawingsModule({ globalProjectId, appProjects }: {
                                 <td className="px-3 py-2" onClick={e => e.stopPropagation()}>
                                   <div className="flex items-center justify-end gap-3 whitespace-nowrap text-[#94A3B8]">
                                     <button data-nav-primary onClick={() => openSheetViewer(s)} className="hover:text-[#5A7A94] group-hover:text-[#7B9BB5] font-medium transition-colors">View</button>
-                                    <button onClick={() => triggerAddRevision(s.id)} disabled={addingRevId === s.id} className="hover:text-[#5A7A94] group-hover:text-[#7B9BB5] font-medium disabled:opacity-50 transition-colors">{addingRevId === s.id ? "Adding…" : "Add rev"}</button>
+                                    {!readOnly && <button onClick={() => triggerAddRevision(s.id)} disabled={addingRevId === s.id} className="hover:text-[#5A7A94] group-hover:text-[#7B9BB5] font-medium disabled:opacity-50 transition-colors">{addingRevId === s.id ? "Adding…" : "Add rev"}</button>}
                                     <button onClick={() => toggleRevHistory(s.id)} className="hover:text-[#5A7A94] group-hover:text-[#7B9BB5] font-medium transition-colors">{revHistoryFor === s.id ? "Hide" : "Revs"}</button>
+                                    {!readOnly && (
+                                    <>
                                     <button onClick={() => startEditSheet(s)} className="hover:text-[#5A7A94] group-hover:text-[#7B9BB5] font-medium transition-colors">Edit</button>
                                     <span className="text-[#E2E8F0]">|</span>
                                     <button onClick={() => softDeleteSheet(s)} className="hover:text-red-500 group-hover:text-red-400 font-medium transition-colors">Delete</button>
+                                    </>
+                                    )}
                                   </div>
                                 </td>
                               </tr>
@@ -658,17 +669,17 @@ export default function DrawingsModule({ globalProjectId, appProjects }: {
                                               {mk ? (
                                                 <>
                                                   <button onClick={() => openMarkupView(s, mk.id)} className="text-[#7B9BB5] hover:text-[#5A7A94] font-semibold">Open</button>
-                                                  <button onClick={() => startEditMarkup(s, mk)} className="text-[#7B9BB5] hover:text-[#5A7A94] font-semibold">Edit</button>
+                                                  {!readOnly && <button onClick={() => startEditMarkup(s, mk)} className="text-[#7B9BB5] hover:text-[#5A7A94] font-semibold">Edit</button>}
                                                   {/* Markup soft-delete → existing route handles source='markup' (no
                                                       re-point); it lands in the recycle bin below, restorable. */}
-                                                  <button onClick={() => softDeleteRevision(s.id, rv)} disabled={deletingRevId === rv.id}
-                                                    className="text-red-400 hover:text-red-500 font-semibold disabled:opacity-50 transition-colors">{deletingRevId === rv.id ? "Deleting…" : "Delete"}</button>
+                                                  {!readOnly && <button onClick={() => softDeleteRevision(s.id, rv)} disabled={deletingRevId === rv.id}
+                                                    className="text-red-400 hover:text-red-500 font-semibold disabled:opacity-50 transition-colors">{deletingRevId === rv.id ? "Deleting…" : "Delete"}</button>}
                                                 </>
                                               ) : (
                                                 <>
                                                   {rv.file_url && <a href={rv.file_url} target="_blank" rel="noopener noreferrer" className="text-[#7B9BB5] hover:text-[#5A7A94] font-semibold">Open</a>}
-                                                  <button onClick={() => softDeleteRevision(s.id, rv)} disabled={deletingRevId === rv.id}
-                                                    className="text-red-400 hover:text-red-500 font-semibold disabled:opacity-50 transition-colors">{deletingRevId === rv.id ? "Deleting…" : "Delete"}</button>
+                                                  {!readOnly && <button onClick={() => softDeleteRevision(s.id, rv)} disabled={deletingRevId === rv.id}
+                                                    className="text-red-400 hover:text-red-500 font-semibold disabled:opacity-50 transition-colors">{deletingRevId === rv.id ? "Deleting…" : "Delete"}</button>}
                                                 </>
                                               )}
                                             </span>
@@ -886,7 +897,7 @@ export default function DrawingsModule({ globalProjectId, appProjects }: {
                   (editorOpen || openMarkupId)
                     ? <button onClick={exitMarkup}
                         className="text-[12px] font-semibold text-[#5A7A94] transition-colors">Done</button>
-                    : <button onClick={startNewMarkup}
+                    : !readOnly && <button onClick={startNewMarkup}
                         className="text-[12px] font-semibold text-[#7B9BB5] hover:text-[#5A7A94] transition-colors">
                         Markup
                       </button>
