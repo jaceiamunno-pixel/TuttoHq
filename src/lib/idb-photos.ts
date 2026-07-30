@@ -286,6 +286,19 @@ export async function noteSyncAttempt(photoId: string): Promise<void> {
   await tx.done
 }
 
+/** Zero the attempts counter so a needs-attention (stuck) photo re-enters
+ *  the drain runner's eligible set. The user-initiated half of the "retry
+ *  stuck photo" affordance — the runner itself never decrements attempts. */
+export async function resetPhotoAttempts(photoId: string): Promise<void> {
+  const db = await getDB()
+  const tx = db.transaction(PHOTOS_STORE, "readwrite")
+  const existing = (await tx.store.get(photoId)) as StoredDailyDraftPhotoRow | undefined
+  if (existing) {
+    await tx.store.put({ ...existing, attempts: 0, lastAttemptAt: 0 })
+  }
+  await tx.done
+}
+
 // ─── Delete (review-sensitive) ──────────────────────────────────────────────
 //
 // removePhotoFromIDB is the single point where a captured photo can leave

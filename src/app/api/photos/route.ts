@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
+import { DAILY_0050_LIVE } from "@/lib/daily-flags"
 
 export async function GET(req: NextRequest) {
   const supabase = await createClient()
@@ -11,9 +12,11 @@ export async function GET(req: NextRequest) {
   const entity_id = searchParams.get("entity_id")
   if (!entity_type || !entity_id) return NextResponse.json({ error: "Missing params" }, { status: 400 })
 
+  // caption is a 0050 column — selecting it pre-migration would error.
+  const cols = DAILY_0050_LIVE ? "id, storage_path, file_name, caption" : "id, storage_path, file_name"
   const { data: photos } = await supabase
     .from("item_photos")
-    .select("id, storage_path, file_name")
+    .select(cols)
     .eq("entity_type", entity_type)
     .eq("entity_id", entity_id)
     .order("created_at")
@@ -21,12 +24,36 @@ export async function GET(req: NextRequest) {
   if (!photos?.length) return NextResponse.json([])
 
   const withUrls = await Promise.all(
-    photos.map(async (p) => {
+    (photos as unknown as { id: string; storage_path: string; file_name: string | null; caption?: string | null }[]).map(async (p) => {
       const { data } = await supabase.storage.from("photos").createSignedUrl(p.storage_path, 3600)
-      return { id: p.id, url: data?.signedUrl ?? "", file_name: p.file_name }
+      return { id: p.id, url: data?.signedUrl ?? "", file_name: p.file_name, caption: p.caption ?? null }
     })
   )
   return NextResponse.json(withUrls)
+}
+
+// Caption-only edit (0050). The polymorphic contract is otherwise
+// untouched — entity_type/entity_id/storage_path are immutable here.
+export async function PATCH(req: NextRequest) {
+  if (!DAILY_0050_LIVE) {
+    return NextResponse.json({ error: "Captions require migration 0050" }, { status: 503 })
+  }
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+
+  const body = await req.json().catch(() => null)
+  const id = typeof body?.id === "string" ? body.id : ""
+  if (!id) return NextResponse.json({ error: "Missing id" }, { status: 400 })
+  const caption = typeof body?.caption === "string" ? body.caption.slice(0, 500).trim() || null
+    : body?.caption === null ? null : undefined
+  if (caption === undefined) return NextResponse.json({ error: "Missing caption" }, { status: 400 })
+
+  const { data, error } = await supabase.from("item_photos")
+    .update({ caption }).eq("id", id).select("id")
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  if (!data?.length) return NextResponse.json({ error: "Not found" }, { status: 404 })
+  return NextResponse.json({ ok: true })
 }
 
 // The photo was already PUT straight to the `photos` bucket from the browser
