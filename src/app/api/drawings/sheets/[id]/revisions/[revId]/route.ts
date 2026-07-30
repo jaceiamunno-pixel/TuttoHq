@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
+import { forbidFieldWithoutEdit } from "@/lib/field-access"
 
 // DELETE /api/drawings/sheets/[id]/revisions/[revId] — SOFT delete ONE revision
 // (ADR-005 Subsystem 4). CAREFUL-LANE: current_revision_id integrity.
@@ -31,6 +32,14 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
 
   const { id: sheetId, revId } = await params
   if (!sheetId || !revId) return NextResponse.json({ error: "id and revId required" }, { status: 400 })
+
+  // ADR-020: soft_delete_drawing_revision is SECURITY DEFINER — require a
+  // drawings can_edit grant on the sheet's project for field callers.
+  const fieldDenied = await forbidFieldWithoutEdit(supabase, user.id, "drawings", async () => {
+    const { data: sheet } = await supabase.from("drawing_sheets").select("project_id").eq("id", sheetId).maybeSingle()
+    return sheet?.project_id ?? null
+  })
+  if (fieldDenied) return fieldDenied
 
   // Target revision must be RLS-visible (same company, not already deleted) and
   // belong to THIS sheet. An already-deleted revision is hidden by the SELECT

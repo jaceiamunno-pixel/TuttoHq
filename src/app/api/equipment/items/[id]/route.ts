@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
+import { forbidFieldRole } from "@/lib/field-access"
 
 // Equipment Inventory — item-level (catalog entry) delete (ADR-018 / migration 0040).
 // SOFT-delete only, through the SECURITY DEFINER RPC (there is NO permissive DELETE
@@ -24,6 +25,11 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
+
+  // ADR-020: locked surface for field accounts (route reaches SECURITY
+  // DEFINER RPCs / service paths RLS cannot gate).
+  const fieldDenied = await forbidFieldRole(supabase)
+  if (fieldDenied) return fieldDenied
   // Block the delete while any unit is out. maybeSingle(): a live item always has a
   // view row; null (no row) means wrong company / already deleted → let the RPC 404.
   const { data: avail, error: availErr } = await supabase

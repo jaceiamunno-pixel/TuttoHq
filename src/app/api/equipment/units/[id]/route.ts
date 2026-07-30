@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
+import { forbidFieldRole } from "@/lib/field-access"
 
 // Equipment Inventory — single-unit edit + retire (ADR-018 / migration 0040).
 // RLS scopes reads/writes to the caller's company. Retire is SOFT-delete only,
@@ -19,6 +20,11 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
+
+  // ADR-020: locked surface for field accounts (route reaches SECURITY
+  // DEFINER RPCs / service paths RLS cannot gate).
+  const fieldDenied = await forbidFieldRole(supabase)
+  if (fieldDenied) return fieldDenied
   const body = await req.json().catch(() => null)
   if (!body || typeof body !== "object" || !("serial" in body)) {
     return NextResponse.json({ error: "Nothing to update" }, { status: 400 })
@@ -58,6 +64,11 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
+
+  // ADR-020: locked surface for field accounts (route reaches SECURITY
+  // DEFINER RPCs / service paths RLS cannot gate).
+  const fieldDenied = await forbidFieldRole(supabase)
+  if (fieldDenied) return fieldDenied
   const { data, error } = await supabase.rpc("soft_delete_equipment_unit", { p_id: id })
 
   if (error) {

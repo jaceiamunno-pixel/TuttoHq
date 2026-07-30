@@ -3,6 +3,7 @@ import Anthropic from "@anthropic-ai/sdk"
 import { createClient } from "@/lib/supabase/server"
 import { createAdminClient } from "@/lib/supabase/admin"
 import { enforceAiLimit } from "@/lib/ratelimit"
+import { forbidFieldRole } from "@/lib/field-access"
 
 export const maxDuration = 60
 
@@ -92,6 +93,12 @@ export async function POST(req: NextRequest) {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+
+  // ADR-020: this route reads submittal document bytes via the SERVICE-ROLE
+  // storage client, which the field lockout on the submittals table can't
+  // see. Submittals are not a field surface — deny explicitly.
+  const fieldDenied = await forbidFieldRole(supabase)
+  if (fieldDenied) return fieldDenied
 
   // TIER 2 cost guard (company-keyed, FAIL CLOSED) — see src/lib/ratelimit.ts.
   const limited = await enforceAiLimit(supabase)

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
+import { forbidFieldWithoutView } from "@/lib/field-access"
 
 // GET /api/drawings/sheets?project_id=… — Drawing Log v1 READ (ADR-005).
 //
@@ -34,6 +35,12 @@ export async function GET(req: NextRequest) {
   }
   let rows: SheetRow[]
   if (wantDeleted) {
+    // ADR-020: the listing RPC below is SECURITY DEFINER (company-wide) — the
+    // field per-project RLS gate can't scope it. Require a drawings grant on
+    // the requested project for field callers.
+    const fieldDenied = await forbidFieldWithoutView(supabase, user.id, pid, "drawings")
+    if (fieldDenied) return fieldDenied
+
     // The SELECT RLS policy filters deleted_at IS NULL, so the authed client
     // CANNOT read soft-deleted sheets directly — this view returned nothing after
     // that policy shipped (unnoticed only because no sheets were deleted yet).

@@ -24,6 +24,15 @@ export default function AppChrome({ children }: { children: React.ReactNode }) {
   const [logoUrl, setLogoUrl]         = useState<string | null>(null)
   const [displayName, setDisplayName] = useState<string | null>(null)
   const [mobileOpen, setMobileOpen]   = useState(false)
+  const [role, setRole]               = useState<string | null>(null)
+
+  // ADR-020: field users get no company-level destinations — only the project
+  // list and their own Settings/profile. Affordance hiding only; the server
+  // layouts under /library, /equipment, /manpower, /directories redirect field
+  // users, and RLS locks the data regardless.
+  const nav = role === "field"
+    ? NAV.filter(n => n.href === "/dashboard" || n.href === "/settings")
+    : NAV
 
   // Keyboard-nav region: the top-level primary nav. Arrows move between the
   // destinations; Enter/→ navigates. order 10 — the first region for [ / ],
@@ -31,7 +40,14 @@ export default function AppChrome({ children }: { children: React.ReactNode }) {
   const { regionProps: primaryNavProps } = useNavRegion({ id: "primary-nav", order: 10 })
 
   useEffect(() => {
-    createClient().auth.getUser().then(({ data }) => setUserEmail(data.user?.email ?? null))
+    const sb = createClient()
+    sb.auth.getUser().then(async ({ data }) => {
+      setUserEmail(data.user?.email ?? null)
+      if (data.user) {
+        const { data: profile } = await sb.from("user_profiles").select("role").eq("user_id", data.user.id).maybeSingle()
+        setRole(profile?.role ?? null)
+      }
+    })
     fetch("/api/settings").then(r => r.json()).then(d => { if (d.logo_url) setLogoUrl(d.logo_url); if (d.display_name) setDisplayName(d.display_name) }).catch(() => {})
   }, [])
 
@@ -56,7 +72,7 @@ export default function AppChrome({ children }: { children: React.ReactNode }) {
         </Link>
 
         <nav className="hidden sm:flex items-center gap-0.5 flex-1" {...primaryNavProps}>
-          {NAV.map(n => (
+          {nav.map(n => (
             <Link
               key={n.href}
               href={n.href}
@@ -86,7 +102,7 @@ export default function AppChrome({ children }: { children: React.ReactNode }) {
         </button>
         {mobileOpen && (
           <div className="absolute top-full left-0 right-0 bg-[#0A1628] border-b border-white/10 z-50 shadow-lg sm:hidden">
-            {NAV.map(n => (
+            {nav.map(n => (
               <Link
                 key={n.href}
                 href={n.href}

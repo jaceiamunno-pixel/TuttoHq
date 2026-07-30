@@ -30,7 +30,7 @@ export default function AcceptForm({
   token:       string
   email:       string
   companyName: string
-  role:        "admin" | "member"
+  role:        "admin" | "member" | "field"
 }) {
   const [fullName, setFullName] = useState("")
   const [password, setPassword] = useState("")
@@ -41,6 +41,10 @@ export default function AcceptForm({
   // confirm. We surface a loud retry rather than navigate away pretending the
   // name saved.
   const [nameUnsaved, setNameUnsaved] = useState(false)
+  // ADR-020: set when a FIELD account was created but the project-access
+  // grants did not materialize. Without grants a field user sees an empty
+  // project list, so this is loud, not silent.
+  const [grantsUnclaimed, setGrantsUnclaimed] = useState(false)
   const router = useRouter()
 
   // Persist full_name with bounded retries. Returns true ONLY on a confirmed
@@ -61,6 +65,27 @@ export default function AcceptForm({
           const d = await res.json().catch(() => ({}))
           if ((d.updated ?? 0) >= 1) return true
         }
+      } catch { /* network error — fall through to retry */ }
+      if (attempt < 3) await new Promise(r => setTimeout(r, 400 * (attempt + 1)))
+    }
+    return false
+  }
+
+  // ADR-020 — materialize the invite's project grants into project_access
+  // (field invites only; no-op for admin/member). Same bounded-retry shape as
+  // saveFullName: true ONLY on confirmed success. Runs with the session from
+  // signInWithPassword; the route re-verifies the session user is the invited
+  // profile and upserts idempotently, so retries are safe.
+  async function claimGrants(): Promise<boolean> {
+    if (role !== "field") return true
+    for (let attempt = 0; attempt < 4; attempt++) {
+      try {
+        const res = await fetch("/api/invites/claim-grants", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ token }),
+        })
+        if (res.ok) return true
       } catch { /* network error — fall through to retry */ }
       if (attempt < 3) await new Promise(r => setTimeout(r, 400 * (attempt + 1)))
     }
@@ -106,6 +131,15 @@ export default function AcceptForm({
       return
     }
 
+    // ADR-020: field invites — turn the invite's grants into project_access
+    // rows before anything else; without them the dashboard is empty.
+    const claimed = await claimGrants()
+    if (!claimed) {
+      setGrantsUnclaimed(true)
+      setLoading(false)
+      return
+    }
+
     // Persist the full name onto the just-created user_profiles row. Done here —
     // with a real session in hand — rather than inside the token/accept logic, so
     // that flow stays untouched. The accept route already committed the profile
@@ -119,6 +153,23 @@ export default function AcceptForm({
       return
     }
 
+    router.push("/dashboard")
+    router.refresh()
+  }
+
+  // Retry only the grants materialization — account exists and is signed in.
+  async function handleRetryGrants() {
+    setLoading(true)
+    setGrantsUnclaimed(false)
+    const claimed = await claimGrants()
+    if (!claimed) {
+      setGrantsUnclaimed(true)
+      setLoading(false)
+      return
+    }
+    const saved = await saveFullName(fullName.trim())
+    setLoading(false)
+    if (!saved) { setNameUnsaved(true); return }
     router.push("/dashboard")
     router.refresh()
   }
@@ -183,7 +234,28 @@ export default function AcceptForm({
 
       {error && <p className="text-[12px] text-red-500">{error}</p>}
 
-      {nameUnsaved ? (
+      {grantsUnclaimed ? (
+        <div className="rounded-md border border-amber-300 bg-amber-50 p-3 space-y-2">
+          <p className="text-[12px] text-amber-800">
+            Your account is ready, but your project access couldn&apos;t be set up yet.
+            Retry now — or continue and ask your admin to grant access in Settings → Team.
+          </p>
+          <div className="flex gap-2">
+            <button
+              type="button" onClick={handleRetryGrants} disabled={loading}
+              className="flex-1 h-9 bg-[#7B9BB5] text-white text-[13px] font-semibold rounded-md hover:bg-[#6A8AA4] transition-colors disabled:opacity-50"
+            >
+              {loading ? "Setting up…" : "Retry access setup"}
+            </button>
+            <button
+              type="button" onClick={() => { router.push("/dashboard"); router.refresh() }} disabled={loading}
+              className="h-9 px-3 text-[13px] font-medium text-[#64748B] rounded-md border border-[#E2E8F0] hover:bg-[#F4F5F7] transition-colors disabled:opacity-50"
+            >
+              Continue
+            </button>
+          </div>
+        </div>
+      ) : nameUnsaved ? (
         <div className="rounded-md border border-amber-300 bg-amber-50 p-3 space-y-2">
           <p className="text-[12px] text-amber-800">
             Your account is ready, but we couldn&apos;t save your name yet. Retry, or set it later

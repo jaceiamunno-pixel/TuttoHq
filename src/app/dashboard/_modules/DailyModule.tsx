@@ -37,10 +37,13 @@ import {
 // unchanged; the load effect keys on globalProjectId (the module mounts only when
 // Daily Reports is active, so the activeModule guard is no longer needed).
 
-export default function DailyModule({ globalProjectId, appProjects, teamMembers }: {
+export default function DailyModule({ globalProjectId, appProjects, teamMembers, readOnly = false }: {
   globalProjectId: string
   appProjects: Project[]
   teamMembers: TeamMember[]
+  // ADR-020: view-only rendering for field users without can_edit. Hides the
+  // create/edit/delete affordances; the DB write gates are the enforcement.
+  readOnly?: boolean
 }) {
   // Daily reports
   const [dailyReports, setDailyReports]               = useState<DailyReport[]>([])
@@ -623,9 +626,13 @@ export default function DailyModule({ globalProjectId, appProjects, teamMembers 
       {/* Daily reports action bar */}
       <div className="flex-shrink-0 border-b border-[#E2E8F0] bg-white flex items-center justify-between px-4 py-2.5">
         <p className="text-[13px] font-semibold text-[#0F172A]">Daily Reports <span className="text-[#64748B] font-normal ml-1">({mergedReports.length})</span></p>
+        {readOnly ? (
+          <span className="text-[11px] font-semibold text-[#64748B] bg-[#F4F5F7] border border-[#E2E8F0] px-2 py-1 rounded-full">View only</span>
+        ) : (
         <button onClick={openNewDailyDraft} className="h-8 px-4 rounded-md bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors flex items-center gap-1.5">
           <PlusIcon /> New Report
         </button>
+        )}
       </div>
 
       {/* Daily reports */}
@@ -642,9 +649,11 @@ export default function DailyModule({ globalProjectId, appProjects, teamMembers 
                 </div>
                 <p className="text-[15px] font-bold text-[#0F172A]">No daily reports yet</p>
                 <p className="text-[13px] text-[#64748B] mt-1.5">Log daily site activity, weather, and manpower.</p>
+                {!readOnly && (
                 <button onClick={openNewDailyDraft} className="mt-5 h-9 px-5 rounded-lg bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors inline-flex items-center gap-2">
                   <PlusIcon /> New Report
                 </button>
+                )}
               </div>
             ) : (
               <>
@@ -698,14 +707,18 @@ export default function DailyModule({ globalProjectId, appProjects, teamMembers 
                             pending rows; they come back when the row syncs. */}
                         {!isPending && (
                           <>
+                            {!readOnly && (
                             <button onClick={e => { e.stopPropagation(); openDailyForEdit(r) }}
                               className="text-[11px] text-[#64748B] hover:text-[#0F172A] px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors">
                               Edit
                             </button>
+                            )}
                             <button onClick={e => { e.stopPropagation(); generateDailyPdf(r.id) }} disabled={dailyGeneratingPdf}
                               className="text-[11px] text-[#7B9BB5] hover:text-[#7B9BB5] px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors disabled:opacity-50">PDF</button>
+                            {!readOnly && (
                             <button onClick={e => { e.stopPropagation(); deleteDaily(r.id) }}
                               className="text-[11px] text-red-400 hover:text-red-300 px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors">Del</button>
+                            )}
                           </>
                         )}
                       </td>
@@ -749,9 +762,9 @@ export default function DailyModule({ globalProjectId, appProjects, teamMembers 
                     </div>
                     {!isPending && (
                       <div className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
-                        <button onClick={() => openDailyForEdit(r)} className="text-[11px] text-[#64748B] px-2 py-1 rounded border border-[#E2E8F0] bg-[#F8F9FA]">Edit</button>
+                        {!readOnly && <button onClick={() => openDailyForEdit(r)} className="text-[11px] text-[#64748B] px-2 py-1 rounded border border-[#E2E8F0] bg-[#F8F9FA]">Edit</button>}
                         <button onClick={() => generateDailyPdf(r.id)} disabled={dailyGeneratingPdf} className="text-[11px] text-[#7B9BB5] px-2 py-1 rounded border border-[#E2E8F0] bg-[#F8F9FA] disabled:opacity-50">PDF</button>
-                        <button onClick={() => deleteDaily(r.id)} className="text-[11px] text-red-400 px-2 py-1 rounded border border-[#E2E8F0] bg-[#F8F9FA]">Del</button>
+                        {!readOnly && <button onClick={() => deleteDaily(r.id)} className="text-[11px] text-red-400 px-2 py-1 rounded border border-[#E2E8F0] bg-[#F8F9FA]">Del</button>}
                       </div>
                     )}
                   </div>
@@ -978,10 +991,12 @@ export default function DailyModule({ globalProjectId, appProjects, teamMembers 
                     all 404 against /api/daily-reports/[id] for a pending row. */}
                 {!pendingIds.has(viewDaily.id) && (
                   <>
+                    {!readOnly && (
                     <button onClick={() => openDailyForEdit(viewDaily)}
                       className="h-7 px-3 rounded-md border border-[#E2E8F0] text-[12px] text-[#64748B] hover:bg-[#0F172A]/[0.04] transition-colors">
                       Edit
                     </button>
+                    )}
                     <button onClick={() => generateDailyPdf(viewDaily.id)} disabled={dailyGeneratingPdf}
                       className="h-7 px-3 rounded-md border border-[#E2E8F0] text-[12px] text-[#7B9BB5] hover:bg-[#0F172A]/[0.04] transition-colors disabled:opacity-50 flex items-center gap-1.5">
                       {dailyGeneratingPdf ? <><SpinnerIcon className="h-3 w-3" />Generating…</> : "PDF"}

@@ -196,7 +196,10 @@ function barDates(t: ScheduleTask): { start: string; end: string } {
   return { start, end }
 }
 
-export default function ProjectSchedule({ projectId, projectName }: { projectId: string; projectName: string }) {
+// ADR-020: readOnly = field user with a view-only schedule grant. Hides the
+// import/dependencies/add-task affordances (row edit/drag writes are rejected
+// by the DB can_edit gate and surface as actionError). Enforcement is the DB.
+export default function ProjectSchedule({ projectId, projectName, readOnly = false }: { projectId: string; projectName: string; readOnly?: boolean }) {
   const [tasks, setTasks] = useState<ScheduleTask[]>([])
   const [deps, setDeps] = useState<ScheduleDependency[]>([])
   const [cpm, setCpm] = useState<CpmSummary | null>(null)
@@ -521,6 +524,10 @@ export default function ProjectSchedule({ projectId, projectName }: { projectId:
               </button>
             ))}
           </div>
+          {readOnly ? (
+            <span className="text-[11px] font-semibold text-[#64748B] bg-white border border-[#E2E8F0] px-2 py-1 rounded-full whitespace-nowrap">View only</span>
+          ) : (
+          <>
           <button
             onClick={() => setImportOpen(true)}
             className="h-9 px-3.5 rounded-md border border-[#E2E8F0] bg-white text-[13px] font-semibold text-[#0F172A] hover:bg-[#F8FAFC] whitespace-nowrap"
@@ -539,6 +546,8 @@ export default function ProjectSchedule({ projectId, projectName }: { projectId:
           >
             Add task
           </button>
+          </>
+          )}
         </div>
       </div>
 
@@ -620,7 +629,7 @@ export default function ProjectSchedule({ projectId, projectName }: { projectId:
           </div>
 
           {empty ? (
-            <EmptyState onAdd={() => setTaskForm({ mode: "create", task: null })} />
+            <EmptyState onAdd={() => setTaskForm({ mode: "create", task: null })} hideAdd={readOnly} />
           ) : (
             <div className="flex-1 min-h-0 flex">
               {/* LEFT — task table */}
@@ -1019,7 +1028,7 @@ function SkeletonRows() {
   )
 }
 
-function EmptyState({ onAdd }: { onAdd: () => void }) {
+function EmptyState({ onAdd, hideAdd = false }: { onAdd: () => void; hideAdd?: boolean }) {
   return (
     <div className="flex-1 flex flex-col items-center justify-center text-center px-6 py-16">
       <div className="w-12 h-12 rounded-full bg-[#EEF2F6] grid place-items-center mb-3">
@@ -1027,7 +1036,7 @@ function EmptyState({ onAdd }: { onAdd: () => void }) {
       </div>
       <p className="text-[14px] font-semibold text-[#0F172A]">No tasks yet</p>
       <p className="text-[13px] text-[#64748B] mt-1 max-w-xs">Add the first task to start the schedule. Chain tasks with dependencies to compute the critical path.</p>
-      <button onClick={onAdd} className="mt-4 h-9 px-4 rounded-md bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4]">Add task</button>
+      {!hideAdd && <button onClick={onAdd} className="mt-4 h-9 px-4 rounded-md bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4]">Add task</button>}
     </div>
   )
 }

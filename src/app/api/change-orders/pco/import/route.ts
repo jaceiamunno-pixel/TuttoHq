@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
+import { forbidFieldRole } from "@/lib/field-access"
 import { computePcoPricingSum, buildLineItemRows } from "@/lib/pco-save"
 import { buildPcoDocuments } from "@/lib/pco-pdf"
 import { payloadToDocData, parseSchedDays, type ImportPcoPayload } from "@/lib/pco-import/payload"
@@ -27,6 +28,11 @@ export async function POST(req: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
+
+  // ADR-020: locked surface for field accounts (route reaches SECURITY
+  // DEFINER RPCs / service paths RLS cannot gate).
+  const fieldDenied = await forbidFieldRole(supabase)
+  if (fieldDenied) return fieldDenied
   const body = (await req.json().catch(() => null)) as { pcos?: ImportPcoPayload[] } | null
   const pcos = Array.isArray(body?.pcos) ? body!.pcos : null
   if (!pcos || pcos.length === 0) return NextResponse.json({ error: "No PCOs to import" }, { status: 400 })

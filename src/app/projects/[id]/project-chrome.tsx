@@ -6,6 +6,7 @@ import { useRouter, useSelectedLayoutSegment } from "next/navigation"
 import { createClient } from "@/lib/supabase/client"
 import type { Project, TeamMember } from "@/app/dashboard/_shared/types"
 import { isFeatureEnabled, type FeatureKey } from "@/lib/features"
+import type { FieldModule } from "@/lib/field-access-shared"
 import { useProjectFavorites, sortByFavorite } from "@/app/dashboard/_shared/use-project-favorites"
 
 // The project verified by the server-side route guard (layout.tsx). Only the
@@ -37,6 +38,9 @@ interface ProjectShellValue {
   setCloseoutPct: (n: number | null) => void
   // Modules call onNavigate with a module id; we map it to a project route.
   navigateModule: (m: string) => void
+  // ADR-020: null for admin/member/demo. For field users, the granted modules
+  // on THIS project (module → can_edit). Resolved server-side in layout.tsx.
+  fieldModules: Partial<Record<FieldModule, boolean>> | null
 }
 
 const ProjectShellContext = createContext<ProjectShellValue | null>(null)
@@ -71,6 +75,15 @@ const PROJECT_NAV: { slug: string; label: string; icon: React.ReactNode; feature
 // flip the flag in @/lib/features to bring them back). The route, module, and
 // data all stay intact regardless.
 const VISIBLE_PROJECT_NAV = PROJECT_NAV.filter(m => !m.feature || isFeatureEnabled(m.feature))
+
+// ADR-020: route slug → grantable module key for field-user nav filtering.
+// Slugs absent here can never appear in a field user's nav.
+const FIELD_SLUG_MODULE: Record<string, FieldModule> = {
+  daily:    "daily_reports",
+  drawings: "drawings",
+  schedule: "schedule",
+  rfis:     "rfis",
+}
 
 // Module ids passed by the existing modules' onNavigate callbacks → route slug.
 const MODULE_SLUG: Record<string, string> = {
@@ -187,9 +200,24 @@ function ProjectSwitcher({ projects, currentId, onPick, favorites, onToggleFavor
   )
 }
 
-export default function ProjectChrome({ project, children }: { project: ShellProject; children: React.ReactNode }) {
+export default function ProjectChrome({ project, fieldModules, children }: {
+  project: ShellProject
+  fieldModules: Partial<Record<FieldModule, boolean>> | null
+  children: React.ReactNode
+}) {
   const router  = useRouter()
   const segment = useSelectedLayoutSegment() // active module slug, e.g. "submittals"
+  const isField = fieldModules !== null
+
+  // Field users see only their granted modules; everyone else sees the full
+  // (feature-filtered) rail. Server-side guards enforce the same set — this is
+  // presentation, not the boundary.
+  const navEntries = isField
+    ? VISIBLE_PROJECT_NAV.filter(m => {
+        const key = FIELD_SLUG_MODULE[m.slug]
+        return key !== undefined && fieldModules[key] !== undefined
+      })
+    : VISIBLE_PROJECT_NAV
 
   const [appProjects, setAppProjects]   = useState<Project[]>([])
   const [teamMembers, setTeamMembers]   = useState<TeamMember[]>([])
@@ -239,6 +267,7 @@ export default function ProjectChrome({ project, children }: { project: ShellPro
     closeoutPct,
     setCloseoutPct,
     navigateModule,
+    fieldModules,
   }
 
   const brand = displayName
@@ -276,7 +305,7 @@ export default function ProjectChrome({ project, children }: { project: ShellPro
 
           {mobileNavOpen && (
             <div className="absolute top-full left-0 right-0 bg-[#0A1628] border-b border-white/10 z-50 shadow-lg max-h-[80vh] overflow-y-auto">
-              {VISIBLE_PROJECT_NAV.map(m => (
+              {navEntries.map(m => (
                 <Link
                   key={m.slug}
                   href={`/projects/${project.id}/${m.slug}`}
@@ -290,7 +319,7 @@ export default function ProjectChrome({ project, children }: { project: ShellPro
               ))}
               <div className="border-t border-white/10">
                 <Link href="/dashboard" onClick={() => setMobileNavOpen(false)} className="w-full text-left px-4 py-3 text-[13px] font-medium text-[#94A3B8] hover:text-white hover:bg-white/[0.04] transition-colors flex items-center gap-2.5">All projects</Link>
-                {BOTTOM_LINKS.map(t => (
+                {(isField ? [] : BOTTOM_LINKS).map(t => (
                   <Link
                     key={t.href}
                     href={t.href}
@@ -321,7 +350,7 @@ export default function ProjectChrome({ project, children }: { project: ShellPro
             </div>
 
             <nav className="flex-1 overflow-y-auto px-2 py-3 space-y-0.5">
-              {VISIBLE_PROJECT_NAV.map(m => (
+              {navEntries.map(m => (
                 <Link
                   key={m.slug}
                   href={`/projects/${project.id}/${m.slug}`}
@@ -335,7 +364,7 @@ export default function ProjectChrome({ project, children }: { project: ShellPro
             </nav>
 
             <div className="flex-shrink-0 border-t border-white/10 px-2 py-2 space-y-0.5">
-              {BOTTOM_LINKS.map(t => (
+              {(isField ? [] : BOTTOM_LINKS).map(t => (
                 <Link
                   key={t.href}
                   href={t.href}

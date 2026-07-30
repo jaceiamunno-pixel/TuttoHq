@@ -15,10 +15,13 @@ import { SkeletonTable } from "@/components/skeleton"
 // effect keys on globalProjectId (the module mounts only when RFIs is active,
 // so the activeModule guard is no longer needed).
 
-export default function RfisModule({ globalProjectId, appProjects, teamMembers }: {
+export default function RfisModule({ globalProjectId, appProjects, teamMembers, readOnly = false }: {
   globalProjectId: string
   appProjects: Project[]
   teamMembers: TeamMember[]
+  // ADR-020: view-only rendering for field users without can_edit. Hides the
+  // create/respond/delete affordances; the DB write gates are the enforcement.
+  readOnly?: boolean
 }) {
   // RFI log
   const [rfis, setRfis]                               = useState<RFI[]>([])
@@ -137,9 +140,13 @@ export default function RfisModule({ globalProjectId, appProjects, teamMembers }
       {/* RFI action bar */}
       <div className="flex-shrink-0 border-b border-[#E2E8F0] bg-white flex items-center justify-between px-4 py-2.5 gap-2 min-w-0">
         <p className="text-[13px] font-semibold text-[#0F172A] truncate min-w-0">RFI Log <span className="text-[#64748B] font-normal ml-1">({rfis.length})</span></p>
+        {readOnly ? (
+          <span className="text-[11px] font-semibold text-[#64748B] bg-[#F4F5F7] border border-[#E2E8F0] px-2 py-1 rounded-full flex-shrink-0">View only</span>
+        ) : (
         <button onClick={() => setShowNewRfi(true)} className="h-8 px-4 rounded-md bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors flex items-center gap-1.5 flex-shrink-0 whitespace-nowrap">
           <PlusIcon /> New RFI
         </button>
+        )}
       </div>
 
       {/* RFI log */}
@@ -156,9 +163,11 @@ export default function RfisModule({ globalProjectId, appProjects, teamMembers }
                 </div>
                 <p className="text-[15px] font-bold text-[#0F172A]">No RFIs yet</p>
                 <p className="text-[13px] text-[#64748B] mt-1.5">Create your first RFI to track questions and responses.</p>
+                {!readOnly && (
                 <button onClick={() => setShowNewRfi(true)} className="mt-5 h-9 px-5 rounded-lg bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors inline-flex items-center gap-2">
                   <PlusIcon /> New RFI
                 </button>
+                )}
               </div>
             ) : (
               <>
@@ -430,17 +439,21 @@ export default function RfisModule({ globalProjectId, appProjects, teamMembers }
                   className="h-8 px-4 rounded-md border border-[#E2E8F0] text-[13px] text-[#64748B] hover:bg-[#0F172A]/[0.04] transition-colors disabled:opacity-50 flex items-center gap-2">
                   {rfiGeneratingPdf ? <><SpinnerIcon className="h-3 w-3" /> Generating…</> : "Generate PDF"}
                 </button>
+                {!readOnly && (
                 <button onClick={() => deleteRfi(viewRfi.id)}
                   className="h-8 px-4 rounded-md border border-red-500/30 text-[13px] text-red-400 hover:bg-red-500/10 transition-colors">Delete</button>
+                )}
               </div>
               <div className="flex gap-2">
                 <button onClick={() => setViewRfi(null)}
                   className="h-8 px-4 rounded-md border border-[#E2E8F0] text-[13px] text-[#64748B] hover:bg-[#0F172A]/[0.04] transition-colors">Close</button>
+                {!readOnly && (
                 <button onClick={respondRfi} disabled={rfiRespondSaving}
                   className="h-8 px-4 rounded-md bg-[#7B9BB5] text-white text-[13px] font-semibold hover:bg-[#6A8AA4] transition-colors disabled:opacity-50 flex items-center gap-2">
                   {rfiRespondSaving && <SpinnerIcon className="h-3 w-3" />}
                   {rfiRespondSaving ? "Saving…" : "Save Response"}
                 </button>
+                )}
               </div>
             </div>
           </div>

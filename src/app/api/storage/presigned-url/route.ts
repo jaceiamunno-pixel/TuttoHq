@@ -47,6 +47,37 @@ export async function POST(req: NextRequest) {
   if (!ALLOWED_BUCKETS.has(bucket)) {
     return NextResponse.json({ error: "Unsupported storage bucket" }, { status: 400 })
   }
+
+  // ADR-020: field users mint upload URLs only for surfaces they can hold:
+  //   * photos bucket — daily-report photo sync;
+  //   * submittals bucket ONLY under the drawing-import prefixes
+  //     (drawing-staging/…, drawings/…) and only with a drawings can_edit
+  //     grant somewhere — the DrawingsModule stages its uploads there.
+  // Everything else (submittal intake, company-assets) is locked: the matching
+  // DB inserts would fail under RLS, but don't hand out blob-upload capability
+  // either. Prefix check runs against the raw prefix before sanitization —
+  // sanitization only tightens it.
+  if (bucket !== "photos") {
+    const { data: role } = await supabase.rpc("get_my_role")
+    if (role === "field") {
+      const isDrawingStaging = bucket === "submittals" && /^drawing(s\b|-staging)/.test(prefix)
+      let allowed = false
+      if (isDrawingStaging) {
+        const { data: grant } = await supabase
+          .from("project_access")
+          .select("id")
+          .eq("user_id", user.id)
+          .eq("module", "drawings")
+          .eq("can_edit", true)
+          .limit(1)
+          .maybeSingle()
+        allowed = !!grant
+      }
+      if (!allowed) {
+        return NextResponse.json({ error: "Not available for field accounts" }, { status: 403 })
+      }
+    }
+  }
   if (!fileName) {
     return NextResponse.json({ error: "file_name is required" }, { status: 400 })
   }
