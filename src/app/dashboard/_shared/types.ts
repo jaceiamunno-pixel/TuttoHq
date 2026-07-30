@@ -169,7 +169,22 @@ export interface ChangeOrder {
   origin?: "manual" | "imported";
 }
 export interface PunchItem { id: string; item_number: string; description: string; location: string | null; assigned_to: string | null; due_date: string | null; priority: string; status: string; notes: string | null; project_id: string | null; created_at: string; completed_at: string | null; uploaded_by: string; generated_pdf_path?: string | null; file_name?: string | null; file_path?: string | null }
-export interface DailyReport { id: string; report_date: string; project_id: string | null; prepared_by: string | null; weather_conditions: string | null; temperature: string | null; manpower_count: number | null; work_performed: string | null; equipment: string | null; materials_delivered: string | null; visitors: string | null; issues_delays: string | null; safety_notes: string | null; created_at: string; uploaded_by: string; generated_pdf_path?: string | null; file_name?: string | null; file_path?: string | null }
+export interface DailyReport {
+  id: string; report_date: string; project_id: string | null; prepared_by: string | null;
+  weather_conditions: string | null; temperature: string | null; manpower_count: number | null;
+  work_performed: string | null; equipment: string | null; materials_delivered: string | null;
+  visitors: string | null; issues_delays: string | null; safety_notes: string | null;
+  created_at: string; uploaded_by: string;
+  generated_pdf_path?: string | null; file_name?: string | null; file_path?: string | null;
+  // Migration 0050 columns — absent until DAILY_0050_LIVE flips, hence all
+  // optional. status is positive-signal-only in the UI: 'submitted' adds
+  // affordances, 'draft' (incl. every legacy row) renders exactly as today.
+  crew?: { trade: string; count: number | null; hours: number | null }[] | null;
+  status?: "draft" | "submitted";
+  submitted_at?: string | null; submitted_by?: string | null;
+  deleted_at?: string | null;
+  updated_at?: string | null; updated_by?: string | null;
+}
 export interface DrawingRecord { id: string; drawing_number: string; sheet_title: string; discipline: string | null; revision: string; revision_date: string | null; status: string; scale: string | null; notes: string | null; project_id: string | null; is_current: boolean; superseded_at: string | null; created_at: string; uploaded_by: string; generated_pdf_path?: string | null; file_name?: string | null; file_path?: string | null; file_url?: string | null }
 export interface CloseoutItem { id: string; project_id: string; category: string; item_type: string; title: string; status: string; assigned_to: string | null; due_date: string | null; file_url: string | null; file_name: string | null; notes: string | null; sort_order: number; folder_name: string | null; linked_record_id: string | null; linked_record_type: string | null; completed_at: string | null; created_at: string }
 export interface Commitment {

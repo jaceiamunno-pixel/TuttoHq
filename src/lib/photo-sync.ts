@@ -8,6 +8,7 @@ import {
   noteSyncAttempt,
   removePendingDailyReport,
   removePhotoFromIDB,
+  resetPhotoAttempts,
 } from "./idb-photos"
 import { presignAndUploadBlob } from "./storage-upload"
 
@@ -318,6 +319,16 @@ export async function drainPhotoQueue(): Promise<DrainStats> {
     notify()
   }
   return { uploaded, failed, skipped, stuck }
+}
+
+/** User-initiated retry for a needs-attention photo: zero its attempts so
+ *  the runner's isStuck/backoff gates reopen, then kick a drain pass. This
+ *  is the "retry stuck photo" affordance the failure policy reserves — the
+ *  runner itself never re-enables a stuck row. */
+export async function retryStuckPhoto(photoId: string): Promise<void> {
+  await resetPhotoAttempts(photoId)
+  notify()  // badges/overlays leave "needs attention" immediately
+  await drainPhotoQueue()
 }
 
 /** Per-saved-report counts of photos still in IDB, split by terminal state.

@@ -51,8 +51,16 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
     })
   }
 
+  // Submitted stamp (0050): rendered in the header block only when the
+  // row carries it. Data-driven — legacy/pre-migration rows (and drafts)
+  // render exactly as before; nothing marks a report as "unsubmitted".
+  const submittedStamp = report.status === "submitted" && report.submitted_at
+    ? `SUBMITTED — ${new Date(report.submitted_at).toLocaleDateString("en-US")} ${new Date(report.submitted_at).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}`
+    : null
+
   pdf.sectionDivider("Report Summary")
   pdf.fieldGrid([
+    ...(submittedStamp ? [[{ label: "Status", value: submittedStamp }]] : []),
     [{ label: "Report Date", value: reportDate },
      { label: "Prepared By", value: report.prepared_by }],
     [{ label: "Weather Conditions", value: report.weather_conditions },
@@ -60,6 +68,25 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
     [{ label: "Manpower on Site",
       value: report.manpower_count != null ? `${report.manpower_count} workers` : null }],
   ])
+
+  // Crew breakdown (0050 jsonb) — table section between the summary and
+  // the narrative blocks. Data-driven: absent column/rows = no section.
+  const crew: { trade?: string | null; count?: number | null; hours?: number | null }[] =
+    Array.isArray(report.crew) ? report.crew : []
+  if (crew.length > 0) {
+    const totalCount = crew.reduce((s, r) => s + (r.count ?? 0), 0)
+    const totalHours = crew.reduce((s, r) => s + (r.hours ?? 0), 0)
+    pdf.sectionDivider("Crew")
+    pdf.table(
+      ["Trade / Crew", "Count", "Hours"],
+      [
+        ...crew.map(r => [r.trade || "—", r.count != null ? String(r.count) : "—", r.hours != null ? String(r.hours) : "—"]),
+        ["Total", String(totalCount), totalHours ? String(totalHours) : "—"],
+      ],
+      [326, 100, 100],
+      r => r[0] === "Total",
+    )
+  }
 
   pdf.textBlock("Work Performed", report.work_performed)
   pdf.textBlock("Equipment on Site", report.equipment)

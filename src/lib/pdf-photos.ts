@@ -1,6 +1,7 @@
 import sharp from "sharp"
 import type { createClient } from "./supabase/server"
 import type { PDFPhoto } from "./pdf-builder"
+import { DAILY_0050_LIVE } from "./daily-flags"
 
 /** The server-side Supabase client (authed via cookies). */
 type ServerSupabase = Awaited<ReturnType<typeof createClient>>
@@ -16,6 +17,7 @@ interface PhotoRow {
   storage_path: string
   file_name: string | null
   created_at: string | null
+  caption?: string | null
 }
 
 /**
@@ -33,9 +35,13 @@ export async function loadEntityPhotos(
   entityType: string,
   entityId: string,
 ): Promise<PDFPhoto[]> {
+  // caption is a 0050 column — selecting it pre-migration would error.
+  const cols = DAILY_0050_LIVE
+    ? "storage_path, file_name, created_at, caption"
+    : "storage_path, file_name, created_at"
   const { data: rows, error } = await supabase
     .from("item_photos")
-    .select("storage_path, file_name, created_at")
+    .select(cols)
     .eq("entity_type", entityType)
     .eq("entity_id", entityId)
     .order("created_at")
@@ -44,7 +50,7 @@ export async function loadEntityPhotos(
     console.error(`[loadEntityPhotos] item_photos query failed for ${entityType}/${entityId}:`, error.message)
   }
 
-  const photoRows = (rows ?? []) as PhotoRow[]
+  const photoRows = (rows ?? []) as unknown as PhotoRow[]
   if (photoRows.length === 0) return []
 
   // Resize in bounded-concurrency batches to cap peak memory.
@@ -57,7 +63,9 @@ export async function loadEntityPhotos(
 }
 
 async function loadOne(supabase: ServerSupabase, row: PhotoRow): Promise<PDFPhoto> {
-  const caption = buildCaption(row.file_name, row.created_at)
+  // A user-entered caption (0050) wins; the filename·date caption is the
+  // fallback so uncaptioned photos keep their existing PDF rendering.
+  const caption = row.caption?.trim() || buildCaption(row.file_name, row.created_at)
   try {
     const { data: blob } = await supabase.storage.from("photos").download(row.storage_path)
     if (!blob) return { bytes: null, caption }
