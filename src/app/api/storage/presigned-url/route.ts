@@ -48,21 +48,38 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Unsupported storage bucket" }, { status: 400 })
   }
 
+  if (!fileName) {
+    return NextResponse.json({ error: "file_name is required" }, { status: 400 })
+  }
+
+  // Sanitize the prefix into clean path segments — no traversal, no stray slashes.
+  const safePrefix = prefix
+    .split("/")
+    .map(seg => seg.replace(/[^a-zA-Z0-9._-]/g, "_"))
+    .filter(seg => seg && seg !== "." && seg !== "..")
+    .join("/")
+  const safeName = fileName.replace(/[^a-zA-Z0-9._-]/g, "_")
+
   // ADR-020: field users mint upload URLs only for surfaces they can hold:
-  //   * photos bucket — daily-report photo sync;
-  //   * submittals bucket ONLY under the drawing-import prefixes
-  //     (drawing-staging/…, drawings/…) and only with a drawings can_edit
-  //     grant somewhere — the DrawingsModule stages its uploads there.
-  // Everything else (submittal intake, company-assets) is locked: the matching
-  // DB inserts would fail under RLS, but don't hand out blob-upload capability
-  // either. Prefix check runs against the raw prefix before sanitization —
-  // sanitization only tightens it.
+  //   * photos bucket — daily-report photo sync (any entity prefix; the path
+  //     below is ALWAYS rooted at the caller's own company id, so the blast
+  //     radius is their company's photo tree — never cross-company);
+  //   * submittals bucket ONLY under the drawing-import prefixes — exactly
+  //     `drawings` or `drawing-staging` (or a subpath of either), matched on
+  //     the SANITIZED prefix that actually lands in the object path — and
+  //     only with a drawings can_edit grant (DrawingsModule stages there).
+  // Everything else (submittal intake, company-assets) is denied: the
+  // matching DB inserts would fail under RLS anyway, but don't hand out
+  // blob-upload capability either.
   if (bucket !== "photos") {
     const { data: role } = await supabase.rpc("get_my_role")
     if (role === "field") {
-      const isDrawingStaging = bucket === "submittals" && /^drawing(s\b|-staging)/.test(prefix)
+      const isDrawingPrefix =
+        bucket === "submittals" &&
+        (safePrefix === "drawings" || safePrefix.startsWith("drawings/") ||
+         safePrefix === "drawing-staging" || safePrefix.startsWith("drawing-staging/"))
       let allowed = false
-      if (isDrawingStaging) {
+      if (isDrawingPrefix) {
         const { data: grant } = await supabase
           .from("project_access")
           .select("id")
@@ -78,17 +95,6 @@ export async function POST(req: NextRequest) {
       }
     }
   }
-  if (!fileName) {
-    return NextResponse.json({ error: "file_name is required" }, { status: 400 })
-  }
-
-  // Sanitize the prefix into clean path segments — no traversal, no stray slashes.
-  const safePrefix = prefix
-    .split("/")
-    .map(seg => seg.replace(/[^a-zA-Z0-9._-]/g, "_"))
-    .filter(seg => seg && seg !== "." && seg !== "..")
-    .join("/")
-  const safeName = fileName.replace(/[^a-zA-Z0-9._-]/g, "_")
 
   // Tenant-isolated path: {company_id}/... prefix is what the new storage.objects
   // RLS policies will check via (storage.foldername(name))[1].

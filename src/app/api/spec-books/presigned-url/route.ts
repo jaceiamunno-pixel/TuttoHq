@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { randomUUID } from "crypto"
 import { createClient } from "@/lib/supabase/server"
+import { forbidFieldRole } from "@/lib/field-access"
 
 const MAX_BYTES = 50 * 1024 * 1024 // 50 MB
 
@@ -15,6 +16,12 @@ export async function POST(req: NextRequest) {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+
+  // ADR-020: spec books are a submittals-surface capability. A field session
+  // can pass the project-visibility check below (granted projects ARE
+  // visible), so deny explicitly before minting any upload URL.
+  const fieldDenied = await forbidFieldRole(supabase)
+  if (fieldDenied) return fieldDenied
 
   const body = await req.json().catch(() => null)
   const projectId = typeof body?.project_id === "string" ? body.project_id.trim() : ""

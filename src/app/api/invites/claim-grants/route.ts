@@ -17,17 +17,27 @@ import { parseGrants } from "@/lib/field-access-shared"
 //   1. Session required — user identity comes from auth, not the payload.
 //   2. Invite looked up by TOKEN (unguessable, 256-bit) via service role;
 //      must be status='accepted' and role='field'.
-//   3. The session user's user_profiles row must exist with company_id equal
+//   3. The invite's email must equal the session user's email
+//      (case-insensitive) — the claim is bound to the invitee, not just to
+//      anyone holding the token.
+//   4. The session user's user_profiles row must exist with company_id equal
 //      to the invite's company_id and role='field' — i.e. this user IS the
 //      profile accept_invite_link just linked for this invite. A stranger who
 //      somehow obtained the token gains nothing: their profile (if any) is in
 //      another company, or absent.
-//   4. Each grant's project must belong to the invite's company; anything
+//   5. Each grant's project must belong to the invite's company; anything
 //      else is skipped and logged (the invite route validates at creation,
 //      so skips here mean the project was deleted in between).
 //
-// Idempotent: upsert on the (user_id, project_id, module) unique key — safe
-// to retry after partial failure and safe to re-call on a revisit.
+// SINGLE-USE: after the project_access upsert succeeds, project_grants is
+// nulled on the invite — the token must not remain a replayable
+// grant-restore primitive after admin revocations. Manage access (Settings →
+// Team) is the sole grant authority post-claim. A re-call with a null
+// payload returns ok as a no-op.
+//
+// Idempotent up to that consumption: upsert on the (user_id, project_id,
+// module) unique key, and a failed upsert leaves project_grants intact so
+// the client's bounded retry can re-run the claim.
 
 export async function POST(req: NextRequest) {
   const supabase = await createClient()
@@ -56,6 +66,13 @@ export async function POST(req: NextRequest) {
   if (invite.role !== "field") {
     // Nothing to materialize for admin/member invites.
     return NextResponse.json({ ok: true, granted: 0, skipped: 0 })
+  }
+
+  // Bind the claim to the INVITEE: the session user's email must match the
+  // invite's email (case-insensitive) — mirrors accept_invite_link's own
+  // auth-user lookup by lower(email).
+  if (!user.email || user.email.toLowerCase() !== String(invite.email ?? "").toLowerCase()) {
+    return NextResponse.json({ error: "Not the invited user" }, { status: 403 })
   }
 
   // Bind the session user to the profile accept_invite_link created for THIS
@@ -111,8 +128,24 @@ export async function POST(req: NextRequest) {
       .upsert(rows, { onConflict: "user_id,project_id,module" })
     if (upErr) {
       console.error("[claim-grants] upsert failed", upErr)
+      // project_grants stays intact — the client retry re-runs the claim.
       return NextResponse.json({ error: "Could not set up project access" }, { status: 500 })
     }
+  }
+
+  // CONSUME the payload: the upsert (if any) succeeded, so null out
+  // project_grants before responding — the token can never re-materialize
+  // grants again (e.g. after an admin revokes access via Manage access).
+  const { error: consumeErr } = await admin
+    .from("company_invites")
+    .update({ project_grants: null })
+    .eq("id", invite.id)
+  if (consumeErr) {
+    // Grants ARE materialized; only the consumption failed. Fail loudly so
+    // the client retries — the retry re-upserts idempotently and re-attempts
+    // the null-out. Never respond ok while the payload is still replayable.
+    console.error("[claim-grants] failed to consume project_grants", consumeErr)
+    return NextResponse.json({ error: "Could not finalize access setup" }, { status: 500 })
   }
 
   return NextResponse.json({ ok: true, granted: usable.length, skipped })
