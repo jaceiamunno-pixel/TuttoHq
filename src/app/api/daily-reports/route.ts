@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import { DAILY_0050_LIVE } from "@/lib/daily-flags"
 import { parseCrew, crewHeadcount } from "@/lib/daily-crew"
+import { fieldCanWriteModule } from "@/lib/field-access"
 
 export async function GET(req: NextRequest) {
   const supabase = await createClient()
@@ -71,6 +72,14 @@ export async function POST(req: NextRequest) {
   const str = (v: unknown): string | null => typeof v === "string" ? v : null
   const report_date = str(fields.report_date)
   if (!report_date) return NextResponse.json({ error: "report_date is required" }, { status: 400 })
+
+  // ADR-020: mirrors the 0049 INSERT gate — field users need a can_edit
+  // grant on the target project (and can never create project-less
+  // reports). Non-field roles pass untouched.
+  const canWrite = await fieldCanWriteModule(supabase, user.id, str(fields.project_id) || null, "daily_reports")
+  if (!canWrite) {
+    return NextResponse.json({ error: "Edit access required for this module" }, { status: 403 })
+  }
 
   const { data: profile } = await supabase.from("user_profiles").select("company_id").eq("user_id", user.id).maybeSingle()
   const company_id = profile?.company_id ?? null

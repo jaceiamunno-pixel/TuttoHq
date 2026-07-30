@@ -8,6 +8,7 @@
 // hard delete, and the UI hides crew / submit / captions — the app deploys
 // safely against the pre-0050 schema.
 //
-// Flip to true (one-line diff) ONLY after 0050 is confirmed applied via
-// introspection. Imported by both API routes and client components.
-export const DAILY_0050_LIVE = false
+// Flipped to true 2026-07-30: 0050 verified LIVE in prod (all 8 columns
+// present, 54 legacy reports backfilled 'draft'). Imported by both API
+// routes and client components.
+export const DAILY_0050_LIVE = true
