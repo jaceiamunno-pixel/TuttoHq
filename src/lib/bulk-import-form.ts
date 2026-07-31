@@ -20,6 +20,7 @@
 
 import { PDFDocument, PDFTextField, PDFCheckBox, PDFDropdown, PDFOptionList, PDFDict, PDFArray } from "pdf-lib"
 import type { CoversheetFields, CoversheetTemplate } from "./bulk-import-detect"
+import { isSectionShape, VALID_DIVISIONS_FOR_SHAPE } from "./csi-section"
 
 /** Architect-stamp information recovered from a PDF /Stamp annotation. */
 export interface ApprovalStampInfo {
@@ -202,16 +203,9 @@ function lookupField(
 // This is also more robust against future template revisions where a field
 // gets renamed but its content stays the same shape.
 
-const SECTION_SHAPE = /^\s*(\d{2})[\s.\-]?(\d{2})[\s.\-]?(\d{2})(?:[\s.\-]?\d{2})?\s*$/
-const VALID_DIVISIONS_FOR_SHAPE = new Set([
-  "00","01","02","03","04","05","06","07","08","09","10","11","12",
-  "13","14","21","22","23","25","26","27","28","31","32","33","34",
-  "35","40","41","42","43","44","46","48",
-])
-function isSectionShape(v: string): boolean {
-  const m = v.match(SECTION_SHAPE)
-  return !!m && VALID_DIVISIONS_FOR_SHAPE.has(m[1])
-}
+// Section-shape check + valid-division set moved verbatim to
+// src/lib/csi-section.ts (imported above) so client code can share them
+// without pulling this module's pdf-lib import into the browser bundle.
 
 const US_DATE_NUMERIC = /^\d{1,2}\/\d{1,2}\/\d{2,4}$/
 const US_DATE_MDY_DOTTED = /^\d{1,2}\.\d{1,2}\.\d{2,4}$/

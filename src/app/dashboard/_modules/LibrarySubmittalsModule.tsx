@@ -25,6 +25,7 @@ import PackageCreateModal from "@/components/packages/PackageCreateModal"
 import PackagesView from "@/components/packages/PackagesView"
 import OverflowMenu, { type OverflowEntry } from "@/components/overflow-menu"
 import BulkImportModal from "@/components/bulk-import/BulkImportModal"
+import AddLogRowModal from "@/components/submittals/AddLogRowModal"
 import { useNavRegion, useFocusTrap } from "@/components/keyboard-nav"
 import { SkeletonTable } from "@/components/skeleton"
 import { usePendingAction } from "@/hooks/usePendingAction"
@@ -325,6 +326,9 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
 
   // Bulk Import — Stage 1. Detect + review-only; commit ships in Stage 2.
   const [showBulkImport, setShowBulkImport]     = useState(false)
+
+  // "Add row" — hand-entered manual log row (spec sections the parser missed).
+  const [showAddRow, setShowAddRow]             = useState(false)
 
   // Submittal-log tracker — vendors, grouping, inline-save debounce. One unified
   // vendors list (each row flagged sub/supplier) + their people, loaded once.
@@ -2268,6 +2272,15 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
               </p>
             </div>
             <div className="flex items-center gap-2 ml-auto flex-wrap justify-end">
+              {submittalsView === "log" && activeProjectId && (
+                <button
+                  onClick={() => setShowAddRow(true)}
+                  title="Add a log row by hand — for a spec section the parser missed"
+                  className="h-8 px-3 rounded-md border border-[#E2E8F0] text-[12px] font-semibold text-[#64748B] hover:bg-[#0F172A]/[0.04] transition-colors flex items-center gap-1.5 whitespace-nowrap"
+                >
+                  <PlusIcon /> <span className="hidden sm:inline">Add row</span>
+                </button>
+              )}
               {submittalsView === "log" && activeProjectId && displaySubmittals.length > 0 && (
                 <button
                   onClick={handleExportLog}
@@ -4632,6 +4645,22 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
           // page refresh. The modal only fires this when ≥1 row committed,
           // so a plain close won't trigger a needless refetch.
           onDone={() => loadSubmittals(activeProjectId)}
+        />
+      )}
+
+      {/* ── Add row modal (manual log row) ───────────────────────────────── */}
+      {showAddRow && activeProjectId && (
+        <AddLogRowModal
+          projectId={activeProjectId}
+          existingRows={logSubmittals}
+          onClose={() => setShowAddRow(false)}
+          onCreated={row => {
+            // Append only — the render-time sort (compareBySectionOrder /
+            // submittal_seq) slots the row into its place, same as every
+            // other surface. No refetch needed; the API returns SELECT *.
+            setLogSubmittals(prev => [...prev, row])
+            setShowAddRow(false)
+          }}
         />
       )}
 
