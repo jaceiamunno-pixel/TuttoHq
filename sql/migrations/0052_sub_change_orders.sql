@@ -1,5 +1,7 @@
 -- =============================================================================
--- Migration 0051: Subcontractor Change Orders (downstream — GC issues COs TO subs)
+-- Migration 0052: Subcontractor Change Orders (downstream — GC issues COs TO subs)
+-- (0050 = daily-reports flagship on master; 0051 = daily_report_weather claimed
+-- by open PR #146 — this took the next free number.)
 --
 -- Mirrors the change_orders architecture but points the other way: the tenant
 -- (GC) authorizes changes to a subcontractor's contract. Modeled on THP's paper
