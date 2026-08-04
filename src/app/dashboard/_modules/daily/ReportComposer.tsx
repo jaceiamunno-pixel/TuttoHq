@@ -9,12 +9,13 @@
 // create path all live in the DailyModule orchestrator.
 
 import { useMemo, useState } from "react"
-import { DAILY_0050_LIVE } from "@/lib/daily-flags"
+import { DAILY_0050_LIVE, DAILY_0051_LIVE } from "@/lib/daily-flags"
 import type { DailyDraftPhotoRow } from "@/lib/idb-photos"
 import type { Project, TeamMember } from "../../_shared/types"
 import { SpinnerIcon, XIcon } from "../../_shared/icons"
 import CrewSection from "./CrewSection"
 import WeatherField from "./WeatherField"
+import LaborField from "./LaborField"
 import { DraftPhotoGrid } from "./PhotoSection"
 import { fieldCls, selectCls, tareaCls, labelCls } from "./ui"
 import { fmtDateOnly } from "../../_shared/format"
@@ -72,17 +73,28 @@ export default function ReportComposer({ mode, form, patch, appProjects, teamMem
 }) {
   const isNew = mode === "new"
   const crewOn = DAILY_0050_LIVE
+  // Labor on Site (0051 labor_notes) hides until the column exists — a value
+  // typed pre-migration would be silently dropped server-side.
+  const laborOn = DAILY_0051_LIVE
 
+  // Auto-context split (feat/daily-report-context): Deliveries and Delays are
+  // their own lightweight sections (same materials_delivered / issues_delays
+  // columns as before — labels only, no schema change).
   const sections: SectionDef[] = useMemo(() => [
-    { id: "basics",  label: "Basics",                filled: !!form.prepared_by || !!form.project_id, defaultOpenMobile: true },
-    { id: "weather", label: "Weather",               filled: !!form.weather_conditions || !!form.temperature, defaultOpenMobile: true },
-    { id: "crew",    label: crewOn ? "Crew" : "Manpower", filled: crewOn ? nonEmptyCrew(form.crew).length > 0 : !!form.manpower_count, defaultOpenMobile: true },
-    { id: "work",    label: "Work Performed",        filled: !!form.work_performed.trim(), defaultOpenMobile: true },
-    { id: "site",    label: "Equipment & Materials", filled: !!form.equipment.trim() || !!form.materials_delivered.trim(), defaultOpenMobile: false },
-    { id: "notes",   label: "Visitors & Issues",     filled: !!form.visitors.trim() || !!form.issues_delays.trim(), defaultOpenMobile: false },
-    { id: "safety",  label: "Safety",                filled: !!form.safety_notes.trim(), defaultOpenMobile: false },
+    { id: "basics",     label: "Basics",                filled: !!form.prepared_by || !!form.project_id, defaultOpenMobile: true },
+    { id: "weather",    label: "Weather",               filled: !!form.weather_conditions || !!form.temperature, defaultOpenMobile: true },
+    { id: "crew",       label: crewOn ? "Crew" : "Manpower", filled: crewOn ? nonEmptyCrew(form.crew).length > 0 : !!form.manpower_count, defaultOpenMobile: true },
+    ...(laborOn ? [{ id: "labor", label: "Labor on Site", filled: !!form.labor_notes.trim(), defaultOpenMobile: true }] : []),
+    { id: "work",       label: "Work Performed",        filled: !!form.work_performed.trim(), defaultOpenMobile: true },
+    { id: "equipment",  label: "Equipment",             filled: !!form.equipment.trim(), defaultOpenMobile: false },
+    { id: "deliveries", label: "Deliveries",            filled: !!form.materials_delivered.trim(), defaultOpenMobile: false },
+    { id: "delays",     label: "Delays",                filled: !!form.issues_delays.trim(), defaultOpenMobile: false },
+    { id: "visitors",   label: "Visitors / Inspections", filled: !!form.visitors.trim(), defaultOpenMobile: false },
+    { id: "safety",     label: "Safety",                filled: !!form.safety_notes.trim(), defaultOpenMobile: false },
     ...(isNew ? [{ id: "photos", label: "Photos & Attachment", filled: draftPhotos.length > 0, defaultOpenMobile: true }] : []),
-  ], [form, crewOn, isNew, draftPhotos.length])
+  ], [form, crewOn, laborOn, isNew, draftPhotos.length])
+
+  const sec = (id: string) => sections.find(s => s.id === id)
 
   // Collapse state: mobile starts with the core capture sections open;
   // desktop starts fully expanded. Evaluated once on mount.
@@ -90,8 +102,8 @@ export default function ReportComposer({ mode, form, patch, appProjects, teamMem
     const mobile = typeof window !== "undefined" && window.innerWidth < 640
     const map: Record<string, boolean> = {}
     for (const s of [
-      "basics", "weather", "crew", "work", "site", "notes", "safety", "photos",
-    ]) map[s] = mobile ? ["basics", "weather", "crew", "work", "photos"].includes(s) : true
+      "basics", "weather", "crew", "labor", "work", "equipment", "deliveries", "delays", "visitors", "safety", "photos",
+    ]) map[s] = mobile ? ["basics", "weather", "crew", "labor", "work", "photos"].includes(s) : true
     return map
   })
   const toggle = (id: string) => setOpenMap(m => ({ ...m, [id]: !m[id] }))
@@ -111,7 +123,7 @@ export default function ReportComposer({ mode, form, patch, appProjects, teamMem
           <div className="flex items-center gap-2">
             {isNew && copySource && canEdit && (
               <button type="button" onClick={onCopyLast}
-                title="Prefill crew, equipment and prepared-by from the most recent report. Never copies work performed, issues, or photos."
+                title="Prefill crew, labor and every text section from the most recent report — edit what changed. Never copies photos or weather."
                 className="h-9 sm:h-8 px-3 rounded-md border border-[#7B9BB5]/40 text-[12px] text-[#7B9BB5] font-medium hover:bg-[#7B9BB5]/10 transition-colors">
                 ⧉ Copy from {fmtDateOnly(copySource.date)}
               </button>
@@ -125,7 +137,7 @@ export default function ReportComposer({ mode, form, patch, appProjects, teamMem
         <form onSubmit={onSave} className="flex flex-col flex-1 min-h-0">
           <div className="px-3 sm:px-6 py-3 sm:py-4 space-y-3 overflow-y-auto flex-1 min-h-0">
 
-            <Section def={sections[0]} open={!!openMap.basics} onToggle={() => toggle("basics")}>
+            <Section def={sec("basics")!} open={!!openMap.basics} onToggle={() => toggle("basics")}>
               <div className="flex flex-col sm:flex-row gap-3">
                 <div className="sm:w-40 sm:flex-shrink-0">
                   <label className={labelCls}>Date <span className="text-red-400">*</span></label>
@@ -152,7 +164,7 @@ export default function ReportComposer({ mode, form, patch, appProjects, teamMem
               </div>
             </Section>
 
-            <Section def={sections[1]} open={!!openMap.weather} onToggle={() => toggle("weather")}>
+            <Section def={sec("weather")!} open={!!openMap.weather} onToggle={() => toggle("weather")}>
               <WeatherField
                 weather={form.weather_conditions}
                 temperature={form.temperature}
@@ -164,7 +176,7 @@ export default function ReportComposer({ mode, form, patch, appProjects, teamMem
               />
             </Section>
 
-            <Section def={sections[2]} open={!!openMap.crew} onToggle={() => toggle("crew")}>
+            <Section def={sec("crew")!} open={!!openMap.crew} onToggle={() => toggle("crew")}>
               {crewOn ? (
                 <>
                   <CrewSection crew={form.crew} onChange={crew => patch({ crew })} canEdit={canEdit} />
@@ -185,50 +197,56 @@ export default function ReportComposer({ mode, form, patch, appProjects, teamMem
               )}
             </Section>
 
-            <Section def={sections[3]} open={!!openMap.work} onToggle={() => toggle("work")}>
+            {laborOn && (
+              <Section def={sec("labor")!} open={!!openMap.labor} onToggle={() => toggle("labor")}>
+                <LaborField
+                  value={form.labor_notes}
+                  onChange={v => patch({ labor_notes: v })}
+                  projectId={form.project_id}
+                  reportDate={form.report_date}
+                  canEdit={canEdit}
+                />
+              </Section>
+            )}
+
+            <Section def={sec("work")!} open={!!openMap.work} onToggle={() => toggle("work")}>
               <textarea rows={4} value={form.work_performed} disabled={!canEdit}
                 onChange={e => patch({ work_performed: e.target.value })}
                 placeholder="Describe the work completed on site today…" className={tareaCls} />
             </Section>
 
-            <Section def={sections[4]} open={!!openMap.site} onToggle={() => toggle("site")}>
-              <div>
-                <label className={labelCls}>Equipment on Site</label>
-                <textarea rows={2} value={form.equipment} disabled={!canEdit}
-                  onChange={e => patch({ equipment: e.target.value })}
-                  placeholder="List equipment used…" className={tareaCls} />
-              </div>
-              <div>
-                <label className={labelCls}>Materials Delivered</label>
-                <textarea rows={2} value={form.materials_delivered} disabled={!canEdit}
-                  onChange={e => patch({ materials_delivered: e.target.value })}
-                  placeholder="List deliveries received…" className={tareaCls} />
-              </div>
+            <Section def={sec("equipment")!} open={!!openMap.equipment} onToggle={() => toggle("equipment")}>
+              <textarea rows={2} value={form.equipment} disabled={!canEdit}
+                onChange={e => patch({ equipment: e.target.value })}
+                placeholder="List equipment used…" className={tareaCls} />
             </Section>
 
-            <Section def={sections[5]} open={!!openMap.notes} onToggle={() => toggle("notes")}>
-              <div>
-                <label className={labelCls}>Visitors / Inspections</label>
-                <textarea rows={2} value={form.visitors} disabled={!canEdit}
-                  onChange={e => patch({ visitors: e.target.value })}
-                  placeholder="Inspectors, owner reps, visitors…" className={tareaCls} />
-              </div>
-              <div>
-                <label className={labelCls}>Issues / Delays</label>
-                <textarea rows={2} value={form.issues_delays} disabled={!canEdit}
-                  onChange={e => patch({ issues_delays: e.target.value })}
-                  placeholder="Any delays, problems, or concerns…" className={tareaCls} />
-              </div>
+            <Section def={sec("deliveries")!} open={!!openMap.deliveries} onToggle={() => toggle("deliveries")}>
+              <textarea rows={2} value={form.materials_delivered} disabled={!canEdit}
+                onChange={e => patch({ materials_delivered: e.target.value })}
+                placeholder="Materials and deliveries received…" className={tareaCls} />
             </Section>
 
-            <Section def={sections[6]} open={!!openMap.safety} onToggle={() => toggle("safety")}>
+            <Section def={sec("delays")!} open={!!openMap.delays} onToggle={() => toggle("delays")}>
+              <textarea rows={2} value={form.issues_delays} disabled={!canEdit}
+                onChange={e => patch({ issues_delays: e.target.value })}
+                placeholder="Any delays, problems, or concerns…" className={tareaCls} />
+            </Section>
+
+            <Section def={sec("visitors")!} open={!!openMap.visitors} onToggle={() => toggle("visitors")}>
+              <textarea rows={2} value={form.visitors} disabled={!canEdit}
+                onChange={e => patch({ visitors: e.target.value })}
+                placeholder="Inspectors, owner reps, visitors…" className={tareaCls} />
+            </Section>
+
+            <Section def={sec("safety")!} open={!!openMap.safety} onToggle={() => toggle("safety")}>
               <textarea rows={2} value={form.safety_notes} disabled={!canEdit}
                 onChange={e => patch({ safety_notes: e.target.value })}
                 placeholder="Safety observations, incidents, toolbox talks…" className={tareaCls} />
             </Section>
 
-            {isNew && sections[7] && (
-              <Section def={sections[7]} open={!!openMap.photos} onToggle={() => toggle("photos")}>
+            {isNew && sec("photos") && (
+              <Section def={sec("photos")!} open={!!openMap.photos} onToggle={() => toggle("photos")}>
                 <DraftPhotoGrid
                   photos={draftPhotos}
                   compressProgress={compressProgress}

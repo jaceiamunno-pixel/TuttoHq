@@ -12,3 +12,14 @@
 // present, 54 legacy reports backfilled 'draft'). Imported by both API
 // routes and client components.
 export const DAILY_0050_LIVE = true
+
+// ─── Migration 0051 activation switch ───────────────────────────────────────
+// Auto-context columns (weather jsonb + labor_notes text) land via
+// sql/migrations/0051_daily_report_weather.sql — run manually by Jace.
+//
+// While false: the POST/PATCH routes never write either column, no weather
+// fetch runs on create, and the composer hides the "Labor on Site" section —
+// the app deploys safely against the pre-0051 schema. The read side needs no
+// gate: detail + PDF render weather/labor only when the row carries them.
+// Flip to true after 0051 has run and the columns are verified.
+export const DAILY_0051_LIVE = false

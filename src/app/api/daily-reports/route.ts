@@ -1,8 +1,45 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
-import { DAILY_0050_LIVE } from "@/lib/daily-flags"
+import { DAILY_0050_LIVE, DAILY_0051_LIVE } from "@/lib/daily-flags"
 import { parseCrew, crewHeadcount } from "@/lib/daily-crew"
 import { fieldCanWriteModule } from "@/lib/field-access"
+import { fetchDailyWeather, type DailyWeatherSnapshot } from "@/lib/daily-weather"
+
+// Weather auto-capture (0051). Runs inline in the create POST under
+// fetchDailyWeather's ~4 s budget; every failure resolves to null so report
+// creation is NEVER blocked or failed by weather.
+//
+// Date gate: only reports dated "now-ish" (±1 day, to absorb the client/
+// server timezone split around midnight) get a snapshot. This covers both
+// lanes with one rule — an online create of today's report captures live
+// conditions; an offline-created report that syncs on a later day stays
+// null rather than back-filling stale-looking data.
+//
+// Location: the project's free-text location, falling back to the company
+// address; neither → skip silently.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function captureWeather(supabase: any, reportDate: string, projectId: string | null): Promise<DailyWeatherSnapshot | null> {
+  try {
+    const reportMs = Date.parse(`${reportDate}T00:00:00Z`)
+    const todayMs = Date.parse(`${new Date().toISOString().slice(0, 10)}T00:00:00Z`)
+    if (!Number.isFinite(reportMs) || Math.abs(todayMs - reportMs) > 86_400_000) return null
+
+    let location: string | null = null
+    if (projectId) {
+      const { data: p } = await supabase.from("projects").select("location").eq("id", projectId).maybeSingle()
+      location = (p?.location as string | null)?.trim() || null
+    }
+    if (!location) {
+      const { data: s } = await supabase.from("company_settings").select("address_line1, address_line2").maybeSingle()
+      location = [s?.address_line1, s?.address_line2].filter(Boolean).join(", ").trim() || null
+    }
+    if (!location) return null
+
+    return await fetchDailyWeather(location, reportDate)
+  } catch {
+    return null
+  }
+}
 
 export async function GET(req: NextRequest) {
   const supabase = await createClient()
@@ -123,6 +160,15 @@ export async function POST(req: NextRequest) {
       insertData.crew = crew
       insertData.manpower_count = crewHeadcount(crew)
     }
+  }
+
+  // Auto-context (0051): labor snapshot + weather capture. The weather key
+  // is only set when a snapshot exists, so a sync-retry upsert that fails
+  // the fetch never clobbers a previously captured value.
+  if (DAILY_0051_LIVE) {
+    insertData.labor_notes = str(fields.labor_notes)?.trim() || null
+    const weather = await captureWeather(supabase, report_date, str(fields.project_id) || null)
+    if (weather) insertData.weather = weather
   }
 
   const builder = useClientId

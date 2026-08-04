@@ -184,6 +184,10 @@ export interface DailyReport {
   submitted_at?: string | null; submitted_by?: string | null;
   deleted_at?: string | null;
   updated_at?: string | null; updated_by?: string | null;
+  // Migration 0051 columns — absent until DAILY_0051_LIVE flips. weather is
+  // the raw jsonb; render via parseWeatherSnapshot (tolerant, never throws).
+  weather?: unknown;
+  labor_notes?: string | null;
 }
 export interface DrawingRecord { id: string; drawing_number: string; sheet_title: string; discipline: string | null; revision: string; revision_date: string | null; status: string; scale: string | null; notes: string | null; project_id: string | null; is_current: boolean; superseded_at: string | null; created_at: string; uploaded_by: string; generated_pdf_path?: string | null; file_name?: string | null; file_path?: string | null; file_url?: string | null }
 export interface CloseoutItem { id: string; project_id: string; category: string; item_type: string; title: string; status: string; assigned_to: string | null; due_date: string | null; file_url: string | null; file_name: string | null; notes: string | null; sort_order: number; folder_name: string | null; linked_record_id: string | null; linked_record_type: string | null; completed_at: string | null; created_at: string }

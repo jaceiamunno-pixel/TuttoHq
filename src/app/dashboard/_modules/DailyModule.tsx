@@ -178,6 +178,7 @@ export default function DailyModule({ globalProjectId, appProjects, teamMembers,
         ...(f.visitors             !== undefined ? { visitors: f.visitors } : {}),
         ...(f.issues_delays        !== undefined ? { issues_delays: f.issues_delays } : {}),
         ...(f.safety_notes         !== undefined ? { safety_notes: f.safety_notes } : {}),
+        ...(f.labor_notes          !== undefined ? { labor_notes: f.labor_notes } : {}),
         crew: parseCrewJson(f.crew),
       }))
       const photos = await listDailyDraftPhotos(id)
@@ -213,6 +214,7 @@ export default function DailyModule({ globalProjectId, appProjects, teamMembers,
           visitors:             form.visitors,
           issues_delays:        form.issues_delays,
           safety_notes:         form.safety_notes,
+          labor_notes:          form.labor_notes,
           // Crew serializes into the string bag so the IDB schema (and
           // every pre-existing draft) is untouched.
           crew:                 crewRows.length ? JSON.stringify(crewRows) : "",
@@ -495,6 +497,7 @@ export default function DailyModule({ globalProjectId, appProjects, teamMembers,
       visitors:            r.visitors ?? "",
       issues_delays:       r.issues_delays ?? "",
       safety_notes:        r.safety_notes ?? "",
+      labor_notes:         r.labor_notes ?? "",
       crew:                r.crew ?? [],
     })
     setDailySaveError("")
@@ -511,6 +514,7 @@ export default function DailyModule({ globalProjectId, appProjects, teamMembers,
       manpower_count: form.manpower_count, work_performed: form.work_performed,
       equipment: form.equipment, materials_delivered: form.materials_delivered,
       visitors: form.visitors, issues_delays: form.issues_delays, safety_notes: form.safety_notes,
+      labor_notes: form.labor_notes,
     }
     if (DAILY_0050_LIVE) {
       const crewRows = nonEmptyCrew(form.crew)
@@ -640,6 +644,7 @@ export default function DailyModule({ globalProjectId, appProjects, teamMembers,
         visitors: form.visitors || null,
         issues_delays: form.issues_delays || null,
         safety_notes: form.safety_notes || null,
+        labor_notes: form.labor_notes || null,
       }
       if (DAILY_0050_LIVE) {
         body.crew = crewRows.length ? crewRows : null
@@ -674,6 +679,8 @@ export default function DailyModule({ globalProjectId, appProjects, teamMembers,
         visitors:           p.fields.visitors || null,
         issues_delays:      p.fields.issues_delays || null,
         safety_notes:       p.fields.safety_notes || null,
+        labor_notes:        p.fields.labor_notes || null,
+        weather:            null,
         crew:               parseCrewJson(p.fields.crew),
         created_at:         new Date(p.createdAt).toISOString(),
         uploaded_by:        "",
@@ -692,9 +699,10 @@ export default function DailyModule({ globalProjectId, appProjects, teamMembers,
     return map
   }, [photoCounts, syncingCounts, stuckCounts])
 
-  // Copy-from-last source (3b): most recent report on the composer's
-  // project. Copies crew/equipment/prepared-by only — never work
-  // performed, issues, or photos.
+  // Copy-from-last source (3b, widened by feat/daily-report-context): most
+  // recent report on the composer's project. Prefills every text section +
+  // crew/labor so the super only edits what changed — never photos, never
+  // the date, never the per-day weather fields.
   const copySource = useMemo(() => {
     if (composerMode !== "new") return null
     return mergedReports.find(r => (r.project_id ?? "") === form.project_id) ?? null
@@ -703,8 +711,14 @@ export default function DailyModule({ globalProjectId, appProjects, teamMembers,
   function copyFromLast() {
     if (!copySource) return
     patch({
-      prepared_by: copySource.prepared_by ?? "",
-      equipment:   copySource.equipment ?? "",
+      prepared_by:         copySource.prepared_by ?? "",
+      equipment:           copySource.equipment ?? "",
+      work_performed:      copySource.work_performed ?? "",
+      materials_delivered: copySource.materials_delivered ?? "",
+      visitors:            copySource.visitors ?? "",
+      issues_delays:       copySource.issues_delays ?? "",
+      safety_notes:        copySource.safety_notes ?? "",
+      labor_notes:         copySource.labor_notes ?? "",
       ...(DAILY_0050_LIVE && copySource.crew?.length
         ? { crew: copySource.crew.map(c => ({ ...c })) }
         : {}),

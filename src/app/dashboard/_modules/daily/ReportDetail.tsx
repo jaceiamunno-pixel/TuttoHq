@@ -9,6 +9,7 @@
 // exactly like today's read view, plus a Submit action when 0050 is live.
 
 import { DAILY_0050_LIVE } from "@/lib/daily-flags"
+import { parseWeatherSnapshot, formatWeatherLine } from "@/lib/daily-weather"
 import type { DailyDraftPhotoRow } from "@/lib/idb-photos"
 import type { DailyReport } from "../../_shared/types"
 import { fmtDateOnly } from "../../_shared/format"
@@ -46,6 +47,9 @@ export default function ReportDetail({ report, pendingSync, photos, photosLoadin
   const submitted = isSubmitted(report)
   const showSubmit = DAILY_0050_LIVE && canEdit && !submitted && !pendingSync
   const crew = report.crew ?? []
+  // Auto-captured site weather (0051 jsonb) — distinct from the editable
+  // weather_conditions/temperature the super fills in.
+  const autoWeather = parseWeatherSnapshot(report.weather)
 
   return (
     <div className="flex flex-col h-full min-h-0">
@@ -128,6 +132,15 @@ export default function ReportDetail({ report, pendingSync, photos, photosLoadin
           )}
         </div>
 
+        {/* Auto-captured weather line (0051) */}
+        {autoWeather && (
+          <div className="text-[12px]" title={`Auto-captured via Open-Meteo${autoWeather.location ? ` for ${autoWeather.location}` : ""}`}>
+            <span className="text-[#64748B]">Site weather: </span>
+            <span className="text-[#0F172A]">{formatWeatherLine(autoWeather)}</span>
+            <span className="ml-1.5 text-[10px] font-semibold text-sky-700 bg-sky-50 border border-sky-200 px-1.5 py-0.5 rounded-full">⚡ Auto</span>
+          </div>
+        )}
+
         {/* Crew breakdown (4f) */}
         {crew.length > 0 && (
           <div className="rounded-md border border-[#E2E8F0] overflow-clip">
@@ -158,11 +171,12 @@ export default function ReportDetail({ report, pendingSync, photos, photosLoadin
         )}
 
         {[
+          { label: "Labor on Site", value: report.labor_notes },
           { label: "Work Performed", value: report.work_performed },
           { label: "Equipment on Site", value: report.equipment },
-          { label: "Materials Delivered", value: report.materials_delivered },
+          { label: "Deliveries", value: report.materials_delivered },
+          { label: "Delays", value: report.issues_delays },
           { label: "Visitors / Inspections", value: report.visitors },
-          { label: "Issues / Delays", value: report.issues_delays },
           { label: "Safety Notes", value: report.safety_notes },
         ].filter(f => f.value).map(f => (
           <div key={f.label} className="rounded-md bg-[#F4F5F7] border border-[#E2E8F0] px-4 py-3">
