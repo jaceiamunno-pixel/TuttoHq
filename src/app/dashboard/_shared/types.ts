@@ -545,3 +545,64 @@ export interface RfqRecipient {
   person_name?: string | null
   person_email?: string | null
 }
+
+// ── Subcontractor Change Orders (downstream: GC issues COs TO subs) ──────────
+// Mirrors change_orders but points at a vendor (the sub). Soft-delete is
+// status = 'deleted' (never a deleted_at column). snap_* columns are the
+// financial recap frozen server-side at PDF generation (PCO stated_* pattern).
+export type SubChangeOrderStatus = "draft" | "sent" | "accepted" | "deleted"
+
+export interface SubChangeOrderLine {
+  id: string
+  sub_change_order_id: string
+  owner_co_number: string | null
+  gc_co_number: string | null
+  description: string
+  cost_code: string | null
+  price: number
+  sort_order: number
+  created_at?: string
+}
+
+export interface SubChangeOrder {
+  id: string
+  project_id: string | null
+  vendor_id: string
+  commitment_id: string | null
+  co_number: string
+  original_contract_no: string | null
+  co_date: string | null
+  cost_code: string | null
+  original_contract_amount: number | null
+  status: SubChangeOrderStatus
+  generated_pdf_path: string | null
+  signer_name: string | null
+  signer_title: string | null
+  signer_signature_path: string | null
+  snap_previous_additions: number | null
+  snap_previous_deductions: number | null
+  snap_previous_total: number | null
+  snap_this_order: number | null
+  snap_present_contract_amount: number | null
+  accepted_at: string | null
+  created_at: string
+  updated_at: string
+  uploaded_by: string | null
+  // Embedded by the API (PostgREST relation on vendor_id).
+  vendor?: {
+    id: string
+    vendor_no: string | null
+    company_name: string
+    street_address: string | null
+    city: string | null
+    state: string | null
+    zip_code: string | null
+    phone: string | null
+    email: string | null
+  } | null
+  // Embedded by the detail endpoint, ordered by sort_order.
+  lines?: SubChangeOrderLine[]
+  // Attached server-side by the list endpoint (never summed client-side).
+  total?: number
+  first_description?: string | null
+}
