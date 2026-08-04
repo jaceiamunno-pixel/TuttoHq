@@ -566,7 +566,9 @@ export class PDFBuilder {
     return this.wrapTextWith(this.reg, text, size, maxW)
   }
 
-  private wrapTextWith(font: PDFFont, text: string, size: number, maxW: number): string[] {
+  /** Public: custom layouts (e.g. sub-co-pdf) reuse the house wrap so long
+   *  tokens hard-break instead of overflowing (the c68bba5 rule). */
+  wrapTextWith(font: PDFFont, text: string, size: number, maxW: number): string[] {
     text = sanitizeWinAnsi(text)   // preserves "\n", so paragraph splitting below still works
     const lines: string[] = []
     for (const paragraph of text.split(/\r?\n/)) {

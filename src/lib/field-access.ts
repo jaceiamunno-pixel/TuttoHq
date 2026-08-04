@@ -25,6 +25,7 @@ export const SLUG_TO_MODULE: Record<string, FieldModule | null> = {
   rfis:              "rfis",
   submittals:        null,
   "change-orders":   null,
+  "sub-change-orders": null,
   "purchase-orders": null,
   commitments:       null,
   punch:             null,
