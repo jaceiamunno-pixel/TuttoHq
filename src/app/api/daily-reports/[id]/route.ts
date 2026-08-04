@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
-import { DAILY_0050_LIVE } from "@/lib/daily-flags"
+import { DAILY_0050_LIVE, DAILY_0051_LIVE } from "@/lib/daily-flags"
 import { parseCrew, crewHeadcount } from "@/lib/daily-crew"
 import { forbidFieldWithoutEdit } from "@/lib/field-access"
 import type { SupabaseClient } from "@supabase/supabase-js"
@@ -33,6 +33,9 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     "weather_conditions", "temperature", "manpower_count",
     "work_performed", "equipment", "materials_delivered",
     "visitors", "issues_delays", "safety_notes",
+    // 0051: labor snapshot is editable; the weather jsonb deliberately is
+    // NOT — it's a server-captured record, not a form field.
+    ...(DAILY_0051_LIVE ? ["labor_notes"] : []),
   ]
   const safe: Record<string, unknown> = Object.fromEntries(
     Object.entries(updates as Record<string, unknown>).filter(([k]) => allowed.includes(k))

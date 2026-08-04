@@ -29,6 +29,7 @@ export interface DailyForm {
   visitors: string
   issues_delays: string
   safety_notes: string
+  labor_notes: string
   crew: CrewRow[]
 }
 
@@ -46,6 +47,7 @@ export function emptyDailyForm(projectId = ""): DailyForm {
     visitors: "",
     issues_delays: "",
     safety_notes: "",
+    labor_notes: "",
     crew: [],
   }
 }

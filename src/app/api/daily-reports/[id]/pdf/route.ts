@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import { PDFBuilder } from "@/lib/pdf-builder"
 import { loadEntityPhotos } from "@/lib/pdf-photos"
+import { parseWeatherSnapshot, formatWeatherLine } from "@/lib/daily-weather"
 
 // Downloading + resizing a report's photos can take a while for image-heavy
 // reports — raise the serverless ceiling so long renders don't get cut off.
@@ -58,6 +59,11 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
     ? `SUBMITTED — ${new Date(report.submitted_at).toLocaleDateString("en-US")} ${new Date(report.submitted_at).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}`
     : null
 
+  // Auto-captured site weather (0051 jsonb) — its own summary line, distinct
+  // from the user-entered Weather Conditions / Temperature fields. Data-
+  // driven: pre-0051 rows (weather absent/null) render exactly as before.
+  const autoWeather = parseWeatherSnapshot(report.weather)
+
   pdf.sectionDivider("Report Summary")
   pdf.fieldGrid([
     ...(submittedStamp ? [[{ label: "Status", value: submittedStamp }]] : []),
@@ -65,6 +71,7 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
      { label: "Prepared By", value: report.prepared_by }],
     [{ label: "Weather Conditions", value: report.weather_conditions },
      { label: "Temperature", value: report.temperature }],
+    ...(autoWeather ? [[{ label: "Site Weather (auto-captured)", value: formatWeatherLine(autoWeather) }]] : []),
     [{ label: "Manpower on Site",
       value: report.manpower_count != null ? `${report.manpower_count} workers` : null }],
   ])
@@ -88,11 +95,14 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
     )
   }
 
+  // Labor on Site (0051): the editable manpower-schedule snapshot. textBlock
+  // no-ops on null, so pre-0051 rows are unaffected.
+  pdf.textBlock("Labor on Site", report.labor_notes)
   pdf.textBlock("Work Performed", report.work_performed)
   pdf.textBlock("Equipment on Site", report.equipment)
-  pdf.textBlock("Materials Delivered", report.materials_delivered)
+  pdf.textBlock("Deliveries", report.materials_delivered)
+  pdf.textBlock("Delays", report.issues_delays)
   pdf.textBlock("Visitors / Inspections", report.visitors)
-  pdf.textBlock("Issues / Delays", report.issues_delays)
   pdf.textBlock("Safety Notes", report.safety_notes)
 
   pdf.signatureBlock("Prepared By / Date", "Superintendent / Date")
