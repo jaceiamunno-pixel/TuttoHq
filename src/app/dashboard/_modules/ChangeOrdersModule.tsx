@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from "react"
 import type { ChangeOrder, Project } from "../_shared/types"
 import { useNavRegion, useFocusTrap } from "@/components/keyboard-nav"
+import { RowActions } from "@/components/RowActions"
 import { fmtDateOnly } from "../_shared/format"
 import { PlusIcon, SpinnerIcon } from "../_shared/icons"
 import { presignAndUpload } from "@/lib/storage-upload"
@@ -17,9 +18,8 @@ import { SkeletonTable } from "@/components/skeleton"
 // effect keys on globalProjectId (the module mounts only when Change Orders is
 // active, so the activeModule guard is no longer needed).
 
-// Compact icon paths for the CO-log row actions. Icon buttons (with title
-// tooltips) replace the old text buttons so the log fits without a horizontal
-// scrollbar at 1280/1440px.
+// Compact icon paths. Row actions are text links (RowActions); ICON.edit still
+// backs the inline PCO-number edit pencil.
 const ICON = {
   edit:   "M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z",
   view:   "M15 12a3 3 0 11-6 0 3 3 0 016 0z M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z",
@@ -42,20 +42,6 @@ function coLogCompare(a: ChangeOrder, b: ChangeOrder): number {
   else if (na !== null) return -1
   else if (nb !== null) return 1
   return (a.date ?? "9999").localeCompare(b.date ?? "9999")
-}
-
-function CoActionBtn({ label, onClick, icon, className = "", disabled = false, navPrimary = false }: {
-  label: string; onClick: () => void; icon: string; className?: string; disabled?: boolean; navPrimary?: boolean
-}) {
-  return (
-    <button onClick={onClick} disabled={disabled} title={label} aria-label={label}
-      data-nav-primary={navPrimary || undefined}
-      className={`h-7 w-7 inline-flex items-center justify-center rounded hover:bg-[#0F172A]/[0.05] transition-colors disabled:opacity-40 ${className}`}>
-      <svg className="h-[15px] w-[15px]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        {icon.split(" M").map((seg, i) => <path key={i} strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.7} d={(i === 0 ? seg : "M" + seg)} />)}
-      </svg>
-    </button>
-  )
 }
 
 export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
@@ -515,24 +501,18 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
                             <td className="px-4 py-2.5">
                               <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold ${badgeCls}`}>{c.status}</span>
                             </td>
-                            <td className="px-4 py-2.5">
-                              <div className="flex items-center justify-end gap-0.5 whitespace-nowrap">
-                                {c.has_pco_detail && !imported && (
-                                  <CoActionBtn label="Edit" onClick={() => setEditPcoId(c.id)} className="text-[#7B9BB5] hover:text-[#5A7A94]" icon={ICON.edit} />
-                                )}
-                                <CoActionBtn label="View" navPrimary onClick={() => { setViewCo(c); setCoResponseStatus(c.status); setCoAssignedTo(c.assigned_to ?? ""); setCoAssignedCoNumber(c.assigned_co_number ?? ""); setCoRespAmount(c.pricing_sum != null ? String(c.pricing_sum) : ""); setCoRespRealized(c.realized_amount != null ? String(c.realized_amount) : "") }} className="text-[#64748B] hover:text-[#0F172A]" icon={ICON.view} />
-                                {c.has_pco_detail ? (
-                                  <>
-                                    <CoActionBtn label="Cover sheet" onClick={() => openPcoPdf(c.id, "cover")} disabled={pdfBusy} className="text-[#7B9BB5]" icon={ICON.cover} />
-                                    <CoActionBtn label="Pricing backup" onClick={() => openPcoPdf(c.id, "backup")} disabled={pdfBusy} className="text-[#7B9BB5]" icon={ICON.backup} />
-                                  </>
-                                ) : (
-                                  <CoActionBtn label="Generate PDF" onClick={() => generateCoPdf(c.id)} disabled={coGeneratingPdf} className="text-[#7B9BB5]" icon={ICON.cover} />
-                                )}
-                                {!imported && (
-                                  <CoActionBtn label="Delete" onClick={() => deleteCo(c.id)} className="text-red-400/70 hover:text-red-500" icon={ICON.trash} />
-                                )}
-                              </div>
+                            <td className="px-4 py-2.5 text-right">
+                              <RowActions actions={[
+                                ...(c.has_pco_detail && !imported ? [{ label: "Edit", onClick: () => setEditPcoId(c.id) }] : []),
+                                { label: "View", navPrimary: true, onClick: () => { setViewCo(c); setCoResponseStatus(c.status); setCoAssignedTo(c.assigned_to ?? ""); setCoAssignedCoNumber(c.assigned_co_number ?? ""); setCoRespAmount(c.pricing_sum != null ? String(c.pricing_sum) : ""); setCoRespRealized(c.realized_amount != null ? String(c.realized_amount) : "") } },
+                                ...(c.has_pco_detail ? [
+                                  { label: "Cover", onClick: () => openPcoPdf(c.id, "cover"), disabled: pdfBusy, title: "Cover sheet" },
+                                  { label: "Pricing", onClick: () => openPcoPdf(c.id, "backup"), disabled: pdfBusy, title: "Pricing backup" },
+                                ] : [
+                                  { label: "PDF", onClick: () => generateCoPdf(c.id), disabled: coGeneratingPdf, title: "Generate PDF" },
+                                ]),
+                                ...(!imported ? [{ label: "Delete", onClick: () => deleteCo(c.id), variant: "danger" as const }] : []),
+                              ]} />
                             </td>
                           </tr>
                         )

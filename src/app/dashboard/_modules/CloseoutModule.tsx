@@ -6,6 +6,7 @@ import { PlusIcon, SpinnerIcon, XIcon, CheckIcon } from "../_shared/icons"
 import { inputCls, labelCls } from "../_shared/ui"
 import { presignAndUpload } from "@/lib/storage-upload"
 import { isFeatureEnabled } from "@/lib/features"
+import { RowActions } from "@/components/RowActions"
 import CloseoutPackageCreateModal from "@/components/closeout-packages/CloseoutPackageCreateModal"
 import CloseoutPackagesView from "@/components/closeout-packages/CloseoutPackagesView"
 
@@ -575,13 +576,10 @@ export default function CloseoutModule({ globalProjectId, appProjects, teamMembe
                                       {closeoutUploadingId === item.id ? "Uploading…" : "+ Doc"}
                                     </button>
                                   )}
-                                  <div className="flex items-center gap-1 flex-shrink-0">
-                                    <button onClick={() => { if (isEditing) { setCloseoutEditId(null); return } setCloseoutEditId(item.id); setCloseoutEditTitle(item.title); setCloseoutEditAssigned(item.assigned_to ?? ""); setCloseoutEditDue(item.due_date ?? ""); setCloseoutEditNotes(item.notes ?? "") }}
-                                      className={`text-[11px] px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors ${isEditing ? "text-[#7B9BB5]" : "text-[#64748B] hover:text-[#64748B]"}`}>
-                                      {isEditing ? "Close" : "Edit"}
-                                    </button>
-                                    <button onClick={() => deleteCloseoutItem(item.id)} className="text-[11px] text-[#64748B] hover:text-red-400 px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors">Del</button>
-                                  </div>
+                                  <RowActions className="flex-shrink-0" actions={[
+                                    { label: isEditing ? "Close" : "Edit", onClick: () => { if (isEditing) { setCloseoutEditId(null); return } setCloseoutEditId(item.id); setCloseoutEditTitle(item.title); setCloseoutEditAssigned(item.assigned_to ?? ""); setCloseoutEditDue(item.due_date ?? ""); setCloseoutEditNotes(item.notes ?? "") } },
+                                    { label: "Del", onClick: () => deleteCloseoutItem(item.id), variant: "danger" },
+                                  ]} />
                                 </div>
                                 {isEditing && (
                                   <div className="px-4 pb-4 pt-2 border-t border-[#E2E8F0]/40 bg-white/30 space-y-3">
@@ -675,13 +673,10 @@ export default function CloseoutModule({ globalProjectId, appProjects, teamMembe
                                       {closeoutUploadingId === item.id ? "Uploading…" : "+ Doc"}
                                     </button>
                                   )}
-                                  <div className="flex items-center gap-1 flex-shrink-0">
-                                    <button onClick={() => { if (isEditing) { setCloseoutEditId(null); return } setCloseoutEditId(item.id); setCloseoutEditTitle(item.title); setCloseoutEditAssigned(item.assigned_to ?? ""); setCloseoutEditDue(item.due_date ?? ""); setCloseoutEditNotes(item.notes ?? "") }}
-                                      className={`text-[11px] px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors ${isEditing ? "text-[#7B9BB5]" : "text-[#64748B] hover:text-[#64748B]"}`}>
-                                      {isEditing ? "Close" : "Edit"}
-                                    </button>
-                                    <button onClick={() => deleteCloseoutItem(item.id)} className="text-[11px] text-[#64748B] hover:text-red-400 px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors">Del</button>
-                                  </div>
+                                  <RowActions className="flex-shrink-0" actions={[
+                                    { label: isEditing ? "Close" : "Edit", onClick: () => { if (isEditing) { setCloseoutEditId(null); return } setCloseoutEditId(item.id); setCloseoutEditTitle(item.title); setCloseoutEditAssigned(item.assigned_to ?? ""); setCloseoutEditDue(item.due_date ?? ""); setCloseoutEditNotes(item.notes ?? "") } },
+                                    { label: "Del", onClick: () => deleteCloseoutItem(item.id), variant: "danger" },
+                                  ]} />
                                 </div>
                                 {isEditing && (
                                   <div className="px-4 pb-4 pt-2 border-t border-[#E2E8F0]/40 bg-white/30 space-y-3">
@@ -760,13 +755,10 @@ export default function CloseoutModule({ globalProjectId, appProjects, teamMembe
                                             {closeoutUploadingId === item.id ? "Uploading…" : "+ Doc"}
                                           </button>
                                         )}
-                                        <div className="flex items-center gap-1 flex-shrink-0">
-                                          <button onClick={() => { if (isEditing) { setCloseoutEditId(null); return } setCloseoutEditId(item.id); setCloseoutEditTitle(item.title); setCloseoutEditAssigned(item.assigned_to ?? ""); setCloseoutEditDue(item.due_date ?? ""); setCloseoutEditNotes(item.notes ?? "") }}
-                                            className={`text-[11px] px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors ${isEditing ? "text-[#7B9BB5]" : "text-[#64748B]"}`}>
-                                            {isEditing ? "Close" : "Edit"}
-                                          </button>
-                                          <button onClick={() => deleteCloseoutItem(item.id)} className="text-[11px] text-[#64748B] hover:text-red-400 px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors">Del</button>
-                                        </div>
+                                        <RowActions className="flex-shrink-0" actions={[
+                                          { label: isEditing ? "Close" : "Edit", onClick: () => { if (isEditing) { setCloseoutEditId(null); return } setCloseoutEditId(item.id); setCloseoutEditTitle(item.title); setCloseoutEditAssigned(item.assigned_to ?? ""); setCloseoutEditDue(item.due_date ?? ""); setCloseoutEditNotes(item.notes ?? "") } },
+                                          { label: "Del", onClick: () => deleteCloseoutItem(item.id), variant: "danger" },
+                                        ]} />
                                       </div>
                                       {isEditing && (
                                         <div className="px-4 pl-10 pb-4 pt-2 border-t border-[#E2E8F0]/40 bg-white/30 space-y-3">
@@ -815,7 +807,7 @@ export default function CloseoutModule({ globalProjectId, appProjects, teamMembe
                                     style={{ borderColor: dotColor(item.status), backgroundColor: item.status === "complete" ? dotColor(item.status) : "transparent" }} />
                                   <span className={`flex-1 text-[13px] font-medium truncate ${item.status === "complete" ? "text-[#64748B] line-through" : "text-[#0F172A]"}`}>{item.title}</span>
                                   <span className={`text-[11px] font-semibold flex-shrink-0 hidden sm:block ${labelColor(item.status)}`}>{statusLabel(item.status)}</span>
-                                  <button onClick={() => deleteCloseoutItem(item.id)} className="text-[11px] text-[#64748B] hover:text-red-400 px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors">Del</button>
+                                  <RowActions className="flex-shrink-0" actions={[{ label: "Del", onClick: () => deleteCloseoutItem(item.id), variant: "danger" }]} />
                                 </div>
                               </div>
                             )
@@ -870,13 +862,10 @@ export default function CloseoutModule({ globalProjectId, appProjects, teamMembe
                                             {closeoutUploadingId === item.id ? "Uploading…" : "+ Doc"}
                                           </button>
                                         )}
-                                        <div className="flex items-center gap-1 flex-shrink-0">
-                                          <button onClick={() => { if (isEditing) { setCloseoutEditId(null); return } setCloseoutEditId(item.id); setCloseoutEditTitle(item.title); setCloseoutEditAssigned(item.assigned_to ?? ""); setCloseoutEditDue(item.due_date ?? ""); setCloseoutEditNotes(item.notes ?? "") }}
-                                            className={`text-[11px] px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors ${isEditing ? "text-[#7B9BB5]" : "text-[#64748B]"}`}>
-                                            {isEditing ? "Close" : "Edit"}
-                                          </button>
-                                          <button onClick={() => deleteCloseoutItem(item.id)} className="text-[11px] text-[#64748B] hover:text-red-400 px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors">Del</button>
-                                        </div>
+                                        <RowActions className="flex-shrink-0" actions={[
+                                          { label: isEditing ? "Close" : "Edit", onClick: () => { if (isEditing) { setCloseoutEditId(null); return } setCloseoutEditId(item.id); setCloseoutEditTitle(item.title); setCloseoutEditAssigned(item.assigned_to ?? ""); setCloseoutEditDue(item.due_date ?? ""); setCloseoutEditNotes(item.notes ?? "") } },
+                                          { label: "Del", onClick: () => deleteCloseoutItem(item.id), variant: "danger" },
+                                        ]} />
                                       </div>
                                       {isEditing && (
                                         <div className="px-4 pl-10 pb-4 pt-2 border-t border-[#E2E8F0]/40 bg-white/30 space-y-3">
@@ -925,7 +914,7 @@ export default function CloseoutModule({ globalProjectId, appProjects, teamMembe
                                     style={{ borderColor: dotColor(item.status), backgroundColor: item.status === "complete" ? dotColor(item.status) : "transparent" }} />
                                   <span className={`flex-1 text-[13px] font-medium truncate ${item.status === "complete" ? "text-[#64748B] line-through" : "text-[#0F172A]"}`}>{item.title}</span>
                                   <span className={`text-[11px] font-semibold flex-shrink-0 hidden sm:block ${labelColor(item.status)}`}>{statusLabel(item.status)}</span>
-                                  <button onClick={() => deleteCloseoutItem(item.id)} className="text-[11px] text-[#64748B] hover:text-red-400 px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors">Del</button>
+                                  <RowActions className="flex-shrink-0" actions={[{ label: "Del", onClick: () => deleteCloseoutItem(item.id), variant: "danger" }]} />
                                 </div>
                               </div>
                             )

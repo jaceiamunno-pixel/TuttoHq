@@ -27,6 +27,7 @@ import OverflowMenu, { type OverflowEntry } from "@/components/overflow-menu"
 import BulkImportModal from "@/components/bulk-import/BulkImportModal"
 import AddLogRowModal from "@/components/submittals/AddLogRowModal"
 import { useNavRegion, useFocusTrap } from "@/components/keyboard-nav"
+import { RowActions } from "@/components/RowActions"
 import { SkeletonTable } from "@/components/skeleton"
 import { usePendingAction } from "@/hooks/usePendingAction"
 import { PendingActionToasts } from "@/components/pending-action-toasts"
@@ -3065,44 +3066,24 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                       )}
                     </td>
                     <td className="px-3 py-1.5 whitespace-nowrap">
-                      <div className="flex items-center gap-0.5">
-                        {s.storage_path && (
-                          <>
-                            <button
-                              onClick={() => window.open(`/api/download/${s.id}?stripped=1`, "_blank")}
-                              title="Library view — front matter (Waters cover + architect-stamp page + routing/blanks) auto-stripped. Original is one click away."
-                              className="text-[11px] text-[#64748B] hover:text-[#0F172A] px-1.5 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors">
-                              Open
-                            </button>
-                            <button
-                              onClick={() => window.open(`/api/download/${s.id}`, "_blank")}
-                              title="Original full PDF — Waters coversheet + architect stamp + all content, exactly as uploaded. This is the record-of-truth file."
-                              className="text-[10px] text-[#94A3B8] hover:text-[#475569] px-1 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors">
-                              Original (w/ stamp)
-                            </button>
-                            <button
-                              onClick={() => openRevUpload(s)}
-                              title="Upload a new revision of this document — it is added to the revision history; the file on record stays intact."
-                              className="text-[11px] text-[#7B9BB5] hover:text-[#5A7A94] px-1.5 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors">
-                              Upload Rev
-                            </button>
-                          </>
-                        )}
-                        <button onClick={() => openEditModal(s)} className="text-[11px] text-[#64748B] hover:text-[#0F172A] px-1.5 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors">Edit</button>
-                        <button onClick={() => s.project_id ? openEditCoverSheet(s) : openTransmittal(s)} className="text-[11px] text-[#7B9BB5] px-1.5 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors">Cover</button>
-                        <button onClick={() => handleTransmittal(s, s.submittal_seq ?? 0)} disabled={transmittalLoading && transmittalSub?.id === s.id}
-                          className="text-[11px] text-emerald-700 hover:text-emerald-800 px-1.5 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors disabled:opacity-50 flex items-center gap-1">
-                          {transmittalLoading && transmittalSub?.id === s.id ? <SpinnerIcon className="h-3 w-3" /> : null}Transmit
-                        </button>
-                        {/* Clear = spec rows with a file only (detach the doc,
-                            keep the placeholder). Delete = EVERY row kind —
-                            spec rows are deletable since the 2026-07-17
-                            reversal; the confirm dialog carries the truth. */}
-                        {s.spec_section_id != null && s.storage_path && (
-                          <button onClick={() => openRowDelete(s, "clear")} className="text-[11px] text-[#64748B] hover:text-amber-600 px-1.5 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors" title="Clear the document — the spec log row stays">Clear</button>
-                        )}
-                        <button onClick={() => openRowDelete(s, "delete")} className="text-[11px] text-[#64748B] hover:text-red-400 px-1.5 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors" title={s.spec_section_id != null ? "Delete this row — removes the spec requirement from the log" : "Delete this submittal from the log"}>Delete</button>
-                      </div>
+                      {/* Clear = spec rows with a file only (detach the doc,
+                          keep the placeholder). Delete = EVERY row kind —
+                          spec rows are deletable since the 2026-07-17
+                          reversal; the confirm dialog carries the truth. */}
+                      <RowActions actions={[
+                        ...(s.storage_path ? [
+                          { label: "Open", onClick: () => window.open(`/api/download/${s.id}?stripped=1`, "_blank"), title: "Library view — front matter (Waters cover + architect-stamp page + routing/blanks) auto-stripped. Original is one click away." },
+                          { label: "Original (w/ stamp)", onClick: () => window.open(`/api/download/${s.id}`, "_blank"), title: "Original full PDF — Waters coversheet + architect stamp + all content, exactly as uploaded. This is the record-of-truth file." },
+                          { label: "Upload Rev", onClick: () => openRevUpload(s), title: "Upload a new revision of this document — it is added to the revision history; the file on record stays intact." },
+                        ] : []),
+                        { label: "Edit", onClick: () => openEditModal(s) },
+                        { label: "Cover", onClick: () => s.project_id ? openEditCoverSheet(s) : openTransmittal(s) },
+                        { label: "Transmit", onClick: () => handleTransmittal(s, s.submittal_seq ?? 0), disabled: transmittalLoading && transmittalSub?.id === s.id },
+                        ...(s.spec_section_id != null && s.storage_path ? [
+                          { label: "Clear", onClick: () => openRowDelete(s, "clear"), title: "Clear the document — the spec log row stays" },
+                        ] : []),
+                        { label: "Delete", onClick: () => openRowDelete(s, "delete"), variant: "danger" as const, title: s.spec_section_id != null ? "Delete this row — removes the spec requirement from the log" : "Delete this submittal from the log" },
+                      ]} />
                     </td>
                   </tr>
                   )

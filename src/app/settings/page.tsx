@@ -8,6 +8,7 @@ import { DivisionChecklist, SectionAccordion, isDefaultInScopeDivision } from "@
 import { CSI_DIVISIONS } from "@/app/dashboard/_shared/csi"
 import ProjectSpecBooks from "@/components/project-spec-books"
 import { useNavRegion } from "@/components/keyboard-nav"
+import { RowActions } from "@/components/RowActions"
 import LaborRatesTab from "@/components/labor-rates-tab"
 import BidDefaultsTab from "@/components/bid-defaults-tab"
 import GcTemplateTab from "@/components/gc-template-tab"
@@ -233,22 +234,6 @@ interface ProjectImportRow {
   architect: string
 }
 
-function XIcon({ className = "h-3 w-3" }: { className?: string }) {
-  return (
-    <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-    </svg>
-  )
-}
-
-function PencilIcon() {
-  return (
-    <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536M9 13l6.5-6.5a2.121 2.121 0 013 3L12 16H9v-3z" />
-    </svg>
-  )
-}
-
 function PlusIcon() {
   return (
     <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -363,8 +348,10 @@ function DirectoryPanel<T extends { id: string }>({
                       <td key={c.header} className={ci === 0 ? "px-4 py-2.5 text-[13px] font-medium text-[#0F172A]" : "px-4 py-2.5 text-[12px] text-[#64748B]"}>{c.render(row)}</td>
                     ))}
                     <td className="px-4 py-2.5 text-right whitespace-nowrap">
-                      <button onClick={() => onEdit(row)} className="p-1 rounded text-[#64748B] hover:text-[#0F172A] transition-colors mr-1"><PencilIcon /></button>
-                      <button onClick={() => onDelete(row)} className="p-1 rounded text-[#64748B] hover:text-red-400 transition-colors"><XIcon /></button>
+                      <RowActions actions={[
+                        { label: "Edit", onClick: () => onEdit(row) },
+                        { label: "Delete", onClick: () => onDelete(row), variant: "danger" },
+                      ]} />
                     </td>
                   </tr>
                 ))}
@@ -2403,13 +2390,9 @@ export default function SettingsPage() {
                               </td>
                               <td className="py-2 text-[#64748B]">{new Date(m.joined_at).toLocaleDateString()}</td>
                               <td className="py-2 text-right">
-                                <button
-                                  onClick={() => handleRemoveMember(m)}
-                                  disabled={isOnlyAdmin || busy}
-                                  className="text-[12px] text-red-600 hover:underline disabled:text-[#94A3B8] disabled:no-underline disabled:cursor-not-allowed"
-                                >
-                                  {removingUserId === m.user_id ? "Removing…" : "Remove"}
-                                </button>
+                                <RowActions actions={[
+                                  { label: removingUserId === m.user_id ? "Removing…" : "Remove", onClick: () => handleRemoveMember(m), disabled: isOnlyAdmin || busy, variant: "danger" },
+                                ]} />
                               </td>
                             </tr>
                           )
@@ -2490,19 +2473,11 @@ export default function SettingsPage() {
                           <td className="py-2 text-[#0F172A]">{inv.email}</td>
                           <td className="py-2 text-[#0F172A]">{inv.role}</td>
                           <td className="py-2 text-[#64748B]">{new Date(inv.expires_at).toLocaleDateString()}</td>
-                          <td className="py-2 text-right space-x-3">
-                            <button
-                              onClick={() => copyInviteLink(inv)}
-                              className="text-[12px] text-[#456A88] hover:underline"
-                            >
-                              {copiedInviteId === inv.id ? "Copied!" : "Copy link"}
-                            </button>
-                            <button
-                              onClick={() => handleRevokeInvite(inv.id)}
-                              className="text-[12px] text-red-600 hover:underline"
-                            >
-                              Revoke
-                            </button>
+                          <td className="py-2 text-right">
+                            <RowActions actions={[
+                              { label: copiedInviteId === inv.id ? "Copied!" : "Copy link", onClick: () => copyInviteLink(inv) },
+                              { label: "Revoke", onClick: () => handleRevokeInvite(inv.id), variant: "danger" },
+                            ]} />
                           </td>
                         </tr>
                       ))}
@@ -2708,24 +2683,12 @@ export default function SettingsPage() {
                         <td className="px-5 py-3 text-[13px] font-medium text-[#0F172A]">{m.name}</td>
                         <td className="px-3 py-3 text-[13px] text-[#64748B]">{m.title ?? <span className="text-[#64748B]">—</span>}</td>
                         <td className="px-3 py-3 text-[13px] text-[#64748B]">{m.email ?? <span className="text-[#64748B]">—</span>}</td>
-                        <td className="px-3 py-3">
+                        <td className="px-3 py-3 text-right">
                           {currentRole === "admin" && (
-                            <div className="flex items-center gap-1.5 justify-end opacity-0 group-hover:opacity-100 transition-opacity">
-                              <button
-                                onClick={() => openEditMember(m)}
-                                className="p-1 rounded text-[#64748B] hover:text-[#0F172A] hover:bg-[#F4F5F7]/[0.08] transition-colors"
-                                title="Edit"
-                              >
-                                <PencilIcon />
-                              </button>
-                              <button
-                                onClick={() => deleteMember(m)}
-                                className="p-1 rounded text-[#64748B] hover:text-red-400 hover:bg-[#F4F5F7]/[0.08] transition-colors"
-                                title="Delete"
-                              >
-                                <XIcon className="h-3 w-3" />
-                              </button>
-                            </div>
+                            <RowActions className="opacity-0 group-hover:opacity-100 transition-opacity" actions={[
+                              { label: "Edit", onClick: () => openEditMember(m) },
+                              { label: "Delete", onClick: () => deleteMember(m), variant: "danger" },
+                            ]} />
                           )}
                         </td>
                       </tr>
@@ -3271,24 +3234,12 @@ export default function SettingsPage() {
                             >
                               {scopedProjectIds.has(p.id) ? "Edit scope" : "Set scope"}
                             </button>
-                            <div className="flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                              <button
-                                onClick={() => openEditProject(p)}
-                                className="p-1 rounded text-[#64748B] hover:text-[#0F172A] hover:bg-[#F4F5F7]/[0.08] transition-colors"
-                                title="Edit"
-                              >
-                                <PencilIcon />
-                              </button>
-                              {(currentRole === "admin" || (currentUserId && p.created_by === currentUserId)) && (
-                                <button
-                                  onClick={() => deleteProject(p)}
-                                  className="p-1 rounded text-[#64748B] hover:text-red-400 hover:bg-[#F4F5F7]/[0.08] transition-colors"
-                                  title="Delete"
-                                >
-                                  <XIcon className="h-3 w-3" />
-                                </button>
-                              )}
-                            </div>
+                            <RowActions className="opacity-0 group-hover:opacity-100 transition-opacity" actions={[
+                              { label: "Edit", onClick: () => openEditProject(p) },
+                              ...(currentRole === "admin" || (currentUserId && p.created_by === currentUserId) ? [
+                                { label: "Delete", onClick: () => deleteProject(p), variant: "danger" as const },
+                              ] : []),
+                            ]} />
                           </div>
                         </td>
                       </tr>

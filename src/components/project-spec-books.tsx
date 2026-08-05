@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react"
 import { uploadFileToSignedUrl } from "@/lib/storage-upload"
+import { RowActions } from "./RowActions"
 import type { SpecBookDoc } from "@/app/dashboard/_shared/types"
 import { fmtDate } from "@/app/dashboard/_shared/format"
 import type { ScopeDiagnosis } from "@/lib/scope-types"
@@ -333,33 +334,23 @@ export default function ProjectSpecBooks({ projectId, projectName, onCountChange
                       )}
                     </td>
                     <td className="px-3 py-2.5">
-                      <div className="flex items-center gap-1">
-                        <button
-                          onClick={async () => {
-                            const r = await fetch(`/api/spec-books/${doc.id}/file`)
-                            const d = await r.json()
-                            if (d.url) window.open(d.url, "_blank")
-                          }}
-                          className="text-[11px] font-semibold text-[#64748B] hover:text-[#0F172A] px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors">
-                          View PDF
-                        </button>
-                        {/* Parsed docs get the ADDITIVE ingest (the old
-                            "Re-parse" hit /parse, which early-returns
-                            alreadyParsed — a silent no-op). Unparsed/failed
-                            docs keep the full /parse path. */}
-                        {!isParsing && doc.parse_status === "parsed" ? (
-                          <button onClick={() => runFillMissing(doc.id)} disabled={isFilling}
-                            title="Parse the volume again and ingest ONLY in-scope sections that have no parsed section yet (e.g. sections scoped in after the original parse). Nothing already ingested is touched."
-                            className="text-[11px] font-semibold text-[#7B9BB5] hover:text-[#5A7A94] px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors disabled:opacity-50 whitespace-nowrap">
-                            {isFilling ? "Ingesting…" : "Ingest newly scoped"}
-                          </button>
-                        ) : !isParsing && (
-                          <button onClick={() => runParse(doc.id)} className="text-[11px] font-semibold text-[#7B9BB5] hover:text-[#5A7A94] px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors">
-                            {doc.parse_status === "failed" ? "Retry" : "Parse"}
-                          </button>
-                        )}
-                        <button onClick={() => requestDelete(doc)} className="text-[11px] text-red-400/70 hover:text-red-500 px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors">Delete</button>
-                      </div>
+                      {/* Parsed docs get the ADDITIVE ingest (the old
+                          "Re-parse" hit /parse, which early-returns
+                          alreadyParsed — a silent no-op). Unparsed/failed
+                          docs keep the full /parse path. */}
+                      <RowActions actions={[
+                        { label: "View PDF", onClick: async () => {
+                          const r = await fetch(`/api/spec-books/${doc.id}/file`)
+                          const d = await r.json()
+                          if (d.url) window.open(d.url, "_blank")
+                        } },
+                        ...(!isParsing && doc.parse_status === "parsed" ? [
+                          { label: isFilling ? "Ingesting…" : "Ingest newly scoped", onClick: () => runFillMissing(doc.id), disabled: isFilling, title: "Parse the volume again and ingest ONLY in-scope sections that have no parsed section yet (e.g. sections scoped in after the original parse). Nothing already ingested is touched." },
+                        ] : !isParsing ? [
+                          { label: doc.parse_status === "failed" ? "Retry" : "Parse", onClick: () => runParse(doc.id) },
+                        ] : []),
+                        { label: "Delete", onClick: () => requestDelete(doc), variant: "danger" },
+                      ]} />
                     </td>
                   </tr>
                 )

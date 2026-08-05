@@ -5,6 +5,7 @@ import type { Project, SupplierContract, PurchaseOrder, Vendor } from "../_share
 import { PlusIcon, SpinnerIcon, XIcon } from "../_shared/icons"
 import { inputCls, labelCls } from "../_shared/ui"
 import { VendorPicker } from "../_shared/vendor-picker"
+import { RowActions } from "@/components/RowActions"
 
 // Commitments view — the contract→release-order drawdown structure. Supplier
 // contracts are the PARENT rows; the POs released against each (parent_commitment_id
@@ -242,10 +243,10 @@ export default function CommitmentsView({ globalProjectId }: {
                       <p className="text-[13px] font-bold text-[#0F172A] truncate" title={c.to_company_name}>{c.to_company_name}</p>
                       {c.cost_code && <p className="text-[11px] text-[#64748B] mt-0.5">Cost code {c.cost_code}</p>}
                     </div>
-                    <div className="flex items-center gap-1 flex-shrink-0">
-                      <button onClick={() => openEdit(c)} className="text-[11px] text-[#64748B] hover:text-[#0F172A] px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors">Edit</button>
-                      <button onClick={() => deleteContract(c.id)} className="text-[11px] text-red-400/60 hover:text-red-400 px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors">Del</button>
-                    </div>
+                    <RowActions className="flex-shrink-0" actions={[
+                      { label: "Edit", onClick: () => openEdit(c) },
+                      { label: "Del", onClick: () => deleteContract(c.id), variant: "danger" },
+                    ]} />
                   </div>
 
                   {/* Drawdown band — all three numbers from commitment_balances */}

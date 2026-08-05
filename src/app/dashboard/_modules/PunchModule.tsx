@@ -8,6 +8,7 @@ import { PunchStatusBadge, PunchPriorityBadge } from "../_shared/badges"
 import { inputCls, labelCls } from "../_shared/ui"
 import { presignAndUpload } from "@/lib/storage-upload"
 import { useNavRegion, useFocusTrap } from "@/components/keyboard-nav"
+import { RowActions } from "@/components/RowActions"
 
 // Punch List module — extracted verbatim from dashboard/page.tsx (Step 3 of the split).
 // State, handlers, photo sub-system, action bar, content, and both modals are
@@ -220,14 +221,11 @@ export default function PunchModule({ globalProjectId, appProjects }: {
                         <td className="px-4 py-2.5"><PunchPriorityBadge priority={p.priority} /></td>
                         <td className="px-4 py-2.5"><PunchStatusBadge status={p.status} /></td>
                         <td className="px-4 py-2.5">
-                          <button data-nav-primary onClick={() => { setViewPunch(p); setPunchEditStatus(p.status); setPunchEditNotes(p.notes ?? "") }}
-                            className="text-[11px] text-[#64748B] hover:text-[#0F172A] px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors">
-                            Edit
-                          </button>
-                          <button onClick={() => generatePunchPdf(p.id)} disabled={punchGeneratingPdf}
-                            className="text-[11px] text-[#7B9BB5] hover:text-[#7B9BB5] px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors disabled:opacity-50">PDF</button>
-                          <button onClick={e => { e.stopPropagation(); deletePunchItem(p.id) }}
-                            className="text-[11px] text-red-400 hover:text-red-300 px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors">Del</button>
+                          <RowActions actions={[
+                            { label: "Edit", navPrimary: true, onClick: () => { setViewPunch(p); setPunchEditStatus(p.status); setPunchEditNotes(p.notes ?? "") } },
+                            { label: "PDF", onClick: () => generatePunchPdf(p.id), disabled: punchGeneratingPdf },
+                            { label: "Del", onClick: e => { e.stopPropagation(); deletePunchItem(p.id) }, variant: "danger" },
+                          ]} />
                         </td>
                       </tr>
                     )

@@ -6,6 +6,7 @@ import { PlusIcon, SpinnerIcon, XIcon } from "../_shared/icons"
 import { inputCls, labelCls } from "../_shared/ui"
 import { VendorPicker } from "../_shared/vendor-picker"
 import { useNavRegion, useFocusTrap } from "@/components/keyboard-nav"
+import { RowActions } from "@/components/RowActions"
 import { SkeletonTable } from "@/components/skeleton"
 
 // Purchase Orders module — replaces the old Commitments nav entry. The list is
@@ -418,11 +419,11 @@ export default function PurchaseOrdersModule({ appProjects, globalProjectId }: {
                       <td className={`px-4 py-2.5 text-[12px] tabular-nums font-medium ${(po.remaining_balance ?? 0) < 0 ? "text-amber-700" : "text-[#0F172A]"}`}>{usd0(po.remaining_balance ?? po.contract_value ?? 0)}</td>
                       <td className="px-4 py-2.5">{statusBadge(po.status)}</td>
                       <td className="px-4 py-2.5">
-                        <div className="flex items-center gap-1">
-                          <button data-nav-primary onClick={() => openEdit(po)} className="text-[11px] text-[#64748B] hover:text-[#0F172A] px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors">Edit</button>
-                          <button onClick={() => generatePdf(po.id)} className="text-[11px] text-[#7B9BB5] hover:text-[#5A7A94] px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors">PDF</button>
-                          <button onClick={() => deletePO(po.id)} className="text-[11px] text-red-400/60 hover:text-red-400 px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors">Del</button>
-                        </div>
+                        <RowActions actions={[
+                          { label: "Edit", navPrimary: true, onClick: () => openEdit(po) },
+                          { label: "PDF", onClick: () => generatePdf(po.id) },
+                          { label: "Del", onClick: () => deletePO(po.id), variant: "danger" },
+                        ]} />
                       </td>
                     </tr>
                   ))}
