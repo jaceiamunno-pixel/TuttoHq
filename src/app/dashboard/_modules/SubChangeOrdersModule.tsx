@@ -1,6 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useRef, useState } from "react"
+import { RowActions } from "@/components/RowActions"
 import { VendorPicker } from "../_shared/vendor-picker"
 import type { Project, SubChangeOrder, Vendor } from "../_shared/types"
 
@@ -370,19 +371,13 @@ export default function SubChangeOrdersModule({
                     {sco.status}
                   </span>
                 </td>
-                <td className="px-3 py-2">
-                  <div className="flex items-center justify-end gap-2 whitespace-nowrap">
-                    <button className="text-blue-600 hover:underline" onClick={() => openEdit(sco)}>Edit</button>
-                    <button
-                      className="text-blue-600 hover:underline disabled:opacity-50"
-                      disabled={pdfBusyId === sco.id}
-                      onClick={() => generatePdf(sco.id)}
-                    >
-                      {pdfBusyId === sco.id ? "Generating…" : "Generate PDF"}
-                    </button>
-                    <button className="text-blue-600 hover:underline" onClick={() => sendViaEmail(sco)}>Send via Email</button>
-                    <button className="text-red-600 hover:underline" onClick={() => del(sco)}>Delete</button>
-                  </div>
+                <td className="px-3 py-2 text-right">
+                  <RowActions actions={[
+                    { label: "Edit", onClick: () => openEdit(sco) },
+                    { label: pdfBusyId === sco.id ? "Generating…" : "Generate PDF", onClick: () => generatePdf(sco.id), disabled: pdfBusyId === sco.id },
+                    { label: "Send via Email", onClick: () => sendViaEmail(sco) },
+                    { label: "Delete", onClick: () => del(sco), variant: "danger" },
+                  ]} />
                 </td>
               </tr>
             ))}

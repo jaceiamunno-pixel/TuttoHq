@@ -8,6 +8,7 @@ import { RfqStatusBadge } from "../_shared/badges"
 import { inputCls, labelCls } from "../_shared/ui"
 import { VendorPicker } from "../_shared/vendor-picker"
 import { presignAndUpload } from "@/lib/storage-upload"
+import { RowActions } from "@/components/RowActions"
 import { SkeletonTable } from "@/components/skeleton"
 
 // RFQ (Bid Requests) module — ADR-016 v1a (manual). Package spec sections +
@@ -145,10 +146,10 @@ export default function RfqModule({ globalProjectId, appProjects }: {
                       </td>
                       <td className="px-4 py-2.5"><RfqStatusBadge status={r.status} /></td>
                       <td className="px-4 py-2.5" onClick={e => e.stopPropagation()}>
-                        <div className="flex items-center gap-1">
-                          <button onClick={() => setOpenId(r.id)} className="text-[11px] text-[#64748B] hover:text-[#0F172A] px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors">Open</button>
-                          <button onClick={() => deleteRfq(r.id)} className="text-[11px] text-red-400/60 hover:text-red-400 px-2 py-1 rounded hover:bg-[#0F172A]/[0.04] transition-colors">Del</button>
-                        </div>
+                        <RowActions actions={[
+                          { label: "Open", onClick: () => setOpenId(r.id) },
+                          { label: "Del", onClick: () => deleteRfq(r.id), variant: "danger" },
+                        ]} />
                       </td>
                     </tr>
                   )

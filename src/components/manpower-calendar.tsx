@@ -1,6 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useState } from "react"
+import { RowActions } from "./RowActions"
 
 // ── Manpower month calendar (Phase 4) ───────────────────────────────────────
 // One shared month-grid component for BOTH manpower surfaces:
@@ -429,7 +430,7 @@ export default function ManpowerCalendar({ projectId }: { projectId?: string }) 
                 <span className="text-[13px] text-[#64748B] truncate">
                   {assigneeLabel(a)} · {dateHeader(a.work_date)}{companyWide ? ` · ${projectName(a.project_id)}` : ""}
                 </span>
-                <button onClick={() => restore(a)} className="text-[12px] font-semibold text-[#456A88] hover:text-[#2F4D66] whitespace-nowrap">Restore</button>
+                <RowActions actions={[{ label: "Restore", onClick: () => restore(a) }]} />
               </li>
             ))}
           </ul>

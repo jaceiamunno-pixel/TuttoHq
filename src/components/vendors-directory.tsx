@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react"
 import VendorImportModal from "./vendor-import-modal"
+import { RowActions } from "./RowActions"
 
 // Unified Vendors directory (Settings → Directories → Vendors). Replaces the
 // former separate Subcontractors and Suppliers panels — one list over the
@@ -250,8 +251,10 @@ export default function VendorsDirectory({ switcher }: { switcher: React.ReactNo
                             <td className="px-4 py-2.5 text-[12px] text-[#64748B]">{v.trade || v.specialty || "—"}</td>
                             <td className="px-4 py-2.5 text-[12px] text-[#64748B]">{v.contact_name ?? "—"}</td>
                             <td className="px-4 py-2.5 text-right whitespace-nowrap">
-                              <button onClick={() => openEdit(v)} className="p-1 rounded text-[#64748B] hover:text-[#0F172A] transition-colors mr-1"><PencilIcon /></button>
-                              <button onClick={() => deleteVendor(v)} className="p-1 rounded text-[#64748B] hover:text-red-400 transition-colors"><XIcon /></button>
+                              <RowActions actions={[
+                                { label: "Edit", onClick: () => openEdit(v) },
+                                { label: "Delete", onClick: () => deleteVendor(v), variant: "danger" },
+                              ]} />
                             </td>
                           </tr>
                         )

@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react"
 import { fmtDate } from "@/app/dashboard/_shared/format"
+import { RowActions } from "@/components/RowActions"
 
 // ── Equipment Inventory (ADR-018) ───────────────────────────────────────────
 // Company-scoped catalog + checkout. Counts (owned / checked_out / available)
@@ -341,19 +342,13 @@ function ItemDetail({ itemId, item, onBack, onCountsChanged }: {
                       <p className="text-[12px] text-green-700 mt-0.5">Available</p>
                     )}
                   </div>
-                  <div className="flex items-center gap-2 flex-shrink-0">
-                    {out ? (
-                      <button onClick={() => checkIn(u)} disabled={busy} className="h-8 px-3 rounded-md bg-[#7B9BB5] text-white text-[12px] font-semibold hover:bg-[#6A8AA4] disabled:opacity-50">
-                        {busy ? "…" : "Check in"}
-                      </button>
-                    ) : (
-                      <button onClick={() => setCheckoutUnit(u)} disabled={busy} className="h-8 px-3 rounded-md bg-[#7B9BB5] text-white text-[12px] font-semibold hover:bg-[#6A8AA4] disabled:opacity-50">
-                        Check out
-                      </button>
-                    )}
-                    <button onClick={() => setEditUnit(u)} className="h-8 px-2.5 rounded-md border border-[#E2E8F0] text-[12px] font-semibold text-[#0F172A] hover:bg-[#F8FAFC]">Edit</button>
-                    <button onClick={() => retire(u)} disabled={busy} className="h-8 px-2.5 rounded-md text-[12px] font-semibold text-red-500 hover:text-red-600 disabled:opacity-50">Retire</button>
-                  </div>
+                  <RowActions className="flex-shrink-0" actions={[
+                    out
+                      ? { label: busy ? "…" : "Check in", onClick: () => checkIn(u), disabled: busy }
+                      : { label: "Check out", onClick: () => setCheckoutUnit(u), disabled: busy },
+                    { label: "Edit", onClick: () => setEditUnit(u) },
+                    { label: "Retire", onClick: () => retire(u), disabled: busy, variant: "danger" },
+                  ]} />
                 </div>
               )
             })}

@@ -11,6 +11,7 @@ import { DrawingStatusBadge } from "../_shared/badges"
 import { inputCls, labelCls } from "../_shared/ui"
 import { presignAndUpload } from "@/lib/storage-upload"
 import { useNavRegion } from "@/components/keyboard-nav"
+import { RowActions } from "@/components/RowActions"
 import { SkeletonGrid } from "@/components/skeleton"
 import type { MarkupDoc } from "@/lib/drawing-markup"
 import dynamic from "next/dynamic"
@@ -629,19 +630,16 @@ export default function DrawingsModule({ globalProjectId, appProjects, readOnly 
                                     ? <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-[#EEF2F6] text-[#475569] text-[10px] font-semibold">{s.revision_label}</span>
                                     : <span className="text-[#CBD5E1]">—</span>}
                                 </td>
-                                <td className="px-3 py-2" onClick={e => e.stopPropagation()}>
-                                  <div className="flex items-center justify-end gap-3 whitespace-nowrap text-[#94A3B8]">
-                                    <button data-nav-primary onClick={() => openSheetViewer(s)} className="hover:text-[#5A7A94] group-hover:text-[#7B9BB5] font-medium transition-colors">View</button>
-                                    {!readOnly && <button onClick={() => triggerAddRevision(s.id)} disabled={addingRevId === s.id} className="hover:text-[#5A7A94] group-hover:text-[#7B9BB5] font-medium disabled:opacity-50 transition-colors">{addingRevId === s.id ? "Adding…" : "Add rev"}</button>}
-                                    <button onClick={() => toggleRevHistory(s.id)} className="hover:text-[#5A7A94] group-hover:text-[#7B9BB5] font-medium transition-colors">{revHistoryFor === s.id ? "Hide" : "Revs"}</button>
-                                    {!readOnly && (
-                                    <>
-                                    <button onClick={() => startEditSheet(s)} className="hover:text-[#5A7A94] group-hover:text-[#7B9BB5] font-medium transition-colors">Edit</button>
-                                    <span className="text-[#E2E8F0]">|</span>
-                                    <button onClick={() => softDeleteSheet(s)} className="hover:text-red-500 group-hover:text-red-400 font-medium transition-colors">Delete</button>
-                                    </>
-                                    )}
-                                  </div>
+                                <td className="px-3 py-2 text-right" onClick={e => e.stopPropagation()}>
+                                  <RowActions actions={[
+                                    { label: "View", navPrimary: true, onClick: () => openSheetViewer(s) },
+                                    ...(!readOnly ? [{ label: addingRevId === s.id ? "Adding…" : "Add rev", onClick: () => triggerAddRevision(s.id), disabled: addingRevId === s.id }] : []),
+                                    { label: revHistoryFor === s.id ? "Hide" : "Revs", onClick: () => toggleRevHistory(s.id) },
+                                    ...(!readOnly ? [
+                                      { label: "Edit", onClick: () => startEditSheet(s) },
+                                      { label: "Delete", onClick: () => softDeleteSheet(s), variant: "danger" as const },
+                                    ] : []),
+                                  ]} />
                                 </td>
                               </tr>
                               {revHistoryFor === s.id && (
@@ -760,7 +758,7 @@ export default function DrawingsModule({ globalProjectId, appProjects, readOnly 
                                 {s.days_remaining != null ? `${s.days_remaining} day${s.days_remaining === 1 ? "" : "s"} left` : "—"}
                               </td>
                               <td className="px-3 py-1.5 text-right">
-                                <button onClick={() => restoreSheet(s)} className="text-[#5A7A94] hover:text-[#3F5A70] font-semibold">Restore</button>
+                                <RowActions actions={[{ label: "Restore", onClick: () => restoreSheet(s) }]} />
                               </td>
                             </tr>
                           ))}
