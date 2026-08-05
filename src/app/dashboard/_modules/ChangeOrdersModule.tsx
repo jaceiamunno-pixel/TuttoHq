@@ -506,10 +506,10 @@ export default function ChangeOrdersModule({ globalProjectId, appProjects }: {
                                 ...(c.has_pco_detail && !imported ? [{ label: "Edit", onClick: () => setEditPcoId(c.id) }] : []),
                                 { label: "View", navPrimary: true, onClick: () => { setViewCo(c); setCoResponseStatus(c.status); setCoAssignedTo(c.assigned_to ?? ""); setCoAssignedCoNumber(c.assigned_co_number ?? ""); setCoRespAmount(c.pricing_sum != null ? String(c.pricing_sum) : ""); setCoRespRealized(c.realized_amount != null ? String(c.realized_amount) : "") } },
                                 ...(c.has_pco_detail ? [
-                                  { label: "Cover sheet", onClick: () => openPcoPdf(c.id, "cover"), disabled: pdfBusy },
-                                  { label: "Pricing backup", onClick: () => openPcoPdf(c.id, "backup"), disabled: pdfBusy },
+                                  { label: "Cover", onClick: () => openPcoPdf(c.id, "cover"), disabled: pdfBusy, title: "Cover sheet" },
+                                  { label: "Pricing", onClick: () => openPcoPdf(c.id, "backup"), disabled: pdfBusy, title: "Pricing backup" },
                                 ] : [
-                                  { label: "Generate PDF", onClick: () => generateCoPdf(c.id), disabled: coGeneratingPdf },
+                                  { label: "PDF", onClick: () => generateCoPdf(c.id), disabled: coGeneratingPdf, title: "Generate PDF" },
                                 ]),
                                 ...(!imported ? [{ label: "Delete", onClick: () => deleteCo(c.id), variant: "danger" as const }] : []),
                               ]} />
