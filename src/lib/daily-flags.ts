@@ -21,5 +21,7 @@ export const DAILY_0050_LIVE = true
 // fetch runs on create, and the composer hides the "Labor on Site" section —
 // the app deploys safely against the pre-0051 schema. The read side needs no
 // gate: detail + PDF render weather/labor only when the row carries them.
-// Flip to true after 0051 has run and the columns are verified.
-export const DAILY_0051_LIVE = false
+//
+// Flipped to true 2026-08-05: 0051 verified LIVE in prod (weather jsonb +
+// labor_notes present, confirmed via introspection).
+export const DAILY_0051_LIVE = true
