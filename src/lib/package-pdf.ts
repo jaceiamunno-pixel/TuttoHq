@@ -1,8 +1,7 @@
 import { PDFDocument } from "pdf-lib"
 import { randomUUID } from "node:crypto"
 import { createClient as createServiceClient, type SupabaseClient } from "@supabase/supabase-js"
-import { PDFBuilder } from "./pdf-builder"
-import { buildCoversheetPdf, SUBMITTAL_REVIEW_LANGUAGE, type CoversheetReviewer } from "./coversheet-pdf"
+import { buildCoversheetPdf, type CoversheetReviewer } from "./coversheet-pdf"
 import type { SubmittalCoversheetProps } from "@/components/submittals/SubmittalCoversheet"
 import { normalizeSubmittalTitle } from "./title-normalize"
 import { formatSectionNumber, padSectionSeq } from "./section-number"
@@ -13,14 +12,18 @@ import { transmittalItemFileName, transmittalPackageBaseName } from "./package-n
 // documents and sends them upstream (to the CM / A/E) or to a subcontractor,
 // from their own email client. It is NOT a solicitation — no spec-book pages.
 //
-// Two coversheet modes, which produce DIFFERENT NUMBERS OF FILES:
-//   MODE 'package'  — ONE PDF: a single transmittal list cover (carrying the
-//                     GC's reviewer stamp) then every document appended RAW, in
-//                     order. One stamp for the whole transmittal, no per-item
-//                     coversheets.
+// BOTH coversheet modes print the SAME "Submittal Coversheet" template, from the
+// one shared renderer (buildCoversheetPdf in ./coversheet-pdf). They differ ONLY
+// in how many files come out:
+//   MODE 'package'  — ONE merged PDF: each item's stamped coversheet followed by
+//                     that item's document, repeated in order
+//                     ([cover 1][doc 1][cover 2][doc 2] …).
 //   MODE 'per_item' — N PDFs, one per submittal: that item's stamped coversheet
 //                     followed by that item's document. A 'per_item' generation
 //                     is a SET of separate files, never a single merged PDF.
+// The separate "Submittal Transmittal" list cover (Sent To + ITEMS table + one
+// package-level stamp) is RETIRED from package output; it survives only at
+// /api/transmittal/[id], the Send-via-Email per-submittal transmittal record.
 //
 // Generations are append-only: each call to generateTransmittalPackage writes a
 // fresh set of files under a new generation_id and inserts one
@@ -39,7 +42,8 @@ type AnySupabase = SupabaseClient<any, any, any>
 export type RecipientType = "cm" | "ae" | "subcontractor"
 export type CoversheetMode = "per_item" | "package"
 
-/** Short recipient label printed on the package cover + stored on the row. */
+/** Short recipient label stored on the row / shown in package UI. No longer
+ *  printed on any cover — the retired list cover was its only render site. */
 export const RECIPIENT_LABEL: Record<RecipientType, string> = {
   cm: "Construction Manager",
   ae: "Architect / Engineer",
@@ -84,13 +88,17 @@ export interface TransmittalPdfInput {
   logoBytes: ArrayBuffer | null
   logoScalePct?: number | null
   items: ResolvedItem[]
-  /** Recipient printed in the list cover's "Sent To" field. Resolved by the
-   *  caller (per-package override → project.cm_name); when null/empty the cover
-   *  falls back to RECIPIENT_LABEL[recipientType]. 'package' mode only. */
+  /** Resolved recipient (per-package override → project.cm_name). NO LONGER
+   *  RENDERED: the retired list cover's "Sent To" field was its only print site,
+   *  and the Submittal Coversheet template has no equivalent. Kept on the input
+   *  because callers still resolve and persist it on the package row (the
+   *  packages UI reads it) — the composer simply does not draw it. */
   sentTo?: string | null
-  /** The GC's reviewer stamp for the WHOLE transmittal, drawn on the list cover
-   *  ('package' mode). Same identity as the per-item stamps (one company, one
-   *  reviewer); submittalNo is blank (it's the whole transmittal). */
+  /** The GC's package-level reviewer stamp (submittalNo blank). NO LONGER
+   *  RENDERED: it was drawn once on the retired list cover. Each item's
+   *  coversheet now carries its OWN stamp via ResolvedItem.reviewer, which
+   *  names the item's submittal number. Kept on the input for shape stability;
+   *  the composer ignores it. */
   reviewer: CoversheetReviewer | null
 }
 
@@ -114,84 +122,56 @@ async function appendInto(merged: PDFDocument, bytes: ArrayBuffer | Uint8Array |
 }
 
 /**
- * Build the transmittal-package file(s) from already-resolved inputs.
- *   'package'  → a single-element array (the merged package PDF).
+ * Build the transmittal-package file(s) from already-resolved inputs. Both modes
+ * print the same per-item Submittal Coversheet via the shared buildCoversheetPdf.
+ *   'package'  → a single-element array (the merged package PDF), or [] when
+ *                there are no items at all (callers treat that as "nothing to
+ *                assemble" rather than emitting a page-less PDF).
  *   'per_item' → one element per item that has a resolvable document.
  */
 export async function buildTransmittalPackageFiles(input: TransmittalPdfInput): Promise<TransmittalFile[]> {
   const generationDate = new Date(`${input.sendDate}T00:00:00`)
 
   if (input.coversheetMode === "package") {
-    // ── MODE 'package': ONE transmittal list cover (carrying the GC's reviewer
-    //    stamp), then every document appended RAW, in order → 1 PDF:
-    //      [list cover w/ stamp] [doc 1] [doc 2] [doc 3] …
-    //    No per-item coversheets — one stamp for the whole transmittal. ───────
-    // The internal tracking ref ([TTQ-…]) is deliberately NOT printed on the
-    // cover (it survives only as the DB id + the file name); so no
-    // documentNumber in the header and no "Tracking Ref" field below.
-    const pdf = await PDFBuilder.create({
-      documentType: "Submittal Transmittal",
-      generationDate,
-      logoBytes: input.logoBytes,
-      logoScalePct: input.logoScalePct ?? undefined,
-      brandName: input.gcName,
-    })
-
-    pdf.projectBlock({
-      name: input.project.name,
-      number: input.project.number,
-      location: input.project.location,
-      gc_name: input.project.gc_name,
-      architect: input.project.architect,
-    })
-
-    pdf.sectionDivider("Transmittal")
-    // "Sent To" is the real recipient (per-package override → project.cm_name),
-    // falling back to the generic recipient-type label when neither is set.
-    const sentTo = (input.sentTo && input.sentTo.trim()) || RECIPIENT_LABEL[input.recipientType]
-    pdf.fieldGrid([
-      [
-        { label: "Sent To", value: sentTo },
-        { label: "Date", value: fmtDate(input.sendDate) },
-      ],
-      [
-        { label: "Items", value: String(input.items.length) },
-      ],
-    ])
-
-    pdf.sectionDivider("Items")
-    const listW = [46, 90, 305, 85] // = 526 (PDF.contentW)
-    pdf.table(
-      ["#", "Spec #", "Description", "Type"],
-      input.items.map(it => [
-        padSectionSeq(it.sectionSeq),
-        it.specNumber || "—",
-        it.description || "—",
-        it.submittalType || "—",
-      ]),
-      listW,
-    )
-
-    // The GC's reviewer stamp for the whole transmittal — drawn in the SAME 2×2
-    // stamp grid the per-item library coversheet uses (stampGrid): OUR reviewer
-    // stamp fills the first cell, with empty bordered "Architect / Engineer /
-    // Subcontractor" placeholder cells for the downstream reviewers to stamp +
-    // mark a disposition. Passing no `stamps` yields stampGrid's default four
-    // roles (GC → Architect → Engineer → Subcontractor); the package-level
-    // reviewer identity has submittalNo blank (it stamps the whole transmittal).
-    // stampGrid page-breaks the whole grid onto a fresh page if a long items
-    // table left too little room, so it never overlaps the table or footer.
-    if (input.reviewer) {
-      pdf.stampGrid(undefined, { ...input.reviewer, reviewText: SUBMITTAL_REVIEW_LANGUAGE })
-    }
+    // ── MODE 'package': ONE merged PDF, but every item now carries its OWN
+    //    "Submittal Coversheet" — the SAME shared renderer (buildCoversheetPdf)
+    //    'per_item' uses — immediately ahead of that item's document:
+    //      [cover 1] [doc 1] [cover 2] [doc 2] [cover 3] [doc 3] …
+    //
+    //    The old "Submittal Transmittal" list cover (GC/Architect row, Sent To,
+    //    ITEMS table, and the single package-level 2×2 stamp grid) is RETIRED
+    //    from package output. The two modes now render an IDENTICAL cover per
+    //    item from one template and differ only in file count: 'package' = 1
+    //    merged PDF, 'per_item' = N separate PDFs. Note this SUPERSEDES #124 /
+    //    #125, which fixed the party stamp grid ON that list cover — every item's
+    //    coversheet already renders the same 2×2 grid via buildCoversheetPdf, so
+    //    the downstream Architect/Engineer/Subcontractor stamp boxes those PRs
+    //    restored are still present, now once per item instead of once per
+    //    package. The transmittal template itself still lives on at
+    //    /api/transmittal/[id] (the Send-via-Email record) — this only stops the
+    //    package composer from drawing it.
+    //
+    //    Every cover is stamped with the package's send date (generationDate)
+    //    so the "Generated <date>" footer reads consistently down the whole
+    //    merged document — the same date the retired list cover carried.
+    if (input.items.length === 0) return []
 
     const merged = await PDFDocument.create()
-    await appendInto(merged, await pdf.save())
-    // Each document appended RAW behind the single cover. appendInto already
-    // skips null bytes (a missing document — already warned in the compose step)
-    // and swallows an unreadable file in a try/catch, so one bad document
-    // contributes nothing but never fails the whole package.
-    for (const it of input.items) await appendInto(merged, it.documentBytes)
+    for (const it of input.items) {
+      // Every item gets a cover, INCLUDING one whose document is missing (that
+      // case is already warned in the compose step) — the cover is the item's
+      // record within the transmittal. This also keeps the cover-only PREVIEW
+      // working: it resolves with withDocuments:false, so every documentBytes
+      // is null and this loop yields exactly the N covers to preview.
+      const coverBytes = await buildCoversheetPdf(
+        it.coversheet, input.logoBytes, it.reviewer, input.logoScalePct ?? undefined, generationDate,
+      )
+      await appendInto(merged, coverBytes)
+      // appendInto skips null bytes and swallows an unreadable file in a
+      // try/catch, so one bad document contributes nothing but never fails the
+      // whole package.
+      await appendInto(merged, it.documentBytes)
+    }
 
     // Single-PDF name reads like the artifact it is, e.g.
     // "Submittal Transmittal - Construction Manager - 2026-07-10.pdf".
@@ -288,7 +268,10 @@ export interface ResolvedPackage {
   logoScalePct: number | null | undefined
   items: ResolvedItem[]
   /** The GC's package-level reviewer stamp (one identity for the whole
-   *  transmittal; submittalNo blank). Drawn on the 'package' list cover. */
+   *  transmittal; submittalNo blank). No longer drawn on any cover — the
+   *  'package' list cover that carried it is retired; per-item stamps
+   *  (ResolvedItem.reviewer) are what print now. Still returned so callers
+   *  keep a resolved package-level identity available. */
   reviewer: CoversheetReviewer
   warnings: string[]
 }
@@ -444,10 +427,11 @@ export async function resolvePackageItems(
     })
   }
 
-  // Package-level reviewer stamp for the 'package' list cover — the GC's stamp on
-  // the whole transmittal. Same company + reviewer as every per-item stamp (one
-  // caller, one company); submittalNo is blank (this stamps the transmittal, not
-  // one submittal, so drawReviewerStamp omits that row).
+  // Package-level reviewer identity — the GC's stamp for the whole transmittal.
+  // Same company + reviewer as every per-item stamp (one caller, one company);
+  // submittalNo is blank (it identifies the transmittal, not one submittal).
+  // NOT rendered any more: the 'package' list cover that drew it is retired, and
+  // each item's coversheet now carries its own per-item stamp instead.
   const reviewer: CoversheetReviewer = {
     company: stampCompanyName,
     projectName: project.name ?? "",
