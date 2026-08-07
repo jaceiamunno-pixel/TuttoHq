@@ -138,13 +138,6 @@ export default function DailyModule({ globalProjectId, appProjects, teamMembers,
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { loadDaily() }, [globalProjectId])
 
-  // Pre-select the current global project when the composer opens for a
-  // fresh draft. A restored draft keeps whatever project it had.
-  useEffect(() => {
-    if (composerMode === "new" && !draftId) patch({ project_id: globalProjectId })
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [composerMode, globalProjectId, draftId])
-
   // ── Draft restore ──────────────────────────────────────────────────────
   // On mount, rehydrate an active draft from IDB and pop the composer so
   // the user lands on exactly what they had before the refresh / restart.
@@ -238,7 +231,12 @@ export default function DailyModule({ globalProjectId, appProjects, teamMembers,
       if (typeof window !== "undefined") {
         window.localStorage.setItem(ACTIVE_DAILY_DRAFT_KEY, id)
       }
-      putDailyDraft({ id, createdAt: now, updatedAt: now, fields: {} })
+      // The draft is born knowing its project: the active project id is
+      // stamped into the fields bag at mint time, so the offline sync path
+      // posts to the right project even if the user navigates elsewhere
+      // before reconnect. A restored draft keeps its stored project_id.
+      patch({ project_id: globalProjectId })
+      putDailyDraft({ id, createdAt: now, updatedAt: now, fields: { project_id: globalProjectId } })
         .catch(err => console.error("[daily draft] mint failed", err))
     }
     if (prefill) patch(prefill)
@@ -509,7 +507,11 @@ export default function DailyModule({ globalProjectId, appProjects, teamMembers,
    *  headcount overwrites manpower_count for back-compat readers. */
   function formToFields(): Record<string, string> {
     const bag: Record<string, string> = {
-      report_date: form.report_date, project_id: form.project_id, prepared_by: form.prepared_by,
+      // The module is locked to the route's project — there is no picker.
+      // form.project_id carries the draft's stored id (stamped at mint, or
+      // restored from IDB); the fallback covers drafts minted before the
+      // stamp existed. Opaque string — legacy rows are not UUIDs.
+      report_date: form.report_date, project_id: form.project_id || globalProjectId, prepared_by: form.prepared_by,
       weather_conditions: form.weather_conditions, temperature: form.temperature,
       manpower_count: form.manpower_count, work_performed: form.work_performed,
       equipment: form.equipment, materials_delivered: form.materials_delivered,
@@ -608,7 +610,7 @@ export default function DailyModule({ globalProjectId, appProjects, teamMembers,
       setDraftCreatedAt(0)
       setDraftPhotos([])
       setComposerMode("closed")
-      setForm(emptyDailyForm(""))
+      setForm(emptyDailyForm(globalProjectId))
       if (dailyFileRef.current) dailyFileRef.current.value = ""
 
       loadDaily()
@@ -665,6 +667,10 @@ export default function DailyModule({ globalProjectId, appProjects, teamMembers,
     const serverIds = new Set(dailyReports.map(r => r.id))
     const pendingAsReports: DailyReport[] = pendingReports
       .filter(p => !serverIds.has(p.id))
+      // Reads are project-locked, mirroring the server's eq(project_id)
+      // filter: a pending row queued under another project stays out of
+      // this project's list (it syncs to its own stored project_id).
+      .filter(p => (p.fields.project_id ?? "") === globalProjectId)
       .map(p => ({
         id:                 p.id,
         report_date:        p.fields.report_date ?? "",
@@ -688,7 +694,7 @@ export default function DailyModule({ globalProjectId, appProjects, teamMembers,
         file_name:          p.fields.file_name || null,
       }))
     return [...pendingAsReports, ...dailyReports]
-  }, [pendingReports, dailyReports])
+  }, [pendingReports, dailyReports, globalProjectId])
 
   // Photo-count badges: server counts + local photos still pending sync.
   const displayPhotoCounts = useMemo(() => {
@@ -891,7 +897,6 @@ export default function DailyModule({ globalProjectId, appProjects, teamMembers,
           mode={composerMode}
           form={form}
           patch={patch}
-          appProjects={appProjects}
           teamMembers={teamMembers}
           projectLocation={projectLocation}
           canEdit={canEdit}
