@@ -16,6 +16,7 @@ import type { SubmittalRecord, VendorRow, VendorPersonRow, ChangeOrder } from ".
 import { SECTION_PALETTE_HEX_THP } from "./csi"
 import { computeCoTotals } from "./co-math"
 import { padSectionSeq } from "@/lib/section-number"
+import { fmtDate } from "./format"
 
 // Light-gray cell border applied to every header/data/buffer cell in cols A-N.
 // Required because the section-tint and status fills render *over* Excel's
@@ -64,6 +65,7 @@ function buildColumns(companyShort: string): ColDef[] {
     { header: "LEAD TIME",                  width: 16   },
     { header: "SOURCE",                     width: 12   },
     { header: "ACTIONS",                    width: 10   },
+    { header: "ATTACHMENT",                 width: 42   },
   ]
 }
 
@@ -81,6 +83,7 @@ const COL_LATE   = 12
 const COL_LEAD   = 13
 const COL_SOURCE = 14
 const COL_OPEN   = 15
+const COL_ATTACH = 16
 
 // Helper cell layout — parks the NOW() / today-minus-14 cells in the wasted
 // space past the merged A1:L2 title (cols P/R/S, rows 1-2) so they can never
@@ -150,6 +153,57 @@ function sectionColorMapTHP(sectionCodes: (string | null | undefined)[]): Map<st
   return map
 }
 
+// ─── Attachment links (GET /api/submittals/export-attachments) ─────────────
+// RLS-scoped submittal + revision rows plus one 10-year signed URL per unique
+// storage path. The submittal set doubles as the export's soft-delete
+// allow-list (both gates filtered server-side: status='deleted' OR deleted_at
+// set are excluded).
+
+export interface ExportAttachmentRow {
+  id: string
+  storage_path: string | null
+  file_name: string | null
+  revision_label: string | null
+  is_current: boolean | null
+  approval_date: string | null
+  uploaded_at: string | null
+}
+
+export interface ExportAttachmentSubmittal {
+  id: string
+  storage_path: string | null
+  file_name: string | null
+  created_at: string | null
+  submittal_attachments: ExportAttachmentRow[]
+}
+
+export interface AttachmentLinkData {
+  submittals: ExportAttachmentSubmittal[]
+  urls: Record<string, string>
+}
+
+// Numeric revision compare — mirrors the DB's newest-wins rule for is_current
+// ((regexp_match(label, '\d+'))[1]::int, approval_date as tiebreaker).
+function revNum(label: string | null): number {
+  const m = /\d+/.exec(label ?? "")
+  return m ? Number(m[0]) : 0
+}
+
+// The row's "current" file: the is_current revision when the sync trigger has
+// marked one, else newest by revision number / approval date / upload time.
+function newestAttachment(atts: ExportAttachmentRow[]): ExportAttachmentRow | null {
+  if (atts.length === 0) return null
+  const current = atts.find(a => a.is_current)
+  if (current) return current
+  return [...atts].sort((a, b) =>
+    revNum(b.revision_label) - revNum(a.revision_label)
+    || (b.approval_date ?? "").localeCompare(a.approval_date ?? "")
+    || (b.uploaded_at ?? "").localeCompare(a.uploaded_at ?? ""),
+  )[0]
+}
+
+const LINK_FONT = { name: "Calibri", size: 12, color: { argb: "FF1D4ED8" }, underline: true }
+
 export interface ExportSubmittalLogArgs {
   rows: SubmittalRecord[]
   projectName: string
@@ -161,6 +215,7 @@ export interface ExportSubmittalLogArgs {
   groupedBySection: boolean
   isSearchMode: boolean
   searchQuery: string | null
+  attachmentData: AttachmentLinkData
 }
 
 export async function exportSubmittalLogToExcel(args: ExportSubmittalLogArgs): Promise<void> {
@@ -208,6 +263,10 @@ export async function exportSubmittalLogToExcel(args: ExportSubmittalLogArgs): P
       : { horizontal: "center", vertical: "middle", wrapText: true }
     cell.border = THIN_BORDER
   })
+
+  const attBySubmittal = new Map(args.attachmentData.submittals.map(s => [s.id, s]))
+  const urlFor = (path: string | null | undefined): string | null =>
+    path ? args.attachmentData.urls[path] ?? null : null
 
   // ── 4) Section-tint colour map (THP palette, by appearance order) ───────
   const colorIdx = sectionColorMapTHP(args.rows.map(r => r.csi_section))
@@ -287,6 +346,27 @@ export async function exportSubmittalLogToExcel(args: ExportSubmittalLogArgs): P
       openCell.font = { name: "Calibri", size: 12, color: { argb: "FF1D4ED8" }, underline: true }
       openCell.alignment = { vertical: "middle", horizontal: "center" }
     }
+
+    // ATTACHMENT — direct 10-year signed link to the row's current file:
+    // newest submittal_attachments revision, falling back to the base
+    // storage_path. Always the ORIGINAL file (storage_path, never
+    // stripped_storage_path) — the log is the official full record.
+    // "file unavailable" = a path exists but its URL couldn't be signed;
+    // blank = the row has no file at all.
+    const att = attBySubmittal.get(s.id)
+    const newest = att ? newestAttachment(att.submittal_attachments) : null
+    const attPath = newest?.storage_path ?? att?.storage_path ?? null
+    if (attPath) {
+      const attCell = row.getCell(COL_ATTACH)
+      const attUrl = urlFor(attPath)
+      if (attUrl) {
+        const label = newest?.file_name ?? att?.file_name ?? s.file_name
+        attCell.value = { text: label, hyperlink: attUrl, tooltip: label }
+        attCell.font = { ...LINK_FONT }
+      } else {
+        attCell.value = "file unavailable"
+      }
+    }
   })
 
   // ── 6) Buffer rows: blank, but formulas live so they activate on data entry
@@ -311,22 +391,25 @@ export async function exportSubmittalLogToExcel(args: ExportSubmittalLogArgs): P
     }
   }
 
-  // ── 7) Helper cells (P/Q/R/S) — drive the Late formula's $S$24 reference
+  // ── 7) Helper cells (Q/R/S) — drive the Late formula's $S$2 reference.
+  // The companyShort label moved P2 → Q2 when ATTACHMENT claimed col P (16)
+  // as a data column; the R/S formula cells are untouched so the Late
+  // formula's $S$ reference is unchanged.
   const tnr = { name: "Times New Roman", size: 11 }
   ws.getCell(`R${HELPER_NOW_ROW}`).value    = "Today"
   ws.getCell(`R${HELPER_NOW_ROW}`).font     = tnr
   ws.getCell(`S${HELPER_NOW_ROW}`).value    = { formula: "NOW()" }
   ws.getCell(`S${HELPER_NOW_ROW}`).font     = tnr
-  ws.getCell(`P${HELPER_CUTOFF_ROW}`).value = companyShort
-  ws.getCell(`P${HELPER_CUTOFF_ROW}`).font  = { name: "Calibri", size: 11 }
+  ws.getCell(`Q${HELPER_CUTOFF_ROW}`).value = companyShort
+  ws.getCell(`Q${HELPER_CUTOFF_ROW}`).font  = { name: "Calibri", size: 11 }
   ws.getCell(`R${HELPER_CUTOFF_ROW}`).value = "Past 2 weeks"
   ws.getCell(`R${HELPER_CUTOFF_ROW}`).font  = tnr
   ws.getCell(`S${HELPER_CUTOFF_ROW}`).value = { formula: `S${HELPER_NOW_ROW}-14` }
   ws.getCell(`S${HELPER_CUTOFF_ROW}`).font  = tnr
 
-  // Helper column widths (P/Q/R/S — match template).
-  ws.getColumn(16).width = 34.6  // P
-  // Q column default
+  // Helper column widths (Q/R/S — match template; P is now the ATTACHMENT
+  // data column and gets its width from buildColumns).
+  ws.getColumn(17).width = 34.6  // Q
   ws.getColumn(18).width = 15.7  // R
   ws.getColumn(19).width = 10.7  // S
 
@@ -347,7 +430,97 @@ export async function exportSubmittalLogToExcel(args: ExportSubmittalLogArgs): P
     to:   { row: lastRow, column: lastDataCol },
   }
 
-  // ── 9) Trigger download ─────────────────────────────────────────────────
+  // ── 9) "Attachments" sheet — one row per revision file ──────────────────
+  // Every submittal_attachments row of the exported submittals, plus a row
+  // for any submittal whose base storage_path isn't represented among its
+  // revision rows (legacy rows predating submittal_attachments). Only
+  // submittals present in attachmentData appear — that set is already
+  // filtered server-side with both soft-delete gates.
+  interface AttachmentSheetEntry {
+    section: string | null
+    seq: number | null
+    title: string
+    type: string
+    revision: string
+    dateIso: string | null
+    fileName: string
+    path: string | null
+  }
+  const entries: AttachmentSheetEntry[] = []
+  for (const s of args.rows) {
+    const srcRow = attBySubmittal.get(s.id)
+    if (!srcRow) continue
+    const title = s.fulfilled_by_other ? "Fulfilled by other submittal" : s.file_name
+    const type = s.submittal_type ?? ""
+    for (const a of srcRow.submittal_attachments) {
+      entries.push({
+        section: s.csi_section, seq: s.section_seq, title, type,
+        revision: a.revision_label ?? "",
+        dateIso: a.approval_date ?? a.uploaded_at,
+        fileName: a.file_name ?? "",
+        path: a.storage_path,
+      })
+    }
+    if (srcRow.storage_path
+        && !srcRow.submittal_attachments.some(a => a.storage_path === srcRow.storage_path)) {
+      entries.push({
+        section: s.csi_section, seq: s.section_seq, title, type,
+        revision: "",
+        dateIso: srcRow.created_at,
+        fileName: srcRow.file_name ?? s.file_name,
+        path: srcRow.storage_path,
+      })
+    }
+  }
+  // "￿" sentinel sorts null sections last.
+  const SECTION_LAST = "￿"
+  entries.sort((a, b) =>
+    (a.section ?? SECTION_LAST).localeCompare(b.section ?? SECTION_LAST)
+    || (a.seq ?? Number.MAX_SAFE_INTEGER) - (b.seq ?? Number.MAX_SAFE_INTEGER)
+    || revNum(a.revision) - revNum(b.revision),
+  )
+
+  const wsAtt = wb.addWorksheet("Attachments")
+  wsAtt.columns = [
+    { width: 14 }, { width: 18 }, { width: 50 }, { width: 22 },
+    { width: 12 }, { width: 16 }, { width: 46 }, { width: 46 },
+  ]
+  const ATT_HEADERS = ["Submittal #", "Spec Section", "Title", "Type", "Revision", "Date", "File Name", "Link"]
+  const attHeaderRow = wsAtt.getRow(1)
+  ATT_HEADERS.forEach((h, i) => {
+    const cell = attHeaderRow.getCell(i + 1)
+    cell.value = h
+    cell.font = { bold: true, size: 11 }
+    cell.alignment = { horizontal: "left" }
+    cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF1F5F9" } }
+  })
+  let attR = 2
+  for (const e of entries) {
+    const row = wsAtt.getRow(attR++)
+    row.getCell(1).value = e.seq != null ? padSectionSeq(e.seq) : ""
+    row.getCell(2).value = e.section ?? ""
+    row.getCell(3).value = e.title
+    row.getCell(4).value = e.type
+    row.getCell(5).value = e.revision
+    // approval_date is date-only ("YYYY-MM-DD") — fmtDate's local-parse path
+    // guards against the one-day-early UTC shift; uploaded_at is a full
+    // timestamp and takes the instant-accurate path.
+    row.getCell(6).value = e.dateIso ? fmtDate(e.dateIso) : ""
+    row.getCell(7).value = e.fileName
+    if (e.path) {
+      const linkCell = row.getCell(8)
+      const url = urlFor(e.path)
+      if (url) {
+        linkCell.value = { text: e.fileName || "Open", hyperlink: url }
+        linkCell.font = { ...LINK_FONT }
+      } else {
+        linkCell.value = "file unavailable"
+      }
+    }
+  }
+  wsAtt.views = [{ state: "frozen", ySplit: 1 }]
+
+  // ── 10) Trigger download ────────────────────────────────────────────────
   const buf  = await wb.xlsx.writeBuffer()
   const date = new Date().toISOString().slice(0, 10)
   const name = `${sanitizeFileName(args.projectName)}_submittal_log_${date}.xlsx`
