@@ -104,6 +104,17 @@ function navCollapseKey(userEmail: string) {
   return `tuttohq:project-nav-collapsed:${userEmail}`
 }
 
+// Per-user icon-only ("mini") rail preference. Deliberately a separate key from
+// navCollapseKey — mini is a rail-width mode, group collapse is a within-rail
+// preference, and toggling one must never disturb the other.
+function navMiniKey(userEmail: string) {
+  return `tuttohq:project-nav-mini:${userEmail}`
+}
+
+// One rendered rail entry. Same shape PROJECT_NAV and LIBRARY_NAV already have —
+// named here so the expanded and mini renderers can share it.
+type NavEntry = { slug: string; label: string; icon: React.ReactNode }
+
 // ADR-020: route slug → grantable module key for field-user nav filtering.
 // Slugs absent here can never appear in a field user's nav.
 const FIELD_SLUG_MODULE: Record<string, FieldModule> = {
@@ -133,9 +144,11 @@ const MODULE_SLUG: Record<string, string> = {
 // crew schedule, in PROJECT_NAV above). The company-wide Workers roster keeps its
 // home in the top-level chrome (AppChrome), reached via "All projects".
 // Library moved into the Documents nav group (2026-08-07) — see LIBRARY_NAV.
+// Icons are used by the mini rail only — the expanded rail keeps these as
+// label-only text links, exactly as before.
 const BOTTOM_LINKS = [
-  { href: "/directories", label: "Directories" },
-  { href: "/settings",    label: "Settings" },
+  { href: "/directories", label: "Directories", icon: <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6.042A8.967 8.967 0 006 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 016 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 016-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0018 18a8.967 8.967 0 00-6 2.292m0-14.25v14.25" /></svg> },
+  { href: "/settings",    label: "Settings",    icon: <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg> },
 ]
 
 function ProjectSwitcher({ projects, currentId, onPick, favorites, onToggleFavorite }: {
@@ -284,6 +297,25 @@ export default function ProjectChrome({ project, fieldModules, children }: {
     if (active) setCollapsedGroups(prev => prev[active.id] ? { ...prev, [active.id]: false } : prev)
   }, [segment])
 
+  // Icon-only rail (per user, localStorage). Same hydrate-when-email-arrives
+  // pattern as the group-collapse state, but a separate key and a separate
+  // setter — collapsing to mini and back leaves collapsedGroups untouched.
+  const [navMini, setNavMini] = useState(false)
+  useEffect(() => {
+    if (typeof window === "undefined" || !userEmail) return
+    try { setNavMini(window.localStorage.getItem(navMiniKey(userEmail)) === "1") } catch { /* ignore */ }
+  }, [userEmail])
+
+  function toggleNavMini() {
+    setNavMini(prev => {
+      const next = !prev
+      if (userEmail) {
+        try { window.localStorage.setItem(navMiniKey(userEmail), next ? "1" : "0") } catch { /* ignore quota */ }
+      }
+      return next
+    })
+  }
+
   function toggleGroup(id: string) {
     setCollapsedGroups(prev => {
       const next = { ...prev, [id]: !prev[id] }
@@ -341,7 +373,7 @@ export default function ProjectChrome({ project, fieldModules, children }: {
 
   // One rail entry — style identical to the pre-group flat rail. Library is
   // the lone href destination; module slugs link into this project.
-  function railEntry(m: { slug: string; label: string; icon: React.ReactNode }) {
+  function railEntry(m: NavEntry) {
     return (
       <Link
         key={m.slug}
@@ -361,6 +393,66 @@ export default function ProjectChrome({ project, fieldModules, children }: {
       <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full flex-shrink-0 ${closeoutPct === 100 ? "bg-emerald-500/20 text-emerald-400" : closeoutPct >= 50 ? "bg-amber-500/20 text-amber-400" : "bg-red-500/20 text-red-400"}`}>{closeoutPct}%</span>
     )
   }
+
+  // Mini-rail entry — same href + active treatment as railEntry, icon only.
+  // The label moves into the tooltip; the closeout badge shrinks to a dot.
+  function miniRailEntry(m: NavEntry) {
+    return (
+      <Link
+        key={m.slug}
+        href={m.slug === "library" ? "/library" : `/projects/${project.id}/${m.slug}`}
+        title={m.label}
+        aria-label={m.label}
+        className={`relative flex items-center justify-center w-10 h-10 rounded-lg transition-colors ${segment === m.slug ? "bg-white/[0.12] text-white" : "text-[#94A3B8] hover:text-white hover:bg-white/[0.06]"}`}
+      >
+        {m.icon}
+        {closeoutDot(m.slug)}
+      </Link>
+    )
+  }
+
+  function closeoutDot(slug: string) {
+    if (slug !== "closeout" || closeoutPct === null) return null
+    return (
+      <span
+        title={`Closeout ${closeoutPct}%`}
+        className={`absolute top-1.5 right-1.5 w-1.5 h-1.5 rounded-full ${closeoutPct === 100 ? "bg-emerald-400" : closeoutPct >= 50 ? "bg-amber-400" : "bg-red-400"}`}
+      />
+    )
+  }
+
+  // Rail entries in render order. The groups are resolved once here so the
+  // mini rail can flatten the exact same (feature- and field-filtered) set —
+  // group headers are an expanded-state affordance only.
+  const railGroups = NAV_GROUPS
+    .map(g => ({
+      ...g,
+      entries: g.slugs
+        .map(s => s === "library"
+          ? (isField ? undefined : LIBRARY_NAV)
+          : navEntries.find(m => m.slug === s))
+        .filter((m): m is NavEntry => !!m),
+    }))
+    .filter(g => g.entries.length > 0)
+  // Safety net: entries no group claims (future additions) render flat below
+  // the groups instead of silently vanishing.
+  const ungroupedEntries = navEntries.filter(m => !NAV_GROUPS.some(g => g.slugs.includes(m.slug)))
+  const flatEntries = [...railGroups.flatMap(g => g.entries), ...ungroupedEntries]
+
+  const navToggle = (
+    <button
+      type="button"
+      onClick={toggleNavMini}
+      aria-expanded={!navMini}
+      aria-label={navMini ? "Expand navigation" : "Collapse navigation"}
+      title={navMini ? "Expand navigation" : "Collapse navigation"}
+      className="flex-shrink-0 flex items-center justify-center w-7 h-7 rounded-lg text-[#64748B] hover:text-white hover:bg-white/[0.06] transition-colors"
+    >
+      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={navMini ? "M13 5l7 7-7 7M5 5l7 7-7 7" : "M11 19l-7-7 7-7M19 19l-7-7 7-7"} />
+      </svg>
+    </button>
+  )
 
   return (
     <ProjectShellContext.Provider value={value}>
@@ -421,58 +513,100 @@ export default function ProjectChrome({ project, fieldModules, children }: {
 
         {/* ── Single left rail (desktop) + content ────────────────────────── */}
         <div className="flex flex-1 min-h-0">
-          <aside className="hidden sm:flex flex-col flex-shrink-0 w-60 bg-[#0A1628] border-r border-white/10">
-            <div className="flex-shrink-0 px-3 pt-4 pb-3 border-b border-white/10 space-y-3">
-              <Link href="/dashboard" className="flex items-center gap-2 h-7" title="All projects">{brand}</Link>
-              <div>
-                <p className="text-[10px] font-bold text-[#64748B] uppercase tracking-widest px-0.5 mb-1.5">Project</p>
-                <ProjectSwitcher projects={appProjects} currentId={project.id} onPick={switchProject} favorites={favorites} onToggleFavorite={toggleFavorite} />
-              </div>
-            </div>
-
-            <nav className="flex-1 overflow-y-auto px-2 py-3 space-y-1">
-              {NAV_GROUPS.map(g => {
-                const entries = g.slugs
-                  .map(s => s === "library"
-                    ? (isField ? undefined : LIBRARY_NAV)
-                    : navEntries.find(m => m.slug === s))
-                  .filter((m): m is { slug: string; label: string; icon: React.ReactNode } => !!m)
-                if (entries.length === 0) return null
-                const open = !collapsedGroups[g.id]
-                return (
-                  <div key={g.id}>
-                    <button
-                      type="button"
-                      onClick={() => toggleGroup(g.id)}
-                      aria-expanded={open}
-                      className="w-full flex items-center justify-between gap-2 px-3 py-1.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest hover:text-[#94A3B8] transition-colors"
-                    >
-                      <span>{g.label}</span>
-                      <svg className={`w-3 h-3 flex-shrink-0 transition-transform ${open ? "" : "-rotate-90"}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
-                    </button>
-                    {open && <div className="space-y-0.5 mb-1">{entries.map(m => railEntry(m))}</div>}
-                  </div>
-                )
-              })}
-              {/* Safety net: entries no group claims (future additions) render
-                  flat below the groups instead of silently vanishing. */}
-              {navEntries.filter(m => !NAV_GROUPS.some(g => g.slugs.includes(m.slug))).map(m => railEntry(m))}
-            </nav>
-
-            <div className="flex-shrink-0 border-t border-white/10 px-2 py-2 space-y-0.5">
-              {(isField ? [] : BOTTOM_LINKS).map(t => (
+          {/* Width is the only thing mini changes structurally — the content
+              pane next to it is flex-1, so the recovered ~160px goes to the
+              workspace rather than leaving a gap. */}
+          <aside className={`hidden sm:flex flex-col flex-shrink-0 bg-[#0A1628] border-r border-white/10 transition-[width] duration-200 ease-out ${navMini ? "w-14" : "w-60"}`}>
+            {navMini ? (
+              <div className="flex-shrink-0 flex flex-col items-center gap-1 px-1 pt-4 pb-3 border-b border-white/10">
                 <Link
-                  key={t.href}
-                  href={t.href}
-                  className="flex items-center px-3 py-1.5 rounded-lg text-[12px] text-[#64748B] hover:text-white hover:bg-white/[0.06] transition-colors"
+                  href="/dashboard"
+                  title="All projects"
+                  aria-label="All projects"
+                  className="flex items-center justify-center w-10 h-8 rounded-lg text-[#94A3B8] hover:text-white hover:bg-white/[0.06] transition-colors"
                 >
-                  {t.label}
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" /></svg>
                 </Link>
-              ))}
-              <div className="flex items-center justify-between px-3 pt-1.5">
-                <span className="text-[11px] text-[#64748B] truncate min-w-0">{userEmail}</span>
-                <button onClick={signOut} className="text-[11px] text-[#94A3B8] hover:text-white transition-colors flex-shrink-0 ml-2">Sign out</button>
+                {navToggle}
               </div>
+            ) : (
+              <div className="flex-shrink-0 px-3 pt-4 pb-3 border-b border-white/10 space-y-3">
+                <div className="flex items-center justify-between gap-2 h-7">
+                  <Link href="/dashboard" className="flex items-center gap-2 min-w-0" title="All projects">{brand}</Link>
+                  {navToggle}
+                </div>
+                <div>
+                  <p className="text-[10px] font-bold text-[#64748B] uppercase tracking-widest px-0.5 mb-1.5">Project</p>
+                  <ProjectSwitcher projects={appProjects} currentId={project.id} onPick={switchProject} favorites={favorites} onToggleFavorite={toggleFavorite} />
+                </div>
+              </div>
+            )}
+
+            {navMini ? (
+              /* Flat icon strip — same entries, same order, group headers off. */
+              <nav className="flex-1 overflow-y-auto overflow-x-hidden flex flex-col items-center px-1 py-3 space-y-0.5">
+                {flatEntries.map(m => miniRailEntry(m))}
+              </nav>
+            ) : (
+              <nav className="flex-1 overflow-y-auto px-2 py-3 space-y-1">
+                {railGroups.map(g => {
+                  const open = !collapsedGroups[g.id]
+                  return (
+                    <div key={g.id}>
+                      <button
+                        type="button"
+                        onClick={() => toggleGroup(g.id)}
+                        aria-expanded={open}
+                        className="w-full flex items-center justify-between gap-2 px-3 py-1.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest hover:text-[#94A3B8] transition-colors"
+                      >
+                        <span>{g.label}</span>
+                        <svg className={`w-3 h-3 flex-shrink-0 transition-transform ${open ? "" : "-rotate-90"}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+                      </button>
+                      {open && <div className="space-y-0.5 mb-1">{g.entries.map(m => railEntry(m))}</div>}
+                    </div>
+                  )
+                })}
+                {ungroupedEntries.map(m => railEntry(m))}
+              </nav>
+            )}
+
+            <div className={`flex-shrink-0 border-t border-white/10 py-2 space-y-0.5 ${navMini ? "flex flex-col items-center px-1" : "px-2"}`}>
+              {(isField ? [] : BOTTOM_LINKS).map(t => (
+                navMini ? (
+                  <Link
+                    key={t.href}
+                    href={t.href}
+                    title={t.label}
+                    aria-label={t.label}
+                    className="flex items-center justify-center w-10 h-9 rounded-lg text-[#64748B] hover:text-white hover:bg-white/[0.06] transition-colors"
+                  >
+                    {t.icon}
+                  </Link>
+                ) : (
+                  <Link
+                    key={t.href}
+                    href={t.href}
+                    className="flex items-center px-3 py-1.5 rounded-lg text-[12px] text-[#64748B] hover:text-white hover:bg-white/[0.06] transition-colors"
+                  >
+                    {t.label}
+                  </Link>
+                )
+              ))}
+              {navMini ? (
+                <button
+                  onClick={signOut}
+                  title={userEmail ? `Sign out (${userEmail})` : "Sign out"}
+                  aria-label="Sign out"
+                  className="flex items-center justify-center w-10 h-9 rounded-lg text-[#64748B] hover:text-white hover:bg-white/[0.06] transition-colors"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" /></svg>
+                </button>
+              ) : (
+                <div className="flex items-center justify-between px-3 pt-1.5">
+                  <span className="text-[11px] text-[#64748B] truncate min-w-0">{userEmail}</span>
+                  <button onClick={signOut} className="text-[11px] text-[#94A3B8] hover:text-white transition-colors flex-shrink-0 ml-2">Sign out</button>
+                </div>
+              )}
             </div>
           </aside>
 
