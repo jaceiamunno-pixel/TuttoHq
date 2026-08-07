@@ -20,7 +20,7 @@ import { isProjectTransmittalCopy } from "@/lib/storage-paths"
 import { truncateForDisplay } from "@/lib/title-normalize"
 import { hashFileInBrowser } from "@/lib/file-hash"
 import { formatSectionNumber, padSectionSeq, compareBySectionOrder } from "@/lib/section-number"
-import { exportSubmittalLogToExcel } from "../_shared/excel-export"
+import { exportSubmittalLogToExcel, type AttachmentLinkData } from "../_shared/excel-export"
 import PackageCreateModal from "@/components/packages/PackageCreateModal"
 import PackagesView from "@/components/packages/PackagesView"
 import OverflowMenu, { type OverflowEntry } from "@/components/overflow-menu"
@@ -1354,8 +1354,18 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
     if (!project) return
     setExporting(true)
     try {
+      // Attachment revisions + 10-year signed URLs, fetched server-side
+      // through the caller's RLS-scoped session. The returned submittal set
+      // is filtered with BOTH soft-delete gates (status='deleted' OR
+      // deleted_at set → excluded) and doubles as the export allow-list, so
+      // soft-deleted rows never reach either worksheet even if the on-screen
+      // log still shows them.
+      const attRes = await fetch(`/api/submittals/export-attachments?project_id=${encodeURIComponent(activeProjectId)}`)
+      if (!attRes.ok) throw new Error("Could not load attachment links for the export")
+      const attachmentData: AttachmentLinkData = await attRes.json()
+      const exportable = new Set(attachmentData.submittals.map(s => s.id))
       await exportSubmittalLogToExcel({
-        rows: orderedExportRows(),
+        rows: orderedExportRows().filter(r => exportable.has(r.id)),
         projectName: project.name,
         gcName: project.gc_name,
         vendors,
@@ -1364,6 +1374,7 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
         groupedBySection: groupBySection,
         isSearchMode,
         searchQuery: query.trim() || null,
+        attachmentData,
       })
     } catch (err) {
       alert(err instanceof Error ? err.message : "Export failed")
