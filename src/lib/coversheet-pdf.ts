@@ -22,12 +22,26 @@ export interface CoversheetReviewer {
  * Build the submittal coversheet PDF through the shared PDFBuilder design
  * system. Returns a single-page document; the generate-cover route merges it
  * in front of the original submittal PDF.
+ *
+ * THIS IS THE SINGLE SOURCE OF TRUTH for the "Submittal Coversheet" template.
+ * Every surface that prints a submittal cover renders it here:
+ *   • /api/generate-cover            — the per-submittal cover
+ *   • package mode 'per_item'        — one cover per emitted file
+ *   • package mode 'package'         — one cover per item inside the merged PDF
+ * Change the template here and all three move together.
+ *
+ * `generationDate` overrides the footer's "Generated <date>" (and the page-1
+ * header meta line). Omit it — as /api/generate-cover does — and PDFBuilder
+ * defaults to now(), so leaving it off is byte-identical to before it existed.
+ * The merged package passes the package's send date so every cover in the one
+ * document carries the same date.
  */
 export async function buildCoversheetPdf(
   props: SubmittalCoversheetProps,
   logoBytes: ArrayBuffer | null = null,
   reviewer: CoversheetReviewer | null = null,
   logoScalePct?: number | null,
+  generationDate?: Date,
 ): Promise<Uint8Array> {
   const {
     gcName,
@@ -48,6 +62,7 @@ export async function buildCoversheetPdf(
     // seal stays proportionally larger than other docs while still scaling.
     logoMaxH: 42,
     logoScalePct: logoScalePct ?? undefined,
+    generationDate,
   })
 
   // Project block
