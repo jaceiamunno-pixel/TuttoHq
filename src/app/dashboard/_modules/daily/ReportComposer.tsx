@@ -11,7 +11,7 @@
 import { useMemo, useState } from "react"
 import { DAILY_0050_LIVE, DAILY_0051_LIVE } from "@/lib/daily-flags"
 import type { DailyDraftPhotoRow } from "@/lib/idb-photos"
-import type { Project, TeamMember } from "../../_shared/types"
+import type { TeamMember } from "../../_shared/types"
 import { SpinnerIcon, XIcon } from "../../_shared/icons"
 import CrewSection from "./CrewSection"
 import WeatherField from "./WeatherField"
@@ -51,11 +51,10 @@ function Section({ def, open, onToggle, children }: {
   )
 }
 
-export default function ReportComposer({ mode, form, patch, appProjects, teamMembers, projectLocation, canEdit, saving, saveError, draftPhotos, compressProgress, photoError, onIngestPhotos, fileRef, copySource, onCopyLast, onSave, onClose }: {
+export default function ReportComposer({ mode, form, patch, teamMembers, projectLocation, canEdit, saving, saveError, draftPhotos, compressProgress, photoError, onIngestPhotos, fileRef, copySource, onCopyLast, onSave, onClose }: {
   mode: "new" | "edit"
   form: DailyForm
   patch: (p: Partial<DailyForm>) => void
-  appProjects: Project[]
   teamMembers: TeamMember[]
   projectLocation: string | null
   canEdit: boolean
@@ -81,7 +80,7 @@ export default function ReportComposer({ mode, form, patch, appProjects, teamMem
   // their own lightweight sections (same materials_delivered / issues_delays
   // columns as before — labels only, no schema change).
   const sections: SectionDef[] = useMemo(() => [
-    { id: "basics",     label: "Basics",                filled: !!form.prepared_by || !!form.project_id, defaultOpenMobile: true },
+    { id: "basics",     label: "Basics",                filled: !!form.prepared_by, defaultOpenMobile: true },
     { id: "weather",    label: "Weather",               filled: !!form.weather_conditions || !!form.temperature, defaultOpenMobile: true },
     { id: "crew",       label: crewOn ? "Crew" : "Manpower", filled: crewOn ? nonEmptyCrew(form.crew).length > 0 : !!form.manpower_count, defaultOpenMobile: true },
     ...(laborOn ? [{ id: "labor", label: "Labor on Site", filled: !!form.labor_notes.trim(), defaultOpenMobile: true }] : []),
@@ -138,19 +137,13 @@ export default function ReportComposer({ mode, form, patch, appProjects, teamMem
           <div className="px-3 sm:px-6 py-3 sm:py-4 space-y-3 overflow-y-auto flex-1 min-h-0">
 
             <Section def={sec("basics")!} open={!!openMap.basics} onToggle={() => toggle("basics")}>
-              <div className="flex flex-col sm:flex-row gap-3">
-                <div className="sm:w-40 sm:flex-shrink-0">
-                  <label className={labelCls}>Date <span className="text-red-400">*</span></label>
-                  <input type="date" required value={form.report_date} disabled={!canEdit}
-                    onChange={e => patch({ report_date: e.target.value })} className={fieldCls} />
-                </div>
-                <div className="flex-1">
-                  <label className={labelCls}>Project</label>
-                  <select value={form.project_id} disabled={!canEdit} onChange={e => patch({ project_id: e.target.value })} className={selectCls}>
-                    <option value="">None</option>
-                    {appProjects.map(p => <option key={p.id} value={p.id}>{p.name}{p.number ? ` — ${p.number}` : ""}</option>)}
-                  </select>
-                </div>
+              {/* No project picker: the module is locked to the route's
+                  active project — the draft carries its project_id from
+                  mint time (DailyModule.openNewDailyDraft). */}
+              <div className="sm:w-40">
+                <label className={labelCls}>Date <span className="text-red-400">*</span></label>
+                <input type="date" required value={form.report_date} disabled={!canEdit}
+                  onChange={e => patch({ report_date: e.target.value })} className={fieldCls} />
               </div>
               <div>
                 <label className={labelCls}>Prepared By</label>

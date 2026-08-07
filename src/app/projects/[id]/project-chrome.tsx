@@ -66,7 +66,9 @@ const PROJECT_NAV: { slug: string; label: string; icon: React.ReactNode; feature
   { slug: "manpower",        label: "Manpower",      icon: <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a4 4 0 00-3-3.87M9 20H4v-2a4 4 0 013-3.87m6-1.13a4 4 0 10-4 0M19 8a3 3 0 11-6 0 3 3 0 016 0z" /></svg> },
   { slug: "schedule",        label: "Schedule",      icon: <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 17V9m4 8v-5m4 5v-3M5 21h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v14a2 2 0 002 2z" /></svg> },
   { slug: "drawings",        label: "Drawing Log",   icon: <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7" /></svg> },
-  { slug: "takeoff",         label: "Takeoff",       icon: <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 5a1 1 0 011-1h14a1 1 0 011 1v14a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM4 9h16M4 14h16M9 4v16M14 4v16" /></svg> },
+  // hidden 2026-08-07, re-enable when takeoff matures. Route + module stay
+  // intact and reachable by direct URL (/projects/[id]/takeoff).
+  // { slug: "takeoff",         label: "Takeoff",       icon: <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 5a1 1 0 011-1h14a1 1 0 011 1v14a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM4 9h16M4 14h16M9 4v16M14 4v16" /></svg> },
   { slug: "rfq",             label: "Bid Requests",  icon: <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" /></svg> },
   { slug: "estimate",        label: "Estimate",      icon: <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 7h6M9 11h.01M12 11h.01M15 11h.01M9 15h.01M12 15h.01M15 15h.01M5 21h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v14a2 2 0 002 2z" /></svg> },
   { slug: "closeout",        label: "Closeout",      icon: <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z" /></svg> },
@@ -76,6 +78,31 @@ const PROJECT_NAV: { slug: string; label: string; icon: React.ReactNode; feature
 // flip the flag in @/lib/features to bring them back). The route, module, and
 // data all stay intact regardless.
 const VISIBLE_PROJECT_NAV = PROJECT_NAV.filter(m => !m.feature || isFeatureEnabled(m.feature))
+
+// Cross-project Library, surfaced inside the Documents group (2026-08-07 nav
+// regroup). It is an href destination, not a project module — never active in
+// this shell, and hidden for field users like every company-level link.
+const LIBRARY_NAV = {
+  slug: "library",
+  label: "Library",
+  icon: <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" /></svg>,
+}
+
+// Grouped rail (2026-08-07): the desktop left nav renders in three collapsible
+// groups. Groups reference slugs only — feature flags and the field-user
+// filter act on the flat list first, and a group shows whatever survives
+// (empty groups disappear). Slugs not claimed by any group render flat below
+// the groups so a future nav entry can never silently vanish.
+const NAV_GROUPS: { id: string; label: string; slugs: string[] }[] = [
+  { id: "field",     label: "Field",     slugs: ["daily", "manpower", "schedule", "punch"] },
+  { id: "documents", label: "Documents", slugs: ["submittals", "library", "drawings", "rfis", "closeout"] },
+  { id: "money",     label: "Money",     slugs: ["estimate", "rfq", "commitments", "change-orders", "sub-change-orders", "purchase-orders"] },
+]
+
+// Per-user collapse state (mirrors use-project-favorites' storage pattern).
+function navCollapseKey(userEmail: string) {
+  return `tuttohq:project-nav-collapsed:${userEmail}`
+}
 
 // ADR-020: route slug → grantable module key for field-user nav filtering.
 // Slugs absent here can never appear in a field user's nav.
@@ -105,8 +132,8 @@ const MODULE_SLUG: Record<string, string> = {
 // Manpower is NOT here: inside a project it's a project-scoped work module (the
 // crew schedule, in PROJECT_NAV above). The company-wide Workers roster keeps its
 // home in the top-level chrome (AppChrome), reached via "All projects".
+// Library moved into the Documents nav group (2026-08-07) — see LIBRARY_NAV.
 const BOTTOM_LINKS = [
-  { href: "/library",     label: "Library" },
   { href: "/directories", label: "Directories" },
   { href: "/settings",    label: "Settings" },
 ]
@@ -232,6 +259,41 @@ export default function ProjectChrome({ project, fieldModules, children }: {
   // Per-user project favorites (localStorage, keyed by the signed-in user).
   const { favorites, toggleFavorite } = useProjectFavorites(userEmail)
 
+  // Grouped-rail collapse state (per user, localStorage). Hydration runs when
+  // the signed-in user is known and force-expands the group holding the
+  // active module — the stored preference for the other groups is untouched.
+  const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({})
+  useEffect(() => {
+    if (typeof window === "undefined" || !userEmail) return
+    let stored: Record<string, boolean> = {}
+    try {
+      const raw = window.localStorage.getItem(navCollapseKey(userEmail))
+      if (raw) stored = JSON.parse(raw) as Record<string, boolean>
+    } catch { /* ignore */ }
+    const active = NAV_GROUPS.find(g => g.slugs.includes(segment ?? ""))
+    if (active) stored = { ...stored, [active.id]: false }
+    setCollapsedGroups(stored)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userEmail])
+
+  // Navigating into a collapsed group's module auto-expands that group. Not
+  // persisted — a view default, so a deliberately collapsed group stays
+  // collapsed on the next load unless the user lands inside it again.
+  useEffect(() => {
+    const active = NAV_GROUPS.find(g => g.slugs.includes(segment ?? ""))
+    if (active) setCollapsedGroups(prev => prev[active.id] ? { ...prev, [active.id]: false } : prev)
+  }, [segment])
+
+  function toggleGroup(id: string) {
+    setCollapsedGroups(prev => {
+      const next = { ...prev, [id]: !prev[id] }
+      if (userEmail) {
+        try { window.localStorage.setItem(navCollapseKey(userEmail), JSON.stringify(next)) } catch { /* ignore quota */ }
+      }
+      return next
+    })
+  }
+
   // Company-scoped support data the modules expect — same fetches the old shell
   // made (all RLS-scoped server-side). Unchanged call paths.
   useEffect(() => {
@@ -277,6 +339,22 @@ export default function ProjectChrome({ project, fieldModules, children }: {
       ? <img src={logoUrl} alt="Logo" className="h-7 max-w-[130px] object-contain" />
       : <span className="text-[15px] font-bold text-white tracking-tight">TuttoHQ</span>
 
+  // One rail entry — style identical to the pre-group flat rail. Library is
+  // the lone href destination; module slugs link into this project.
+  function railEntry(m: { slug: string; label: string; icon: React.ReactNode }) {
+    return (
+      <Link
+        key={m.slug}
+        href={m.slug === "library" ? "/library" : `/projects/${project.id}/${m.slug}`}
+        className={`flex items-center gap-3 px-3 py-2 rounded-lg text-[13px] font-medium transition-colors ${segment === m.slug ? "bg-white/[0.12] text-white" : "text-[#94A3B8] hover:text-white hover:bg-white/[0.06]"}`}
+      >
+        {m.icon}
+        <span className="flex-1 truncate">{m.label}</span>
+        {closeoutBadge(m.slug)}
+      </Link>
+    )
+  }
+
   function closeoutBadge(slug: string) {
     if (slug !== "closeout" || closeoutPct === null) return null
     return (
@@ -320,7 +398,9 @@ export default function ProjectChrome({ project, fieldModules, children }: {
               ))}
               <div className="border-t border-white/10">
                 <Link href="/dashboard" onClick={() => setMobileNavOpen(false)} className="w-full text-left px-4 py-3 text-[13px] font-medium text-[#94A3B8] hover:text-white hover:bg-white/[0.04] transition-colors flex items-center gap-2.5">All projects</Link>
-                {(isField ? [] : BOTTOM_LINKS).map(t => (
+                {/* The mobile drawer stays a flat list (groups are a rail
+                    affordance), so Library keeps its old drawer spot here. */}
+                {(isField ? [] : [{ href: "/library", label: "Library" }, ...BOTTOM_LINKS]).map(t => (
                   <Link
                     key={t.href}
                     href={t.href}
@@ -350,18 +430,33 @@ export default function ProjectChrome({ project, fieldModules, children }: {
               </div>
             </div>
 
-            <nav className="flex-1 overflow-y-auto px-2 py-3 space-y-0.5">
-              {navEntries.map(m => (
-                <Link
-                  key={m.slug}
-                  href={`/projects/${project.id}/${m.slug}`}
-                  className={`flex items-center gap-3 px-3 py-2 rounded-lg text-[13px] font-medium transition-colors ${segment === m.slug ? "bg-white/[0.12] text-white" : "text-[#94A3B8] hover:text-white hover:bg-white/[0.06]"}`}
-                >
-                  {m.icon}
-                  <span className="flex-1 truncate">{m.label}</span>
-                  {closeoutBadge(m.slug)}
-                </Link>
-              ))}
+            <nav className="flex-1 overflow-y-auto px-2 py-3 space-y-1">
+              {NAV_GROUPS.map(g => {
+                const entries = g.slugs
+                  .map(s => s === "library"
+                    ? (isField ? undefined : LIBRARY_NAV)
+                    : navEntries.find(m => m.slug === s))
+                  .filter((m): m is { slug: string; label: string; icon: React.ReactNode } => !!m)
+                if (entries.length === 0) return null
+                const open = !collapsedGroups[g.id]
+                return (
+                  <div key={g.id}>
+                    <button
+                      type="button"
+                      onClick={() => toggleGroup(g.id)}
+                      aria-expanded={open}
+                      className="w-full flex items-center justify-between gap-2 px-3 py-1.5 text-[10px] font-bold text-[#64748B] uppercase tracking-widest hover:text-[#94A3B8] transition-colors"
+                    >
+                      <span>{g.label}</span>
+                      <svg className={`w-3 h-3 flex-shrink-0 transition-transform ${open ? "" : "-rotate-90"}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+                    </button>
+                    {open && <div className="space-y-0.5 mb-1">{entries.map(m => railEntry(m))}</div>}
+                  </div>
+                )
+              })}
+              {/* Safety net: entries no group claims (future additions) render
+                  flat below the groups instead of silently vanishing. */}
+              {navEntries.filter(m => !NAV_GROUPS.some(g => g.slugs.includes(m.slug))).map(m => railEntry(m))}
             </nav>
 
             <div className="flex-shrink-0 border-t border-white/10 px-2 py-2 space-y-0.5">
