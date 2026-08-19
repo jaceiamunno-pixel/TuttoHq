@@ -66,6 +66,27 @@ export async function POST(req: NextRequest) {
   }
   let original_contract_amount = parsedAmount.value ?? null
 
+  // Prior contract history typed by hand — for subcontracts whose change-order
+  // history predates TuttoHQ. null = keep auto-computing from earlier COs.
+  // Both are MAGNITUDES as printed (rows 2 and 3 are separate positive lines),
+  // so a negative is a user error, never something to silently sign-flip.
+  const parsedPriorAdd = parseMoney(body.prior_additions_override)
+  if (parsedPriorAdd.invalid) {
+    return NextResponse.json({ error: "prior_additions_override is not a valid amount" }, { status: 400 })
+  }
+  const prior_additions_override = parsedPriorAdd.value ?? null
+  if (prior_additions_override != null && prior_additions_override < 0) {
+    return NextResponse.json({ error: "Previous additions cannot be negative" }, { status: 400 })
+  }
+  const parsedPriorDed = parseMoney(body.prior_deductions_override)
+  if (parsedPriorDed.invalid) {
+    return NextResponse.json({ error: "prior_deductions_override is not a valid amount" }, { status: 400 })
+  }
+  const prior_deductions_override = parsedPriorDed.value ?? null
+  if (prior_deductions_override != null && prior_deductions_override < 0) {
+    return NextResponse.json({ error: "Previous deductions cannot be negative" }, { status: 400 })
+  }
+
   let commitment_id: string | null = null
   if (typeof body.commitment_id === "string" && body.commitment_id) {
     // The linked subcontract must belong to the same project AND the same
@@ -99,6 +120,10 @@ export async function POST(req: NextRequest) {
     co_date: typeof body.co_date === "string" && body.co_date ? body.co_date : new Date().toISOString().slice(0, 10),
     cost_code: typeof body.cost_code === "string" ? body.cost_code.trim() || null : null,
     original_contract_amount,
+    // Omitted entirely when null — the column defaults to NULL anyway, so this
+    // is semantically identical and keeps INSERT working before 0053 is run.
+    ...(prior_additions_override != null ? { prior_additions_override } : {}),
+    ...(prior_deductions_override != null ? { prior_deductions_override } : {}),
     status: "draft",
     signer_name: typeof body.signer_name === "string" ? body.signer_name.trim() || null : null,
     signer_title: typeof body.signer_title === "string" ? body.signer_title.trim() || null : null,

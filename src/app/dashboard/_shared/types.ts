@@ -578,6 +578,10 @@ export interface SubChangeOrder {
   co_date: string | null
   cost_code: string | null
   original_contract_amount: number | null
+  // Manual prior contract history (0053). null = derive from earlier COs;
+  // optional because the columns are absent until 0053 is applied.
+  prior_additions_override?: number | null
+  prior_deductions_override?: number | null
   status: SubChangeOrderStatus
   generated_pdf_path: string | null
   signer_name: string | null
