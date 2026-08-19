@@ -99,6 +99,10 @@ export default function SubChangeOrdersModule({
   // that have never had one (so the module is inert until 0053 is applied).
   const [hadPriorOverrides, setHadPriorOverrides] = useState(false)
   const [recap, setRecap] = useState<Recap | null>(null)
+  // Which CO the recap block currently belongs to. A /recap response is
+  // applied ONLY if this still matches — so a late response can never land on
+  // a closed editor or a different CO.
+  const recapScoIdRef = useRef<string | null>(null)
   const [status, setStatus] = useState("draft")
   const [signerName, setSignerName] = useState("")
   const [signerTitle, setSignerTitle] = useState("")
@@ -133,6 +137,20 @@ export default function SubChangeOrdersModule({
   }, [editorOpen, globalProjectId])
 
   const vendorCommitments = commitments.filter(c => vendor && c.vendor_id === vendor.id)
+
+  // Refresh the recap block from the server (the same computeSubCoRecap the
+  // PDF uses). While the fetch is in flight the previous values keep showing;
+  // on ANY failure the last good values stay — a failed preview refresh never
+  // surfaces an error, blanks the block, or blocks a save that already
+  // succeeded. Fire-and-forget by design.
+  function refreshRecap(scoId: string) {
+    fetch(`/api/sub-change-orders/${scoId}/recap`)
+      .then(r => r.json())
+      .then(d => {
+        if (d.recap && recapScoIdRef.current === scoId) setRecap(d.recap)
+      })
+      .catch(() => {})
+  }
 
   // Display-only preview of the PDF's right-hand recap. Rows 1/2/3/5 come from
   // the server (/recap); only rows 4 and 6 are re-derived here so a typed
@@ -169,6 +187,7 @@ export default function SubChangeOrdersModule({
     setPriorDeductions("")
     setHadPriorOverrides(false)
     setRecap(null)
+    recapScoIdRef.current = null
     setStatus("draft")
     setSignerName("")
     setSignerTitle("")
@@ -218,10 +237,8 @@ export default function SubChangeOrdersModule({
     setEditorOpen(true)
 
     // Server-produced recap for the preview block — same helper the PDF uses.
-    fetch(`/api/sub-change-orders/${sco.id}/recap`)
-      .then(r => r.json())
-      .then(d => setRecap(d.recap ?? null))
-      .catch(() => setRecap(null))
+    recapScoIdRef.current = sco.id
+    refreshRecap(sco.id)
   }
 
   function setLineField(key: string, field: keyof Omit<LineRow, "key" | "id">, value: string) {
@@ -324,6 +341,14 @@ export default function SubChangeOrdersModule({
         }
       }
 
+      // Header + all lines are saved — refresh the preview from the server so
+      // rows 5/6 can never contradict the saved state while the editor is
+      // open. Fire-and-forget: the recapScoIdRef guard drops the response once
+      // the editor closes (as it does just below today) or moves to another
+      // CO, and a failed refresh never blocks the save, which has already
+      // succeeded.
+      if (editing) refreshRecap(editing.id)
+
       setEditorOpen(false)
       resetEditor()
       load()
@@ -339,6 +364,10 @@ export default function SubChangeOrdersModule({
       const d = await res.json()
       if (res.ok && d.url) {
         window.open(d.url, "_blank")
+        // The snap_* freeze can move the effective numbers — refresh the
+        // preview if this CO's editor happens to be open (same keep-last-good
+        // failure behavior as everywhere else).
+        if (recapScoIdRef.current === scoId) refreshRecap(scoId)
         load()
       } else {
         setListErr(d.error ?? "Could not generate PDF")
