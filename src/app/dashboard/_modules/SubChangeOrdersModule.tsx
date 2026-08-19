@@ -29,6 +29,21 @@ interface LineRow {
   price: string
 }
 
+// The CO recap, exactly as the server computes it (GET .../recap). Never
+// recomputed here — the client only re-derives rows 4 and 6 for the preview.
+interface Recap {
+  originalContractAmount: number
+  computedPreviousAdditions: number
+  computedPreviousDeductions: number
+  previousAdditions: number
+  previousDeductions: number
+  previousAdditionsIsOverride: boolean
+  previousDeductionsIsOverride: boolean
+  thisOrder: number
+  previousTotal: number
+  presentContractAmount: number
+}
+
 let lineSeq = 0
 const newLineKey = () => `line-${++lineSeq}`
 const emptyLine = (): LineRow => ({ key: newLineKey(), owner: "", gc: "", description: "", costCode: "", price: "" })
@@ -76,6 +91,14 @@ export default function SubChangeOrdersModule({
   const [coDate, setCoDate] = useState("")
   const [costCode, setCostCode] = useState("")
   const [originalAmount, setOriginalAmount] = useState("")
+  // Prior contract history typed by hand ("" = auto-compute from earlier COs).
+  const [priorAdditions, setPriorAdditions] = useState("")
+  const [priorDeductions, setPriorDeductions] = useState("")
+  // True when the loaded row already carried an override — lets a cleared field
+  // be sent as null. Also keeps the payload byte-identical to today's for rows
+  // that have never had one (so the module is inert until 0053 is applied).
+  const [hadPriorOverrides, setHadPriorOverrides] = useState(false)
+  const [recap, setRecap] = useState<Recap | null>(null)
   const [status, setStatus] = useState("draft")
   const [signerName, setSignerName] = useState("")
   const [signerTitle, setSignerTitle] = useState("")
@@ -111,6 +134,29 @@ export default function SubChangeOrdersModule({
 
   const vendorCommitments = commitments.filter(c => vendor && c.vendor_id === vendor.id)
 
+  // Display-only preview of the PDF's right-hand recap. Rows 1/2/3/5 come from
+  // the server (/recap); only rows 4 and 6 are re-derived here so a typed
+  // override shows its effect immediately. Nothing here is ever stored — the
+  // authoritative numbers are whatever generate-pdf freezes into snap_*.
+  const previewRecap = (() => {
+    if (!recap) return null
+    const typed = (s: string, fallback: number) => {
+      if (s.trim() === "") return fallback
+      const n = Number(s.replace(/[$,\s]/g, ""))
+      return Number.isFinite(n) ? n : fallback
+    }
+    const round2 = (n: number) => Math.round(n * 100) / 100
+    const previousAdditions = typed(priorAdditions, recap.computedPreviousAdditions)
+    const previousDeductions = typed(priorDeductions, recap.computedPreviousDeductions)
+    const previousTotal = round2(recap.originalContractAmount + previousAdditions - previousDeductions)
+    return {
+      previousAdditions,
+      previousDeductions,
+      previousTotal,
+      presentContractAmount: round2(previousTotal + recap.thisOrder),
+    }
+  })()
+
   function resetEditor() {
     setEditing(null)
     setVendor(null)
@@ -119,6 +165,10 @@ export default function SubChangeOrdersModule({
     setCoDate(new Date().toISOString().slice(0, 10))
     setCostCode("")
     setOriginalAmount("")
+    setPriorAdditions("")
+    setPriorDeductions("")
+    setHadPriorOverrides(false)
+    setRecap(null)
     setStatus("draft")
     setSignerName("")
     setSignerTitle("")
@@ -150,6 +200,9 @@ export default function SubChangeOrdersModule({
     setCoDate(full.co_date ?? "")
     setCostCode(full.cost_code ?? "")
     setOriginalAmount(full.original_contract_amount != null ? String(full.original_contract_amount) : "")
+    setPriorAdditions(full.prior_additions_override != null ? String(full.prior_additions_override) : "")
+    setPriorDeductions(full.prior_deductions_override != null ? String(full.prior_deductions_override) : "")
+    setHadPriorOverrides(full.prior_additions_override != null || full.prior_deductions_override != null)
     setStatus(full.status)
     setSignerName(full.signer_name ?? "")
     setSignerTitle(full.signer_title ?? "")
@@ -163,6 +216,12 @@ export default function SubChangeOrdersModule({
         }))
       : [emptyLine()])
     setEditorOpen(true)
+
+    // Server-produced recap for the preview block — same helper the PDF uses.
+    fetch(`/api/sub-change-orders/${sco.id}/recap`)
+      .then(r => r.json())
+      .then(d => setRecap(d.recap ?? null))
+      .catch(() => setRecap(null))
   }
 
   function setLineField(key: string, field: keyof Omit<LineRow, "key" | "id">, value: string) {
@@ -188,12 +247,24 @@ export default function SubChangeOrdersModule({
     setSaving(true)
     setEditorErr(null)
     try {
+      // The override keys are sent only once they are actually in play (typed,
+      // or already stored on this row) — an untouched CO posts exactly the
+      // payload it posts today.
+      const touchedPriors =
+        hadPriorOverrides || priorAdditions.trim() !== "" || priorDeductions.trim() !== ""
+      const priorFields = touchedPriors
+        ? {
+            prior_additions_override: priorAdditions.trim() === "" ? null : priorAdditions,
+            prior_deductions_override: priorDeductions.trim() === "" ? null : priorDeductions,
+          }
+        : {}
       const headerFields = {
         co_number: coNumber.trim(),
         original_contract_no: originalContractNo,
         co_date: coDate,
         cost_code: costCode,
         original_contract_amount: originalAmount.trim() === "" ? null : originalAmount,
+        ...priorFields,
         signer_name: signerName,
         signer_title: signerTitle,
         commitment_id: commitmentId || null,
@@ -452,6 +523,30 @@ export default function SubChangeOrdersModule({
                 <label className="block text-xs font-medium text-gray-500 mb-1">Original Contract Amount</label>
                 <input className="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm" value={originalAmount} onChange={e => setOriginalAmount(e.target.value)} placeholder="$0.00" />
               </div>
+              <div className="md:col-span-2">
+                <div className="text-xs font-semibold uppercase tracking-wide text-gray-500">Prior contract history</div>
+                <p className="text-xs text-gray-400 mt-0.5">
+                  Leave blank to total prior change orders in TuttoHQ automatically.
+                </p>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1">Previous Additions</label>
+                <input
+                  className="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm"
+                  value={priorAdditions}
+                  onChange={e => setPriorAdditions(e.target.value)}
+                  placeholder={usd(recap?.computedPreviousAdditions ?? 0)}
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1">Previous Deductions</label>
+                <input
+                  className="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm"
+                  value={priorDeductions}
+                  onChange={e => setPriorDeductions(e.target.value)}
+                  placeholder={usd(recap?.computedPreviousDeductions ?? 0)}
+                />
+              </div>
               {editing && (
                 <div>
                   <label className="block text-xs font-medium text-gray-500 mb-1">Status</label>
@@ -514,6 +609,32 @@ export default function SubChangeOrdersModule({
                 </tbody>
               </table>
             </div>
+
+            {recap && previewRecap && (
+              <div className="mb-4 rounded-lg border border-gray-200 bg-gray-50 p-3">
+                <div className="flex items-baseline justify-between mb-2">
+                  <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">Preview</span>
+                  <span className="text-xs text-gray-400">Final figures are frozen when the PDF is generated</span>
+                </div>
+                <dl className="text-sm max-w-sm ml-auto">
+                  {[
+                    { label: "1. Original Contract Amt", value: recap.originalContractAmount },
+                    { label: "2. Previous Additions", value: previewRecap.previousAdditions },
+                    { label: "3. Previous Deductions", value: previewRecap.previousDeductions },
+                    { label: "4. Previous Total", value: previewRecap.previousTotal },
+                    { label: "5. This Order", value: recap.thisOrder },
+                    { label: "6. Present Contract Amount", value: previewRecap.presentContractAmount, strong: true },
+                  ].map(row => (
+                    <div key={row.label} className="flex items-center justify-between gap-4 py-0.5">
+                      <dt className={row.strong ? "font-semibold text-gray-900" : "text-gray-600"}>{row.label}</dt>
+                      <dd className={`tabular-nums ${row.strong ? "font-semibold text-gray-900" : "text-gray-700"}`}>
+                        {usd(row.value)}
+                      </dd>
+                    </div>
+                  ))}
+                </dl>
+              </div>
+            )}
 
             <div className="flex items-center justify-end gap-2">
               <button

@@ -1,22 +1,24 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import { forbidFieldRole } from "@/lib/field-access"
-import { sumLinePrices } from "@/lib/sub-co-shared"
+import { computeSubCoRecap } from "@/lib/sub-co-shared"
 import { buildSubChangeOrderPdf } from "@/lib/sub-co-pdf"
 
 export const maxDuration = 60
 
-// Generates the Change Order PDF. ALL money is computed HERE, server-side,
-// and frozen into the snap_* columns before rendering (PCO stated_* pattern):
+// Generates the Change Order PDF. ALL money comes from computeSubCoRecap()
+// (server-side, the single producer) and is frozen into the snap_* columns
+// before rendering (PCO stated_* pattern):
 //   this_order          = Σ this CO's line prices
-//   previous_additions  = Σ positive totals of OTHER COs, same (project, vendor),
-//                         status in (sent, accepted), created_at < this one
-//   previous_deductions = |Σ negative totals| of that same set
+//   previous_additions  = prior_additions_override, else Σ positive totals of
+//                         OTHER COs, same (project, vendor), status in
+//                         (sent, accepted), created_at < this one
+//   previous_deductions = prior_deductions_override, else |Σ negative totals|
 //   previous_total      = original_contract_amount + additions − deductions
 //   present_contract    = previous_total + this_order
-// The client never computes or supplies any of these.
-
-const round2 = (n: number) => Math.round(n * 100) / 100
+// The snapshot records the EFFECTIVE numbers (overrides applied), so the frozen
+// snapshot always equals the printed page. The client never computes or
+// supplies any of these.
 
 export async function POST(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
@@ -50,38 +52,8 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
   const lines = linesRaw ?? []
 
   // ── Server-side financial snapshot ─────────────────────────────────────────
-  const thisOrder = sumLinePrices(lines)
-
-  const { data: priorScos } = await supabase
-    .from("sub_change_orders")
-    .select("id")
-    .eq("project_id", sco.project_id)
-    .eq("vendor_id", sco.vendor_id)
-    .in("status", ["sent", "accepted"])
-    .lt("created_at", sco.created_at)
-    .neq("id", id)
-  let previousAdditions = 0
-  let previousDeductions = 0
-  const priorIds = (priorScos ?? []).map(r => r.id)
-  if (priorIds.length) {
-    const { data: priorLines } = await supabase
-      .from("sub_change_order_lines")
-      .select("sub_change_order_id, price")
-      .in("sub_change_order_id", priorIds)
-    const totals = new Map<string, number>()
-    for (const l of priorLines ?? []) {
-      totals.set(l.sub_change_order_id, (totals.get(l.sub_change_order_id) ?? 0) + (l.price ?? 0))
-    }
-    for (const pid of priorIds) {
-      const t = round2(totals.get(pid) ?? 0)
-      if (t > 0) previousAdditions += t
-      else if (t < 0) previousDeductions += Math.abs(t)
-    }
-    previousAdditions = round2(previousAdditions)
-    previousDeductions = round2(previousDeductions)
-  }
-  const previousTotal = round2((sco.original_contract_amount ?? 0) + previousAdditions - previousDeductions)
-  const presentContractAmount = round2(previousTotal + thisOrder)
+  const recap = await computeSubCoRecap(supabase, sco)
+  const { previousAdditions, previousDeductions, previousTotal, thisOrder, presentContractAmount } = recap
 
   // Freeze the recap BEFORE rendering, so the stored snapshot and the printed
   // page can never disagree.

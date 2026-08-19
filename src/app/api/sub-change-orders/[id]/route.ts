@@ -58,6 +58,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     "co_number", "original_contract_no", "co_date", "cost_code",
     "original_contract_amount", "status", "commitment_id", "vendor_id",
     "signer_name", "signer_title",
+    "prior_additions_override", "prior_deductions_override",
   ]
   const safe: Record<string, unknown> = Object.fromEntries(
     Object.entries(updates).filter(([k]) => allowed.includes(k)),
@@ -91,6 +92,26 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       return NextResponse.json({ error: "original_contract_amount is not a valid amount" }, { status: 400 })
     }
     safe.original_contract_amount = parsed.value ?? null
+  }
+
+  // Prior contract history overrides — either may be set independently; there
+  // is no validation coupling between them. Empty/null clears back to auto.
+  // Both are MAGNITUDES as printed, so a negative is a user error, not a sign
+  // to flip; the 0053 CHECK is the backstop, not the first line of defense.
+  for (const [field, label] of [
+    ["prior_additions_override", "Previous additions"],
+    ["prior_deductions_override", "Previous deductions"],
+  ] as const) {
+    if (!(field in safe)) continue
+    const parsed = parseMoney(safe[field])
+    if (parsed.invalid) {
+      return NextResponse.json({ error: `${field} is not a valid amount` }, { status: 400 })
+    }
+    const value = parsed.value ?? null
+    if (value != null && value < 0) {
+      return NextResponse.json({ error: `${label} cannot be negative` }, { status: 400 })
+    }
+    safe[field] = value
   }
 
   // Re-resolve FK edits through RLS-scoped reads (cross-company ids 404).
