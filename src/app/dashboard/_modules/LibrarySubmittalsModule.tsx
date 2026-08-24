@@ -2975,8 +2975,17 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                           data-nav-primary
                           onClick={() => openDetailModal(s)}
                           title={s.file_name}
-                          className={`flex-1 min-w-0 text-left truncate hover:underline focus:outline-none focus:underline ${hasAttachment ? "text-[#0F172A] font-medium" : "text-[#94A3B8] italic"}`}>
-                          {s.file_name}
+                          className={`flex-1 min-w-0 text-left hover:underline focus:outline-none focus:underline ${hasAttachment ? "text-[#0F172A] font-medium" : "text-[#94A3B8] italic"}`}>
+                          <span className="block truncate">{s.file_name}</span>
+                          {/* Requirement sentence (detailed-mode commits): rows
+                              sharing a product name stay distinguishable. Null
+                              on every pre-existing row → renders nothing. */}
+                          {s.description && (
+                            <span title={s.description}
+                              className="block truncate text-[11px] font-normal text-[#64748B]">
+                              {s.description}
+                            </span>
+                          )}
                         </button>
                         {s.title_locked && (
                           <span title="Title was set manually — automated re-process will not overwrite it"

@@ -91,6 +91,29 @@ written, with no number and no trailing punctuation ("Door Hardware").
 When an item has no enclosing product heading — it sits directly under
 the article — set "group_title" to "". Never invent one, never use the
 spec section's own title, never use a page footer or running header.
+Use the numbered product heading's own text and nothing else. Do NOT append,
+qualify, or compose a more specific title from sub-products, nested headings,
+or the item's own content — every item under "11. Door Hardware" gets exactly
+"Door Hardware", however varied the items beneath it. One numbered heading =
+one group_title, character for character.
+The heading is ALWAYS the NUMBERED line. Some groups insert an extra lettered
+layer of sub-products between the numbered heading and the deliverables:
+  22. Bathroom Accessories
+      a. Toilet
+         1) Product Data: ...
+         2) Warranty: ...
+      b. Sink
+         1) Product Data: ...
+That lettered sub-product layer NEVER contributes to group_title. Every item
+above gets group_title "Bathroom Accessories" — never "Toilet", never
+"Bathroom Accessories - Toilet", never any joined or hyphenated combination.
+The sub-product belongs in the item's heading/description, not in group_title.
+HARD CONSTRAINT on every non-empty group_title: the exact string you write
+must appear verbatim as the text of ONE numbered heading line in the input,
+minus its number and trailing punctuation. Before writing a group_title,
+verify it against the input: if that exact string is not the text of a
+numbered heading line, it is INVALID — write the enclosing numbered heading's
+text instead. A group_title containing " - " is almost always this error.
 
 ==== IGNORE PAGE FURNITURE ====
 Running headers / footers are sometimes stitched BETWEEN lettered items — e.g. the
@@ -144,7 +167,8 @@ Respond with ONLY compact JSON — no markdown, no prose:
 If the text has no lettered items, return: {"submittals": []}
 "letter" is the item's own letter. "article" is the article number it sits under
 (e.g. "1.4"), or the article title if unnumbered. "group_title" is the enclosing
-product heading's name, or "" when there is none. Keep "description" under 120
+NUMBERED product heading's name verbatim — never composed with sub-product or
+nested-heading names — or "" when there is none. Keep "description" under 120
 characters. "type" MUST be exactly one of the nine allowed values.`
 
 // ─── Classification ──────────────────────────────────────────────────────────
