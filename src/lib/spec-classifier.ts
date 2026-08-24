@@ -282,8 +282,9 @@ export async function classifySubmittals(
 const MAX_CHUNK_CHARS = 8000
 
 /** Top-level lettered item ("A. ", "B. ") at line start — the same pattern the
- *  item grain is built on. Sub-chunk boundaries fall ONLY here, so a lettered
- *  item is never split across chunks. */
+ *  item grain is built on. Sub-chunk boundaries fall only here and at
+ *  PRODUCT_HEADING_LINE matches, so a chunk always starts on an item or
+ *  heading line, never mid-sentence. */
 const LETTERED_ITEM_LINE = /^[ \t]*[A-Z]\.\s/
 
 /** A product-group heading line ("11. Door Hardware") — a numbered line whose
@@ -294,29 +295,35 @@ const PRODUCT_HEADING_LINE = /^[ \t]*\d{1,3}[.)][ \t]+\S.{0,78}$/
 
 /**
  * Splits one oversized article block into pieces under MAX_CHUNK_CHARS, cutting
- * only at top-level lettered-item boundaries. Every piece after the first is
+ * at top-level lettered-item boundaries AND at product-heading lines. Product
+ * headings must be boundaries too: a lettered item that enumerates its products
+ * as numbered headings ("1." … "26.") with lowercase sub-bullets has NO
+ * lettered interior line, so lettered-only segmentation passes the whole item
+ * through as one 18k+ chunk — and a chunk holding many headings is what lets
+ * the model compose titles across them. Every piece after the first is
  * re-anchored with the article's heading line (the block's first line, e.g.
  * "1.4 SUBMITTALS") so the model still knows which article it is itemizing —
  * without it the "article" field of the continuation rows would be wrong.
  * The same re-anchoring carries the most recent PRODUCT heading ("11. Door
- * Hardware"): a boundary is a lettered-item line, never a product heading, so a
- * continuation chunk can open with deliverables whose enclosing heading stayed
- * in the previous chunk — without the carry those items would lose their
- * group_title.
- * A single lettered item longer than the limit stays whole (never split), even
- * though the resulting piece exceeds the limit.
+ * Hardware") when a continuation chunk opens with deliverables whose enclosing
+ * heading stayed in the previous chunk — without the carry those items would
+ * lose their group_title.
+ * A single segment longer than the limit (no interior boundary at all) stays
+ * whole, even though the resulting piece exceeds the limit — the caller warns
+ * on any such overflow instead of hiding it.
  */
-function subChunkArticle(article: string): string[] {
+export function subChunkArticle(article: string, specNumber: string): string[] {
   if (article.length <= MAX_CHUNK_CHARS) return [article]
 
   const lines = article.split("\n")
   const headingLine = lines[0]
 
-  // Segment at lettered-item starts: [preamble incl. heading, item A, item B, …]
+  // Segment at lettered-item starts AND product-heading starts:
+  // [preamble incl. heading, item A, …, heading 1 + its sub-items, heading 2 …]
   const segments: string[] = []
   let current: string[] = []
   for (const line of lines) {
-    if (LETTERED_ITEM_LINE.test(line) && current.length > 0) {
+    if ((LETTERED_ITEM_LINE.test(line) || PRODUCT_HEADING_LINE.test(line)) && current.length > 0) {
       segments.push(current.join("\n"))
       current = []
     }
@@ -360,6 +367,18 @@ function subChunkArticle(article: string): string[] {
     carriedHeading = lastProductHeading(seg) ?? carriedHeading
   }
   if (buf) chunks.push(buf)
+
+  // MAX_CHUNK_CHARS is a ceiling, not a target. The only legitimate overflow
+  // is a single segment with no interior boundary that is itself over the
+  // limit (the documented never-split case) — it passes through whole, but
+  // NEVER silently: silent overflow is exactly what let composed titles hide.
+  for (const chunk of chunks) {
+    if (chunk.length > MAX_CHUNK_CHARS) {
+      console.warn(
+        `[spec-classifier] ${specNumber}: sub-chunk is ${chunk.length} chars, over the ${MAX_CHUNK_CHARS}-char limit — no interior boundary to split at; sent whole`,
+      )
+    }
+  }
   return chunks
 }
 
@@ -478,7 +497,7 @@ export async function classifySubmittalsChunked(
     return { items: [], failedChunks: 1 }
   }
 
-  const chunks = usable.flatMap(subChunkArticle)
+  const chunks = usable.flatMap(a => subChunkArticle(a, specNumber))
   const results = await Promise.all(chunks.map(chunk =>
     (gate ? gate.run(() => classifyChunk(client, specNumber, specTitle, chunk))
           : classifyChunk(client, specNumber, specTitle, chunk)
