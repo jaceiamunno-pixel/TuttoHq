@@ -281,6 +281,10 @@ export async function classifySubmittals(
  *  8,000-token ceiling. */
 const MAX_CHUNK_CHARS = 8000
 
+/** A trailing chunk smaller than this merges into its predecessor when that
+ *  fits under MAX_CHUNK_CHARS (see the minimum-size merge in subChunkArticle). */
+const MIN_TRAILING_CHUNK_CHARS = 2500
+
 /** Top-level lettered item ("A. ", "B. ") at line start — the same pattern the
  *  item grain is built on. Sub-chunk boundaries fall only here and at
  *  PRODUCT_HEADING_LINE matches, so a chunk always starts on an item or
@@ -384,6 +388,7 @@ export function subChunkArticle(article: string, specNumber: string): string[] {
   let buf = ""
   let carriedHeading: string | null = null
   let groupedRegionStarted = false
+  let preambleChunkIndex = -1
   const opensOnHeading = (s: string): boolean => PRODUCT_HEADING_LINE.test(s.split("\n", 1)[0])
   for (let i = 0; i < segments.length; i++) {
     const seg = segments[i]
@@ -392,6 +397,7 @@ export function subChunkArticle(article: string, specNumber: string): string[] {
     if (modeBreak) groupedRegionStarted = true
     if (buf && (modeBreak || buf.length + 1 + seg.length > MAX_CHUNK_CHARS)) {
       chunks.push(buf)
+      if (modeBreak) preambleChunkIndex = chunks.length - 1
       buf = carriedHeading && opensMidGroup(seg)
         ? `${headingLine}\n${carriedHeading}\n${seg}`
         : `${headingLine}\n${seg}`
@@ -401,6 +407,25 @@ export function subChunkArticle(article: string, specNumber: string): string[] {
     carriedHeading = lastProductHeading(seg) ?? carriedHeading
   }
   if (buf) chunks.push(buf)
+
+  // Minimum-size merge: a trailing mini-chunk folds into its predecessor. A
+  // chunk holding a single heading gives the model nothing to contrast
+  // against, and it can promote the heading's own sub-products ("a. Furniture")
+  // to bare titles. Two refusals: never past MAX_CHUNK_CHARS (the two chunks
+  // stay separate rather than manufacturing an overflow), and never into the
+  // preamble chunk (that would rebuild the mixed preamble+grouped shape the
+  // mode break above exists to remove). The duplicated article-heading
+  // re-anchor is dropped from the absorbed chunk so it doesn't repeat
+  // mid-chunk.
+  if (chunks.length > 1 && chunks[chunks.length - 1].length < MIN_TRAILING_CHUNK_CHARS &&
+      chunks.length - 2 !== preambleChunkIndex) {
+    const last = chunks[chunks.length - 1]
+    const body = last.startsWith(`${headingLine}\n`) ? last.slice(headingLine.length + 1) : last
+    const merged = `${chunks[chunks.length - 2]}\n${body}`
+    if (merged.length <= MAX_CHUNK_CHARS) {
+      chunks.splice(chunks.length - 2, 2, merged)
+    }
+  }
 
   // MAX_CHUNK_CHARS is a ceiling, not a target. The only legitimate overflow
   // is a single segment with no interior boundary that is itself over the
