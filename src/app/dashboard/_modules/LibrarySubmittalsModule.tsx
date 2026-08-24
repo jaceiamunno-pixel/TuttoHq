@@ -1,13 +1,13 @@
 "use client"
 
-import { useState, useEffect, useMemo, useRef } from "react"
+import { Fragment, useState, useEffect, useMemo, useRef } from "react"
 import { createPortal } from "react-dom"
 import SubmittalCoversheet from "@/components/submittals/SubmittalCoversheet"
 import type {
   Division, SubmittalFile, SubmittalRecord, AiResult, NameOptions, UploadStep,
   BatchItem, BatchPhase, Project, TeamMember, OpenFileCtx, FileModalStep,
   CoverFormData, CoverContact, StagedSubmittal, SpecSectionRow, PendingDoc,
-  VendorRow, VendorPersonRow,
+  VendorRow, VendorPersonRow, SubmittalRevision,
 } from "../_shared/types"
 import { SUBMITTAL_TYPE_OPTIONS } from "../_shared/types"
 import { CSI_DIVISIONS, CSI_SECTIONS, SECTION_PALETTE, sectionColorMap } from "../_shared/csi"
@@ -38,6 +38,16 @@ import { REVIEW_STATUSES, isReviewStatus, type ReviewStatus } from "@/lib/review
 // 'Transmitted' were retired (one word per state: 'Sent to A/E'); the
 // sub-return leg is tracked by returned_to_sub_date, not a status.
 const LOG_STATUS_OPTIONS = REVIEW_STATUSES
+
+// Nested cover-sheet issues (submittal_revisions) — the API returns them
+// newest-first, so [0] is the latest. Its status is the parent row's
+// DISPLAY roll-up only; nothing ever writes it back to the submittals row.
+const revsOf = (s: SubmittalRecord): SubmittalRevision[] => s.revisions ?? []
+// Short date-time stamp for revision child rows ("Aug 24, 2026, 3:42 PM").
+const fmtRevStamp = (iso: string) =>
+  new Date(iso).toLocaleString("en-US", {
+    month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit",
+  })
 
 // ─── Submittal-log calculated columns ────────────────────────────────────────
 function daysBetween(a: string, b: string): number | null {
@@ -344,6 +354,10 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
   // Sub-package selection (Session I) — "Select" mode adds a checkbox column.
   const [selectMode, setSelectMode]             = useState(false)
   const [selectedIds, setSelectedIds]           = useState<Set<string>>(new Set())
+  // Which parent rows have their revision children expanded. Local state
+  // only (not persisted); default collapsed. Revision rows are display-only
+  // children — never selectable, never in selectedIds.
+  const [expandedRevIds, setExpandedRevIds]     = useState<Set<string>>(new Set())
   const [showPackageModal, setShowPackageModal] = useState(false)
   // "Mark fulfilled by other submittal" bulk action (migration 0043). In-flight
   // guard + monotonic key source for the undo toast (so back-to-back marks stack
@@ -2941,8 +2955,11 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                   // a subtle white-tinted background to stand out from
                   // the section-color tint that applies to all rows.
                   const hasAttachment = !!s.storage_path
+                  const revs = revsOf(s)
+                  const revsOpen = revs.length > 0 && expandedRevIds.has(s.id)
                   return (
-                  <tr key={s.id} data-nav-item className={`border-b border-[#E2E8F0]/60 ${c.bg} ${hasAttachment ? "shadow-[inset_0_0_0_999px_rgba(255,255,255,0.45)]" : ""} ${showSelect && selectedIds.has(s.id) ? "ring-1 ring-inset ring-[#7B9BB5]/40" : ""} outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#7B9BB5] focus-visible:bg-[#7B9BB5]/[0.06]`}>
+                  <Fragment key={s.id}>
+                  <tr data-nav-item className={`border-b border-[#E2E8F0]/60 ${c.bg} ${hasAttachment ? "shadow-[inset_0_0_0_999px_rgba(255,255,255,0.45)]" : ""} ${showSelect && selectedIds.has(s.id) ? "ring-1 ring-inset ring-[#7B9BB5]/40" : ""} outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#7B9BB5] focus-visible:bg-[#7B9BB5]/[0.06]`}>
                     {showSelect && (
                       <td className="px-3 py-1.5">
                         <input type="checkbox" checked={selectedIds.has(s.id)}
@@ -2950,7 +2967,27 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                           className="accent-[#7B9BB5] align-middle" />
                       </td>
                     )}
-                    <td className={`px-3 py-1.5 tabular-nums ${hasAttachment ? "text-[#0F172A] font-semibold" : "text-[#94A3B8] font-medium"} border-l-4 ${c.border} whitespace-nowrap`}>{formatSectionNumber(s.csi_section, s.section_seq)}</td>
+                    <td className={`px-3 py-1.5 tabular-nums ${hasAttachment ? "text-[#0F172A] font-semibold" : "text-[#94A3B8] font-medium"} border-l-4 ${c.border} whitespace-nowrap`}>
+                      <span className="inline-flex items-center gap-1.5">
+                        {revs.length > 0 && (
+                          <button type="button"
+                            onClick={() => setExpandedRevIds(prev => {
+                              const next = new Set(prev)
+                              next.has(s.id) ? next.delete(s.id) : next.add(s.id)
+                              return next
+                            })}
+                            aria-expanded={revsOpen}
+                            title={`${revs.length} cover-sheet revision${revs.length === 1 ? "" : "s"} — click to ${revsOpen ? "collapse" : "expand"}`}
+                            className="inline-flex items-center gap-1 px-1 py-0.5 rounded text-[10px] font-semibold tabular-nums bg-[#7B9BB5]/10 text-[#5A7A94] hover:bg-[#7B9BB5]/20 transition-colors">
+                            <svg className={`h-3 w-3 transition-transform ${revsOpen ? "rotate-90" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                            </svg>
+                            {revs.length} rev
+                          </button>
+                        )}
+                        {formatSectionNumber(s.csi_section, s.section_seq)}
+                      </span>
+                    </td>
                     <td className="px-3 py-1.5 whitespace-nowrap">
                       <span className={`inline-block px-1.5 py-0.5 rounded font-mono text-[11px] font-semibold ${c.chip}`}>{s.csi_section ?? "—"}</span>
                     </td>
@@ -3065,11 +3102,22 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                     <td className="px-2 py-1.5"><DateCell value={s.returned_to_sub_date} onChange={v => patchSubmittal(s.id, { returned_to_sub_date: v })} /></td>
                     <td className="px-3 py-1.5 text-center tabular-nums text-[#64748B]">{appr ?? "—"}</td>
                     <td className="px-2 py-1.5">
+                      {/* Roll-up display: with revisions on file, the status
+                          column reads the LATEST revision's review_status
+                          (revs[0], newest-first). Display only — nothing is
+                          written back to the submittals row, and the row's
+                          own review_status is untouched underneath. */}
+                      {revs.length > 0 ? (
+                        <span title={`Latest revision (Rev ${revs[0].rev_seq}) status — roll-up display; expand the row for the full history`}>
+                          <StatusBadge status={revs[0].review_status ?? "Received"} />
+                        </span>
+                      ) : (
                       <select value={s.review_status ?? "Not Started"}
                         onChange={e => patchSubmittal(s.id, { review_status: e.target.value })}
                         className="h-7 px-1.5 rounded border border-[#E2E8F0] text-[12px] text-[#0F172A] bg-white focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40">
                         {LOG_STATUS_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
                       </select>
+                      )}
                     </td>
                     <td className="px-3 py-1.5 whitespace-nowrap">
                       {late === "late"
@@ -3113,6 +3161,39 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                       ]} />
                     </td>
                   </tr>
+                  {/* Revision child rows — newest first, indented on a tinted
+                      background so they read as children. Display-only: no
+                      checkbox, no data-nav-item, never in selectedIds —
+                      package/export selection stays at parent level. */}
+                  {revsOpen && revs.map(r => {
+                    const revPath = r.cover_pdf_path ?? r.storage_path
+                    return (
+                    <tr key={`rev-${r.id}`} className="border-b border-[#E2E8F0]/60 bg-[#7B9BB5]/[0.07]">
+                      <td colSpan={HEADERS.length + (showSelect ? 1 : 0)}
+                        className={`px-3 py-1.5 border-l-4 ${c.border}`}>
+                        <div className="flex items-center gap-2.5 pl-10">
+                          <svg className="h-3 w-3 flex-shrink-0 text-[#94A3B8]" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5v8a2 2 0 002 2h6m0 0l-3-3m3 3l-3 3" />
+                          </svg>
+                          <span className="flex-shrink-0 text-[11px] font-semibold tabular-nums text-[#5A7A94]">Rev {r.rev_seq}</span>
+                          {revPath ? (
+                            <button type="button"
+                              onClick={() => window.open(`/api/download/${encodeURIComponent(s.id)}?path=${encodeURIComponent(revPath)}`, "_blank")}
+                              title={`${r.file_name ?? "Cover PDF"} — open the cover PDF`}
+                              className="min-w-0 max-w-[420px] truncate text-left text-[12px] font-medium text-[#0F172A] hover:underline focus:outline-none focus:underline">
+                              {r.file_name ?? "Cover PDF"}
+                            </button>
+                          ) : (
+                            <span className="min-w-0 max-w-[420px] truncate text-[12px] text-[#64748B]">{r.file_name ?? "Cover PDF"}</span>
+                          )}
+                          <StatusBadge status={r.review_status ?? "Received"} />
+                          <span className="flex-shrink-0 text-[10px] text-[#64748B] tabular-nums whitespace-nowrap">{fmtRevStamp(r.created_at)}</span>
+                        </div>
+                      </td>
+                    </tr>
+                    )
+                  })}
+                  </Fragment>
                   )
                 })}
                 {rows.length === 0 && (
@@ -3164,7 +3245,9 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                         </span>
                       )}
                     </div>
-                    <StatusBadge status={s.review_status ?? "Not Started"} />
+                    {/* Same roll-up rule as the desktop status column:
+                        latest revision's status when revisions exist. */}
+                    <StatusBadge status={revsOf(s)[0]?.review_status ?? s.review_status ?? "Not Started"} />
                   </div>
                   <div className="mb-1.5">
                     <span

@@ -28,6 +28,42 @@ export type UploadStep = "file" | "classifying" | "suggested" | "manual" | "nami
 export interface NameOptions { materials: string[]; manufacturers: string[]; dimensions: string[] }
 export interface AiResult { division_num: string; division_name: string; section_code: string; section_name: string; material_name?: string | null; manufacturer?: string | null; dimensions?: string | null; confidence?: number; reasoning?: string }
 
+// One cover-sheet issue nested under a parent submittal (migration 0055,
+// table submittal_revisions). rev_seq is 0-based and unique per submittal.
+// Rows are created by /api/generate-cover when a cover is generated for a
+// source submittal WITHOUT an existing log row (shelf Cover / batch cover
+// queue) — never by hand. Deliberately its own table so closeout, packages,
+// scope gates, exports, and dashboard counts (all of which query submittals
+// only) stay untouched.
+export interface SubmittalRevision {
+  id: string
+  company_id: string
+  submittal_id: string
+  rev_seq: number
+  storage_path: string | null
+  file_name: string | null
+  mime_type: string | null
+  file_size: number | null
+  cover_pdf_path: string | null
+  review_status: string | null
+  sent_to_ae_date: string | null
+  returned_from_ae_date: string | null
+  sent_to_sub_date: string | null
+  returned_to_sub_date: string | null
+  send_to_type: string | null
+  send_to_company: string | null
+  send_to_contact: string | null
+  send_to_email: string | null
+  send_to_phone: string | null
+  send_to_address: string | null
+  transmitted_by: string | null
+  transmitted_by_company: string | null
+  copy_to: string | null
+  notes: string | null
+  created_at: string
+  created_by: string | null
+}
+
 export interface SubmittalRecord {
   id: string
   file_name: string
@@ -117,6 +153,12 @@ export interface SubmittalRecord {
   // description renders "Fulfilled by other submittal" (display-only — the
   // stored file_name/title is never overwritten, so unmark restores it).
   fulfilled_by_other: boolean
+  // Nested cover-sheet issues, newest first (rev_seq desc). Attached by
+  // GET /api/submittals only — optional (`?`) because every other producer
+  // of this shape (search, files, bulk import) omits it. Display roll-up:
+  // when present and non-empty, the log's status column shows
+  // revisions[0].review_status; the value is never written back to this row.
+  revisions?: SubmittalRevision[]
 }
 
 export type BatchStatus = "pending" | "classifying" | "ready" | "error" | "uploading" | "done" | "upload-error"

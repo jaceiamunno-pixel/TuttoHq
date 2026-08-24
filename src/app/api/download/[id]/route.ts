@@ -30,14 +30,13 @@ export async function GET(
     .eq("id", id)
     .single()
 
-  if (!submittal?.storage_path) {
+  if (!submittal) {
     return NextResponse.json({ error: "Not found" }, { status: 404 })
   }
 
   const url = new URL(req.url)
   const stripped = url.searchParams.get("stripped") === "1"
   const requestedPath = url.searchParams.get("path")
-  const originalPath = submittal.storage_path
 
   // Universal safe fallback: redirect to a 1-hour signed URL for a stored
   // object. Plain download, no PDF processing — cannot crash on a bad file.
@@ -48,18 +47,36 @@ export async function GET(
   const storageDown = () => NextResponse.json({ error: "storage unavailable" }, { status: 502 })
 
   // ── Historical-revision download (?path=…): validate the path is a real
-  //    attachment on this submittal (defends against arbitrary-object reads),
-  //    then serve it raw via signed redirect.
-  if (requestedPath && requestedPath !== originalPath) {
+  //    attachment OR a submittal_revisions cover on this submittal (defends
+  //    against arbitrary-object reads), then serve it raw via signed
+  //    redirect. Checked BEFORE the storage_path gate below — a revision can
+  //    hang off a parent that has no file of its own (spec placeholder that
+  //    only ever had covers generated).
+  if (requestedPath && requestedPath !== submittal.storage_path) {
     const { data: att } = await supabase
       .from("submittal_attachments")
       .select("storage_path")
       .eq("submittal_id", id)
       .eq("storage_path", requestedPath)
       .maybeSingle()
-    if (!att) return NextResponse.json({ error: "attachment not found" }, { status: 404 })
-    return (await signedRedirect(att.storage_path)) ?? storageDown()
+    if (att) return (await signedRedirect(att.storage_path)) ?? storageDown()
+
+    const { data: rev } = await supabase
+      .from("submittal_revisions")
+      .select("id")
+      .eq("submittal_id", id)
+      .or(`storage_path.eq."${requestedPath}",cover_pdf_path.eq."${requestedPath}"`)
+      .limit(1)
+      .maybeSingle()
+    if (rev) return (await signedRedirect(requestedPath)) ?? storageDown()
+
+    return NextResponse.json({ error: "attachment not found" }, { status: 404 })
   }
+
+  if (!submittal.storage_path) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 })
+  }
+  const originalPath = submittal.storage_path
 
   // ── Library stripped view (?stripped=1): serve the PRE-STRIPPED stored
   //    copy if one exists, else the original. Never strips on the fly.
