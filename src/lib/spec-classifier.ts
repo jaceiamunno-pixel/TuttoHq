@@ -318,6 +318,9 @@ const PRODUCT_HEADING_LINE = /^[ \t]*\d{1,3}\.[ \t]+\S.{0,78}$/
  * A single segment longer than the limit (no interior boundary at all) stays
  * whole, even though the resulting piece exceeds the limit — the caller warns
  * on any such overflow instead of hiding it.
+ * One extra rule: a chunk never mixes the ungrouped lettered preamble with the
+ * grouped (product-heading) region — packing force-breaks once per article at
+ * the first heading-opening segment (see the packing loop's comment).
  */
 export function subChunkArticle(article: string, specNumber: string): string[] {
   if (article.length <= MAX_CHUNK_CHARS) return [article]
@@ -359,11 +362,35 @@ export function subChunkArticle(article: string, specNumber: string): string[] {
 
   // Greedily pack whole segments into chunks under the limit, tracking the most
   // recent product heading seen in already-packed text for re-anchoring.
+  //
+  // One forced break, at the grouped region's start: the first segment that
+  // OPENS on a product heading closes the buffer even though it is under the
+  // limit. Without it the packer merges the ungrouped lettered preamble with
+  // the first headings into one MIXED chunk — and on that shape the model
+  // fails all-or-nothing: seeing a chunk that opens with ungrouped items, it
+  // sometimes decides the whole chunk isn't product-grouped and empties every
+  // group_title in it (observed 4 of 10 live runs on 13 30 50; homogeneous
+  // chunks never failed). Preamble items' titles are genuinely "" so the
+  // preamble-only chunk is safe; chunks after the break all open on a heading.
+  //
+  // "Grouped region's start" = the first heading-opening segment whose NEXT
+  // segment also opens on a heading. A lone heading-shaped line inside the
+  // preamble (13 30 50's 1.9 has "1. Products used in the work…", a short
+  // numbered sentence under item A) must not trigger the break — it is
+  // followed by lettered preamble, not by "2. <product>", so the lookahead
+  // rejects it; breaking there would strand the rest of the preamble in a
+  // mixed chunk, recreating the exact shape this break removes.
   const chunks: string[] = []
   let buf = ""
   let carriedHeading: string | null = null
-  for (const seg of segments) {
-    if (buf && buf.length + 1 + seg.length > MAX_CHUNK_CHARS) {
+  let groupedRegionStarted = false
+  const opensOnHeading = (s: string): boolean => PRODUCT_HEADING_LINE.test(s.split("\n", 1)[0])
+  for (let i = 0; i < segments.length; i++) {
+    const seg = segments[i]
+    const modeBreak = !groupedRegionStarted && opensOnHeading(seg) &&
+      i + 1 < segments.length && opensOnHeading(segments[i + 1])
+    if (modeBreak) groupedRegionStarted = true
+    if (buf && (modeBreak || buf.length + 1 + seg.length > MAX_CHUNK_CHARS)) {
       chunks.push(buf)
       buf = carriedHeading && opensMidGroup(seg)
         ? `${headingLine}\n${carriedHeading}\n${seg}`
