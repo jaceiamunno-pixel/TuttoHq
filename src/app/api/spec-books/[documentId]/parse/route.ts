@@ -223,7 +223,9 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ do
             spec_number:         sec.spec_number,
             letter:              it.letter || null,
             article:             it.article || null,
-            project_item_name:   sec.spec_title,
+            // Product-grouped articles name the row by its group heading
+            // ("Door Hardware"); ungrouped items keep the section title.
+            project_item_name:   it.group_title || sec.spec_title,
             submittal_type:      it.type,
             description:         it.sub_bullets.length > 0
               ? it.sub_bullets.join("; ")
