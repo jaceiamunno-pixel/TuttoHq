@@ -349,6 +349,11 @@ export interface ParseSummary {
   sectionsFound: number
   sectionsWithSubmittals: number
   staged: number
+  /** Sections whose AI itemization lost ≥1 chunk (truncated/unparseable) —
+   *  their staged rows are incomplete, NOT "no submittals". Optional: absent
+   *  on summaries written before chunked classification shipped. */
+  sectionsFailed?: number
+  failedSections?: string[]
 }
 export interface PendingDoc {
   id: string

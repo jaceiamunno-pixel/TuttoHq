@@ -165,7 +165,12 @@ function normalize(item: unknown): ClassifiedSubmittal | null {
   }
 }
 
-/** Sends one spec section's SUBMITTALS text to Claude Haiku. */
+/** Sends one spec section's SUBMITTALS text to Claude Haiku.
+ *
+ *  LEGACY single-shot path — kept exported and behaviorally identical for any
+ *  existing caller, but it cannot distinguish "no submittals" from "response
+ *  truncated / unparseable" (both return []). The parse pipeline uses
+ *  classifySubmittalsChunked below, which reports failures explicitly. */
 export async function classifySubmittals(
   client: Anthropic,
   specNumber: string,
@@ -174,7 +179,7 @@ export async function classifySubmittals(
 ): Promise<ClassifiedSubmittal[]> {
   const message = await client.messages.create({
     model: "claude-haiku-4-5-20251001",
-    max_tokens: 1500,
+    max_tokens: 8000,
     system: SYSTEM_PROMPT,
     messages: [
       {
@@ -202,6 +207,161 @@ export async function classifySubmittals(
       : []
 
   return items.map(normalize).filter((x): x is ClassifiedSubmittal => x !== null)
+}
+
+// ─── Chunked classification ──────────────────────────────────────────────────
+//
+// WHY: a single Haiku call over a whole section's concatenated submittals text
+// truncates mid-JSON when the itemization needs more output tokens than
+// max_tokens allows; the greedy brace match then finds nothing (or JSON.parse
+// throws) and the section silently stages 0 items. Prod evidence: sections
+// under ~8,000 chars stage reliably; above ~20,000 chars failure is 100%
+// (worst case: a genuine 42,515-char, 109-page section that staged nothing).
+// The fix is one call per ARTICLE block, an explicit stop_reason check, and an
+// explicit failure count — a failed chunk must never read as "no submittals".
+
+/** A single article block longer than this is sub-chunked at top-level
+ *  lettered-item boundaries before being sent. Chosen from prod evidence:
+ *  sections under ~8,000 chars classified reliably at the OLD 1,500-token
+ *  ceiling, so one ≤8,000-char chunk is comfortably itemized within the new
+ *  8,000-token ceiling. */
+const MAX_CHUNK_CHARS = 8000
+
+/** Top-level lettered item ("A. ", "B. ") at line start — the same pattern the
+ *  item grain is built on. Sub-chunk boundaries fall ONLY here, so a lettered
+ *  item is never split across chunks. */
+const LETTERED_ITEM_LINE = /^[ \t]*[A-Z]\.\s/
+
+/**
+ * Splits one oversized article block into pieces under MAX_CHUNK_CHARS, cutting
+ * only at top-level lettered-item boundaries. Every piece after the first is
+ * re-anchored with the article's heading line (the block's first line, e.g.
+ * "1.4 SUBMITTALS") so the model still knows which article it is itemizing —
+ * without it the "article" field of the continuation rows would be wrong.
+ * A single lettered item longer than the limit stays whole (never split), even
+ * though the resulting piece exceeds the limit.
+ */
+function subChunkArticle(article: string): string[] {
+  if (article.length <= MAX_CHUNK_CHARS) return [article]
+
+  const lines = article.split("\n")
+  const headingLine = lines[0]
+
+  // Segment at lettered-item starts: [preamble incl. heading, item A, item B, …]
+  const segments: string[] = []
+  let current: string[] = []
+  for (const line of lines) {
+    if (LETTERED_ITEM_LINE.test(line) && current.length > 0) {
+      segments.push(current.join("\n"))
+      current = []
+    }
+    current.push(line)
+  }
+  if (current.length > 0) segments.push(current.join("\n"))
+
+  // Greedily pack whole segments into chunks under the limit.
+  const chunks: string[] = []
+  let buf = ""
+  for (const seg of segments) {
+    if (buf && buf.length + 1 + seg.length > MAX_CHUNK_CHARS) {
+      chunks.push(buf)
+      buf = `${headingLine}\n${seg}`
+    } else {
+      buf = buf ? `${buf}\n${seg}` : seg
+    }
+  }
+  if (buf) chunks.push(buf)
+  return chunks
+}
+
+/** One Haiku call over one chunk. ok:false = truncated or unparseable — the
+ *  items are incomplete/unknown and MUST NOT pass as a normal (empty) result.
+ *  A genuine {"submittals": []} parses cleanly and returns ok:true. */
+async function classifyChunk(
+  client: Anthropic,
+  specNumber: string,
+  specTitle: string,
+  chunkText: string,
+): Promise<{ items: ClassifiedSubmittal[]; ok: boolean }> {
+  const message = await client.messages.create({
+    model: "claude-haiku-4-5-20251001",
+    max_tokens: 8000,
+    system: SYSTEM_PROMPT,
+    messages: [
+      {
+        role: "user",
+        content: `Spec section: ${specNumber} — ${specTitle}\n\nSUBMITTALS article text:\n${chunkText}`,
+      },
+    ],
+  })
+
+  if (message.stop_reason === "max_tokens") {
+    console.error(`[spec-classifier] ${specNumber}: response truncated at max_tokens — chunk marked failed`)
+    return { items: [], ok: false }
+  }
+
+  const text = message.content[0]?.type === "text" ? message.content[0].text.trim() : ""
+  const match = text.match(/\{[\s\S]*\}/)
+  if (!match) {
+    console.error(`[spec-classifier] ${specNumber}: no JSON object in response — chunk marked failed`)
+    return { items: [], ok: false }
+  }
+
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(match[0])
+  } catch (err) {
+    console.error(`[spec-classifier] ${specNumber}: failed to parse Claude JSON response — chunk marked failed`, err)
+    return { items: [], ok: false }
+  }
+
+  if (!parsed || typeof parsed !== "object" || !Array.isArray((parsed as Record<string, unknown>).submittals)) {
+    console.error(`[spec-classifier] ${specNumber}: response JSON has no submittals array — chunk marked failed`)
+    return { items: [], ok: false }
+  }
+
+  const items = ((parsed as Record<string, unknown>).submittals as unknown[])
+    .map(normalize)
+    .filter((x): x is ClassifiedSubmittal => x !== null)
+  return { items, ok: true }
+}
+
+/**
+ * Chunked classification of one spec section — the parse pipeline's entry
+ * point. One Haiku call per article block, SEQUENTIAL on purpose: the caller
+ * already fans sections out through mapWithConcurrency, so adding concurrency
+ * here would multiply the total fan-out. Items are concatenated in article
+ * order and never deduped — letters legitimately restart per article and the
+ * `article` field disambiguates them.
+ *
+ * failedChunks counts every chunk that truncated, failed to parse, or threw —
+ * distinct from a genuine empty result. failedChunks > 0 means the section's
+ * itemization is INCOMPLETE and must be surfaced for manual review, never read
+ * as "no submittals".
+ */
+export async function classifySubmittalsChunked(
+  client: Anthropic,
+  specNumber: string,
+  specTitle: string,
+  articles: string[],
+): Promise<{ items: ClassifiedSubmittal[]; failedChunks: number }> {
+  const items: ClassifiedSubmittal[] = []
+  let failedChunks = 0
+
+  for (const article of articles) {
+    for (const chunk of subChunkArticle(article)) {
+      try {
+        const result = await classifyChunk(client, specNumber, specTitle, chunk)
+        if (result.ok) items.push(...result.items)
+        else failedChunks++
+      } catch (err) {
+        console.error(`[spec-classifier] ${specNumber}: chunk call threw — chunk marked failed`, err)
+        failedChunks++
+      }
+    }
+  }
+
+  return { items, failedChunks }
 }
 
 /** Runs an async mapper over items with a fixed concurrency ceiling. */

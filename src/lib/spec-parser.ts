@@ -776,18 +776,29 @@ function isSubmittalBearingArticle(title: string): boolean {
   return SUBMITTAL_ARTICLE_KEYWORDS.some(k => t.includes(k))
 }
 
+// A table-of-contents dotted-leader entry ("Waste Management Plan ....... 5").
+// Some spec sections open with a section-internal TOC whose lines survive into
+// the extracted article blocks (the O&G/Perini Amtrak 13 30 50 opens with
+// several) — they are index entries, not requirements. Stripped per block.
+const TOC_LEADER_LINE = /\.{5,}\s*\d+\s*$/
+
 /**
- * Extracts every submittal-bearing PART-1 article from a section's text. This is
- * the SUBMITTALS article (SUBMITTALS, ACTION / INFORMATIONAL / CLOSEOUT
- * SUBMITTALS) PLUS the sibling articles that carry real submittal items —
- * QUALITY ASSURANCE, WARRANTY / GUARANTEES AND WARRANTIES, MAINTENANCE MATERIAL
- * SUBMITTALS, DELEGATED DESIGN (see SUBMITTAL_ARTICLE_KEYWORDS). Articles are
- * located by TITLE, not by number (SUBMITTALS sits at 1.3 in some sections, 1.4
- * in others). Each article runs until the FIRST of: the next article heading,
- * the next PART heading, or END OF SECTION — so it never reads past its natural
- * end. Returns "" when none are present.
+ * Extracts every submittal-bearing PART-1 article from a section's text, ONE
+ * STRING PER ARTICLE. This is the SUBMITTALS article (SUBMITTALS, ACTION /
+ * INFORMATIONAL / CLOSEOUT SUBMITTALS) PLUS the sibling articles that carry
+ * real submittal items — QUALITY ASSURANCE, WARRANTY / GUARANTEES AND
+ * WARRANTIES, MAINTENANCE MATERIAL SUBMITTALS, DELEGATED DESIGN (see
+ * SUBMITTAL_ARTICLE_KEYWORDS). Articles are located by TITLE, not by number
+ * (SUBMITTALS sits at 1.3 in some sections, 1.4 in others). Each article runs
+ * until the FIRST of: the next article heading, the next PART heading, or END
+ * OF SECTION — so it never reads past its natural end.
+ *
+ * The per-article grain exists so the classifier can send ONE Haiku call per
+ * article instead of the whole concatenation — the itemization of a long
+ * section overflows a single response otherwise. extractSubmittalsText below
+ * is exactly this array joined, so the two can never drift.
  */
-export function extractSubmittalsText(sectionText: string): string {
+export function extractSubmittalArticles(sectionText: string): string[] {
   const headings: { index: number; title: string }[] = []
   ARTICLE_HEADING.lastIndex = 0
   let m: RegExpExecArray | null
@@ -801,9 +812,21 @@ export function extractSubmittalsText(sectionText: string): string {
     const start = headings[i].index
     const nextArticle = i + 1 < headings.length ? headings[i + 1].index : sectionText.length
     const hardStop = firstHardStopAfter(sectionText, start + 1)
-    blocks.push(sectionText.slice(start, Math.min(nextArticle, hardStop)).trim())
+    const block = sectionText
+      .slice(start, Math.min(nextArticle, hardStop))
+      .split("\n")
+      .filter(line => !TOC_LEADER_LINE.test(line))
+      .join("\n")
+      .trim()
+    if (block) blocks.push(block)
   }
-  return blocks.join("\n\n")
+  return blocks
+}
+
+/** The submittal-bearing articles as one concatenated string — the value
+ *  persisted to spec_sections.submittals_text. Returns "" when none present. */
+export function extractSubmittalsText(sectionText: string): string {
+  return extractSubmittalArticles(sectionText).join("\n\n")
 }
 
 // ─── Top-level parse ─────────────────────────────────────────────────────────
