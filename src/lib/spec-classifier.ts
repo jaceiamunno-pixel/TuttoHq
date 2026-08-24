@@ -42,6 +42,11 @@ export interface ClassifiedSubmittal {
   /** Derived TAG, not the row key — it never decides how many rows are emitted
    *  (the lettered items do). Kept for filtering / display. */
   type: SubmittalType
+  /** The product-group heading the item sits under, when the article groups its
+   *  deliverables by product ("11. Door Hardware" → "Door Hardware"). "" when
+   *  the item sits directly under the article. Writers use it as the row's
+   *  project_item_name, falling back to the section title when empty. */
+  group_title: string
   heading: string
   description: string
   /** True when the item is a bare cross-reference to another section
@@ -76,6 +81,16 @@ article in the text. Enumerate the letters mechanically; do not skip, merge, or 
   are two DIFFERENT rows. Record which article each item sits under in "article".
 - A nested "1., 2., 3." or "a., b., c." list under a letter is that row's
   sub_bullets, NOT its own row.
+
+==== group_title (product-grouped articles) ====
+Some sections group their submittals by PRODUCT: a numbered heading
+("11. Door Hardware", "12. Aluminum Storefront System") followed by
+lettered/sub-lettered deliverables. When an item sits under such a
+heading, set "group_title" to that heading's product name EXACTLY as
+written, with no number and no trailing punctuation ("Door Hardware").
+When an item has no enclosing product heading — it sits directly under
+the article — set "group_title" to "". Never invent one, never use the
+spec section's own title, never use a page footer or running header.
 
 ==== IGNORE PAGE FURNITURE ====
 Running headers / footers are sometimes stitched BETWEEN lettered items — e.g. the
@@ -117,6 +132,7 @@ Respond with ONLY compact JSON — no markdown, no prose:
       "letter": "A",
       "article": "1.4",
       "type": "Product Data",
+      "group_title": "",
       "heading": "Product Data",
       "description": "Mfr's data: dims, capacity, operating features",
       "reference_only": false,
@@ -127,7 +143,8 @@ Respond with ONLY compact JSON — no markdown, no prose:
 
 If the text has no lettered items, return: {"submittals": []}
 "letter" is the item's own letter. "article" is the article number it sits under
-(e.g. "1.4"), or the article title if unnumbered. Keep "description" under 120
+(e.g. "1.4"), or the article title if unnumbered. "group_title" is the enclosing
+product heading's name, or "" when there is none. Keep "description" under 120
 characters. "type" MUST be exactly one of the nine allowed values.`
 
 // ─── Classification ──────────────────────────────────────────────────────────
@@ -144,6 +161,18 @@ function coerceType(raw: unknown): SubmittalType {
   return (ALLOWED.has(v) ? v : "Other") as SubmittalType
 }
 
+/** Cleans the model's group_title: "" when absent/non-string, and strips the
+ *  heading's own number ("11." / "11)") and trailing "." / ":" if the model
+ *  echoes them despite the prompt rule. */
+function coerceGroupTitle(raw: unknown): string {
+  if (typeof raw !== "string") return ""
+  return raw
+    .trim()
+    .replace(/^\d{1,3}[.)]\s*/, "")
+    .replace(/[.:]+$/, "")
+    .trim()
+}
+
 function normalize(item: unknown): ClassifiedSubmittal | null {
   if (!item || typeof item !== "object") return null
   const o = item as Record<string, unknown>
@@ -154,6 +183,7 @@ function normalize(item: unknown): ClassifiedSubmittal | null {
     letter: typeof o.letter === "string" ? o.letter.trim() : "",
     article: typeof o.article === "string" ? o.article.trim() : "",
     type: coerceType(o.type),
+    group_title: coerceGroupTitle(o.group_title),
     heading: heading || description,
     description: description || heading,
     // Deterministic first (regex on the item text), Haiku's own flag as backstop.
@@ -232,12 +262,23 @@ const MAX_CHUNK_CHARS = 8000
  *  item is never split across chunks. */
 const LETTERED_ITEM_LINE = /^[ \t]*[A-Z]\.\s/
 
+/** A product-group heading line ("11. Door Hardware") — a numbered line whose
+ *  text reads as a short title, not a numbered requirement sentence. The length
+ *  cap keeps nested numbered sub-bullets ("1. Provide mfr's data for each …",
+ *  which run sentence-long) from being mistaken for headings. */
+const PRODUCT_HEADING_LINE = /^[ \t]*\d{1,3}[.)][ \t]+\S.{0,78}$/
+
 /**
  * Splits one oversized article block into pieces under MAX_CHUNK_CHARS, cutting
  * only at top-level lettered-item boundaries. Every piece after the first is
  * re-anchored with the article's heading line (the block's first line, e.g.
  * "1.4 SUBMITTALS") so the model still knows which article it is itemizing —
  * without it the "article" field of the continuation rows would be wrong.
+ * The same re-anchoring carries the most recent PRODUCT heading ("11. Door
+ * Hardware"): a boundary is a lettered-item line, never a product heading, so a
+ * continuation chunk can open with deliverables whose enclosing heading stayed
+ * in the previous chunk — without the carry those items would lose their
+ * group_title.
  * A single lettered item longer than the limit stays whole (never split), even
  * though the resulting piece exceeds the limit.
  */
@@ -259,16 +300,40 @@ function subChunkArticle(article: string): string[] {
   }
   if (current.length > 0) segments.push(current.join("\n"))
 
-  // Greedily pack whole segments into chunks under the limit.
+  const lastProductHeading = (text: string): string | null => {
+    let found: string | null = null
+    for (const l of text.split("\n")) {
+      if (PRODUCT_HEADING_LINE.test(l)) found = l
+    }
+    return found
+  }
+
+  // True when the segment's first product heading (if any) comes after its
+  // first content line — i.e. the segment opens with material that belongs to
+  // a heading it does not contain.
+  const opensMidGroup = (seg: string): boolean => {
+    for (const l of seg.split("\n")) {
+      if (l.trim() === "") continue
+      return !PRODUCT_HEADING_LINE.test(l)
+    }
+    return true
+  }
+
+  // Greedily pack whole segments into chunks under the limit, tracking the most
+  // recent product heading seen in already-packed text for re-anchoring.
   const chunks: string[] = []
   let buf = ""
+  let carriedHeading: string | null = null
   for (const seg of segments) {
     if (buf && buf.length + 1 + seg.length > MAX_CHUNK_CHARS) {
       chunks.push(buf)
-      buf = `${headingLine}\n${seg}`
+      buf = carriedHeading && opensMidGroup(seg)
+        ? `${headingLine}\n${carriedHeading}\n${seg}`
+        : `${headingLine}\n${seg}`
     } else {
       buf = buf ? `${buf}\n${seg}` : seg
     }
+    carriedHeading = lastProductHeading(seg) ?? carriedHeading
   }
   if (buf) chunks.push(buf)
   return chunks
