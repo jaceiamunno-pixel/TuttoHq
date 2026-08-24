@@ -41,10 +41,9 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
   // still fire.
   const { data: parsedDocs } = await supabase
     .from("project_documents")
-    .select("id")
+    .select("id, parse_summary")
     .eq("project_id", id)
     .eq("parse_status", "parsed")
-    .limit(1)
   const parsed = (parsedDocs ?? []).length > 0
 
   if (!parsed) {
@@ -64,10 +63,22 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
   const hasBody  = new Set((specRows ?? []).map(r => r.spec_number as string))
   const hasItems = new Set((stagedRows ?? []).map(r => r.spec_number as string))
 
+  // Sections whose AI itemization lost ≥1 chunk, from each parsed doc's
+  // parse_summary.failedSections (written by /parse and /fill-missing). These
+  // have a body — and possibly SOME staged rows — but are incomplete, so they
+  // outrank body_no_items: "extraction failed" must never read as "no
+  // submittals".
+  const extractionFailed = new Set<string>()
+  for (const d of parsedDocs ?? []) {
+    const failed = (d.parse_summary as { failedSections?: unknown } | null)?.failedSections
+    if (Array.isArray(failed)) for (const n of failed) if (typeof n === "string") extractionFailed.add(n)
+  }
+
   const scope = rows.map(r => {
     let diagnosis: ScopeDiagnosis | null = null
     if (r.in_scope) {
       if (!hasBody.has(r.spec_number)) diagnosis = "no_body"
+      else if (extractionFailed.has(r.spec_number)) diagnosis = "extraction_failed"
       else if (!hasItems.has(r.spec_number)) diagnosis = "body_no_items"
     }
     return { ...r, diagnosis }

@@ -1,14 +1,16 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import Anthropic from "@anthropic-ai/sdk"
-import { parseSpecBook } from "@/lib/spec-parser"
-import { classifySubmittals, mapWithConcurrency } from "@/lib/spec-classifier"
+import { parseSpecBook, extractSubmittalArticles } from "@/lib/spec-parser"
+import { classifySubmittalsChunked, Semaphore } from "@/lib/spec-classifier"
 import { enforceAiLimit } from "@/lib/ratelimit"
 
 // Full-book text extraction can take 30-60s on an 800+ page volume.
 export const maxDuration = 300
 
-const CLASSIFY_CONCURRENCY = 3
+// Same single global bound as /parse: sections and chunks dispatch freely and
+// the shared Semaphore is the only throttle on concurrent Haiku calls.
+const HAIKU_CONCURRENCY = 6
 
 // POST /api/spec-books/[documentId]/fill-missing — incremental ingestion for a
 // spec book that has ALREADY been parsed.
@@ -128,10 +130,13 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ do
       submittals_text:     s.submittalsText || null,
       has_submittals:      s.submittalsText.length > 0,
     }))
+    // full_text is selected back so a row whose article-block association is
+    // ambiguous (duplicate spec_number) can have its articles re-extracted
+    // from its OWN body — see articlesForRow below.
     const { data: insertedSections, error: secError } = await supabase
       .from("spec_sections")
       .insert(sectionRows)
-      .select("id, spec_number, spec_title, submittals_text")
+      .select("id, spec_number, spec_title, submittals_text, full_text")
     if (secError) throw new Error(`Failed to save spec sections: ${secError.message}`)
     const inserted = insertedSections ?? []
 
@@ -151,6 +156,30 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ do
     // applied ONLY to the newly inserted sections.
     const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
     const toClassify = inserted.filter(s => s.submittals_text)
+    const gate = new Semaphore(HAIKU_CONCURRENCY)
+
+    // Per-article blocks carried alongside the rows, zipped back by
+    // spec_number ONLY when unambiguous on both sides; any ambiguity
+    // (duplicate spec_number — no unique index guards it) re-extracts fresh
+    // from THAT row's own full_text. Same association rule as /parse: a wrong
+    // or missing association must never silently classify the wrong text.
+    const blocksByNumber = new Map<string, string[][]>()
+    for (const s of target) {
+      const arr = blocksByNumber.get(s.specNumber) ?? []
+      arr.push(extractSubmittalArticles(s.fullText))
+      blocksByNumber.set(s.specNumber, arr)
+    }
+    const insertedCountByNumber = new Map<string, number>()
+    for (const r of inserted) {
+      insertedCountByNumber.set(r.spec_number, (insertedCountByNumber.get(r.spec_number) ?? 0) + 1)
+    }
+    const articlesForRow = (row: { spec_number: string; full_text: string | null }): string[] => {
+      const candidates = blocksByNumber.get(row.spec_number)
+      if (candidates && candidates.length === 1 && insertedCountByNumber.get(row.spec_number) === 1) {
+        return candidates[0]
+      }
+      return extractSubmittalArticles(row.full_text ?? "")
+    }
 
     type StagedRow = {
       project_document_id: string
@@ -167,18 +196,23 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ do
       is_selected: boolean
     }
     const staged: StagedRow[] = []
+    // Sections whose classification lost at least one chunk this run — their
+    // itemization is incomplete, never "no submittals". Merged additively into
+    // parse_summary.failedSections below.
+    const failedSections: string[] = []
 
-    const classified = await mapWithConcurrency(toClassify, CLASSIFY_CONCURRENCY, async sec => {
+    const classified = await Promise.all(toClassify.map(async sec => {
       try {
-        const items = await classifySubmittals(client, sec.spec_number, sec.spec_title, sec.submittals_text ?? "")
-        return { sec, items }
+        const { items, failedChunks } = await classifySubmittalsChunked(client, sec.spec_number, sec.spec_title, articlesForRow(sec), gate)
+        return { sec, items, failedChunks }
       } catch (err) {
         console.error(`[spec-books/fill-missing] classify failed for section ${sec.spec_number}`, err)
-        return { sec, items: [] }
+        return { sec, items: [], failedChunks: 1 }
       }
-    })
+    }))
 
-    for (const { sec, items } of classified) {
+    for (const { sec, items, failedChunks } of classified) {
+      if (failedChunks > 0) failedSections.push(sec.spec_number)
       for (const it of items) {
         const refOnly = it.reference_only === true
         staged.push({
@@ -207,16 +241,25 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ do
 
     // Additive telemetry update — the stored summary keeps describing what has
     // been ingested in total for this doc. parse_status/progress untouched.
-    const prev = (doc.parse_summary ?? {}) as Record<string, number>
+    // failedSections is a union: this run only ingests NEW sections, so prior
+    // failures (from /parse or earlier fills) stay listed until re-ingested.
+    const prev = (doc.parse_summary ?? {}) as Record<string, unknown>
+    const prevNum = (k: string) => (typeof prev[k] === "number" ? (prev[k] as number) : 0)
+    const prevFailed = Array.isArray(prev.failedSections)
+      ? (prev.failedSections as unknown[]).filter((s): s is string => typeof s === "string")
+      : []
+    const allFailed = [...new Set([...prevFailed, ...failedSections])]
     await supabase
       .from("project_documents")
       .update({
         parse_summary: {
           ...prev,
-          sectionsScoped:         hasScope ? inScope.size : (prev.sectionsScoped ?? 0) + inserted.length,
-          sectionsFound:          (prev.sectionsFound ?? 0) + inserted.length,
-          sectionsWithSubmittals: (prev.sectionsWithSubmittals ?? 0) + toClassify.length,
-          staged:                 (prev.staged ?? 0) + staged.length,
+          sectionsScoped:         hasScope ? inScope.size : prevNum("sectionsScoped") + inserted.length,
+          sectionsFound:          prevNum("sectionsFound") + inserted.length,
+          sectionsWithSubmittals: prevNum("sectionsWithSubmittals") + toClassify.length,
+          staged:                 prevNum("staged") + staged.length,
+          sectionsFailed:         allFailed.length,
+          failedSections:         allFailed,
         },
       })
       .eq("id", documentId)

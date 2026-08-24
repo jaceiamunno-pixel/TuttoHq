@@ -2581,6 +2581,11 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                           This likely means the section bodies are in another volume of the spec book. Upload additional volumes from Settings → Projects.
                         </p>
                       )}
+                      {(summary.sectionsFailed ?? 0) > 0 && (
+                        <p className="text-[13px] text-amber-600">
+                          Extraction did not complete for {summary.sectionsFailed} section{summary.sectionsFailed === 1 ? "" : "s"} ({(summary.failedSections ?? []).join(", ")}) — the items are missing or incomplete. Review these sections&apos; specs manually.
+                        </p>
+                      )}
                     </div>
                   ) : (
                     <p className="text-[13px] text-[#64748B] mt-1.5">Upload a spec book from Settings → Projects to auto-extract submittals for review.</p>
@@ -2601,6 +2606,12 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
               const staged = pendingStaged
               const sectionIds = [...new Set(staged.map(s => s.spec_section_id))]
                 .sort((a, b) => (sectionMap.get(a)?.spec_number ?? "").localeCompare(sectionMap.get(b)?.spec_number ?? ""))
+              // Sections whose AI itemization lost ≥1 chunk (union across
+              // volumes) — they have no/incomplete staged rows here, so without
+              // this line they'd silently read as "nothing to review".
+              const failedSpecNumbers = [...new Set(
+                pendingDocuments.flatMap(d => d.parse_summary?.failedSections ?? []),
+              )]
               let commitCount = 0
               if (specMode === "detailed") {
                 commitCount = staged.filter(s => s.is_selected).length
@@ -2619,6 +2630,11 @@ export default function LibrarySubmittalsModule({ activeModule, globalProjectId,
                         <p className="text-[11px] text-[#94A3B8]">
                           {pendingHiddenCount} submittal{pendingHiddenCount === 1 ? "" : "s"} hidden — out of project scope.{" "}
                           <a href="/settings?tab=projects" className="text-[#7B9BB5] font-medium hover:underline">Edit scope</a>
+                        </p>
+                      )}
+                      {failedSpecNumbers.length > 0 && (
+                        <p className="text-[11px] text-amber-600">
+                          Extraction incomplete for {failedSpecNumbers.length} section{failedSpecNumbers.length === 1 ? "" : "s"} ({failedSpecNumbers.join(", ")}) — items missing or incomplete; review the spec manually.
                         </p>
                       )}
                     </div>

@@ -318,6 +318,11 @@ export default function ProjectSpecBooks({ projectId, projectName, onCountChange
                               {ps.sectionsFound} of {ps.sectionsScoped} scoped section{ps.sectionsScoped === 1 ? "" : "s"} found in this volume · {ps.sectionsWithSubmittals} with submittals · {ps.staged} staged
                             </p>
                           )}
+                          {ps && (ps.sectionsFailed ?? 0) > 0 && (
+                            <p className="text-[11px] text-amber-600 mt-1">
+                              Extraction incomplete for {ps.sectionsFailed} section{ps.sectionsFailed === 1 ? "" : "s"} ({(ps.failedSections ?? []).join(", ")}) — review manually.
+                            </p>
+                          )}
                           {fillResult?.docId === doc.id && (
                             <p className={`text-[11px] mt-1 ${fillResult.isError ? "text-red-500" : "text-[#5A7A94]"}`}>
                               {fillResult.message}
