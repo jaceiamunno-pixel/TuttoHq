@@ -290,8 +290,15 @@ const LETTERED_ITEM_LINE = /^[ \t]*[A-Z]\.\s/
 /** A product-group heading line ("11. Door Hardware") — a numbered line whose
  *  text reads as a short title, not a numbered requirement sentence. The length
  *  cap keeps nested numbered sub-bullets ("1. Provide mfr's data for each …",
- *  which run sentence-long) from being mistaken for headings. */
-const PRODUCT_HEADING_LINE = /^[ \t]*\d{1,3}[.)][ \t]+\S.{0,78}$/
+ *  which run sentence-long) from being mistaken for headings.
+ *  PERIOD form only ("11."), never the paren form ("3)"): in these documents
+ *  the paren layer is the NESTED sub-bullet under a heading ("3) Frame details
+ *  for each frame type…" — often short enough to slip the length cap), so a
+ *  paren line must never be a chunk boundary, a carry source, or an
+ *  opensMidGroup signal. A missed boundary only makes a chunk bigger (and the
+ *  post-pack warn catches it); a false boundary orphans items from their
+ *  heading silently. All three call sites read this one regex. */
+const PRODUCT_HEADING_LINE = /^[ \t]*\d{1,3}\.[ \t]+\S.{0,78}$/
 
 /**
  * Splits one oversized article block into pieces under MAX_CHUNK_CHARS, cutting
