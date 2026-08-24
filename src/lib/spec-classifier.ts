@@ -326,41 +326,85 @@ async function classifyChunk(
   return { items, ok: true }
 }
 
+/** Counting gate bounding concurrent Haiku calls across a whole classify
+ *  phase. ONE global ceiling instead of nested per-level limits: sections and
+ *  chunks dispatch freely and this gate is the only throttle, so total
+ *  in-flight calls is exactly `limit` — never a product of nesting levels
+ *  (which under-uses the budget) and never fully sequential per section
+ *  (which blows past the route's maxDuration on large books).
+ *
+ *  A finishing task hands its slot DIRECTLY to the next waiter (resolve
+ *  without decrementing) — decrement-then-signal would let a fresh caller
+ *  sneak in on the same tick and briefly exceed the limit. */
+export class Semaphore {
+  private inFlight = 0
+  private readonly queue: Array<() => void> = []
+  constructor(private readonly limit: number) {}
+
+  async run<T>(fn: () => Promise<T>): Promise<T> {
+    if (this.inFlight >= this.limit) {
+      await new Promise<void>(resolve => this.queue.push(resolve))
+      // Slot handed off by a finishing task — already counted in inFlight.
+    } else {
+      this.inFlight++
+    }
+    try {
+      return await fn()
+    } finally {
+      const next = this.queue.shift()
+      if (next) next()
+      else this.inFlight--
+    }
+  }
+}
+
 /**
  * Chunked classification of one spec section — the parse pipeline's entry
- * point. One Haiku call per article block, SEQUENTIAL on purpose: the caller
- * already fans sections out through mapWithConcurrency, so adding concurrency
- * here would multiply the total fan-out. Items are concatenated in article
- * order and never deduped — letters legitimately restart per article and the
- * `article` field disambiguates them.
+ * point. One Haiku call per article block (sub-chunked when oversized). All
+ * chunks are dispatched at once; `gate` — shared across every section of the
+ * classify phase — is the ONLY concurrency throttle. Results are awaited as an
+ * ordered array, so items always concatenate in article order regardless of
+ * completion order: letters restart per article and log row order follows
+ * article order. Never deduped — the `article` field disambiguates same-letter
+ * rows across sibling articles.
  *
  * failedChunks counts every chunk that truncated, failed to parse, or threw —
  * distinct from a genuine empty result. failedChunks > 0 means the section's
  * itemization is INCOMPLETE and must be surfaced for manual review, never read
- * as "no submittals".
+ * as "no submittals". An EMPTY (or all-whitespace) `articles` input is itself
+ * a failure, not a clean zero: callers only reach this for sections whose
+ * stored submittals_text is non-empty, so zero articles is a contradiction —
+ * a lost association or extraction regression — and must be flagged.
  */
 export async function classifySubmittalsChunked(
   client: Anthropic,
   specNumber: string,
   specTitle: string,
   articles: string[],
+  gate?: Semaphore,
 ): Promise<{ items: ClassifiedSubmittal[]; failedChunks: number }> {
-  const items: ClassifiedSubmittal[] = []
-  let failedChunks = 0
-
-  for (const article of articles) {
-    for (const chunk of subChunkArticle(article)) {
-      try {
-        const result = await classifyChunk(client, specNumber, specTitle, chunk)
-        if (result.ok) items.push(...result.items)
-        else failedChunks++
-      } catch (err) {
-        console.error(`[spec-classifier] ${specNumber}: chunk call threw — chunk marked failed`, err)
-        failedChunks++
-      }
-    }
+  const usable = articles.filter(a => a.trim() !== "")
+  if (usable.length === 0) {
+    console.error(`[spec-classifier] ${specNumber}: no usable article blocks for a section with submittals_text — marked failed`)
+    return { items: [], failedChunks: 1 }
   }
 
+  const chunks = usable.flatMap(subChunkArticle)
+  const results = await Promise.all(chunks.map(chunk =>
+    (gate ? gate.run(() => classifyChunk(client, specNumber, specTitle, chunk))
+          : classifyChunk(client, specNumber, specTitle, chunk)
+    ).catch((err): { items: ClassifiedSubmittal[]; ok: boolean } => {
+      console.error(`[spec-classifier] ${specNumber}: chunk call threw — chunk marked failed`, err)
+      return { items: [], ok: false }
+    }),
+  ))
+
+  const items: ClassifiedSubmittal[] = []
+  let failedChunks = 0
+  for (const r of results) {
+    if (r.ok) items.push(...r.items)
+    else failedChunks++
+  }
   return { items, failedChunks }
 }
 
