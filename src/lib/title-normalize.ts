@@ -1,7 +1,7 @@
 // Centralized submittal-title normalization.
 //
 // Five different code paths write `submittals.file_name`:
-//   - /api/staged-submittals/commit (detailed: s.description; consolidated: spec_title)
+//   - /api/staged-submittals/commit (both modes: project_item_name, detailed falls back to description)
 //   - /api/generate-cover           (user-typed description from the cover modal)
 //   - /api/upload                   (custom name or materialName—manufacturer—dimensions)
 //   - /api/gmail-intake             (email attachment filename — main + match-back paths)
@@ -20,10 +20,10 @@
 //     survives. Apostrophes (and balanced double-quote pairs) are preserved.
 //   - Title-case ALL-CAPS strings while preserving real acronyms (O&M, BMS,
 //     HVAC, ASTM, …). A mixed-case string is left alone.
-//   - DO NOT TRUNCATE the stored value. Truncation would destroy the only
-//     copy of long Haiku descriptions for spec_ingestion rows (no
-//     `description` column exists, no storage_path either). The render layer
-//     calls `truncateForDisplay(...)` when it needs a short label.
+//   - DO NOT TRUNCATE the stored value. Long Haiku descriptions must survive
+//     intact (pre-#129 spec_ingestion rows have no `description` value and no
+//     storage_path — file_name is their only copy). The render layer calls
+//     `truncateForDisplay(...)` when it needs a short label.
 //   - Returns "" for empty input; callers fall back to their own default
 //     (filename, safeName, etc.) when the result is "".
 

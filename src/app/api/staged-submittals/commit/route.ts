@@ -124,7 +124,16 @@ export async function POST(req: NextRequest) {
 
   if (mode === "detailed") {
     for (const s of staged) {
-      submittalRows.push({ file_name: normalizeSubmittalTitle(s.description), ...baseFields(s) })
+      // Name the row by its product (project_item_name — the group heading or
+      // section title), keep the requirement sentence as the description. A
+      // name that normalizes to empty falls back to the description so a row
+      // can never commit nameless.
+      const name = normalizeSubmittalTitle(s.project_item_name)
+      submittalRows.push({
+        file_name:   name || normalizeSubmittalTitle(s.description),
+        description: s.description || null,
+        ...baseFields(s),
+      })
       stagedIdsPerRow.push([s.id])
     }
   } else {
