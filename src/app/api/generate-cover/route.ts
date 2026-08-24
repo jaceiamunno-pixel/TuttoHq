@@ -161,17 +161,20 @@ export async function POST(req: NextRequest) {
   const finalBytes = await mergedDoc.save()
   const filename = submittalId ? "submittal_transmittal.pdf" : "cover_sheet.pdf"
 
-  // Record the generated transmittal onto an EXISTING log row ONLY.
+  // Record the generated transmittal.
   //
-  // We never CREATE a submittals row here. Generating a cover for a Library
-  // SHELF item (no existingId) is a download/send action, not a submittal
-  // transaction — it must not file a phantom log row, and must not leave a
-  // phantom PDF under project-submittals/ with no row pointing at it. So the
-  // whole save block is gated on `existingId`: only the project-log
-  // "Cover"/"Transmit" flow (which passes an already-real log row) records
-  // its transmittal here. The shelf-Cover flow falls straight through to the
-  // PDF download below.
-  if (projectId && existingId) {
+  //   existingId  → UPDATE that log row (project-log "Cover"/"Transmit" on an
+  //     already-real row — the legit transmittal-record path, unchanged).
+  //   no existingId, but a source submittalId → INSERT a submittal_revisions
+  //     row NESTED under the parent (shelf Cover / batch cover queue). We
+  //     still never CREATE a submittals row here — that was the orphan-log-row
+  //     bug (fixed 8014dd6 by recording nothing; recorded properly since
+  //     migration 0055 gave cover issues their own child table). Revisions
+  //     live in their own table so closeout/packages/exports/counts, which
+  //     query submittals only, stay correct.
+  //   no projectId (settings preview, shelf Cover without a project picked)
+  //     → pure download, nothing stored.
+  if (projectId && (existingId || submittalId)) {
     try {
       const { data: companyId } = await supabase.rpc("get_my_company_id")
       if (!companyId) throw new Error("No company association")
@@ -195,16 +198,59 @@ export async function POST(req: NextRequest) {
         transmitted_by_company: transmittedByCompany || null,
       }
 
-      const displayTitle = normalizeSubmittalTitle(description) || safeName
+      if (existingId) {
+        const displayTitle = normalizeSubmittalTitle(description) || safeName
 
-      await supabase.from("submittals").update({
-        file_name:    displayTitle,
-        storage_path: storagePath,
-        mime_type:    "application/pdf",
-        project_id:   projectId,
-        review_status: "Received",
-        ...transmittalFields,
-      }).eq("id", existingId)
+        await supabase.from("submittals").update({
+          file_name:    displayTitle,
+          storage_path: storagePath,
+          mime_type:    "application/pdf",
+          project_id:   projectId,
+          review_status: "Received",
+          ...transmittalFields,
+        }).eq("id", existingId)
+      } else {
+        // company_id is NEVER sent — the column defaults to
+        // get_my_company_id() and RLS scopes on it.
+        const nextRevSeq = async (): Promise<number> => {
+          const { data } = await supabase
+            .from("submittal_revisions")
+            .select("rev_seq")
+            .eq("submittal_id", submittalId)
+            .order("rev_seq", { ascending: false })
+            .limit(1)
+            .maybeSingle()
+          return (data?.rev_seq ?? -1) + 1
+        }
+        const revRow = {
+          submittal_id:   submittalId,
+          storage_path:   storagePath,
+          file_name:      (typeof description === "string" && description.trim()) || safeName,
+          mime_type:      "application/pdf",
+          cover_pdf_path: storagePath,
+          review_status:  "Received",
+          created_by:     user.id,
+          copy_to:        copyTo || null,
+          ...transmittalFields,
+        }
+        // Same derive-and-retry-once idiom as RFI/CO/Sub-CO numbering: two
+        // browsers can derive the same rev_seq; on the unique violation
+        // re-read and retry exactly once, then surface a 409.
+        let { error } = await supabase.from("submittal_revisions")
+          .insert({ ...revRow, rev_seq: await nextRevSeq() })
+        if (error?.code === "23505") {
+          const retry = await supabase.from("submittal_revisions")
+            .insert({ ...revRow, rev_seq: await nextRevSeq() })
+          error = retry.error
+        }
+        if (error?.code === "23505") {
+          return NextResponse.json(
+            { error: "A revision was recorded for this submittal at the same moment — please try again" },
+            { status: 409 },
+          )
+        }
+        // Any other insert error is non-fatal — the PDF still downloads.
+      }
     } catch {
       // Non-fatal: PDF still downloads even if DB save fails
     }
