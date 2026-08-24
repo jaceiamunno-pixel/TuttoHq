@@ -61,14 +61,28 @@ export async function GET(
       .maybeSingle()
     if (att) return (await signedRedirect(att.storage_path)) ?? storageDown()
 
-    const { data: rev } = await supabase
+    // Two chained .eq() lookups — never string-interpolate a client value
+    // into a PostgREST filter expression — and sign the DB-sourced column,
+    // same as the attachment branch above.
+    const { data: revByFile } = await supabase
       .from("submittal_revisions")
-      .select("id")
+      .select("storage_path")
       .eq("submittal_id", id)
-      .or(`storage_path.eq."${requestedPath}",cover_pdf_path.eq."${requestedPath}"`)
-      .limit(1)
+      .eq("storage_path", requestedPath)
       .maybeSingle()
-    if (rev) return (await signedRedirect(requestedPath)) ?? storageDown()
+    if (revByFile?.storage_path) {
+      return (await signedRedirect(revByFile.storage_path)) ?? storageDown()
+    }
+
+    const { data: revByCover } = await supabase
+      .from("submittal_revisions")
+      .select("cover_pdf_path")
+      .eq("submittal_id", id)
+      .eq("cover_pdf_path", requestedPath)
+      .maybeSingle()
+    if (revByCover?.cover_pdf_path) {
+      return (await signedRedirect(revByCover.cover_pdf_path)) ?? storageDown()
+    }
 
     return NextResponse.json({ error: "attachment not found" }, { status: 404 })
   }
