@@ -281,42 +281,63 @@ export async function classifySubmittals(
  *  8,000-token ceiling. */
 const MAX_CHUNK_CHARS = 8000
 
+/** A trailing chunk smaller than this merges into its predecessor when that
+ *  fits under MAX_CHUNK_CHARS (see the minimum-size merge in subChunkArticle). */
+const MIN_TRAILING_CHUNK_CHARS = 2500
+
 /** Top-level lettered item ("A. ", "B. ") at line start — the same pattern the
- *  item grain is built on. Sub-chunk boundaries fall ONLY here, so a lettered
- *  item is never split across chunks. */
+ *  item grain is built on. Sub-chunk boundaries fall only here and at
+ *  PRODUCT_HEADING_LINE matches, so a chunk always starts on an item or
+ *  heading line, never mid-sentence. */
 const LETTERED_ITEM_LINE = /^[ \t]*[A-Z]\.\s/
 
 /** A product-group heading line ("11. Door Hardware") — a numbered line whose
  *  text reads as a short title, not a numbered requirement sentence. The length
  *  cap keeps nested numbered sub-bullets ("1. Provide mfr's data for each …",
- *  which run sentence-long) from being mistaken for headings. */
-const PRODUCT_HEADING_LINE = /^[ \t]*\d{1,3}[.)][ \t]+\S.{0,78}$/
+ *  which run sentence-long) from being mistaken for headings.
+ *  PERIOD form only ("11."), never the paren form ("3)"): in these documents
+ *  the paren layer is the NESTED sub-bullet under a heading ("3) Frame details
+ *  for each frame type…" — often short enough to slip the length cap), so a
+ *  paren line must never be a chunk boundary, a carry source, or an
+ *  opensMidGroup signal. A missed boundary only makes a chunk bigger (and the
+ *  post-pack warn catches it); a false boundary orphans items from their
+ *  heading silently. All three call sites read this one regex. */
+const PRODUCT_HEADING_LINE = /^[ \t]*\d{1,3}\.[ \t]+\S.{0,78}$/
 
 /**
  * Splits one oversized article block into pieces under MAX_CHUNK_CHARS, cutting
- * only at top-level lettered-item boundaries. Every piece after the first is
+ * at top-level lettered-item boundaries AND at product-heading lines. Product
+ * headings must be boundaries too: a lettered item that enumerates its products
+ * as numbered headings ("1." … "26.") with lowercase sub-bullets has NO
+ * lettered interior line, so lettered-only segmentation passes the whole item
+ * through as one 18k+ chunk — and a chunk holding many headings is what lets
+ * the model compose titles across them. Every piece after the first is
  * re-anchored with the article's heading line (the block's first line, e.g.
  * "1.4 SUBMITTALS") so the model still knows which article it is itemizing —
  * without it the "article" field of the continuation rows would be wrong.
  * The same re-anchoring carries the most recent PRODUCT heading ("11. Door
- * Hardware"): a boundary is a lettered-item line, never a product heading, so a
- * continuation chunk can open with deliverables whose enclosing heading stayed
- * in the previous chunk — without the carry those items would lose their
- * group_title.
- * A single lettered item longer than the limit stays whole (never split), even
- * though the resulting piece exceeds the limit.
+ * Hardware") when a continuation chunk opens with deliverables whose enclosing
+ * heading stayed in the previous chunk — without the carry those items would
+ * lose their group_title.
+ * A single segment longer than the limit (no interior boundary at all) stays
+ * whole, even though the resulting piece exceeds the limit — the caller warns
+ * on any such overflow instead of hiding it.
+ * One extra rule: a chunk never mixes the ungrouped lettered preamble with the
+ * grouped (product-heading) region — packing force-breaks once per article at
+ * the first heading-opening segment (see the packing loop's comment).
  */
-function subChunkArticle(article: string): string[] {
+export function subChunkArticle(article: string, specNumber: string): string[] {
   if (article.length <= MAX_CHUNK_CHARS) return [article]
 
   const lines = article.split("\n")
   const headingLine = lines[0]
 
-  // Segment at lettered-item starts: [preamble incl. heading, item A, item B, …]
+  // Segment at lettered-item starts AND product-heading starts:
+  // [preamble incl. heading, item A, …, heading 1 + its sub-items, heading 2 …]
   const segments: string[] = []
   let current: string[] = []
   for (const line of lines) {
-    if (LETTERED_ITEM_LINE.test(line) && current.length > 0) {
+    if ((LETTERED_ITEM_LINE.test(line) || PRODUCT_HEADING_LINE.test(line)) && current.length > 0) {
       segments.push(current.join("\n"))
       current = []
     }
@@ -345,12 +366,38 @@ function subChunkArticle(article: string): string[] {
 
   // Greedily pack whole segments into chunks under the limit, tracking the most
   // recent product heading seen in already-packed text for re-anchoring.
+  //
+  // One forced break, at the grouped region's start: the first segment that
+  // OPENS on a product heading closes the buffer even though it is under the
+  // limit. Without it the packer merges the ungrouped lettered preamble with
+  // the first headings into one MIXED chunk — and on that shape the model
+  // fails all-or-nothing: seeing a chunk that opens with ungrouped items, it
+  // sometimes decides the whole chunk isn't product-grouped and empties every
+  // group_title in it (observed 4 of 10 live runs on 13 30 50; homogeneous
+  // chunks never failed). Preamble items' titles are genuinely "" so the
+  // preamble-only chunk is safe; chunks after the break all open on a heading.
+  //
+  // "Grouped region's start" = the first heading-opening segment whose NEXT
+  // segment also opens on a heading. A lone heading-shaped line inside the
+  // preamble (13 30 50's 1.9 has "1. Products used in the work…", a short
+  // numbered sentence under item A) must not trigger the break — it is
+  // followed by lettered preamble, not by "2. <product>", so the lookahead
+  // rejects it; breaking there would strand the rest of the preamble in a
+  // mixed chunk, recreating the exact shape this break removes.
   const chunks: string[] = []
   let buf = ""
   let carriedHeading: string | null = null
-  for (const seg of segments) {
-    if (buf && buf.length + 1 + seg.length > MAX_CHUNK_CHARS) {
+  let groupedRegionStarted = false
+  let preambleChunkIndex = -1
+  const opensOnHeading = (s: string): boolean => PRODUCT_HEADING_LINE.test(s.split("\n", 1)[0])
+  for (let i = 0; i < segments.length; i++) {
+    const seg = segments[i]
+    const modeBreak = !groupedRegionStarted && opensOnHeading(seg) &&
+      i + 1 < segments.length && opensOnHeading(segments[i + 1])
+    if (modeBreak) groupedRegionStarted = true
+    if (buf && (modeBreak || buf.length + 1 + seg.length > MAX_CHUNK_CHARS)) {
       chunks.push(buf)
+      if (modeBreak) preambleChunkIndex = chunks.length - 1
       buf = carriedHeading && opensMidGroup(seg)
         ? `${headingLine}\n${carriedHeading}\n${seg}`
         : `${headingLine}\n${seg}`
@@ -360,6 +407,37 @@ function subChunkArticle(article: string): string[] {
     carriedHeading = lastProductHeading(seg) ?? carriedHeading
   }
   if (buf) chunks.push(buf)
+
+  // Minimum-size merge: a trailing mini-chunk folds into its predecessor. A
+  // chunk holding a single heading gives the model nothing to contrast
+  // against, and it can promote the heading's own sub-products ("a. Furniture")
+  // to bare titles. Two refusals: never past MAX_CHUNK_CHARS (the two chunks
+  // stay separate rather than manufacturing an overflow), and never into the
+  // preamble chunk (that would rebuild the mixed preamble+grouped shape the
+  // mode break above exists to remove). The duplicated article-heading
+  // re-anchor is dropped from the absorbed chunk so it doesn't repeat
+  // mid-chunk.
+  if (chunks.length > 1 && chunks[chunks.length - 1].length < MIN_TRAILING_CHUNK_CHARS &&
+      chunks.length - 2 !== preambleChunkIndex) {
+    const last = chunks[chunks.length - 1]
+    const body = last.startsWith(`${headingLine}\n`) ? last.slice(headingLine.length + 1) : last
+    const merged = `${chunks[chunks.length - 2]}\n${body}`
+    if (merged.length <= MAX_CHUNK_CHARS) {
+      chunks.splice(chunks.length - 2, 2, merged)
+    }
+  }
+
+  // MAX_CHUNK_CHARS is a ceiling, not a target. The only legitimate overflow
+  // is a single segment with no interior boundary that is itself over the
+  // limit (the documented never-split case) — it passes through whole, but
+  // NEVER silently: silent overflow is exactly what let composed titles hide.
+  for (const chunk of chunks) {
+    if (chunk.length > MAX_CHUNK_CHARS) {
+      console.warn(
+        `[spec-classifier] ${specNumber}: sub-chunk is ${chunk.length} chars, over the ${MAX_CHUNK_CHARS}-char limit — no interior boundary to split at; sent whole`,
+      )
+    }
+  }
   return chunks
 }
 
@@ -478,7 +556,7 @@ export async function classifySubmittalsChunked(
     return { items: [], failedChunks: 1 }
   }
 
-  const chunks = usable.flatMap(subChunkArticle)
+  const chunks = usable.flatMap(a => subChunkArticle(a, specNumber))
   const results = await Promise.all(chunks.map(chunk =>
     (gate ? gate.run(() => classifyChunk(client, specNumber, specTitle, chunk))
           : classifyChunk(client, specNumber, specTitle, chunk)
