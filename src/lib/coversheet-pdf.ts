@@ -195,7 +195,9 @@ export async function buildPackageCoversheetPdf(
 
   pdf.sectionDivider("Submittals in this Package")
   pdf.table(
-    ["Submittal No.", "Spec Section No.", "Spec Section Title", "Submittal Description", "Due Date"],
+    // Short labels: tableHeader clips (no wrap) at colW-12, so the two narrow
+    // columns can't carry "Submittal No." / "Spec Section No." without an ellipsis.
+    ["No.", "Spec No.", "Spec Title", "Submittal Description", "Due Date"],
     lines.map(l => [
       cleanLineField(l.submittalNumber, 40) || "—",
       cleanLineField(l.specNumber, 40) || "—",
