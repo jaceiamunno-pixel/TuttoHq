@@ -117,14 +117,18 @@ export interface PackageCoverLine {
   specNumber: string
   specTitle: string
   description: string
+  /** Pre-formatted M/D/YYYY; "" when the submittal has no due date. Per-row
+   *  because a package carries many submittals with their own dates. */
+  dueDate: string
 }
 
 /** Longest a single manifest cell may be — the table wraps, so this only guards
  *  against a pathological value growing the cover by pages. */
 export const PACKAGE_COVER_LINE_MAX = 300
 
-// Manifest column widths (pt): Submittal No. / Spec No. / Spec Title / Description.
-const PACKAGE_COVER_COLS = [78, 92, 140, 216]
+// Manifest column widths (pt): Submittal No. / Spec No. / Spec Title /
+// Description / Due Date.
+const PACKAGE_COVER_COLS = [66, 80, 122, 190, 68]
 
 function cleanLineField(v: string, max = PACKAGE_COVER_LINE_MAX): string {
   // eslint-disable-next-line no-control-regex
@@ -140,8 +144,10 @@ function cleanLineField(v: string, max = PACKAGE_COVER_LINE_MAX): string {
  * fresh page when the manifest leaves too little room, so a long package never
  * clips. ONE package-level stamp, not one per item.
  *
- * `props` supplies the project/GC/date fields only; its submittalDescription,
- * specSection*, submittalNumber and revisionNumber are unused here.
+ * `props` supplies the project/GC/date-submitted fields only; its
+ * submittalDescription, specSection*, submittalNumber, revisionNumber and
+ * submittalDueDate are unused here — the due date is PER SUBMITTAL, so it
+ * prints in each manifest row, never in the package-level grid.
  */
 export async function buildPackageCoversheetPdf(
   props: SubmittalCoversheetProps,
@@ -154,7 +160,7 @@ export async function buildPackageCoversheetPdf(
   const {
     gcName,
     projectName, projectNumber, projectLocation,
-    dateSubmitted, submittalDueDate,
+    dateSubmitted,
     criticalSubmittal = false, submittalPartyRequired = false, copyTo = "",
   } = props
 
@@ -179,10 +185,7 @@ export async function buildPackageCoversheetPdf(
   })
 
   pdf.fieldGrid([
-    [
-      { label: "Date Submitted", value: dateSubmitted },
-      { label: "Submittal Due Date", value: submittalDueDate },
-    ],
+    [{ label: "Date Submitted", value: dateSubmitted }],
     { checkboxes: [
       { label: "Critical Submittal", checked: criticalSubmittal },
       { label: "Submittal Party Required", checked: submittalPartyRequired },
@@ -192,12 +195,13 @@ export async function buildPackageCoversheetPdf(
 
   pdf.sectionDivider("Submittals in this Package")
   pdf.table(
-    ["Submittal No.", "Spec Section No.", "Spec Section Title", "Submittal Description"],
+    ["Submittal No.", "Spec Section No.", "Spec Section Title", "Submittal Description", "Due Date"],
     lines.map(l => [
       cleanLineField(l.submittalNumber, 40) || "—",
       cleanLineField(l.specNumber, 40) || "—",
       cleanLineField(l.specTitle) || "—",
       cleanLineField(l.description) || "—",
+      cleanLineField(l.dueDate, 40) || "—",
     ]),
     PACKAGE_COVER_COLS,
   )

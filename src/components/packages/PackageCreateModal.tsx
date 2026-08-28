@@ -81,6 +81,8 @@ interface PackageItemPreview {
   submittalId: string
   description: string
   specNumber: string
+  specTitle: string
+  dueDate: string
 }
 /** A manual, description-only manifest row. Local state only — never PATCHed
  *  to a submittal; sent as `extra_lines` and printed on the package cover. */
@@ -89,6 +91,7 @@ interface ExtraLine {
   description: string
   specNumber: string
   specTitle: string
+  dueDate: string
 }
 type PreviewData =
   | { mode: "per_item"; items: PerItemPreview[] }
@@ -137,7 +140,7 @@ export default function PackageCreateModal({
   /** The subset of manual rows worth sending — a blank description is dropped. */
   const extraLinesPayload = extraLines
     .filter(l => l.description.trim())
-    .map(l => ({ description: l.description.trim(), specNumber: l.specNumber.trim(), specTitle: l.specTitle.trim() }))
+    .map(l => ({ description: l.description.trim(), specNumber: l.specNumber.trim(), specTitle: l.specTitle.trim(), dueDate: l.dueDate.trim() }))
 
   // ── Cover-preview (gate) state ──
   const [preview, setPreview] = useState<PreviewData | null>(null)
@@ -266,7 +269,7 @@ export default function PackageCreateModal({
     setIncludedIds(prev => prev.filter(x => x !== id))
   }
   function addExtraLine() {
-    setExtraLines(prev => [...prev, { key: crypto.randomUUID(), description: "", specNumber: "", specTitle: "" }])
+    setExtraLines(prev => [...prev, { key: crypto.randomUUID(), description: "", specNumber: "", specTitle: "", dueDate: "" }])
   }
   function updateExtraLine(key: string, patch: Partial<Omit<ExtraLine, "key">>) {
     setExtraLines(prev => prev.map(l => (l.key === key ? { ...l, ...patch } : l)))
@@ -622,22 +625,27 @@ export default function PackageCreateModal({
                           <th className="text-left px-3 py-1.5 text-[10px] font-bold text-[#64748B] uppercase tracking-wider w-24">Spec No.</th>
                           <th className="text-left px-3 py-1.5 text-[10px] font-bold text-[#64748B] uppercase tracking-wider w-44">Spec Section Title</th>
                           <th className="text-left px-3 py-1.5 text-[10px] font-bold text-[#64748B] uppercase tracking-wider">Description</th>
+                          <th className="text-left px-3 py-1.5 text-[10px] font-bold text-[#64748B] uppercase tracking-wider w-24">Due Date</th>
                           <th className="w-10" />
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-[#E2E8F0]/70">
                         {preview.items.map((it) => {
-                          const lastRow = includedIds.length === 1 && extraLines.length === 0
+                          // Both routes require at least one real submittal, so
+                          // the last bound row can never be removed — manual rows
+                          // don't count.
+                          const lastRow = includedIds.length === 1
                           return (
                             <tr key={it.submittalId}>
                               <td className="px-3 py-1 font-mono text-[11px] text-[#64748B] align-middle">{it.specNumber || "—"}</td>
-                              <td className="px-3 py-1 text-[11px] text-[#94A3B8] align-middle italic">from the log</td>
+                              <td className="px-3 py-1 text-[12px] text-[#0F172A] align-middle truncate max-w-[176px]" title={it.specTitle}>{it.specTitle || "—"}</td>
                               <td className="py-0 align-middle">
                                 <PackageDescriptionRow
                                   value={it.description}
                                   onSave={saveDescription(it.submittalId)}
                                 />
                               </td>
+                              <td className="px-3 py-1 text-[12px] text-[#64748B] tabular-nums align-middle">{it.dueDate || "—"}</td>
                               <td className="px-2 py-1 align-middle text-right">
                                 <TrashButton
                                   disabled={lastRow || previewLoading}
@@ -675,6 +683,15 @@ export default function PackageCreateModal({
                                 placeholder="Description (required) — e.g. Warranty letter"
                                 required
                                 onChange={e => updateExtraLine(l.key, { description: e.target.value })}
+                                onBlur={bumpManifest}
+                              />
+                            </td>
+                            <td className="px-2 py-1 align-middle">
+                              <input
+                                className={extraInputCls + " tabular-nums"}
+                                value={l.dueDate}
+                                placeholder="M/D/YYYY"
+                                onChange={e => updateExtraLine(l.key, { dueDate: e.target.value })}
                                 onBlur={bumpManifest}
                               />
                             </td>

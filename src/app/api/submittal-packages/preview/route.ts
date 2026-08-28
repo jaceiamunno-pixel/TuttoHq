@@ -143,11 +143,14 @@ export async function POST(req: NextRequest) {
     pendingNumber,
     coverPdfBase64,
     // The manifest rows bound to submittals: the editable description plus the
-    // read-only spec number the modal shows beside it.
+    // read-only spec number / title / due date the modal shows beside it, so
+    // the on-screen table mirrors the printed manifest.
     items: resolved.items.map(it => ({
       submittalId: it.submittalId,
       description: it.description,
       specNumber: it.specNumber ?? "",
+      specTitle: it.coversheet.specSectionTitle,
+      dueDate: it.coversheet.submittalDueDate,
     })),
   })
 }

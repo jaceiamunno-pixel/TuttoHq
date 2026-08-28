@@ -121,7 +121,7 @@ const EXTRA_LINES_MAX = 50
  */
 export function parseExtraLines(input: unknown): PackageCoverLine[] {
   if (!Array.isArray(input)) return []
-  const clean = (v: unknown) => String(v ?? "").trim().slice(0, PACKAGE_COVER_LINE_MAX)
+  const clean = (v: unknown, max = PACKAGE_COVER_LINE_MAX) => String(v ?? "").trim().slice(0, max)
   const out: PackageCoverLine[] = []
   for (const raw of input.slice(0, EXTRA_LINES_MAX)) {
     const r = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>
@@ -133,6 +133,7 @@ export function parseExtraLines(input: unknown): PackageCoverLine[] {
       specNumber: clean(r.specNumber),
       specTitle: clean(r.specTitle),
       description,
+      dueDate: clean(r.dueDate, 40),
     })
   }
   return out
@@ -189,6 +190,7 @@ export async function buildTransmittalPackageFiles(input: TransmittalPdfInput): 
         specNumber: it.coversheet.specSectionNumber,
         specTitle: it.coversheet.specSectionTitle,
         description: it.coversheet.submittalDescription,
+        dueDate: it.coversheet.submittalDueDate,
       })),
       ...extraLines,
     ]
@@ -415,10 +417,10 @@ export async function resolvePackageItems(
             warnings.push(`${label}: no cover-stripped copy on file — used the original (any existing coversheet is retained).`)
           }
         } else {
-          warnings.push(`${label}: attachment file could not be read — skipped.`)
+          warnings.push(`${label}: attachment file could not be read — no document included.`)
         }
       } else {
-        warnings.push(`${label}: no current PDF attachment — skipped.`)
+        warnings.push(`${label}: no current PDF attachment — no document included.`)
       }
     }
 
