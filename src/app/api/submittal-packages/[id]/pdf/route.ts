@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import {
-  generateTransmittalPackage, signPaths,
+  generateTransmittalPackage, signPaths, parseExtraLines,
   type RecipientType, type CoversheetMode,
 } from "@/lib/package-pdf"
 
@@ -27,7 +27,7 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
   // Existence doubles as the ownership check (RLS hides other companies).
   const { data: pkg } = await supabase
     .from("submittal_packages")
-    .select("id, project_id, company_id, package_number, recipient_type, coversheet_mode, send_date")
+    .select("id, project_id, company_id, package_number, recipient_type, coversheet_mode, send_date, cover_extra_lines")
     .eq("id", id)
     .maybeSingle()
   if (!pkg) return NextResponse.json({ error: "Package not found" }, { status: 404 })
@@ -61,6 +61,9 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
       coversheetMode: pkg.coversheet_mode as CoversheetMode,
       submittalIds,
       generatedBy: user.id,
+      // The manual manifest rows saved at create — re-validated so a regen
+      // reproduces the same 'package' cover.
+      extraLines: parseExtraLines(pkg.cover_extra_lines),
     })
     const signed = await signPaths(supabase, files.map(f => f.storagePath))
     return NextResponse.json({

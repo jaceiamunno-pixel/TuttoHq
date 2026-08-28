@@ -22,16 +22,21 @@ import {
 // download. The PM sends them from their own email client. NO email field, NO
 // vendor lookup, NO dispatch/send action.
 //
-// Coversheet mode drives the output shape: 'package' → one PDF (cover + all
-// docs); 'per_item' → N PDFs (one per submittal), delivered as per-item
-// downloads plus a client-side "Download all" zip.
+// Coversheet mode drives the output shape: 'package' → one PDF (ONE cover with
+// a manifest of every submittal + all docs); 'per_item' → N PDFs (one per
+// submittal), delivered as per-item downloads plus a client-side "Download
+// all" zip.
 //
 // THREE steps:
 //   form     — recipient / date / mode / item review.
 //   cover    — the GATE. The actual cover is rendered and the two descriptive
 //              fields (description, spec-section title) are click-to-edit,
 //              writing straight back to the submittal row via the shared PATCH
-//              route. NOTHING is assembled, uploaded, stored, or date-stamped
+//              route. In 'package' mode the manifest is editable too: a bound
+//              row can be removed (drops its cover line AND its document) and
+//              manual description-only rows can be added (cover line, no
+//              document) — those live in local state only, never on a submittal
+//              row. NOTHING is assembled, uploaded, stored, or date-stamped
 //              here. Cancel/close/Back on this step = nothing happened.
 //   delivery — the download view, shown only AFTER the user accepts. Creating
 //              the package is the send event; it stamps the chosen date column.
@@ -40,6 +45,9 @@ const inputCls =
   "w-full h-9 px-3 rounded-md border border-[#E2E8F0] text-[14px] text-[#0F172A] bg-white " +
   "focus:outline-none focus:ring-1 focus:ring-[#7B9BB5]/40 focus:border-[#7B9BB5]/50 placeholder:text-[#94A3B8]"
 const labelCls = "block text-[11px] font-semibold text-[#64748B] uppercase tracking-[0.08em] mb-1.5"
+const extraInputCls =
+  "w-full h-8 px-2 rounded border border-[#E2E8F0] text-[12px] text-[#0F172A] bg-white " +
+  "focus:outline-none focus:border-[#7B9BB5] placeholder:text-[#94A3B8]"
 
 type RecipientType = "cm" | "ae" | "subcontractor"
 type CoversheetMode = "per_item" | "package"
@@ -72,6 +80,18 @@ interface PerItemPreview {
 interface PackageItemPreview {
   submittalId: string
   description: string
+  specNumber: string
+  specTitle: string
+  dueDate: string
+}
+/** A manual, description-only manifest row. Local state only — never PATCHed
+ *  to a submittal; sent as `extra_lines` and printed on the package cover. */
+interface ExtraLine {
+  key: string
+  description: string
+  specNumber: string
+  specTitle: string
+  dueDate: string
 }
 type PreviewData =
   | { mode: "per_item"; items: PerItemPreview[] }
@@ -110,6 +130,17 @@ export default function PackageCreateModal({
   // Inline, non-blocking confirmation shown under the Send button after a click —
   // covers the no-mailto-handler case (nothing opens) by pointing at the clipboard.
   const [sendNote, setSendNote] = useState<string | null>(null)
+
+  // Which of the selected submittals are still in the package. Removing a row
+  // on the cover step drops it here — the single source for every request body
+  // and every count shown in the modal.
+  const [includedIds, setIncludedIds] = useState<string[]>(submittals.map(s => s.id))
+  const [extraLines, setExtraLines] = useState<ExtraLine[]>([])
+  const included = submittals.filter(s => includedIds.includes(s.id))
+  /** The subset of manual rows worth sending — a blank description is dropped. */
+  const extraLinesPayload = extraLines
+    .filter(l => l.description.trim())
+    .map(l => ({ description: l.description.trim(), specNumber: l.specNumber.trim(), specTitle: l.specTitle.trim(), dueDate: l.dueDate.trim() }))
 
   // ── Cover-preview (gate) state ──
   const [preview, setPreview] = useState<PreviewData | null>(null)
@@ -161,7 +192,7 @@ export default function PackageCreateModal({
     if (!recipientType) { setError("Choose who this package is being sent to."); return false }
     if (!coversheetMode) { setError("Choose a coversheet mode."); return false }
     if (!sendDate) { setError("Choose a send date."); return false }
-    if (submittals.length === 0) { setError("No submittals selected."); return false }
+    if (includedIds.length === 0) { setError("Select at least one submittal to package"); return false }
     return true
   }
 
@@ -180,8 +211,9 @@ export default function PackageCreateModal({
           recipient_type: recipientType,
           send_date: sendDate,
           coversheet_mode: coversheetMode,
-          submittal_ids: submittals.map(s => s.id),
+          submittal_ids: includedIds,
           sent_to: sentTo.trim() || null,
+          extra_lines: extraLinesPayload,
         }),
       })
       const d = await res.json().catch(() => ({}))
@@ -230,6 +262,33 @@ export default function PackageCreateModal({
     await loadPreview()
   }
 
+  // ── 'package' manifest edits (cover step) ──
+  // Removing a bound row drops it from the package — cover line AND document.
+  // Manual rows are local only; the cover re-renders from the preview route.
+  function removeIncluded(id: string) {
+    setIncludedIds(prev => prev.filter(x => x !== id))
+  }
+  function addExtraLine() {
+    setExtraLines(prev => [...prev, { key: crypto.randomUUID(), description: "", specNumber: "", specTitle: "", dueDate: "" }])
+  }
+  function updateExtraLine(key: string, patch: Partial<Omit<ExtraLine, "key">>) {
+    setExtraLines(prev => prev.map(l => (l.key === key ? { ...l, ...patch } : l)))
+  }
+  function removeExtraLine(key: string) {
+    setExtraLines(prev => prev.filter(l => l.key !== key))
+  }
+  // Manifest edits change state the request body reads from, so the preview
+  // reload runs AFTER React commits (an inline `await loadPreview()` in the
+  // click handler would still send the stale includedIds / extraLines).
+  const [manifestVersion, setManifestVersion] = useState(0)
+  const bumpManifest = () => setManifestVersion(v => v + 1)
+  useEffect(() => {
+    if (manifestVersion === 0 || step !== "cover" || coversheetMode !== "package") return
+    if (includedIds.length === 0 && extraLinesPayload.length === 0) return
+    void loadPreview()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [manifestVersion])
+
   /** Create the package. isDraft=false stamps the date + is the send event.
    *  Only reachable from the cover gate. */
   async function createPackage(isDraft: boolean) {
@@ -247,9 +306,10 @@ export default function PackageCreateModal({
           send_date: sendDate,
           coversheet_mode: coversheetMode,
           notes: notes.trim() || null,
-          submittal_ids: submittals.map(s => s.id),
+          submittal_ids: includedIds,
           is_draft: isDraft,
           sent_to: sentTo.trim() || null,
+          extra_lines: extraLinesPayload,
         }),
       })
       const d = await res.json().catch(() => ({}))
@@ -284,11 +344,11 @@ export default function PackageCreateModal({
 
   // Recipient email — shown as the "To:" line and used as the mailto To:. Only
   // populated when the packaged rows share exactly one email (else ambiguous).
-  const recipientEmails = Array.from(new Set(submittals.map(s => s.send_to_email).filter(Boolean))) as string[]
+  const recipientEmails = Array.from(new Set(included.map(s => s.send_to_email).filter(Boolean))) as string[]
   const recipientEmail = recipientEmails.length === 1 ? recipientEmails[0] : ""
   // Recipient firm — the "Sent To" name printed on the cover, else a single
   // shared per-row company, else empty. Backs {vendor} + the fallback message.
-  const recipientFirms = Array.from(new Set(submittals.map(s => s.send_to_company).filter(Boolean))) as string[]
+  const recipientFirms = Array.from(new Set(included.map(s => s.send_to_company).filter(Boolean))) as string[]
   const recipientVendor = sentTo.trim() || (recipientFirms.length === 1 ? recipientFirms[0] : "")
 
   /** Open the sender's mail client with the templated draft, and — additively —
@@ -303,8 +363,8 @@ export default function PackageCreateModal({
    *  it is additive, never a replacement for the mailto. */
   function sendViaEmail() {
     // Unique CSI section codes, first-seen order.
-    const sections = Array.from(new Set(submittals.map(s => s.csi_section).filter(Boolean))) as string[]
-    const titles = submittals.map(s => normalizeSubmittalTitle(s.file_name) || s.file_name)
+    const sections = Array.from(new Set(included.map(s => s.csi_section).filter(Boolean))) as string[]
+    const titles = included.map(s => normalizeSubmittalTitle(s.file_name) || s.file_name)
 
     const fields: TransmittalMergeFields = {
       project: projectName,
@@ -357,7 +417,7 @@ export default function PackageCreateModal({
                 : "Package ready"}
             </h2>
             <p className="text-[12px] text-[#64748B] mt-0.5">
-              {submittals.length} submittal{submittals.length === 1 ? "" : "s"} · {projectName}
+              {includedIds.length} submittal{includedIds.length === 1 ? "" : "s"} · {projectName}
             </p>
           </div>
           <button onClick={onClose} className="text-[#64748B] hover:text-[#0F172A] transition-colors text-[20px] leading-none">×</button>
@@ -417,7 +477,7 @@ export default function PackageCreateModal({
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                 {([
                   { value: "per_item" as const, title: "Cover sheet per item", desc: "Each submittal gets its own coversheet before its document. One PDF per item." },
-                  { value: "package" as const, title: "One merged PDF", desc: "A transmittal cover listing every item, then each document behind its own coversheet." },
+                  { value: "package" as const, title: "One merged PDF", desc: "One cover sheet listing every submittal, then all the documents merged behind it." },
                 ]).map(m => (
                   <button
                     key={m.value} type="button"
@@ -445,7 +505,7 @@ export default function PackageCreateModal({
 
             {/* Item review */}
             <div>
-              <label className={labelCls}>Items in this package ({submittals.length})</label>
+              <label className={labelCls}>Items in this package ({includedIds.length})</label>
               <div className="rounded-lg border border-[#E2E8F0] overflow-clip max-h-52 overflow-y-auto">
                 <table className="w-full text-[12px] border-collapse">
                   <thead className="bg-[#F8F9FA] sticky top-0">
@@ -457,7 +517,7 @@ export default function PackageCreateModal({
                     </tr>
                   </thead>
                   <tbody>
-                    {submittals.map(s => (
+                    {included.map(s => (
                       <tr key={s.id} className="border-b border-[#E2E8F0]/60 last:border-0">
                         <td className="px-3 py-1.5 tabular-nums text-[#64748B]" title={formatSectionNumber(s.csi_section, s.section_seq)}>{padSectionSeq(s.section_seq)}</td>
                         <td className="px-3 py-1.5 font-mono text-[11px] text-[#0F172A]">{s.csi_section ?? "—"}</td>
@@ -545,25 +605,120 @@ export default function PackageCreateModal({
                 </p>
                 {coverUrl ? (
                   <object data={coverUrl} type="application/pdf" className="w-full rounded-lg border border-[#E2E8F0] bg-white" style={{ height: 420 }}>
-                    <p className="p-4 text-[12px] text-[#64748B]">Preview unavailable in this browser — the summary cover will still generate on accept.</p>
+                    <p className="p-4 text-[12px] text-[#64748B]">Preview unavailable in this browser — the package cover will still generate on accept.</p>
                   </object>
                 ) : (
                   <p className="text-[13px] text-[#64748B]">No cover could be rendered for this package.</p>
                 )}
 
+                {/* Editable manifest: bound rows (one per included submittal) +
+                    manual description-only rows. Bound-row descriptions write
+                    back to the log; manual rows are local state only. */}
                 <div>
                   <p className="text-[11px] font-semibold text-[#64748B] uppercase tracking-wider mb-1.5">
-                    Item descriptions (click to edit — the only editable field on this cover)
+                    Submittals in this package ({preview.items.length + extraLines.length})
                   </p>
-                  <div className="rounded-lg border border-[#E2E8F0] bg-white divide-y divide-[#E2E8F0]/70 overflow-clip">
-                    {preview.items.map((it) => (
-                      <PackageDescriptionRow
-                        key={it.submittalId}
-                        value={it.description}
-                        onSave={saveDescription(it.submittalId)}
-                      />
-                    ))}
+                  <div className="rounded-lg border border-[#E2E8F0] bg-white overflow-clip">
+                    <table className="w-full text-[12px] border-collapse">
+                      <thead className="bg-[#F8F9FA]">
+                        <tr className="border-b border-[#E2E8F0]">
+                          <th className="text-left px-3 py-1.5 text-[10px] font-bold text-[#64748B] uppercase tracking-wider w-24">Spec No.</th>
+                          <th className="text-left px-3 py-1.5 text-[10px] font-bold text-[#64748B] uppercase tracking-wider w-44">Spec Section Title</th>
+                          <th className="text-left px-3 py-1.5 text-[10px] font-bold text-[#64748B] uppercase tracking-wider">Description</th>
+                          <th className="text-left px-3 py-1.5 text-[10px] font-bold text-[#64748B] uppercase tracking-wider w-24">Due Date</th>
+                          <th className="w-10" />
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-[#E2E8F0]/70">
+                        {preview.items.map((it) => {
+                          // Both routes require at least one real submittal, so
+                          // the last bound row can never be removed — manual rows
+                          // don't count.
+                          const lastRow = includedIds.length === 1
+                          return (
+                            <tr key={it.submittalId}>
+                              <td className="px-3 py-1 font-mono text-[11px] text-[#64748B] align-middle">{it.specNumber || "—"}</td>
+                              <td className="px-3 py-1 text-[12px] text-[#0F172A] align-middle truncate max-w-[176px]" title={it.specTitle}>{it.specTitle || "—"}</td>
+                              <td className="py-0 align-middle">
+                                <PackageDescriptionRow
+                                  value={it.description}
+                                  onSave={saveDescription(it.submittalId)}
+                                />
+                              </td>
+                              <td className="px-3 py-1 text-[12px] text-[#64748B] tabular-nums align-middle">{it.dueDate || "—"}</td>
+                              <td className="px-2 py-1 align-middle text-right">
+                                <TrashButton
+                                  disabled={lastRow || previewLoading}
+                                  title={lastRow ? "A package needs at least one submittal." : "Remove from this package (cover line and document)"}
+                                  onClick={() => { removeIncluded(it.submittalId); bumpManifest() }}
+                                />
+                              </td>
+                            </tr>
+                          )
+                        })}
+                        {extraLines.map((l) => (
+                          <tr key={l.key} className="bg-[#FFFDF5]">
+                            <td className="px-2 py-1 align-middle">
+                              <input
+                                className={extraInputCls + " font-mono"}
+                                value={l.specNumber}
+                                placeholder="—"
+                                onChange={e => updateExtraLine(l.key, { specNumber: e.target.value })}
+                                onBlur={bumpManifest}
+                              />
+                            </td>
+                            <td className="px-2 py-1 align-middle">
+                              <input
+                                className={extraInputCls}
+                                value={l.specTitle}
+                                placeholder="Spec section title"
+                                onChange={e => updateExtraLine(l.key, { specTitle: e.target.value })}
+                                onBlur={bumpManifest}
+                              />
+                            </td>
+                            <td className="px-2 py-1 align-middle">
+                              <input
+                                className={extraInputCls}
+                                value={l.description}
+                                placeholder="Description (required) — e.g. Warranty letter"
+                                required
+                                onChange={e => updateExtraLine(l.key, { description: e.target.value })}
+                                onBlur={bumpManifest}
+                              />
+                            </td>
+                            <td className="px-2 py-1 align-middle">
+                              <input
+                                className={extraInputCls + " tabular-nums"}
+                                value={l.dueDate}
+                                placeholder="M/D/YYYY"
+                                onChange={e => updateExtraLine(l.key, { dueDate: e.target.value })}
+                                onBlur={bumpManifest}
+                              />
+                            </td>
+                            <td className="px-2 py-1 align-middle text-right">
+                              <TrashButton
+                                disabled={previewLoading}
+                                title="Remove this row"
+                                onClick={() => { removeExtraLine(l.key); bumpManifest() }}
+                              />
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                    <div className="border-t border-[#E2E8F0] px-3 py-1.5">
+                      <button
+                        type="button"
+                        onClick={addExtraLine}
+                        className="text-[12px] font-semibold text-[#7B9BB5] hover:underline"
+                      >
+                        + Add description row
+                      </button>
+                    </div>
                   </div>
+                  <p className="text-[11px] text-[#94A3B8] mt-1.5 leading-relaxed">
+                    Rows removed here are dropped from the package — the cover line and the document. Added rows print on the cover with no document attached.
+                  </p>
                 </div>
 
                 <ReadOnlyNote logLink={logLink} />
@@ -582,7 +737,7 @@ export default function PackageCreateModal({
                 ["Package", trackingRef],
                 ["Sent To", sentTo.trim() || recipientLabel],
                 ["Date", new Date(`${sendDate}T00:00:00`).toLocaleDateString("en-US")],
-                ["Items", String(submittals.length)],
+                ["Items", String(includedIds.length)],
               ].map(([label, value]) => (
                 <div key={label}>
                   <p className="text-[10px] font-bold text-[#64748B] uppercase tracking-widest mb-0.5">{label}</p>
@@ -707,7 +862,25 @@ function ReadOnlyNote({ logLink }: { logLink: string }) {
   )
 }
 
-/** One click-to-edit description row for the package-mode summary cover. Mirrors
+/** Compact trash icon button for a manifest row. */
+function TrashButton({ onClick, disabled, title }: { onClick: () => void; disabled?: boolean; title: string }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      title={title}
+      aria-label={title}
+      className="inline-flex items-center justify-center w-7 h-7 rounded text-[#94A3B8] hover:text-red-600 hover:bg-red-50 disabled:opacity-40 disabled:hover:text-[#94A3B8] disabled:hover:bg-transparent transition-colors"
+    >
+      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+      </svg>
+    </button>
+  )
+}
+
+/** One click-to-edit description row for the package-mode cover manifest. Mirrors
  *  the coversheet's inline edit (empty rejected, Enter/blur commits, Escape
  *  cancels) but as a compact list row beside the rendered PDF. */
 function PackageDescriptionRow({ value, onSave }: { value: string; onSave: (v: string) => Promise<void> }) {

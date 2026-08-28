@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import {
-  resolvePackageItems, buildTransmittalPackageFiles,
+  resolvePackageItems, buildTransmittalPackageFiles, parseExtraLines,
   type RecipientType, type CoversheetMode,
 } from "@/lib/package-pdf"
 
@@ -24,8 +24,10 @@ export const maxDuration = 60
 //
 //   'per_item' → returns per-item coversheet props + the (display-only)
 //                reviewer, which the modal renders as the editable HTML cover.
-//   'package'  → returns the ACTUAL summary cover rendered to a cover-only PDF
-//                (base64), plus each item's editable description.
+//   'package'  → returns the ACTUAL package cover rendered to a cover-only PDF
+//                (base64), plus each item's editable description. `extra_lines`
+//                (manual, description-only manifest rows) are validated through
+//                parseExtraLines and printed on the cover exactly as create will.
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
 
@@ -36,7 +38,7 @@ export async function POST(req: NextRequest) {
 
   const body = await req.json().catch(() => ({}))
   const {
-    project_id, recipient_type, send_date, coversheet_mode, submittal_ids, sent_to,
+    project_id, recipient_type, send_date, coversheet_mode, submittal_ids, sent_to, extra_lines,
   } = body as {
     project_id?: string
     recipient_type?: string
@@ -44,7 +46,9 @@ export async function POST(req: NextRequest) {
     coversheet_mode?: string
     submittal_ids?: string[]
     sent_to?: string | null
+    extra_lines?: unknown
   }
+  const extraLines = parseExtraLines(extra_lines)
 
   // Validate the same shape as the real create (minus draft) — the preview must
   // reject anything the create would reject, so "looks fine in preview" never
@@ -129,6 +133,7 @@ export async function POST(req: NextRequest) {
     items: resolved.items,
     sentTo,
     reviewer: resolved.reviewer,
+    extraLines,
   })
 
   const coverPdfBase64 = built[0] ? Buffer.from(built[0].bytes).toString("base64") : null
@@ -137,10 +142,15 @@ export async function POST(req: NextRequest) {
     mode: "package",
     pendingNumber,
     coverPdfBase64,
-    // The one descriptive field that appears on the summary cover (items table).
+    // The manifest rows bound to submittals: the editable description plus the
+    // read-only spec number / title / due date the modal shows beside it, so
+    // the on-screen table mirrors the printed manifest.
     items: resolved.items.map(it => ({
       submittalId: it.submittalId,
       description: it.description,
+      specNumber: it.specNumber ?? "",
+      specTitle: it.coversheet.specSectionTitle,
+      dueDate: it.coversheet.submittalDueDate,
     })),
   })
 }
