@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import {
-  generateTransmittalPackage, signPaths,
+  generateTransmittalPackage, signPaths, parseExtraLines,
   type RecipientType, type CoversheetMode,
 } from "@/lib/package-pdf"
 
@@ -103,7 +103,7 @@ export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => ({}))
   const {
     project_id, recipient_type, send_date, coversheet_mode,
-    notes, submittal_ids, is_draft, sent_to,
+    notes, submittal_ids, is_draft, sent_to, extra_lines,
   } = body as {
     project_id?: string
     recipient_type?: string
@@ -113,7 +113,11 @@ export async function POST(req: NextRequest) {
     submittal_ids?: string[]
     is_draft?: boolean
     sent_to?: string | null
+    extra_lines?: unknown
   }
+  // Manual manifest rows for the 'package' cover — validated server-side, never
+  // trusted from the body. Persisted so a regenerate reproduces the same cover.
+  const extraLines = parseExtraLines(extra_lines)
 
   if (!project_id) return NextResponse.json({ error: "project_id is required" }, { status: 400 })
   if (recipient_type !== "cm" && recipient_type !== "ae" && recipient_type !== "subcontractor") {
@@ -186,6 +190,7 @@ export async function POST(req: NextRequest) {
       coversheet_mode: coversheetMode,
       send_date: draft ? null : sendDate,
       notes: notes?.trim() || null,
+      cover_extra_lines: extraLines.length > 0 ? extraLines : null,
       created_by: user.id,
     })
     .select()
@@ -223,6 +228,7 @@ export async function POST(req: NextRequest) {
       // Per-package "Sent To" override; generateTransmittalPackage falls back to
       // project.cm_name, then the recipient-type label, when this is blank.
       sentTo: typeof sent_to === "string" ? sent_to : null,
+      extraLines,
     })
     generationId = res.generationId
     files = res.files
